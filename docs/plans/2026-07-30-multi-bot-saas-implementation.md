@@ -10,6 +10,8 @@
 
 **Design:** `docs/plans/2026-07-30-multi-bot-saas-design.md`
 
+**Simplified Bot Baseline:** `docs/plans/2026-07-30-simplify-bot-lifecycle-design.md`。后续迁移和租户化必须以精简后的机器人模型为准，不得重新引入分组、模板、标签、slug、环境、自定义命令前缀或复制流程。
+
 ---
 
 ## 执行规则
@@ -527,7 +529,7 @@ git commit -m "租户：建立SQLAlchemy会话级强制隔离"
 
 ```python
 TENANT_OWNED_MODELS = {
-    Bot, BotGroup, ConfigTemplate, BotTag, BotTagLink, Channel, BotPlugin,
+    Bot, Channel, BotPlugin,
     Conversation, Chatroom, ChatroomMember, WorkWechatContact,
     WorkWechatContactRelation, CustomerOperationRequest, OpenApiApp,
     OpenApiAppChannel, GroupPluginScope, RawWebhookEvent, Message,
@@ -549,10 +551,7 @@ def test_all_business_models_are_tenant_owned():
 
 修改租户内唯一约束，例如：
 
-- `Bot`：`(tenant_id, name)`、`(tenant_id, slug)`；
-- `BotGroup`：`(tenant_id, name)`、`(tenant_id, slug)`；
-- `ConfigTemplate`：`(tenant_id, name)`；
-- `BotTag`：`(tenant_id, name)`；
+- `Bot`：`(tenant_id, name)`；机器人不再保存 slug、分组、模板、标签、环境和自定义命令前缀；
 - `CustomerOperationRequest`：`(tenant_id, channel_id, request_id)`；
 - `OpenApiApp`：`(tenant_id, app_key)`；
 - 入站事件和插件业务表按现有幂等字段增加 `tenant_id`。
