@@ -49,6 +49,7 @@ from app.core.db import SessionLocal
 from app.core.settings import settings
 from app.models.entities import AdminUser, AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, HealthCheckRecord, Message, Plugin, PointsAccount, PointsPrisonRecord, PointsTransaction, RawWebhookEvent, SignInHistory, SignInRecord, TaskJob
 from app.services import async_workers
+import app.services.init_db as init_db_service
 from app.services.auth import AUTH_COOKIE_NAME, build_auth_cookie, hash_password
 from app.services.channel_events import ingest_inbound_event
 from app.services.init_db import init_db_with_seed
@@ -66,12 +67,123 @@ from app.services.plugin_runtime.contracts import PluginExecutionRequest
 from app.services.plugin_schemas import build_plugin_config_view, get_plugin_config_schema
 from app.services.task_queue import enqueue_job
 from app.services.seed import seed_auth_users
-from app.services.security import build_telegram_webhook_secret, sign_webhook_payload
+from app.services.security import build_telegram_webhook_secret, encrypt_secret, mask_secret, sign_webhook_payload
 from app.services.workwechat_cloud_poll import exchange_authorization_code, issue_authorization_code
 from app.services.wechat_ipad.client import WechatIpadApiClient
 import app.services.wechat_ipad.service as wechat_ipad_service
 from app.services.wechat_ipad.service import build_wechat_ipad_group_summary, build_wechat_ipad_overview, refresh_wechat_ipad_status
 from app.services.wechat_ipad.chatrooms import upsert_wechat_ipad_chatroom_profile
+
+
+def seed_legacy_test_fixture(db):
+    """仅为历史回归构造确定性业务数据，不恢复生产环境已经删除的演示数据。"""
+
+    # 大量历史用例通过固定主键访问机器人和渠道。这里完整复刻测试真正依赖的最小关系，
+    # 同时遵守当前机器人精简契约，不再创建分组、模板、标签、slug 或环境字段。
+    bot = Bot(
+        name="ABOT-主机器人",
+        description="历史回归测试专用机器人",
+        status="running",
+        is_enabled=True,
+    )
+    db.add(bot)
+    db.flush()
+
+    channels = [
+        Channel(
+            bot_id=bot.id,
+            name="微信 iPad 通道",
+            channel_type="wechat_ipad",
+            api_base="http://192.168.2.170:8059",
+            bot_token_encrypted=encrypt_secret("wx-demo-token-main"),
+            bot_token_masked=mask_secret("wx-demo-token-main"),
+            webhook_path="/wechat/webhook",
+            dm_policy="allowlist",
+            allow_from="Jyunere",
+            adapter_config_json='{"server_url":"http://192.168.2.170:8059/","wxid":"wxid_demo_account_001","device_id":"4978fc0fd191cf45a4e55fae7936b153","device_name":"Demo iPad Device","server_ip":"192.168.2.170","server_port":"8059"}',
+            login_state="online",
+            status="online",
+            is_enabled=True,
+        ),
+        Channel(
+            bot_id=bot.id,
+            name="OpenClaw 桥接",
+            channel_type="openclaw",
+            api_base="http://127.0.0.1:18789",
+            bot_token_encrypted=encrypt_secret("openclaw-demo-token"),
+            bot_token_masked=mask_secret("openclaw-demo-token"),
+            webhook_path="/wechat_abot/webhook",
+            dm_policy="allowlist",
+            allow_from="wxid_xxx,wxid_yyy",
+            adapter_config_json='{"provider":"openclaw","mode":"bridge"}',
+            status="online",
+            is_enabled=True,
+        ),
+        Channel(
+            bot_id=bot.id,
+            name="内置实验渠道",
+            channel_type="simulator",
+            api_base="simulator://local",
+            webhook_path="/simulator/inbound",
+            dm_policy="allow",
+            allow_from="*",
+            adapter_config_json='{"provider":"simulator","mode":"local-loopback"}',
+            status="online",
+            is_enabled=True,
+        ),
+    ]
+    db.add_all(channels)
+    db.flush()
+
+    plugins = db.scalars(select(Plugin).order_by(Plugin.id.asc())).all()
+    if not plugins:
+        raise AssertionError("历史测试夹具未同步到任何插件目录项")
+    # 测试为当前实际存在的每个目录插件建立绑定，状态严格沿用 manifest 默认值；
+    # 这样运行时测试可以按需启用目标插件，同时不会伪造已经从仓库删除的插件。
+    db.add_all(
+        [
+            BotPlugin(
+                bot_id=bot.id,
+                plugin_id=plugin.id,
+                status="enabled" if plugin.default_enabled else "disabled",
+            )
+            for plugin in plugins
+        ]
+    )
+
+    conversation = Conversation(
+        bot_id=bot.id,
+        channel_id=channels[0].id,
+        channel_type="wechat_ipad",
+        external_id="room_001",
+        title="演示群聊",
+        chat_type="group",
+    )
+    db.add(conversation)
+    db.flush()
+    db.add_all(
+        [
+            Message(
+                conversation_id=conversation.id,
+                direction="in",
+                sender_id="wxid_demo_1",
+                sender_name="张三",
+                content="/总结 昨天群里说了什么？",
+                message_type="text",
+                status="received",
+            ),
+            Message(
+                conversation_id=conversation.id,
+                direction="out",
+                sender_id="abot-main",
+                sender_name="ABOT",
+                content="已开始总结最近消息，请稍等。",
+                message_type="text",
+                status="sent",
+            ),
+        ]
+    )
+    db.commit()
 
 
 class MultiBotAdminTestCase(unittest.TestCase):
@@ -84,8 +196,12 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self._assert_test_database()
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        # init_db 使用进程级哨兵避免生产环境重复初始化；测试每次重建数据库后必须同步重置，
+        # 否则第二个用例开始便会跳过用户、插件和运行时结构初始化，造成无关的级联失败。
+        init_db_service._initialized = False
         with SessionLocal() as db:
             init_db_with_seed(db)
+            seed_legacy_test_fixture(db)
             for username, password, role in (
                 ("admin", "admin123", "admin"),
                 ("ops", "ops123", "ops"),
@@ -197,76 +313,37 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
             db.commit()
 
-    def test_group_template_and_bot_metadata_flow(self):
+    def test_minimal_bot_create_and_edit_flow(self):
         self.login()
         response = self.client.post(
-            "/groups",
-            data={"name": "客服组", "slug": "support", "description": "面向客服机器人"},
+            "/bots",
+            data={"name": "ABOT-客服"},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
+        self.assertIn("/bots/", response.headers["location"])
 
-        response = self.client.post(
-            "/templates",
-            data={
-                "name": "客服模板",
-                "template_scope": "bot",
-                "channel_type": "wechat_ipad",
-                "environment": "prod",
-                "description": "客服标准配置",
-                "config_json": '{"command_prefix": "/kf"}',
-                "is_enabled": "true",
-            },
+        with SessionLocal() as db:
+            created = db.scalar(select(Bot).where(Bot.name == "ABOT-客服"))
+            self.assertIsNotNone(created)
+            created_id = created.id
+
+        update = self.client.post(
+            f"/bots/{created_id}/edit",
+            data={"name": "ABOT-售后", "description": "售后专用机器人"},
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 303)
+        self.assertEqual(update.status_code, 303)
 
         page = self.client.get("/bots")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("客服组", page.text)
-        self.assertIn("客服模板", page.text)
+        self.assertIn("ABOT-售后", page.text)
+        detail = self.client.get(f"/bots/{created_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn("售后专用机器人", detail.text)
 
-        response = self.client.post(
-            "/bots",
-            data={
-                "name": "ABOT-客服",
-                "slug": "abot-support",
-                "description": "客服专用机器人",
-                "command_prefix": "/kf",
-                "group_id": "2",
-                "config_template_id": "2",
-                "environment": "prod",
-                "tags": "客服, 微信",
-                "is_enabled": "true",
-            },
-            follow_redirects=False,
-        )
-        self.assertEqual(response.status_code, 303)
-
-        filtered = self.client.get("/bots", params={"group_id": 2, "environment": "prod", "template_id": 2})
-        self.assertEqual(filtered.status_code, 200)
-        self.assertIn("ABOT-客服", filtered.text)
-        self.assertIn("客服", filtered.text)
-
-    def test_error_filters_monitoring_and_clone(self):
+    def test_error_filters_and_monitoring_without_clone(self):
         self.login()
-        clone_response = self.client.post(
-            "/bots/1/clone",
-            data={
-                "name": "ABOT-主机器人-测试副本",
-                "slug": "abot-main-test",
-                "environment": "test",
-                "copy_channels": "true",
-                "copy_plugins": "true",
-            },
-            follow_redirects=False,
-        )
-        self.assertEqual(clone_response.status_code, 303)
-
-        bot_page = self.client.get("/bots", params={"environment": "test"})
-        self.assertEqual(bot_page.status_code, 200)
-        self.assertIn("ABOT-主机器人-测试副本", bot_page.text)
-
         errors_page = self.client.get(
             "/errors",
             params={"tab": "error", "source_file": "error.log", "keyword": "webhook"},
@@ -277,9 +354,24 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertIn("error.log", errors_page.text)
         self.assertIn("webhook signature failed", errors_page.text)
 
+        monitoring_page = self.client.get("/monitoring")
+        self.assertEqual(monitoring_page.status_code, 200)
+        self.assertIn("健康检查中心", monitoring_page.text)
+
     def test_webhook_signature_outbound_and_monitoring_flow(self):
         self.login("ops", "ops123")
-        self.client.post("/channels/1/health-check", follow_redirects=False)
+        # 历史夹具保留了旧渠道地址，但回归测试必须完全阻断真实局域网探测。
+        with patch(
+            "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter.health_check",
+            return_value={
+                "ok": True,
+                "provider": "wechat_ipad",
+                "status": "online",
+                "summary": "测试心跳正常",
+                "details": {"probes": []},
+            },
+        ):
+            self.client.post("/channels/1/health-check", follow_redirects=False)
         self.client.post("/bots/1/status-check", follow_redirects=False)
 
         payload = {
@@ -326,14 +418,30 @@ class MultiBotAdminTestCase(unittest.TestCase):
                 "/channels/1/outbound",
                 json={"conversation_id": 1, "content": "测试真实出站", "message_type": "text"},
             )
-        self.assertEqual(outbound.status_code, 200)
-        outbound_data = outbound.json()
-        self.assertEqual(outbound_data["adapter"]["transport_status"], "sent")
-        self.assertEqual(outbound_data["adapter"]["provider"], "wechat_ipad")
-        self.assertEqual(outbound_data["adapter"]["external_message_id"], "msg-170")
+            self.assertEqual(outbound.status_code, 200)
+            outbound_data = outbound.json()
+            self.assertTrue(outbound_data["queued"])
+
+            # 当前出站接口只负责可靠入队；Worker 会先处理较高优先级的入站插件任务，
+            # 因此按任务真实状态推进，而不是假定固定调用次数或恢复旧同步发送语义。
+            for _ in range(3):
+                with SessionLocal() as db:
+                    outbound_job = db.get(TaskJob, outbound_data["job_id"])
+                    self.assertIsNotNone(outbound_job)
+                    if outbound_job.status == "completed":
+                        break
+                self.assertTrue(async_workers._run_single_job())
 
         with SessionLocal() as db:
-            message = db.scalar(select(Message).where(Message.id == outbound_data["message_id"]))
+            outbound_job = db.get(TaskJob, outbound_data["job_id"])
+            self.assertIsNotNone(outbound_job)
+            self.assertEqual(outbound_job.status, "completed")
+            worker_result = json.loads(outbound_job.result_json or "{}")
+            adapter_result = worker_result["adapter_result"]
+            self.assertEqual(adapter_result["transport_status"], "sent")
+            self.assertEqual(adapter_result["provider"], "wechat_ipad")
+            self.assertEqual(adapter_result["external_message_id"], "msg-170")
+            message = db.scalar(select(Message).where(Message.id == worker_result["message_id"]))
             self.assertIsNotNone(message)
             self.assertEqual(message.status, "sent")
             self.assertEqual(message.external_status, "0")
@@ -357,7 +465,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertIn("健康检查中心", monitoring_page.text)
         self.assertIn("Webhook", monitoring_page.text)
         self.assertIn("channel.health-check", monitoring_page.text)
-        self.assertIn("message.outbound-dispatch", monitoring_page.text)
+        self.assertIn("message.outbound-queued", monitoring_page.text)
 
     def test_monitoring_alert_resolve_marks_alert_closed(self):
         self.login("ops", "ops123")
@@ -1477,7 +1585,16 @@ consume_policy = "continue"
         image_file = Path(TEST_DIR) / "auto-reply-image.bin"
         image_file.write_bytes(b"fake-image-binary")
         payloads = _build_auto_outbound_payloads(
-            type("FakeContext", (), {"conversation_external_id": "room-image@chatroom", "content": "test"})(),
+            # 回复归一化会按渠道类型决定媒体载荷结构，测试上下文必须提供真实协议边界。
+            type(
+                "FakeContext",
+                (),
+                {
+                    "conversation_external_id": "room-image@chatroom",
+                    "content": "test",
+                    "channel_type": "wechat_ipad",
+                },
+            )(),
             {"replies": [{"type": "image", "image_path": str(image_file)}]},
         )
         self.assertEqual(len(payloads), 1)
@@ -1611,8 +1728,8 @@ consume_policy = "continue"
 
     def test_app_main_module_imports_cleanly(self):
         module = import_module("app.main")
-        self.assertEqual(module.app.title, "Multi Bot Admin")
-        self.assertTrue(any(route.path == "/healthz" for route in module.app.routes))
+        self.assertEqual(module.app.title, "Multi Bot SaaS")
+        self.assertTrue(any(getattr(route, "path", None) == "/healthz" for route in module.app.routes))
 
     def test_plugin_runtime_package_imports_cleanly(self):
         module = import_module("app.services.plugin_runtime")
@@ -1980,74 +2097,6 @@ consume_policy = "shared"
             self.assertIsNotNone(binding)
             self.assertEqual(binding.last_execution_status, "completed")
             self.assertIn("来自 Dify 的回复", binding.runtime_details_json or "")
-
-    def test_ai_gen_image_plugin_execution_endpoint_generates_runtime_result(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "ai_gen_image"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "image_api_url": "https://image.pollinations.ai/prompt/{prompt}",
-                    "default_width": 1024,
-                    "default_height": 1024,
-                    "default_model": "turbo",
-                    "default_timeout": 300,
-                    "commands": ["AI绘图", "绘图", "画图", "生成图片"],
-                }
-            )
-            db.commit()
-            binding_id = binding.id
-
-        with patch(
-            "app.services.plugin_runtime.executors.load_directory_plugin",
-            return_value=type(
-                "LoadedPlugin",
-                (),
-                {
-                    "instance": type(
-                        "PluginInstance",
-                        (),
-                        {
-                            "execute_action": staticmethod(
-                                lambda request: {
-                                    "ok": True,
-                                    "status": "completed",
-                                    "message": "AI 绘图请求已完成。",
-                                    "output": {
-                                        "provider_status": "generated",
-                                        "prompt": "a cat under snow",
-                                        "image_path": "C:/temp/ai_gen_image_test.jpg",
-                                    },
-                                }
-                            )
-                        },
-                    )()
-                },
-            )(),
-        ):
-            response = self.client.post(
-                f"/plugins/{binding_id}/execute",
-                json={"prompt": "a cat under snow"},
-            )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "ai_gen_image")
-        self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "generated")
-        self.assertEqual(data["output"]["prompt"], "a cat under snow")
-        self.assertTrue(data["output"]["image_path"])
-
-        with SessionLocal() as db:
-            binding = db.get(BotPlugin, binding_id)
-            self.assertIsNotNone(binding)
-            self.assertEqual(binding.last_execution_status, "completed")
-            self.assertIn("a cat under snow", binding.runtime_details_json or "")
-            self.assertIn("\"provider_status\": \"generated\"", binding.runtime_details_json or "")
 
     def test_duanju_search_plugin_execution_endpoint_returns_provider_results(self):
         self.login("ops", "ops123")
