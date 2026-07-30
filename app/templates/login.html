@@ -1,18 +1,42 @@
 {% extends 'base.html' %}
+
+{#
+  租户员工必须通过租户编码、用户名和密码三项信息完成身份定位。
+  平台管理员使用独立的 /platform/login 入口，本页不接受也不提示平台账号字段。
+  登录失败和验证码错误仍由 base.html 统一渲染 notice，避免在表单中重复展示状态提示。
+#}
 {% block content %}
-<section class="auth-showcase auth-showcase-single">
+<section class="auth-showcase auth-showcase-single" aria-labelledby="tenant-login-title">
   <section class="card login-card auth-form-card">
+    {# 标题区直接说明这是租户员工入口，避免与平台管理后台的登录身份混淆。 #}
     <div class="section-head auth-card-head">
       <div>
-        <p class="section-kicker">Account Access</p>
-        <h2>登录后台</h2>
+        <p class="section-kicker">Tenant Access</p>
+        <h2 id="tenant-login-title">租户后台登录</h2>
       </div>
-      <span class="chip chip-outline">管理员入口</span>
+      <span class="chip chip-outline">租户员工入口</span>
     </div>
-    <p class="muted-text">请输入已初始化的管理员账号信息。</p>
+    <p class="muted-text">请输入租户编码和员工账号信息。</p>
+
+    {#
+      tenant_code 与 username 可在认证失败后由服务端安全回填，减少重复输入；密码始终保持空白。
+      字段名称必须与 /login 的 SaaS 租户认证接口一致，不能继续沿用旧 AdminUser 单账号登录契约。
+    #}
     <form method="post" action="/login" class="form-grid auth-form-grid">
-      <label class="full-row"><span>用户名</span><input name="username" autocomplete="username" value="{{ prefill_username or '' }}" required /></label>
-      <label class="full-row"><span>密码</span><input name="password" type="password" autocomplete="current-password" required /></label>
+      <label class="full-row">
+        <span>租户编码</span>
+        <input name="tenant_code" value="{{ prefill_tenant_code or '' }}" autocapitalize="none" spellcheck="false" required />
+      </label>
+      <label class="full-row">
+        <span>用户名</span>
+        <input name="username" autocomplete="username" value="{{ prefill_username or '' }}" required />
+      </label>
+      <label class="full-row">
+        <span>密码</span>
+        <input name="password" type="password" autocomplete="current-password" required />
+      </label>
+
+      {# 达到失败阈值后沿用既有算术验证码；隐藏令牌和答案必须成对提交给认证路由。 #}
       {% if require_captcha %}
       <input type="hidden" name="captcha_token" value="{{ captcha_token }}" />
       <label class="full-row">
@@ -27,13 +51,11 @@
         <button class="btn auth-submit" type="submit">登录</button>
       </div>
     </form>
+
+    {# 仅说明入口归属，不在登录页放置安装流程或旧管理员初始化提示。 #}
     <div class="panel inset-panel auth-tip-panel">
-      <strong>提示</strong>
-      <p class="muted-text">如果你刚完成首次安装，请先重启当前服务，再重新打开后台页面。</p>
-      <p class="muted-text">连续输错多次后会启用验证码校验。</p>
-      {% if needs_bootstrap_admin %}
-      <p class="muted-text">当前还没有可用管理员账号，请访问 `/setup` 完成首次安装。</p>
-      {% endif %}
+      <strong>身份说明</strong>
+      <p class="muted-text">此入口仅供租户员工使用，平台管理员请使用平台登录入口。</p>
     </div>
   </section>
 </section>
