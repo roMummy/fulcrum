@@ -39,7 +39,8 @@ class LocalTimezoneTests(unittest.TestCase):
 
     def test_model_default_created_at_uses_local_time(self):
         before = now_shanghai().replace(tzinfo=None)
-        bot = Bot(name="Bot", slug="bot")
+        # 时区测试关注时间字段，机器人夹具按精简契约只提供名称。
+        bot = Bot(name="Bot")
         self.db.add(bot)
         self.db.commit()
         after = now_shanghai().replace(tzinfo=None)

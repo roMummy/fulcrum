@@ -27,7 +27,8 @@ class WorkWechatContactTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
         self.db = TestingSession()
 
-        bot = Bot(name="Bot", slug="bot")
+        # 联系人归属通过渠道和机器人主键确定，测试夹具同步删除旧 slug 参数。
+        bot = Bot(name="Bot")
         self.db.add(bot)
         self.db.flush()
         channel = Channel(bot_id=bot.id, name="企微", channel_type="workwechat")

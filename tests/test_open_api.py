@@ -38,7 +38,8 @@ class OpenApiTestCase(unittest.TestCase):
         Base.metadata.create_all(bind=engine)
 
     def _create_open_app(self, db, *, status: str = "active") -> tuple[OpenApiApp, Channel]:
-        bot = Bot(name="开放接口测试机器人", slug="open-api-test", status="running", is_enabled=True)
+        # 开放接口资源关联使用数据库主键，机器人精简后不再构造第二套 slug 标识。
+        bot = Bot(name="开放接口测试机器人", status="running", is_enabled=True)
         db.add(bot)
         db.flush()
         channel = Channel(
@@ -247,7 +248,7 @@ class OpenApiTestCase(unittest.TestCase):
     def test_open_api_app_can_use_authorized_channel_from_another_bot(self):
         with SessionLocal() as db:
             app, _channel = self._create_open_app(db)
-            other_bot = Bot(name="另一个开放接口机器人", slug="open-api-other-bot", status="running", is_enabled=True)
+            other_bot = Bot(name="另一个开放接口机器人", status="running", is_enabled=True)
             db.add(other_bot)
             db.flush()
             other_channel = Channel(

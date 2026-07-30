@@ -53,7 +53,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         Base.metadata.create_all(bind=engine)
 
     def _create_message_graph(self, db):
-        bot = Bot(name="Webhook测试机器人", slug="webhook-test", status="running", is_enabled=True)
+        # Webhook 通过机器人主键建立归属，精简后的机器人不再维护额外 slug 标识。
+        bot = Bot(name="Webhook测试机器人", status="running", is_enabled=True)
         db.add(bot)
         db.flush()
         channel = Channel(bot_id=bot.id, name="企微测试渠道", channel_type="workwechat", is_enabled=True, status="online")
@@ -109,7 +110,7 @@ class OpenWebhookTestCase(unittest.TestCase):
         return app, channel, conversation, message, attachment
 
     def _create_channel_with_webhook_app(self, db):
-        bot = Bot(name="Webhook入站测试机器人", slug="webhook-inbound-test", status="running", is_enabled=True)
+        bot = Bot(name="Webhook入站测试机器人", status="running", is_enabled=True)
         db.add(bot)
         db.flush()
         channel = Channel(bot_id=bot.id, name="企微入站测试渠道", channel_type="workwechat", is_enabled=True, status="online")

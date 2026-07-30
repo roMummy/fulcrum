@@ -1015,7 +1015,8 @@ consume_policy = "continue"
 
     def test_static_dispatch_plan_skips_inactive_wechat_chatroom(self):
         with SessionLocal() as db:
-            bot = Bot(name="Dispatch Bot", slug="dispatch-bot")
+            # 插件调度使用机器人主键，精简模型不再需要独立 slug。
+            bot = Bot(name="Dispatch Bot")
             db.add(bot)
             db.flush()
             plugin_codes = {"dify", "message_summary"}
@@ -2735,7 +2736,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微测试机器人", slug="workwechat-attachment-bot")
+                bot = Bot(name="企微测试机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -2803,7 +2804,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微出站回显机器人", slug="workwechat-outbound-echo-bot")
+                bot = Bot(name="企微出站回显机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -2862,7 +2863,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微补偿下载机器人", slug="workwechat-compensation-bot")
+                bot = Bot(name="企微补偿下载机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -2944,7 +2945,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微云端补偿下载机器人", slug="workwechat-cloud-compensation-bot")
+                bot = Bot(name="企微云端补偿下载机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -3024,7 +3025,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微补偿下载机器人", slug="workwechat-compensation-worker-bot")
+                bot = Bot(name="企微补偿下载机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -3090,7 +3091,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微云端历史补偿机器人", slug="workwechat-cloud-worker-bot")
+                bot = Bot(name="企微云端历史补偿机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -3145,7 +3146,7 @@ consume_policy = "shared"
         with SessionLocal() as db:
             bot = db.scalar(select(Bot).order_by(Bot.id.asc()))
             if bot is None:
-                bot = Bot(name="企微上传测试机器人", slug="workwechat-upload-bot")
+                bot = Bot(name="企微上传测试机器人")
                 db.add(bot)
                 db.flush()
             channel = Channel(
@@ -5629,7 +5630,7 @@ consume_policy = "shared"
 
     def test_workwechat_chatroom_detail_and_scope_mode_buttons_do_not_error(self):
         with SessionLocal() as db:
-            bot = Bot(name="企微测试 Bot", slug="workwechat-test-bot")
+            bot = Bot(name="企微测试 Bot")
             db.add(bot)
             db.flush()
             channel = Channel(
@@ -7485,7 +7486,7 @@ consume_policy = "shared"
 
     def test_workwechat_provider_cloud_inbound_uses_client_token(self):
         with SessionLocal() as db:
-            bot = Bot(name="企微云端入站测试机器人", slug="workwechat-cloud-inbound-bot")
+            bot = Bot(name="企微云端入站测试机器人")
             db.add(bot)
             db.flush()
             channel = Channel(bot_id=bot.id, name="企微云端入站", channel_type="workwechat")
@@ -7851,4 +7852,3 @@ consume_policy = "shared"
 
 if __name__ == "__main__":
     unittest.main()
-

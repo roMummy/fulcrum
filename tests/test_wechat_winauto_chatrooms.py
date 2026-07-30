@@ -23,7 +23,8 @@ class WechatWinAutoChatroomTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
         self.db = TestingSession()
 
-        bot = Bot(name="Bot", slug="bot")
+        # 机器人测试夹具遵循 SaaS 精简契约，内部关联只依赖主键，不再构造已删除的 slug。
+        bot = Bot(name="Bot")
         plugin = Plugin(code="weather", display_name="天气插件")
         self.db.add_all([bot, plugin])
         self.db.flush()

@@ -26,7 +26,8 @@ class WorkWechatChatroomTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
         self.db = TestingSession()
 
-        bot = Bot(name="Bot", slug="bot")
+        # 群聊同步测试只需要机器人主键，名称即为当前唯一的租户可见标识。
+        bot = Bot(name="Bot")
         plugin = Plugin(code="weather", display_name="天气插件")
         self.db.add_all([bot, plugin])
         self.db.flush()

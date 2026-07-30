@@ -57,7 +57,8 @@ class WorkWechatCloudPollTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
         self.db = TestingSession()
 
-        bot = Bot(name="Bot", slug="bot")
+        # 云轮询只依赖机器人主键；测试夹具不得重新引入已从产品模型删除的 slug。
+        bot = Bot(name="Bot")
         self.db.add(bot)
         self.db.flush()
         self.channel = Channel(bot_id=bot.id, name="企微", channel_type="workwechat")

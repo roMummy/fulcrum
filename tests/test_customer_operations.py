@@ -20,7 +20,8 @@ class CustomerOperationTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
         self.db = TestingSession()
 
-        bot = Bot(name="Bot", slug="bot")
+        # 客户运营数据通过机器人主键关联，测试夹具不再携带旧 slug。
+        bot = Bot(name="Bot")
         self.db.add(bot)
         self.db.flush()
         channel = Channel(
