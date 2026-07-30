@@ -1,17 +1,16 @@
-version: "3.9"
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: multi-bot-admin
+    container_name: multi-bot-saas-app
     restart: unless-stopped
     ports:
-      # 主服务容器端口统一为 8180，避开 Windows 主机常见 TCP 排除端口段。
-      - "8180:8180"
+      # SaaS 服务使用独立端口，允许原 multi-bot-admin 在同一台服务器继续运行。
+      - "8280:8280"
     env_file:
-      - .env.docker
+      # 验证时可用 MBS_ENV_FILE 指向样例文件，生产默认读取未提交的 .env.docker。
+      - ${MBS_ENV_FILE:-.env.docker}
     volumes:
       - ./plugins:/app/plugins
       - ./logs:/app/logs
@@ -22,26 +21,26 @@ services:
 
   mariadb:
     image: mariadb:11.4
-    container_name: multi-bot-admin-mariadb
+    container_name: multi-bot-saas-mariadb
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: rootpass
-      MARIADB_DATABASE: multi_bot_admin
-      MARIADB_USER: multi_bot_admin
-      MARIADB_PASSWORD: multi_bot_admin_pass
+      # 生产密码只能由未提交的环境文件注入，Compose 不提供可误用的固定密码。
+      MARIADB_ROOT_PASSWORD: ${MBS_DB_ROOT_PASSWORD:?请在环境中设置 MBS_DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: multi_bot_saas
+      MARIADB_USER: ${MBS_DB_USER:-multi_bot_saas}
+      MARIADB_PASSWORD: ${MBS_DB_PASSWORD:?请在环境中设置 MBS_DB_PASSWORD}
       TZ: Asia/Shanghai
-    ports:
-      - "3306:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     volumes:
-      - mariadb_data:/var/lib/mysql
+      - multi_bot_saas_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      # 使用容器环境变量完成健康检查，避免密码直接出现在版本库和宿主机命令行中。
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -uroot -p\"$${MARIADB_ROOT_PASSWORD}\""]
       interval: 10s
       timeout: 5s
       retries: 10
 
 volumes:
-  mariadb_data:
+  multi_bot_saas_data:

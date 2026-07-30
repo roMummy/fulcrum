@@ -158,7 +158,8 @@ from app.services.workwechat_contacts import (
 configure_logging()
 logger = get_logger(__name__)
 
-app = FastAPI(title="Multi Bot Admin", version="0.5.0")
+# 应用元数据统一从 Settings 读取，部署时可以覆盖名称，但默认明确标识 SaaS 服务。
+app = FastAPI(title=settings.app_name, version="1.0.0")
 APP_STARTED_AT = now_shanghai()
 APP_ROOT = Path(__file__).resolve().parents[1]
 SETUP_PENDING_RESTART_FILE = APP_ROOT / ".run" / "setup_pending_restart.json"
@@ -187,11 +188,11 @@ def log_startup_banner() -> None:
         "| |  | | |_| | |___| |  | |   | |_) | |_| || |   / ___ \\| |_| | |  | || || |\\  |",
         "|_|  |_|\\___/|_____|_| |___|  |____/ \\___/ |_|  /_/   \\_\\____/|_|  |_|___|_| \\_|",
     ]
-    logger.info("========== MULTI BOT ADMIN STARTUP COMPLETE ==========")
+    logger.info("========== MULTI BOT SAAS STARTUP COMPLETE ==========")
     for line in banner_lines:
         logger.info(line)
     logger.info(
-        "MULTI BOT ADMIN 已启动并完成初始化",
+        "MULTI BOT SAAS 已启动并完成初始化",
         extra={
             "app_env": settings.app_env,
             "started_at": APP_STARTED_AT.isoformat(),
@@ -1626,7 +1627,7 @@ async def auth_middleware(request: Request, call_next):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "service": "multi-bot-admin"}
+    return {"ok": True, "service": "multi-bot-saas"}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2812,8 +2813,8 @@ async def setup_page(request: Request):
                 "database_mode": "sqlite",
                 "db_host": "127.0.0.1",
                 "db_port": "3306",
-                "db_name": "multi_bot_admin",
-                "db_user": "multi_bot_admin",
+                "db_name": "multi_bot_saas",
+                "db_user": "multi_bot_saas",
                 "db_password": "",
                 "admin_username": "admin",
                 "admin_display_name": "管理员",
@@ -2830,8 +2831,8 @@ async def setup_action(
     database_mode: str = Form("sqlite"),
     db_host: str = Form("127.0.0.1"),
     db_port: str = Form("3306"),
-    db_name: str = Form("multi_bot_admin"),
-    db_user: str = Form("multi_bot_admin"),
+    db_name: str = Form("multi_bot_saas"),
+    db_user: str = Form("multi_bot_saas"),
     db_password: str = Form(""),
     admin_username: str = Form(...),
     admin_display_name: str = Form("管理员"),

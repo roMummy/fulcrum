@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# FastAPI/Starlette 2026 版本的 TestClient 已切换到 httpx2；显式声明可保证新环境可收集测试。
+httpx2>=2.3.0,<3.0.0
+pytest>=9.0.0,<10.0.0

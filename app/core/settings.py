@@ -3,7 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Multi Bot Admin"
+    # SaaS 项目使用独立品牌名，避免日志、页面和健康检查与原单租户服务混淆。
+    app_name: str = "Multi Bot SaaS"
     app_env: str = "dev"
     data_dir: str = str(Path(__file__).resolve().parents[2] / "data")
     log_dir: str = str(Path(__file__).resolve().parents[2] / "logs")

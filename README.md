@@ -1,6 +1,6 @@
-# Multi Bot Admin
+# Multi Bot SaaS
 
-`Multi Bot Admin` 是一个多渠道机器人后台，提供机器人、渠道、会话、插件、任务队列和运行状态管理能力。项目当前重点面向微信 iPad、Telegram 等渠道，并支持目录驱动插件体系，方便持续迁移和维护现有插件。
+`Multi Bot SaaS` 从 `multi-bot-admin` 独立复制而来，目标是提供共享云端、租户数据隔离和客户 Windows 企业微信 Provider 接入能力。当前仓库正在按 `docs/plans/2026-07-30-multi-bot-saas-implementation.md` 分阶段完成 SaaS 改造。
 
 ## 功能特性
 
@@ -26,7 +26,7 @@
 ## 目录结构
 
 ```text
-multi-bot-admin/
+multi-bot-saas/
 ├── app/                  # 应用主代码
 │   ├── core/             # 配置、日志、数据库
 │   ├── models/           # SQLAlchemy 模型
@@ -60,7 +60,7 @@ Linux / macOS:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 Windows PowerShell:
@@ -68,7 +68,7 @@ Windows PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### 2. 启动服务
@@ -76,13 +76,13 @@ pip install -r requirements.txt
 Linux / macOS:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8180
+uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
 Windows:
 
 ```powershell
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8180
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
 开发模式可加 `--reload`。
@@ -90,7 +90,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8180
 访问：
 
 ```text
-http://127.0.0.1:8180
+http://127.0.0.1:8280
 ```
 
 ### 一键更新并重启
@@ -113,7 +113,7 @@ chmod +x scripts/deploy_restart_mba.sh
 可选环境变量：
 
 ```bash
-MBA_GIT_BRANCH=main MBA_PORT=8180 ./scripts/deploy_restart_mba.sh
+MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
 ```
 
 ### 3. 首次安装引导
@@ -179,7 +179,7 @@ AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 | `AUTH_BOOTSTRAP_ADMIN_USERNAME` | 初始化管理员用户名 |
 | `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | 初始化管理员密码 |
 
-示例见 [`.env.example`](/d:/learn/multi-bot-admin/.env.example)。
+示例见 [`.env.example`](/data/multi-bot-saas/.env.example)。
 
 ## 数据库
 
@@ -196,7 +196,7 @@ DATABASE_URL=sqlite:///./data/app.db
 如果消息规模会到几十万甚至更多，生产环境更建议使用 MariaDB：
 
 ```env
-DATABASE_URL=mysql+pymysql://multi_bot_admin:multi_bot_admin_pass@127.0.0.1:3306/multi_bot_admin?charset=utf8mb4
+DATABASE_URL=mysql+pymysql://multi_bot_saas:change-this-password@127.0.0.1:3306/multi_bot_saas?charset=utf8mb4
 DATABASE_POOL_SIZE=10
 DATABASE_MAX_OVERFLOW=20
 DATABASE_POOL_RECYCLE_SECONDS=1800
@@ -225,15 +225,15 @@ DATABASE_POOL_TIMEOUT_SECONDS=30
 
 项目已提供：
 
-- [Dockerfile](/d:/learn/multi-bot-admin/Dockerfile)
-- [docker-compose.yml](/d:/learn/multi-bot-admin/docker-compose.yml)
-- [`.env.docker.example`](/d:/learn/multi-bot-admin/.env.docker.example)
+- [Dockerfile](/data/multi-bot-saas/Dockerfile)
+- [docker-compose.yml](/data/multi-bot-saas/docker-compose.yml)
+- [`.env.docker.example`](/data/multi-bot-saas/.env.docker.example)
 
 ### 使用 Docker Compose
 
 ```bash
 cp .env.docker.example .env.docker
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 ```
 
 默认会启动：
@@ -291,14 +291,14 @@ DATABASE_URL=sqlite:////app/data/app.db
 - `wechat_ipad` 当前能力最完整，支持图片、语音、视频、群资料和成员同步等
 - `wechat_ipad` 建议先单独部署 provider，再把 `API Base` 配到渠道里
 - `wechat_winauto` 适合 Windows 桌面微信场景，推荐单独部署 Windows provider，通过 HTTP 和主服务解耦
-- `workwechat` 适合企业微信 Hook 协议，推荐单独启动 [WorkWechat Provider](/d:/learn/multi-bot-admin/docs/workwechat_provider.md)
+- `workwechat` 适合企业微信 Hook 协议，推荐单独启动 [WorkWechat Provider](/data/multi-bot-saas/docs/workwechat_provider.md)
 - `telegram` 目前支持文本、图片、轮询拉取；视频发送仍建议按渠道能力做降级
 - `openclaw` 依赖桥接端实现
 - `simulator` 适合本地调试
 
 ### 跨机器发送图片和文件
 
-如果 `Multi Bot Admin` 和 Windows provider 不在同一台机器，推荐使用“主服务中转文件”的方式：
+如果 `Multi Bot SaaS` 和 Windows provider 不在同一台机器，推荐使用“主服务中转文件”的方式：
 
 1. 把文件上传到主服务 `POST /channels/{channel_id}/outbound/upload`
 2. 主服务返回一个公开下载地址 `download_url`
@@ -314,11 +314,11 @@ DATABASE_URL=sqlite:////app/data/app.db
 ```json
 {
   "ok": true,
-  "download_url": "http://192.168.2.142:8180/outbound-files/3/abc123/report.pdf",
+  "download_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf",
   "payload": {
     "message_type": "file",
     "file_name": "report.pdf",
-    "file_url": "http://192.168.2.142:8180/outbound-files/3/abc123/report.pdf"
+    "file_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf"
   }
 }
 ```
@@ -330,7 +330,7 @@ DATABASE_URL=sqlite:////app/data/app.db
   "external_id": "group:测试群",
   "message_type": "file",
   "file_name": "report.pdf",
-  "file_url": "http://192.168.2.142:8180/outbound-files/3/abc123/report.pdf"
+  "file_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf"
 }
 ```
 
@@ -349,7 +349,7 @@ DATABASE_URL=sqlite:////app/data/app.db
 Excel 发群示例：
 
 ```powershell
-curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
+curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
   -H "Cookie: 你的后台登录cookie" `
   -F "external_id=group:测试群" `
   -F "conversation_title=测试群" `
@@ -369,7 +369,7 @@ curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
 
 如果你希望让 OSM 之类的第三方系统直接接入，而不依赖后台登录 Cookie，可以使用工具 API：
 
-- [Tool API For OSM](/d:/learn/multi-bot-admin/docs/tool_api_for_osm.md)
+- [Tool API For OSM](/data/multi-bot-saas/docs/tool_api_for_osm.md)
 
 这组 API 使用 `X-API-Key` 鉴权，典型用途：
 
@@ -381,8 +381,8 @@ curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
 
 项目里附带了一份来自 `abot` 的 provider 目录：
 
-- [vendors/wechat_ipad_provider](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider)
-- [Wechat iPad Provider 部署说明](/d:/learn/multi-bot-admin/docs/wechat_ipad_provider.md)
+- [vendors/wechat_ipad_provider](/data/multi-bot-saas/vendors/wechat_ipad_provider)
+- [Wechat iPad Provider 部署说明](/data/multi-bot-saas/docs/wechat_ipad_provider.md)
 
 推荐使用方式：
 
@@ -394,8 +394,8 @@ curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
 
 仓库里也附带了 Windows `wxauto` provider 骨架：
 
-- [vendors/wechat_winauto_provider](/d:/learn/multi-bot-admin/vendors/wechat_winauto_provider)
-- [WinAuto Provider 接入方案](/d:/learn/multi-bot-admin/docs/wechat_winauto_provider.md)
+- [vendors/wechat_winauto_provider](/data/multi-bot-saas/vendors/wechat_winauto_provider)
+- [WinAuto Provider 接入方案](/data/multi-bot-saas/docs/wechat_winauto_provider.md)
 
 推荐使用方式：
 
@@ -407,8 +407,8 @@ curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
 
 仓库里附带了企业微信 Hook 高层 provider：
 
-- [vendors/workwechat_provider](/d:/learn/multi-bot-admin/vendors/workwechat_provider)
-- [WorkWechat Provider 接入说明](/d:/learn/multi-bot-admin/docs/workwechat_provider.md)
+- [vendors/workwechat_provider](/data/multi-bot-saas/vendors/workwechat_provider)
+- [WorkWechat Provider 接入说明](/data/multi-bot-saas/docs/workwechat_provider.md)
 
 推荐使用方式：
 
@@ -417,22 +417,14 @@ curl -X POST "http://192.168.2.142:8180/channels/3/outbound/upload-and-send" `
 
 ## 测试
 
-项目当前以单文件集成测试为主：
+测试前必须从进程环境指定 `.run/test-runtime` 数据库，避免测试模块收集顺序让全局 Settings 误连开发库：
 
 ```bash
-python -m unittest tests.test_multi_bot_admin
-```
-
-如果你在虚拟环境中运行：
-
-```bash
-.venv/bin/python -m unittest tests.test_multi_bot_admin
-```
-
-Windows:
-
-```powershell
-.\.venv\Scripts\python -m unittest tests.test_multi_bot_admin
+APP_ENV=test \
+DATA_DIR="$PWD/.run/test-runtime/full" \
+DATABASE_URL="sqlite:///$PWD/.run/test-runtime/full/test.db" \
+LOG_DIR="$PWD/.run/test-runtime/full/logs" \
+.venv/bin/python -m pytest -q
 ```
 
 ## 开发说明
@@ -449,12 +441,12 @@ Windows:
 
 ## 常见文件
 
-- [main.py](/d:/learn/multi-bot-admin/app/main.py): FastAPI 入口
-- [db.py](/d:/learn/multi-bot-admin/app/core/db.py): 数据库引擎与会话
-- [settings.py](/d:/learn/multi-bot-admin/app/core/settings.py): 配置入口
-- [entities.py](/d:/learn/multi-bot-admin/app/models/entities.py): 数据模型
-- [plugin_directory.py](/d:/learn/multi-bot-admin/app/services/plugin_directory.py): 目录插件扫描与调度
-- [async_workers.py](/d:/learn/multi-bot-admin/app/services/async_workers.py): 后台任务与轮询
+- [main.py](/data/multi-bot-saas/app/main.py): FastAPI 入口
+- [db.py](/data/multi-bot-saas/app/core/db.py): 数据库引擎与会话
+- [settings.py](/data/multi-bot-saas/app/core/settings.py): 配置入口
+- [entities.py](/data/multi-bot-saas/app/models/entities.py): 数据模型
+- [plugin_directory.py](/data/multi-bot-saas/app/services/plugin_directory.py): 目录插件扫描与调度
+- [async_workers.py](/data/multi-bot-saas/app/services/async_workers.py): 后台任务与轮询
 
 ## 生产建议
 

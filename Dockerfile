@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
-# 主服务默认端口统一为 8180，和本地 Windows 保留端口段错开。
-EXPOSE 8180
+# SaaS 容器使用独立 8280 端口，部署时不会占用旧项目的 8180。
+EXPOSE 8280
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8180"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8280"]

@@ -4,13 +4,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p .run
 
-APP_PORT="${MBA_PORT:-8180}"
-APP_HOST="${MBA_HOST:-0.0.0.0}"
-APP_MODULE="${MBA_APP_MODULE:-app.main:app}"
-APP_BRANCH="${MBA_GIT_BRANCH:-main}"
-ALLOW_DIRTY="${MBA_ALLOW_DIRTY:-0}"
+APP_PORT="${MBS_PORT:-8280}"
+APP_HOST="${MBS_HOST:-0.0.0.0}"
+APP_MODULE="${MBS_APP_MODULE:-app.main:app}"
+APP_BRANCH="${MBS_GIT_BRANCH:-main}"
+ALLOW_DIRTY="${MBS_ALLOW_DIRTY:-0}"
 PID_FILE=".run/ui-${APP_PORT}.pid"
-LOG_FILE=".run/mba-uvicorn.log"
+LOG_FILE=".run/mbs-uvicorn.log"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required"
@@ -27,7 +27,7 @@ if [ -n "${dirty_status}" ] && [ "${ALLOW_DIRTY}" != "1" ]; then
   echo "working tree is not clean; please commit or stash local changes before deploy restart"
   echo "ignored paths: scripts/deploy_restart_mba.sh, .run/"
   printf '%s\n' "${dirty_status}"
-  echo "set MBA_ALLOW_DIRTY=1 to bypass this check temporarily"
+  echo "set MBS_ALLOW_DIRTY=1 to bypass this check temporarily"
   exit 1
 fi
 
@@ -91,7 +91,7 @@ echo "$new_pid" > "$PID_FILE"
 sleep 4
 
 if ! kill -0 "$new_pid" 2>/dev/null; then
-  echo "multi-bot-admin failed to stay alive"
+  echo "multi-bot-saas failed to stay alive"
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
   exit 1
 fi
