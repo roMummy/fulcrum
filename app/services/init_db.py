@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.db import Base, engine
 from app.core.logging import get_logger
 from app.models import entities  # noqa: F401
+from app.models import saas  # noqa: F401
 from app.services.plugin_directory import sync_plugins_from_directory
 from app.services.runtime import backfill_conversation_channels, ensure_runtime_schema
 from app.services.seed import seed_auth_users
@@ -22,6 +23,8 @@ def init_db():
         if _initialized:
             return
         logger.info("initializing database schema")
+        # 迁移生命周期完全接管前，开发初始化仍使用统一元数据；显式导入 saas 后，
+        # 平台账号、租户、套餐和数据库会话表不会因模块未加载而漏建。
         Base.metadata.create_all(bind=engine)
         ensure_runtime_schema()
         logger.info("database schema initialized")

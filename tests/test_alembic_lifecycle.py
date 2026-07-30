@@ -57,12 +57,14 @@ def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) 
 
     from app.core.db import Base
     from app.models import entities  # noqa: F401
+    from app.models import saas  # noqa: F401
+    from app.services.database_lifecycle import expected_database_revision
 
     migration_engine = create_engine(f"sqlite:///{database_path}")
     inspector = inspect(migration_engine)
     actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
 
-    assert _current_revision(database_path) == "20260730_0001"
+    assert _current_revision(database_path) == expected_database_revision()
     assert actual_tables == set(Base.metadata.tables)
     assert DELETED_TABLES.isdisjoint(actual_tables)
     assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})
@@ -76,6 +78,7 @@ def test_database_revision_guard_accepts_head_and_rejects_stale_revision(tmp_pat
     _run_alembic(database_path, "upgrade", "head")
 
     from app.services.database_lifecycle import assert_database_at_head
+    from app.services.database_lifecycle import expected_database_revision
 
     migration_engine = create_engine(f"sqlite:///{database_path}")
     with migration_engine.connect() as connection:
@@ -85,6 +88,7 @@ def test_database_revision_guard_accepts_head_and_rejects_stale_revision(tmp_pat
     with migration_engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = 'outdated'"))
     with migration_engine.connect() as connection:
-        with pytest.raises(RuntimeError, match="database_revision_mismatch:outdated:20260730_0001"):
+        expected_revision = expected_database_revision()
+        with pytest.raises(RuntimeError, match=f"database_revision_mismatch:outdated:{expected_revision}"):
             assert_database_at_head(connection)
     migration_engine.dispose()

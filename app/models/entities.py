@@ -3,11 +3,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
 from app.core.db import Base
-
-
-class TimestampMixin:
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai)
-    updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, onupdate=now_shanghai)
+from app.models.mixins import TimestampMixin
 
 
 class Bot(Base, TimestampMixin):
