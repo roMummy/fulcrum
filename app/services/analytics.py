@@ -39,11 +39,9 @@ def record_message_activity(
     message: Message,
 ) -> None:
     bucket = _hour_bucket(getattr(message, "created_at", None))
-    environment = getattr(getattr(channel, "bot", None), "environment", None)
     row = db.scalar(
         select(MessageActivityHourly).where(
             MessageActivityHourly.bucket_start == bucket,
-            MessageActivityHourly.environment == environment,
             MessageActivityHourly.bot_id == channel.bot_id,
             MessageActivityHourly.channel_id == channel.id,
             MessageActivityHourly.channel_type == channel.channel_type,
@@ -54,7 +52,6 @@ def record_message_activity(
     if row is None:
         row = MessageActivityHourly(
             bucket_start=bucket,
-            environment=environment,
             bot_id=channel.bot_id,
             channel_id=channel.id,
             channel_type=channel.channel_type,
@@ -82,7 +79,6 @@ def record_plugin_dispatch_analytics(
         for item in (getattr(dispatch_report, "decisions", ()) or ())
     }
     bucket = _hour_bucket()
-    environment = getattr(getattr(channel, "bot", None), "environment", None)
     for execution in getattr(dispatch_report, "executions", ()) or ():
         candidate = getattr(execution, "candidate", None)
         if candidate is None:
@@ -134,7 +130,6 @@ def record_plugin_dispatch_analytics(
         hourly = db.scalar(
             select(PluginActivityHourly).where(
                 PluginActivityHourly.bucket_start == bucket,
-                PluginActivityHourly.environment == environment,
                 PluginActivityHourly.bot_id == channel.bot_id,
                 PluginActivityHourly.channel_id == channel.id,
                 PluginActivityHourly.plugin_id == getattr(candidate, "plugin_id", None),
@@ -145,7 +140,6 @@ def record_plugin_dispatch_analytics(
         if hourly is None:
             hourly = PluginActivityHourly(
                 bucket_start=bucket,
-                environment=environment,
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 plugin_id=getattr(candidate, "plugin_id", None),

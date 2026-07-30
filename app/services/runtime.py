@@ -14,14 +14,10 @@ from app.models.entities import (
     AlertRecord,
     AuditLog,
     Bot,
-    BotGroup,
     BotPlugin,
-    BotTag,
-    BotTagLink,
     Chatroom,
     ChatroomMember,
     Channel,
-    ConfigTemplate,
     Conversation,
     CustomerOperationRequest,
     GroupPluginScope,
@@ -82,23 +78,12 @@ def ensure_runtime_schema() -> None:
     _ensure_column("bot_plugins", "last_execution_summary", "TEXT")
     _ensure_column("bot_plugins", "runtime_details_json", "TEXT")
     _ensure_column("conversations", "channel_id", "INTEGER")
-    _ensure_column("bots", "group_id", "INTEGER")
-    _ensure_column("bots", "config_template_id", "INTEGER")
-    _ensure_column("bots", "environment", "VARCHAR(20) DEFAULT 'prod'")
 
     tables = set(inspector.get_table_names())
     if "raw_webhook_events" not in tables:
         RawWebhookEvent.__table__.create(bind=engine)
     else:
         _ensure_column("raw_webhook_events", "dispatch_summary_json", "TEXT")
-    if "bot_groups" not in tables:
-        BotGroup.__table__.create(bind=engine)
-    if "config_templates" not in tables:
-        ConfigTemplate.__table__.create(bind=engine)
-    if "bot_tags" not in tables:
-        BotTag.__table__.create(bind=engine)
-    if "bot_tag_links" not in tables:
-        BotTagLink.__table__.create(bind=engine)
     if "health_check_records" not in tables:
         HealthCheckRecord.__table__.create(bind=engine)
     if "alert_records" not in tables:

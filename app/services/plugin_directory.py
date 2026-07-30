@@ -792,7 +792,8 @@ def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) 
         channel_type=channel.channel_type,
         chat_type=str(conversation.get("chat_type") or "direct"),
         message_type=str(message.get("message_type") or "text"),
-        command_prefix=getattr(channel.bot, "command_prefix", "/") or "/",
+        # SaaS 只提供统一的斜杠命令语法，避免每个机器人维护一套难以解释的前缀配置。
+        command_prefix="/",
         sender_id=_coerce_optional_text(message.get("sender_id")),
         conversation_external_id=_coerce_optional_text(conversation.get("external_id")),
         message_text=str(message.get("content") or ""),

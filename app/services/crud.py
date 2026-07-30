@@ -1,27 +1,22 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Bot, BotPlugin, BotTag, BotTagLink, Channel, Plugin
+from app.models.entities import Bot, BotPlugin, Channel, Plugin
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.runtime import compute_binding_runtime
 from app.services.security import encrypt_secret, mask_secret
 
 
 def create_bot(db: Session, data: BotCreate) -> Bot:
+    # 创建入口只收集业务名称，其余运行状态由系统统一初始化，避免租户在首次
+    # 接入企业微信前就面对环境、模板、前缀等没有实际价值的技术选项。
     bot = Bot(
         name=data.name.strip(),
-        slug=data.slug.strip(),
-        description=(data.description or "").strip() or None,
-        command_prefix=data.command_prefix or "/",
-        group_id=data.group_id,
-        config_template_id=data.config_template_id,
-        environment=(data.environment or "prod").strip() or "prod",
-        is_enabled=data.is_enabled,
-        status="running" if data.is_enabled else "stopped",
+        description=None,
+        is_enabled=True,
+        status="running",
     )
     db.add(bot)
-    db.flush()
-    _sync_bot_tags(db, bot, data.tags)
     db.commit()
     db.refresh(bot)
     return bot
@@ -29,15 +24,8 @@ def create_bot(db: Session, data: BotCreate) -> Bot:
 
 def update_bot(db: Session, bot: Bot, data: BotUpdate) -> Bot:
     bot.name = data.name.strip()
-    bot.slug = data.slug.strip()
     bot.description = (data.description or "").strip() or None
-    bot.command_prefix = data.command_prefix or "/"
-    bot.group_id = data.group_id
-    bot.config_template_id = data.config_template_id
-    bot.environment = (data.environment or "prod").strip() or "prod"
-    bot.is_enabled = data.is_enabled
-    bot.status = "running" if data.is_enabled else "stopped"
-    _sync_bot_tags(db, bot, data.tags)
+    # 启停由独立动作负责，编辑名称或说明时不能意外改变机器人运行状态。
     db.commit()
     db.refresh(bot)
     return bot
@@ -171,23 +159,3 @@ def list_channels(db: Session):
 
 def list_plugins(db: Session):
     return db.scalars(select(Plugin).order_by(Plugin.id.desc())).all()
-
-
-def _sync_bot_tags(db: Session, bot: Bot, raw_tags: str | None) -> None:
-    names: list[str] = []
-    for part in (raw_tags or "").replace("，", ",").split(","):
-        normalized = part.strip()
-        if normalized and normalized not in names:
-            names.append(normalized)
-
-    for link in list(bot.tag_links):
-        db.delete(link)
-    db.flush()
-
-    for name in names:
-        tag = db.scalar(select(BotTag).where(BotTag.name == name))
-        if not tag:
-            tag = BotTag(name=name)
-            db.add(tag)
-            db.flush()
-        db.add(BotTagLink(bot_id=bot.id, tag_id=tag.id))
