@@ -56,13 +56,32 @@ def _build_engine():
 
 
 engine = _build_engine()
+# SessionLocal 保留为平台管理、认证预检、Alembic 和旧代码使用的显式非租户
+# 工厂。普通租户业务必须通过 tenant_session()/get_tenant_db() 打开会话，不能
+# 直接把 SessionLocal 当作租户隔离边界。
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 独立命名的工厂便于依赖注入和测试替换；真正的隔离标记由 tenant_session()
+# 在每个会话实例上写入，避免影响同一引擎上的平台和迁移操作。
+TenantSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
 def get_db():
+    """返回历史非租户会话；新租户路由应改用 get_tenant_db。"""
+
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+def get_tenant_db():
+    """为已经建立 tenant_scope 的请求提供强制隔离会话。"""
+
+    # 延迟导入避免 db.py 初始化 Base 和 sessionmaker 时产生循环依赖；FastAPI
+    # 实际解析依赖时模块均已加载完成。
+    from app.core.tenant_db import tenant_session
+
+    with tenant_session(TenantSessionLocal) as db:
+        yield db
