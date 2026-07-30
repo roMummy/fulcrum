@@ -113,6 +113,12 @@ def _enforce_tenant_orm_statement(execute_state: ORMExecuteState) -> None:
             )
         return
 
+    if execute_state.is_insert and _is_tenant_owned_mapper(execute_state):
+        # Session.execute(insert(Model)) 不会把对象放入 Session.new，因此无法
+        # 通过 before_flush 自动补 tenant_id 或逐条核验归属。租户业务新增统一
+        # 使用 db.add()/add_all()；确需批量导入时只能走经过审计的平台旁路。
+        raise TenantScopeError("租户业务会话禁止对租户模型执行 ORM 批量新增")
+
     if not (execute_state.is_update or execute_state.is_delete):
         return
     if not _is_tenant_owned_mapper(execute_state):

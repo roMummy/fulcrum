@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Integer, String, create_engine, select, update
+from sqlalchemy import Integer, String, create_engine, insert, select, update
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 
 from app.core.db import Base
@@ -118,6 +118,20 @@ def test_scoped_session_rejects_cross_tenant_insert(session_factory, tenant_pair
         db.add(TenantScopedProbe(tenant_id=beta.id, name="wrong-owner"))
         with pytest.raises(TenantScopeError):
             db.flush()
+
+
+def test_scoped_session_rejects_bulk_insert_that_bypasses_flush(session_factory, tenant_pair) -> None:
+    """ORM 批量新增不经过 before_flush，租户会话必须明确拒绝该旁路。"""
+
+    alpha, beta = tenant_pair
+
+    with tenant_scope(alpha.id), tenant_session(session_factory) as db:
+        statement = insert(TenantScopedProbe).values(
+            tenant_id=beta.id,
+            name="bulk-wrong-owner",
+        )
+        with pytest.raises(TenantScopeError):
+            db.execute(statement)
 
 
 def test_scoped_session_rejects_cross_tenant_object_update(session_factory, tenant_pair) -> None:
