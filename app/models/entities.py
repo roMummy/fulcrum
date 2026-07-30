@@ -14,68 +14,16 @@ class Bot(Base, TimestampMixin):
     __tablename__ = "bots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    # SaaS 租户只需要一个可识别的业务名称。内部关联统一使用主键，避免再维护
+    # slug、分组、模板、标签和环境等与企业微信接入无关的第二套资产体系。
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="stopped")
-    command_prefix: Mapped[str] = mapped_column(String(32), default="/")
-    group_id: Mapped[int | None] = mapped_column(ForeignKey("bot_groups.id"), index=True, nullable=True)
-    config_template_id: Mapped[int | None] = mapped_column(ForeignKey("config_templates.id"), index=True, nullable=True)
-    environment: Mapped[str] = mapped_column(String(20), default="prod", index=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    group = relationship("BotGroup", back_populates="bots")
-    config_template = relationship("ConfigTemplate", back_populates="bots")
     channels = relationship("Channel", back_populates="bot", cascade="all, delete-orphan")
     plugin_bindings = relationship("BotPlugin", back_populates="bot", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="bot", cascade="all, delete-orphan")
-    tag_links = relationship("BotTagLink", back_populates="bot", cascade="all, delete-orphan")
-
-
-class BotGroup(Base, TimestampMixin):
-    __tablename__ = "bot_groups"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    bots = relationship("Bot", back_populates="group")
-
-
-class ConfigTemplate(Base, TimestampMixin):
-    __tablename__ = "config_templates"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    template_scope: Mapped[str] = mapped_column(String(30), default="bot")
-    channel_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    environment: Mapped[str] = mapped_column(String(20), default="shared", index=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    bots = relationship("Bot", back_populates="config_template")
-
-
-class BotTag(Base, TimestampMixin):
-    __tablename__ = "bot_tags"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-
-    bot_links = relationship("BotTagLink", back_populates="tag", cascade="all, delete-orphan")
-
-
-class BotTagLink(Base, TimestampMixin):
-    __tablename__ = "bot_tag_links"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), index=True)
-    tag_id: Mapped[int] = mapped_column(ForeignKey("bot_tags.id"), index=True)
-
-    bot = relationship("Bot", back_populates="tag_links")
-    tag = relationship("BotTag", back_populates="bot_links")
 
 
 class Channel(Base, TimestampMixin):
@@ -600,7 +548,6 @@ class MessageActivityHourly(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bucket_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True)
-    environment: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     bot_id: Mapped[int | None] = mapped_column(ForeignKey("bots.id"), index=True, nullable=True)
     channel_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id"), index=True, nullable=True)
     channel_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
@@ -615,7 +562,6 @@ class PluginActivityHourly(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bucket_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True)
-    environment: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     bot_id: Mapped[int | None] = mapped_column(ForeignKey("bots.id"), index=True, nullable=True)
     channel_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id"), index=True, nullable=True)
     plugin_id: Mapped[int | None] = mapped_column(ForeignKey("plugins.id"), index=True, nullable=True)
