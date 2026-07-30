@@ -136,7 +136,5 @@ def _build_page_context(request: Request, *, notice: str = "", notice_tone: str 
         "section_nav_items": [
             {"label": "应用配置", "href": "/open-api/apps", "active": True},
         ],
-        "current_environment": "",
-        "environment_tabs": [],
         "module_links": {},
     }
