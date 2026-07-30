@@ -11,6 +11,8 @@ from app.core.time import now_shanghai
 from app.models.saas import PlatformUser, Tenant, TenantUser
 from app.services.csrf import verify_csrf_token
 from app.services.saas_auth import (
+    authenticate_platform_user,
+    authenticate_tenant_user,
     create_platform_session,
     create_tenant_session,
     generate_initial_password,
@@ -19,7 +21,9 @@ from app.services.saas_auth import (
     load_platform_principal,
     load_tenant_principal,
     revoke_platform_sessions,
+    revoke_platform_session_by_token,
     revoke_tenant_sessions,
+    revoke_tenant_session_by_token,
     verify_password,
 )
 
@@ -135,3 +139,51 @@ def test_csrf_requires_cookie_form_and_database_hash_to_match(db: Session) -> No
     assert verify_csrf_token(db, created.raw_token, created.raw_csrf_token, created.raw_csrf_token)
     assert not verify_csrf_token(db, created.raw_token, created.raw_csrf_token, "伪造值")
     assert not verify_csrf_token(db, "伪造会话", created.raw_csrf_token, created.raw_csrf_token)
+
+
+def test_platform_and_tenant_credentials_are_queried_in_separate_identity_tables(db: Session) -> None:
+    """同名账号必须由入口类型和租户编码共同限定，不能跨身份链认证。"""
+
+    _tenant, tenant_user = _create_tenant_user(db)
+    platform_user = PlatformUser(
+        username=tenant_user.username,
+        display_name="平台同名管理员",
+        password_hash=hash_password("Platform-secret-123"),
+        role="platform_admin",
+        is_enabled=True,
+        auth_version=1,
+    )
+    db.add(platform_user)
+    db.commit()
+
+    assert authenticate_tenant_user(db, "alpha", "ops", "SaaS-secret-123") == tenant_user
+    assert authenticate_tenant_user(db, "missing", "ops", "SaaS-secret-123") is None
+    assert authenticate_platform_user(db, "ops", "Platform-secret-123") == platform_user
+    assert authenticate_platform_user(db, "ops", "SaaS-secret-123") is None
+
+
+def test_logout_revokes_only_the_current_raw_session_token(db: Session) -> None:
+    """单设备注销不能误伤同一账号仍在使用的其他数据库会话。"""
+
+    _tenant, tenant_user = _create_tenant_user(db)
+    tenant_first = create_tenant_session(db, tenant_user)
+    tenant_second = create_tenant_session(db, tenant_user)
+    assert revoke_tenant_session_by_token(db, tenant_first.raw_token)
+    assert load_tenant_principal(db, tenant_first.raw_token) is None
+    assert load_tenant_principal(db, tenant_second.raw_token) is not None
+
+    platform_user = PlatformUser(
+        username="platform-current",
+        display_name="平台管理员",
+        password_hash=hash_password("Platform-secret-123"),
+        role="platform_admin",
+        is_enabled=True,
+        auth_version=1,
+    )
+    db.add(platform_user)
+    db.commit()
+    platform_first = create_platform_session(db, platform_user)
+    platform_second = create_platform_session(db, platform_user)
+    assert revoke_platform_session_by_token(db, platform_first.raw_token)
+    assert load_platform_principal(db, platform_first.raw_token) is None
+    assert load_platform_principal(db, platform_second.raw_token) is not None

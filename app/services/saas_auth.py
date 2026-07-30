@@ -18,6 +18,7 @@ from app.models.saas import (
     TENANT_ROLES,
     PlatformSession,
     PlatformUser,
+    Tenant,
     TenantSession,
     TenantUser,
 )
@@ -82,6 +83,55 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bool(PASSWORD_HASHER.verify(password_hash, password))
     except (VerifyMismatchError, InvalidHashError, VerificationError):
         return False
+
+
+def authenticate_platform_user(db: Session, username: str, password: str) -> PlatformUser | None:
+    """只在平台账号表内验证凭据，租户员工即使同名也不能登录平台入口。"""
+
+    normalized_username = (username or "").strip()
+    if not normalized_username or not password:
+        return None
+    user = db.scalar(
+        select(PlatformUser).where(
+            PlatformUser.username == normalized_username,
+            PlatformUser.is_enabled.is_(True),
+        )
+    )
+    if user is None or user.role not in PLATFORM_ROLES:
+        return None
+    return user if verify_password(password, user.password_hash) else None
+
+
+def authenticate_tenant_user(
+    db: Session,
+    tenant_code: str,
+    username: str,
+    password: str,
+) -> TenantUser | None:
+    """在指定启用租户内验证员工，避免同名账号跨租户碰撞或枚举。"""
+
+    normalized_tenant_code = (tenant_code or "").strip().lower()
+    normalized_username = (username or "").strip()
+    if not normalized_tenant_code or not normalized_username or not password:
+        return None
+    tenant = db.scalar(
+        select(Tenant).where(
+            Tenant.code == normalized_tenant_code,
+            Tenant.status == "active",
+        )
+    )
+    if tenant is None:
+        return None
+    user = db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == tenant.id,
+            TenantUser.username == normalized_username,
+            TenantUser.is_enabled.is_(True),
+        )
+    )
+    if user is None or user.role not in TENANT_ROLES:
+        return None
+    return user if verify_password(password, user.password_hash) else None
 
 
 def generate_initial_password() -> str:
@@ -288,6 +338,38 @@ def _clean_revoke_reason(reason: str) -> str:
     """限制吊销原因长度，避免异常输入污染审计字段。"""
 
     return (reason or "revoked").strip()[:255] or "revoked"
+
+
+def revoke_tenant_session_by_token(db: Session, raw_token: str | None, *, reason: str = "logout") -> bool:
+    """只吊销当前浏览器持有的租户会话，其他设备会话保持有效。"""
+
+    if not raw_token:
+        return False
+    token_hash = hash_credential(raw_token)
+    record = db.scalar(select(TenantSession).where(TenantSession.session_token_hash == token_hash))
+    if record is None or not hmac.compare_digest(record.session_token_hash, token_hash):
+        return False
+    if record.revoked_at is None:
+        record.revoked_at = now_shanghai()
+        record.revoke_reason = _clean_revoke_reason(reason)
+        db.commit()
+    return True
+
+
+def revoke_platform_session_by_token(db: Session, raw_token: str | None, *, reason: str = "logout") -> bool:
+    """只吊销当前平台浏览器会话，不影响管理员在其他设备上的会话。"""
+
+    if not raw_token:
+        return False
+    token_hash = hash_credential(raw_token)
+    record = db.scalar(select(PlatformSession).where(PlatformSession.session_token_hash == token_hash))
+    if record is None or not hmac.compare_digest(record.session_token_hash, token_hash):
+        return False
+    if record.revoked_at is None:
+        record.revoked_at = now_shanghai()
+        record.revoke_reason = _clean_revoke_reason(reason)
+        db.commit()
+    return True
 
 
 def revoke_tenant_sessions(db: Session, user_id: int, *, reason: str = "revoked") -> int:
