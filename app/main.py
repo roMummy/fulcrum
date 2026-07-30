@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, tool_api_router, workwechat_provider_cloud_router
@@ -22,7 +23,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
-from app.models.entities import AdminUser, AlertRecord, AuditLog, Bot, BotGroup, BotPlugin, BotTag, Channel, Chatroom, ConfigTemplate, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
+from app.models.entities import AdminUser, AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.auth import (
     AUTH_COOKIE_NAME,
@@ -55,13 +56,8 @@ from app.services.crud import (
     update_channel,
 )
 from app.services.ops import (
-    KNOWN_ENVIRONMENTS,
-    build_environment_summary,
     build_monitoring_snapshot,
-    clone_bot,
     create_alert,
-    normalize_environment,
-    normalize_environment_filter,
     record_audit,
     record_health_check,
 )
@@ -350,53 +346,38 @@ def safe_return_to(value: str | None, fallback: str) -> str:
     return candidate
 
 
-def build_context_href(path: str, environment: str = "", return_to: str = "") -> str:
-    return build_url(path, environment=environment, return_to=return_to)
+def build_context_href(path: str, return_to: str = "") -> str:
+    """生成站内链接；机器人环境已删除，只保留必要的返回地址。"""
+
+    return build_url(path, return_to=return_to)
 
 
 templates.env.globals["context_href"] = build_context_href
 
 
-def build_environment_tabs(current_environment: str = "") -> list[dict[str, str | bool]]:
-    tabs = [{"label": "全部环境", "value": "", "href": build_url("/", environment=""), "active": not current_environment}]
-    for environment in sorted(KNOWN_ENVIRONMENTS):
-        tabs.append(
-            {
-                "label": environment,
-                "value": environment,
-                "href": build_url("/", environment=environment),
-                "active": current_environment == environment,
-            }
-        )
-    return tabs
+def build_module_links() -> dict[str, str]:
+    """集中提供不携带旧环境参数的模块入口。"""
 
-
-def build_module_links(environment: str = "") -> dict[str, str]:
     return {
-        "dashboard": build_url("/", environment=environment),
-        "bots": build_url("/bots", environment=environment),
-        "groups": "/groups",
-        "templates": "/templates",
-        "channels": build_url("/channels", environment=environment),
-        "plugins": build_url("/plugins", environment=environment),
-        "plugin_runtime": build_url("/plugins/runtime", environment=environment),
-        "conversations": build_url("/conversations", environment=environment),
-        "messages": build_url("/messages", environment=environment),
+        "dashboard": "/",
+        "bots": "/bots",
+        "channels": "/channels",
+        "plugins": "/plugins",
+        "plugin_runtime": "/plugins/runtime",
+        "conversations": "/conversations",
+        "messages": "/messages",
         "lab": "/lab",
-        "monitoring": build_url("/monitoring", environment=environment),
+        "monitoring": "/monitoring",
         "errors": "/errors",
     }
 
 
-def detail_fallback(path: str, environment: str = "") -> str:
-    return build_url(path, environment=environment)
+def detail_fallback(path: str) -> str:
+    return path
 
 
-def filtered_bots_query(db: Session, environment: str = ""):
-    stmt = select(Bot)
-    if environment:
-        stmt = stmt.where(Bot.environment == environment)
-    return db.scalars(stmt.order_by(Bot.id.desc())).all()
+def filtered_bots_query(db: Session):
+    return db.scalars(select(Bot).order_by(Bot.id.desc())).all()
 
 
 def build_bot_name_map(bots: list[Bot]) -> dict[int, str]:
@@ -450,22 +431,15 @@ def _build_workwechat_contact_form_payload(**values: str) -> dict[str, Any]:
     return payload
 
 
-def filtered_channels_query(db: Session, environment: str = ""):
-    stmt = select(Channel).join(Bot, Channel.bot_id == Bot.id)
-    if environment:
-        stmt = stmt.where(Bot.environment == environment)
-    return db.scalars(stmt.order_by(Channel.id.desc())).all()
+def filtered_channels_query(db: Session):
+    return db.scalars(select(Channel).order_by(Channel.id.desc())).all()
 
 
-def filtered_bindings_query(db: Session, environment: str = ""):
-    stmt = select(BotPlugin).join(Bot, BotPlugin.bot_id == Bot.id)
-    if environment:
-        stmt = stmt.where(Bot.environment == environment)
-    return db.scalars(stmt.order_by(BotPlugin.id.desc())).all()
+def filtered_bindings_query(db: Session):
+    return db.scalars(select(BotPlugin).order_by(BotPlugin.id.desc())).all()
 
 
 def render(request: Request, template: str, **context):
-    current_environment = normalize_environment_filter(context.get("current_environment", ""))
     notice = str(context.get("notice", "") or "").strip()
     response_status = int(context.pop("response_status", 200) or 200)
     notice_tone = context.get("notice_tone")
@@ -488,13 +462,13 @@ def render(request: Request, template: str, **context):
 
     # 顶部菜单按真实使用路线重排：总览、接入、机器人、插件、消息、排障。
     primary_nav_items = [
-        nav_item("总览", build_url("/", environment=current_environment), ("/",), exact_root=True),
-        nav_item("接入", build_url("/channels", environment=current_environment), ("/channels",)),
-        nav_item("机器人", build_url("/bots", environment=current_environment), ("/bots", "/groups", "/templates")),
-        nav_item("插件", build_url("/plugins", environment=current_environment), ("/plugins",)),
-        nav_item("消息", build_url("/conversations", environment=current_environment), ("/conversations", "/messages", "/lab")),
+        nav_item("总览", "/", ("/",), exact_root=True),
+        nav_item("接入", "/channels", ("/channels",)),
+        nav_item("机器人", "/bots", ("/bots",)),
+        nav_item("插件", "/plugins", ("/plugins",)),
+        nav_item("消息", "/conversations", ("/conversations", "/messages", "/lab")),
         nav_item("开放接口", "/open-api/apps", ("/open-api",)),
-        nav_item("排障", build_url("/monitoring", environment=current_environment), ("/monitoring", "/errors")),
+        nav_item("排障", "/monitoring", ("/monitoring", "/errors")),
     ]
     secondary_nav_items: list[dict[str, str | bool]] = []
     nav_items = [*primary_nav_items, *secondary_nav_items]
@@ -504,27 +478,25 @@ def render(request: Request, template: str, **context):
     section_nav_items: list[dict[str, str | bool]] = []
     if is_path_active(("/channels",)):
         section_nav_items = [
-            nav_item("渠道清单", build_url("/channels", environment=current_environment), ("/channels",)),
+            nav_item("渠道清单", "/channels", ("/channels",)),
         ]
-    elif is_path_active(("/bots", "/groups", "/templates")):
+    elif is_path_active(("/bots",)):
         section_nav_items = [
-            nav_item("机器人", build_url("/bots", environment=current_environment), ("/bots",)),
-            nav_item("分组", "/groups", ("/groups",)),
-            nav_item("配置模板", "/templates", ("/templates",)),
+            nav_item("机器人", "/bots", ("/bots",)),
         ]
     elif is_path_active(("/plugins",)):
         section_nav_items = [
             {
                 "label": "插件开关",
-                "href": build_url("/plugins", environment=current_environment),
+                "href": "/plugins",
                 "active": path == "/plugins" or (path.startswith("/plugins/") and not path.startswith("/plugins/runtime")),
             },
-            nav_item("运行状态", build_url("/plugins/runtime", environment=current_environment), ("/plugins/runtime",)),
+            nav_item("运行状态", "/plugins/runtime", ("/plugins/runtime",)),
         ]
     elif is_path_active(("/conversations", "/messages", "/lab")):
         section_nav_items = [
-            nav_item("会话", build_url("/conversations", environment=current_environment), ("/conversations",)),
-            nav_item("消息", build_url("/messages", environment=current_environment), ("/messages",)),
+            nav_item("会话", "/conversations", ("/conversations",)),
+            nav_item("消息", "/messages", ("/messages",)),
             nav_item("实验台", "/lab", ("/lab",)),
         ]
     elif is_path_active(("/open-api",)):
@@ -533,7 +505,7 @@ def render(request: Request, template: str, **context):
         ]
     elif is_path_active(("/monitoring", "/errors")):
         section_nav_items = [
-            nav_item("监控审计", build_url("/monitoring", environment=current_environment), ("/monitoring",)),
+            nav_item("监控审计", "/monitoring", ("/monitoring",)),
             nav_item("日志", "/errors", ("/errors",)),
         ]
     base_context = {
@@ -545,9 +517,7 @@ def render(request: Request, template: str, **context):
         "secondary_nav_items": secondary_nav_items,
         "secondary_nav_active": secondary_nav_active,
         "section_nav_items": section_nav_items,
-        "current_environment": current_environment,
-        "environment_tabs": build_environment_tabs(current_environment),
-        "module_links": build_module_links(current_environment),
+        "module_links": build_module_links(),
     }
     base_context.update(context)
     response = templates.TemplateResponse(request, template, base_context)
@@ -800,7 +770,6 @@ def build_time_series_chart(items: list[dict[str, object]], *, value_key: str, t
 def build_dashboard_trend_series(
     db: Session,
     *,
-    environment: str = "",
     hours: int = 24,
 ) -> dict[str, object]:
     now_bucket = _hour_bucket_utc()
@@ -813,15 +782,11 @@ def build_dashboard_trend_series(
         PluginActivityHourly.bucket_start >= start_bucket,
         PluginActivityHourly.bucket_start <= now_bucket,
     )
-    if environment:
-        message_stmt = message_stmt.where(MessageActivityHourly.environment == environment)
-        plugin_stmt = plugin_stmt.where(PluginActivityHourly.environment == environment)
     message_rows = db.scalars(message_stmt.order_by(MessageActivityHourly.bucket_start.asc())).all()
     plugin_rows = db.scalars(plugin_stmt.order_by(PluginActivityHourly.bucket_start.asc())).all()
     logger.info(
         "dashboard trend query window",
         extra={
-            "environment": environment or "all",
             "hours": hours,
             "start_bucket": start_bucket.isoformat(),
             "now_bucket": now_bucket.isoformat(),
@@ -846,7 +811,6 @@ def build_dashboard_trend_series(
                 "rows": [
                     {
                         "bucket_start": _normalize_dt_utc(row.bucket_start).isoformat(),
-                        "row_environment": row.environment or "",
                         "bot_id": row.bot_id,
                         "channel_id": row.channel_id,
                         "channel_type": row.channel_type or "",
@@ -876,13 +840,10 @@ def build_dashboard_trend_series(
             .join(Bot, Conversation.bot_id == Bot.id)
             .where(Message.created_at >= start_bucket, Message.created_at <= now_bucket + timedelta(hours=1))
         )
-        if environment:
-            raw_message_stmt = raw_message_stmt.where(Bot.environment == environment)
         raw_message_rows = db.execute(raw_message_stmt).all()
         logger.info(
             "dashboard trend fallback to raw messages",
             extra={
-                "environment": environment or "all",
                 "raw_message_rows": len(raw_message_rows),
             },
         )
@@ -909,8 +870,6 @@ def build_dashboard_trend_series(
                 PluginExecutionLog.attempted.is_(True),
             )
         )
-        if environment:
-            raw_plugin_stmt = raw_plugin_stmt.where(Bot.environment == environment)
         for created_at, ok, status, attempted in db.execute(raw_plugin_stmt).all():
             if not attempted:
                 continue
@@ -940,7 +899,6 @@ def build_dashboard_trend_series(
     logger.info(
         "dashboard trend summary",
         extra={
-            "environment": environment or "all",
             "inbound_max": max((int(item["inbound"]) for item in timeline), default=0),
             "outbound_max": max((int(item["outbound"]) for item in timeline), default=0),
             "plugin_trigger_max": max((int(item["plugin_trigger"]) for item in timeline), default=0),
@@ -963,7 +921,7 @@ def build_dashboard_trend_series(
     }
 
 
-def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str, list[dict[str, object]]]:
+def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
     since_24h = now_shanghai() - timedelta(hours=24)
 
     bot_rows = db.execute(
@@ -974,11 +932,6 @@ def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str,
         .group_by(Bot.id, Bot.name)
         .order_by(func.count(Message.id).desc(), Bot.id.asc())
     ).all()
-    if environment:
-        bot_rows = [
-            row for row in bot_rows if db.get(Bot, int(row.id or 0)) and db.get(Bot, int(row.id or 0)).environment == environment
-        ]
-
     chatroom_rows = db.execute(
         select(
             Conversation.external_id,
@@ -991,7 +944,6 @@ def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str,
             Conversation.chat_type == "group",
             Message.direction == "in",
             Message.created_at >= since_24h,
-            *( [Bot.environment == environment] if environment else [] ),
         )
         .group_by(Conversation.external_id, Conversation.title)
         .order_by(func.count(Message.id).desc(), Conversation.external_id.asc())
@@ -1010,7 +962,6 @@ def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str,
             Message.direction == "in",
             Message.sender_id.is_not(None),
             Message.created_at >= since_24h,
-            *( [Bot.environment == environment] if environment else [] ),
         )
         .group_by(Message.sender_id)
         .order_by(func.count(Message.id).desc(), Message.sender_id.asc())
@@ -1027,7 +978,6 @@ def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str,
         .where(
             PluginExecutionLog.created_at >= since_24h,
             PluginExecutionLog.attempted.is_(True),
-            *( [Bot.environment == environment] if environment else [] ),
         )
         .group_by(PluginExecutionLog.plugin_code)
         .order_by(func.count(PluginExecutionLog.id).desc(), PluginExecutionLog.plugin_code.asc())
@@ -1054,26 +1004,8 @@ def build_dashboard_rankings(db: Session, *, environment: str = "") -> dict[str,
     }
 
 
-def build_dashboard_alert_summary(db: Session, *, environment: str = "") -> dict[str, object]:
+def build_dashboard_alert_summary(db: Session) -> dict[str, object]:
     open_alerts = db.scalars(select(AlertRecord).where(AlertRecord.status == "open").order_by(AlertRecord.id.desc()).limit(50)).all()
-    if environment:
-        filtered_alerts: list[AlertRecord] = []
-        for item in open_alerts:
-            related_type = str(item.related_type or "").strip()
-            related_id = int(item.related_id or 0)
-            if related_type == "bot" and related_id:
-                bot = db.get(Bot, related_id)
-                if bot and bot.environment == environment:
-                    filtered_alerts.append(item)
-            elif related_type == "channel" and related_id:
-                channel = db.get(Channel, related_id)
-                if channel and channel.bot and channel.bot.environment == environment:
-                    filtered_alerts.append(item)
-            elif related_type == "bot_plugin" and related_id:
-                binding = db.get(BotPlugin, related_id)
-                if binding and binding.bot and binding.bot.environment == environment:
-                    filtered_alerts.append(item)
-        open_alerts = filtered_alerts
     level_counts = {
         "critical": sum(1 for item in open_alerts if str(item.level or "").lower() == "critical"),
         "warning": sum(1 for item in open_alerts if str(item.level or "").lower() == "warning"),
@@ -1282,18 +1214,6 @@ def enforce_role(request: Request, required_role: str) -> AdminUser:
     return user
 
 
-def bot_tag_names(bot: Bot) -> list[str]:
-    return [link.tag.name for link in bot.tag_links]
-
-
-def load_bot_metadata(db: Session) -> dict[str, list]:
-    return {
-        "groups": db.scalars(select(BotGroup).order_by(BotGroup.name.asc())).all(),
-        "templates": db.scalars(select(ConfigTemplate).order_by(ConfigTemplate.name.asc())).all(),
-        "tags": db.scalars(select(BotTag).order_by(BotTag.name.asc())).all(),
-    }
-
-
 def count_enabled_admins(db: Session) -> int:
     return db.scalar(select(func.count(AdminUser.id)).where(AdminUser.role == "admin", AdminUser.is_enabled.is_(True))) or 0
 
@@ -1417,7 +1337,6 @@ def build_plugin_toggle_matrix(
             {
                 "bot_id": bot.id,
                 "bot_name": bot.name,
-                "environment": bot.environment or "-",
                 "enabled_count": enabled_count,
                 "total_count": len(plugin_items),
                 "items": plugin_items,
@@ -1909,119 +1828,40 @@ async def toggle_user_action(request: Request, user_id: int):
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, environment: str = ""):
+async def dashboard(request: Request):
     db = get_session()
     try:
-        normalized_environment = normalize_environment_filter(environment)
         recent_cutoff = now_shanghai() - timedelta(hours=24)
         today_cutoff = now_shanghai().replace(hour=0, minute=0, second=0, microsecond=0)
+        # 总览始终统计当前租户的完整数据集；机器人环境已经从产品和数据库中删除。
         stats = {
-            "bots": (
-                db.scalar(select(func.count(Bot.id)).where(Bot.environment == normalized_environment))
-                if normalized_environment
-                else db.scalar(select(func.count(Bot.id)))
-            )
-            or 0,
-            "channels": (
-                db.scalar(select(func.count(Channel.id)).join(Bot, Channel.bot_id == Bot.id).where(Bot.environment == normalized_environment))
-                if normalized_environment
-                else db.scalar(select(func.count(Channel.id)))
-            )
-            or 0,
-            "plugins": (
-                db.scalar(
-                    select(func.count(func.distinct(BotPlugin.plugin_id))).join(Bot, BotPlugin.bot_id == Bot.id).where(Bot.environment == normalized_environment)
-                )
-                if normalized_environment
-                else db.scalar(select(func.count(Plugin.id)))
-            )
-            or 0,
-            "messages": (
-                db.scalar(
-                    select(func.count(Message.id))
-                    .join(Conversation, Message.conversation_id == Conversation.id)
-                    .join(Bot, Conversation.bot_id == Bot.id)
-                    .where(Bot.environment == normalized_environment)
-                )
-                if normalized_environment
-                else db.scalar(select(func.count(Message.id)))
-            )
-            or 0,
+            "bots": db.scalar(select(func.count(Bot.id))) or 0,
+            "channels": db.scalar(select(func.count(Channel.id))) or 0,
+            "plugins": db.scalar(select(func.count(Plugin.id))) or 0,
+            "messages": db.scalar(select(func.count(Message.id))) or 0,
             "errors": db.scalar(select(func.count(ErrorLog.id))) or 0,
-            "conversations": (
-                db.scalar(select(func.count(Conversation.id)).join(Bot, Conversation.bot_id == Bot.id).where(Bot.environment == normalized_environment))
-                if normalized_environment
-                else db.scalar(select(func.count(Conversation.id)))
-            )
-            or 0,
+            "conversations": db.scalar(select(func.count(Conversation.id))) or 0,
         }
         recent_errors = db.scalars(select(ErrorLog).order_by(ErrorLog.id.desc()).limit(5)).all()
-        channel_scope = select(Channel.id).join(Bot, Channel.bot_id == Bot.id)
-        if normalized_environment:
-            channel_scope = channel_scope.where(Bot.environment == normalized_environment)
-        channel_ids = [item for item in db.scalars(channel_scope).all()]
         ops_snapshot = {
-            "enabled_bots": (
-                db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True), Bot.environment == normalized_environment))
-                if normalized_environment
-                else db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True)))
-            )
-            or 0,
-            "enabled_channels": (
-                db.scalar(
-                    select(func.count(Channel.id))
-                    .join(Bot, Channel.bot_id == Bot.id)
-                    .where(Channel.is_enabled.is_(True), Bot.environment == normalized_environment)
-                )
-                if normalized_environment
-                else db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True)))
-            )
-            or 0,
-            "online_wechat_ipad": (
-                db.scalar(
-                    select(func.count(Channel.id))
-                    .join(Bot, Channel.bot_id == Bot.id)
-                    .where(
-                        Channel.channel_type == "wechat_ipad",
-                        Channel.login_state == "online",
-                        Bot.environment == normalized_environment,
-                    )
-                )
-                if normalized_environment
-                else db.scalar(
-                    select(func.count(Channel.id)).where(Channel.channel_type == "wechat_ipad", Channel.login_state == "online")
+            "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True))) or 0,
+            "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True))) or 0,
+            "online_workwechat": db.scalar(
+                select(func.count(Channel.id)).where(
+                    Channel.channel_type == "workwechat",
+                    Channel.login_state == "online",
                 )
             )
             or 0,
-            "abnormal_channels": (
-                db.scalar(
-                    select(func.count(Channel.id))
-                    .join(Bot, Channel.bot_id == Bot.id)
-                    .where(
-                        Channel.is_enabled.is_(True),
-                        Channel.status.in_(("degraded", "offline", "failed")),
-                        Bot.environment == normalized_environment,
-                    )
-                )
-                if normalized_environment
-                else db.scalar(
-                    select(func.count(Channel.id)).where(Channel.is_enabled.is_(True), Channel.status.in_(("degraded", "offline", "failed")))
+            "abnormal_channels": db.scalar(
+                select(func.count(Channel.id)).where(
+                    Channel.is_enabled.is_(True),
+                    Channel.status.in_(("degraded", "offline", "failed")),
                 )
             )
             or 0,
-            "inbound_24h": (
-                db.scalar(
-                    select(func.count(Message.id))
-                    .join(Conversation, Message.conversation_id == Conversation.id)
-                    .join(Bot, Conversation.bot_id == Bot.id)
-                    .where(
-                        Message.direction == "in",
-                        Message.created_at >= recent_cutoff,
-                        Bot.environment == normalized_environment,
-                    )
-                )
-                if normalized_environment
-                else db.scalar(select(func.count(Message.id)).where(Message.direction == "in", Message.created_at >= recent_cutoff))
+            "inbound_24h": db.scalar(
+                select(func.count(Message.id)).where(Message.direction == "in", Message.created_at >= recent_cutoff)
             )
             or 0,
             "recent_errors_24h": db.scalar(select(func.count(ErrorLog.id)).where(ErrorLog.created_at >= recent_cutoff)) or 0,
@@ -2031,11 +1871,7 @@ async def dashboard(request: Request, environment: str = ""):
         recent_failed_jobs = db.scalars(
             select(TaskJob).where(TaskJob.status.in_(("failed", "running", "pending"))).order_by(TaskJob.id.desc()).limit(6)
         ).all()
-        total_open_alerts = (
-            db.scalar(select(func.count(AlertRecord.id)).where(AlertRecord.status == "open")) or 0
-        )
-        if normalized_environment:
-            total_open_alerts = build_dashboard_alert_summary(db, environment=normalized_environment)["total"]
+        total_open_alerts = db.scalar(select(func.count(AlertRecord.id)).where(AlertRecord.status == "open")) or 0
         active_bot_stmt = (
             select(func.count(func.distinct(Conversation.bot_id)))
             .join(Message, Message.conversation_id == Conversation.id)
@@ -2099,15 +1935,6 @@ async def dashboard(request: Request, environment: str = ""):
                 PluginExecutionLog.attempted.is_(True),
             )
         )
-        if normalized_environment:
-            active_bot_stmt = active_bot_stmt.where(Bot.environment == normalized_environment)
-            active_user_stmt = active_user_stmt.where(Bot.environment == normalized_environment)
-            active_group_stmt = active_group_stmt.where(Bot.environment == normalized_environment)
-            inbound_today_stmt = inbound_today_stmt.where(Bot.environment == normalized_environment)
-            outbound_24h_stmt = outbound_24h_stmt.where(Bot.environment == normalized_environment)
-            plugin_trigger_stmt = plugin_trigger_stmt.where(Bot.environment == normalized_environment)
-            plugin_success_stmt = plugin_success_stmt.where(Bot.environment == normalized_environment)
-            plugin_attempt_stmt = plugin_attempt_stmt.where(Bot.environment == normalized_environment)
         plugin_success_count = db.scalar(plugin_success_stmt) or 0
         plugin_attempt_count = db.scalar(plugin_attempt_stmt) or 0
         plugin_success_rate = 0 if plugin_attempt_count <= 0 else round((plugin_success_count / plugin_attempt_count) * 100)
@@ -2123,39 +1950,27 @@ async def dashboard(request: Request, environment: str = ""):
             "abnormal_channels": ops_snapshot["abnormal_channels"],
             "open_alerts": total_open_alerts,
         }
-        trend_series = build_dashboard_trend_series(db, environment=normalized_environment, hours=24)
-        rankings = build_dashboard_rankings(db, environment=normalized_environment)
-        alert_summary = build_dashboard_alert_summary(db, environment=normalized_environment)
+        trend_series = build_dashboard_trend_series(db, hours=24)
+        rankings = build_dashboard_rankings(db)
+        alert_summary = build_dashboard_alert_summary(db)
         risk_items: list[str] = []
         if ops_snapshot["abnormal_channels"]:
             risk_items.append(f"当前有 {ops_snapshot['abnormal_channels']} 个启用渠道状态异常，建议优先看渠道页和错误页。")
         if ops_snapshot["failed_jobs"]:
             risk_items.append(f"任务队列里有 {ops_snapshot['failed_jobs']} 个失败任务，可能影响插件或出站链路。")
-        if not ops_snapshot["online_wechat_ipad"]:
-            risk_items.append("当前没有在线的 Wechat iPad 渠道，相关入站和心跳能力可能不可用。")
+        if not ops_snapshot["online_workwechat"]:
+            risk_items.append("当前没有在线的企业微信账号，相关入站和心跳能力可能不可用。")
         if alert_summary["total"]:
             risk_items.append(f"当前有 {alert_summary['total']} 条未恢复告警，请优先关注首页告警摘要和监控页。")
         if not risk_items:
             risk_items.append("当前没有明显阻断项，建议继续关注最近错误和待处理任务。")
-        bot_stmt = select(Bot)
-        if normalized_environment:
-            bot_stmt = bot_stmt.where(Bot.environment == normalized_environment)
-        bots = db.scalars(bot_stmt.order_by(Bot.id.desc()).limit(6)).all()
         bot_rows = []
-        for bot in db.scalars(bot_stmt.order_by(Bot.id.desc())).all():
+        for bot in db.scalars(select(Bot).order_by(Bot.id.desc())).all():
             bot_rows.append(
                 {
                     "bot": bot,
                     "channels": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0,
-                    "online_channels": db.scalar(
-                        select(func.count(Channel.id)).where(Channel.bot_id == bot.id, Channel.is_enabled.is_(True))
-                    )
-                    or 0,
                     "plugins": db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0,
-                    "enabled_plugins": db.scalar(
-                        select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id, BotPlugin.status == "enabled")
-                    )
-                    or 0,
                     "conversations": db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot.id)) or 0,
                     "messages": db.scalar(
                         select(func.count(Message.id))
@@ -2163,10 +1978,6 @@ async def dashboard(request: Request, environment: str = ""):
                         .where(Conversation.bot_id == bot.id)
                     )
                     or 0,
-                    "group": bot.group.name if bot.group else "-",
-                    "environment": bot.environment,
-                    "template": bot.config_template.name if bot.config_template else "-",
-                    "tags": bot_tag_names(bot),
                 }
             )
         return render(
@@ -2182,61 +1993,49 @@ async def dashboard(request: Request, environment: str = ""):
             ops_snapshot=ops_snapshot,
             recent_failed_jobs=recent_failed_jobs,
             risk_items=risk_items,
-            bots=bots,
             bot_rows=bot_rows,
-            environment_rows=build_environment_summary(db),
-            current_environment=normalized_environment,
         )
     finally:
         db.close()
 
 
 @app.get("/bots", response_class=HTMLResponse)
-async def bots_page(request: Request, group_id: int = 0, environment: str = "", template_id: int = 0):
+async def bots_page(request: Request):
     db = get_session()
     try:
-        normalized_environment = normalize_environment_filter(environment)
-        stmt = select(Bot)
-        if group_id:
-            stmt = stmt.where(Bot.group_id == group_id)
-        if normalized_environment:
-            stmt = stmt.where(Bot.environment == normalized_environment)
-        if template_id:
-            stmt = stmt.where(Bot.config_template_id == template_id)
-        bots = db.scalars(stmt.order_by(Bot.id.desc())).all()
-        metadata = load_bot_metadata(db)
+        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        # 列表需要稳定的计数键，模板不再触碰已删除的分组、模板、标签和环境关系。
+        bot_rows = [
+            {
+                "bot": bot,
+                "channel_count": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0,
+                "binding_count": db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0,
+            }
+            for bot in bots
+        ]
         return render(
             request,
             "bots.html",
             page_title="机器人管理",
-            bots=bots,
+            bot_rows=bot_rows,
+            bot_count=len(bot_rows),
             notice=request.query_params.get("notice", ""),
-            group_id=group_id,
-            environment=normalized_environment,
-            template_id=template_id,
-            current_environment=normalized_environment,
-            **metadata,
+            notice_tone=request.query_params.get("tone", ""),
         )
     finally:
         db.close()
 
 
 @app.get("/bots/{bot_id}", response_class=HTMLResponse)
-async def bot_detail_page(request: Request, bot_id: int, environment: str = "", return_to: str = ""):
+async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
     db = get_session()
     try:
         bot = get_bot(db, bot_id)
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
-        normalized_environment = normalize_environment_filter(environment or bot.environment)
         channels = db.scalars(select(Channel).where(Channel.bot_id == bot_id).order_by(Channel.id.desc())).all()
         bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == bot_id).order_by(BotPlugin.id.desc())).all()
-        health_summary = {
-            "enabled_channels": sum(1 for item in channels if item.is_enabled),
-            "enabled_bindings": sum(1 for item in bindings if item.status == "enabled"),
-            "conversation_count": db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot_id)) or 0,
-        }
-        metadata = load_bot_metadata(db)
+        conversation_count = db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot_id)) or 0
         return render(
             request,
             "bot_detail.html",
@@ -2244,12 +2043,12 @@ async def bot_detail_page(request: Request, bot_id: int, environment: str = "", 
             bot=bot,
             channels=channels,
             bindings=bindings,
-            health_summary=health_summary,
+            channel_count=len(channels),
+            binding_count=len(bindings),
+            conversation_count=conversation_count,
             notice=request.query_params.get("notice", ""),
-            bot_tags=", ".join(bot_tag_names(bot)),
-            back_href=safe_return_to(return_to, detail_fallback("/bots", normalized_environment)),
-            current_environment=normalized_environment,
-            **metadata,
+            notice_tone=request.query_params.get("tone", ""),
+            back_href=safe_return_to(return_to, detail_fallback("/bots")),
         )
     finally:
         db.close()
@@ -2259,32 +2058,33 @@ async def bot_detail_page(request: Request, bot_id: int, environment: str = "", 
 async def create_bot_action(
     request: Request,
     name: str = Form(...),
-    slug: str = Form(...),
-    description: str = Form(""),
-    command_prefix: str = Form("/"),
-    group_id: int = Form(0),
-    config_template_id: int = Form(0),
-    environment: str = Form("prod"),
-    tags: str = Form(""),
-    is_enabled: str = Form("true"),
 ):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        payload = BotCreate(
-            name=name,
-            slug=slug,
-            description=description,
-            command_prefix=command_prefix,
-            group_id=group_id or None,
-            config_template_id=config_template_id or None,
-            environment=normalize_environment(environment),
-            tags=tags,
-            is_enabled=is_enabled == "true",
-        )
-        bot = create_bot(db, payload)
-        record_audit(db, "bot.create", "bot", bot.id, f"创建机器人 {bot.name}，环境 {bot.environment}")
-        return RedirectResponse(url="/bots", status_code=303)
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            return RedirectResponse(
+                url="/bots?notice=" + quote("机器人名称不能为空") + "&tone=danger",
+                status_code=303,
+            )
+        if db.scalar(select(Bot.id).where(Bot.name == cleaned_name)) is not None:
+            return RedirectResponse(
+                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
+                status_code=303,
+            )
+        try:
+            bot = create_bot(db, BotCreate(name=cleaned_name))
+        except IntegrityError:
+            # 数据库唯一约束负责并发兜底；回滚后只向用户返回业务提示，不暴露 SQL 细节。
+            db.rollback()
+            return RedirectResponse(
+                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
+                status_code=303,
+            )
+        record_audit(db, "bot.create", "bot", bot.id, f"创建机器人 {bot.name}")
+        notice = quote("机器人已创建，请继续添加企业微信账号")
+        return RedirectResponse(url=f"/bots/{bot.id}?notice={notice}", status_code=303)
     finally:
         db.close()
 
@@ -2317,14 +2117,7 @@ async def edit_bot_action(
     request: Request,
     bot_id: int,
     name: str = Form(...),
-    slug: str = Form(...),
     description: str = Form(""),
-    command_prefix: str = Form("/"),
-    group_id: int = Form(0),
-    config_template_id: int = Form(0),
-    environment: str = Form("prod"),
-    tags: str = Form(""),
-    is_enabled: str = Form("true"),
 ):
     enforce_role(request, "ops")
     db = get_session()
@@ -2332,20 +2125,28 @@ async def edit_bot_action(
         bot = get_bot(db, bot_id)
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
-        payload = BotUpdate(
-            name=name,
-            slug=slug,
-            description=description,
-            command_prefix=command_prefix,
-            group_id=group_id or None,
-            config_template_id=config_template_id or None,
-            environment=normalize_environment(environment),
-            tags=tags,
-            is_enabled=is_enabled == "true",
-        )
-        update_bot(db, bot, payload)
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            return RedirectResponse(
+                url=f"/bots/{bot_id}?notice=" + quote("机器人名称不能为空") + "&tone=danger",
+                status_code=303,
+            )
+        duplicate_id = db.scalar(select(Bot.id).where(Bot.name == cleaned_name, Bot.id != bot_id))
+        if duplicate_id is not None:
+            return RedirectResponse(
+                url=f"/bots/{bot_id}?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
+                status_code=303,
+            )
+        try:
+            update_bot(db, bot, BotUpdate(name=cleaned_name, description=description))
+        except IntegrityError:
+            db.rollback()
+            return RedirectResponse(
+                url=f"/bots/{bot_id}?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
+                status_code=303,
+            )
         record_audit(db, "bot.update", "bot", bot.id, f"更新机器人 {bot.name}")
-        return RedirectResponse(url=f"/bots/{bot_id}", status_code=303)
+        return RedirectResponse(url=f"/bots/{bot_id}?notice=" + quote("机器人资料已更新"), status_code=303)
     finally:
         db.close()
 
@@ -2381,7 +2182,7 @@ async def check_bot_status_action(request: Request, bot_id: int):
             status,
             message,
             target_id=bot.id,
-            details={"bot": bot.name, "environment": bot.environment},
+            details={"bot": bot.name},
         )
         if status != "running":
             create_alert(db, "bot-health", f"机器人 {bot.name} 状态异常", message, related_type="bot", related_id=bot.id)
@@ -2412,43 +2213,6 @@ async def delete_bot_action(request: Request, bot_id: int, confirmation_name: st
         db.close()
 
 
-@app.post("/bots/{bot_id}/clone")
-async def clone_bot_action(
-    request: Request,
-    bot_id: int,
-    name: str = Form(...),
-    slug: str = Form(...),
-    environment: str = Form("test"),
-    copy_channels: str = Form("true"),
-    copy_plugins: str = Form("true"),
-):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        source_bot = get_bot(db, bot_id)
-        if not source_bot:
-            raise HTTPException(status_code=404, detail="Bot not found")
-        clone = clone_bot(
-            db,
-            source_bot,
-            name=name,
-            slug=slug,
-            environment=environment,
-            copy_channels=copy_channels == "true",
-            copy_plugins=copy_plugins == "true",
-        )
-        record_audit(
-            db,
-            "bot.clone",
-            "bot",
-            clone.id,
-            f"从 bot#{source_bot.id} 复制，目标环境 {clone.environment}",
-        )
-        return RedirectResponse(url=f"/bots/{clone.id}?notice=" + quote("机器人复制完成"), status_code=303)
-    finally:
-        db.close()
-
-
 @app.get("/channels", response_class=HTMLResponse)
 async def channels_page(request: Request):
     db = get_session()
@@ -2467,226 +2231,6 @@ async def channels_page(request: Request):
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
             notice=request.query_params.get("notice", ""),
         )
-    finally:
-        db.close()
-
-
-@app.get("/groups", response_class=HTMLResponse)
-async def groups_page(request: Request):
-    db = get_session()
-    try:
-        groups = db.scalars(select(BotGroup).order_by(BotGroup.id.desc())).all()
-        rows = []
-        for group in groups:
-            rows.append(
-                {
-                    "group": group,
-                    "bot_count": db.scalar(select(func.count(Bot.id)).where(Bot.group_id == group.id)) or 0,
-                }
-            )
-        return render(
-            request,
-            "groups.html",
-            page_title="分组管理",
-            rows=rows,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/groups")
-async def create_group_action(
-    request: Request,
-    name: str = Form(...),
-    slug: str = Form(...),
-    description: str = Form(""),
-):
-    enforce_role(request, "admin")
-    db = get_session()
-    try:
-        group = BotGroup(
-            name=name.strip(),
-            slug=slug.strip(),
-            description=description.strip() or None,
-        )
-        db.add(group)
-        db.commit()
-        record_audit(db, "group.create", "group", group.id, f"创建分组 {group.name}")
-        return RedirectResponse(url="/groups?notice=" + quote("分组已创建"), status_code=303)
-    finally:
-        db.close()
-
-
-@app.get("/groups/{group_id}", response_class=HTMLResponse)
-async def group_detail_page(request: Request, group_id: int):
-    db = get_session()
-    try:
-        group = db.get(BotGroup, group_id)
-        if not group:
-            raise HTTPException(status_code=404, detail="Group not found")
-        bots = db.scalars(select(Bot).where(Bot.group_id == group.id).order_by(Bot.id.desc())).all()
-        bot_rows = []
-        for bot in bots:
-            channel_count = db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0
-            binding_count = db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0
-            bot_rows.append(
-                {
-                    "bot": bot,
-                    "channel_count": channel_count,
-                    "binding_count": binding_count,
-                }
-            )
-        return render(
-            request,
-            "group_detail.html",
-            page_title=f"分组详情 · {group.name}",
-            group=group,
-            bot_rows=bot_rows,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/groups/{group_id}/edit")
-async def edit_group_action(
-    request: Request,
-    group_id: int,
-    name: str = Form(...),
-    slug: str = Form(...),
-    description: str = Form(""),
-):
-    enforce_role(request, "admin")
-    db = get_session()
-    try:
-        group = db.get(BotGroup, group_id)
-        if not group:
-            raise HTTPException(status_code=404, detail="Group not found")
-        group.name = name.strip()
-        group.slug = slug.strip()
-        group.description = description.strip() or None
-        db.commit()
-        record_audit(db, "group.update", "group", group.id, f"更新分组 {group.name}")
-        return RedirectResponse(url=f"/groups/{group.id}?notice=" + quote("分组已更新"), status_code=303)
-    finally:
-        db.close()
-
-
-@app.get("/templates", response_class=HTMLResponse)
-async def templates_page(request: Request):
-    db = get_session()
-    try:
-        templates = db.scalars(select(ConfigTemplate).order_by(ConfigTemplate.id.desc())).all()
-        rows = []
-        for template in templates:
-            rows.append(
-                {
-                    "template": template,
-                    "bot_count": db.scalar(select(func.count(Bot.id)).where(Bot.config_template_id == template.id)) or 0,
-                }
-            )
-        return render(
-            request,
-            "templates.html",
-            page_title="配置模板",
-            rows=rows,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.get("/templates/{template_id}", response_class=HTMLResponse)
-async def template_detail_page(request: Request, template_id: int):
-    db = get_session()
-    try:
-        config_template = db.get(ConfigTemplate, template_id)
-        if not config_template:
-            raise HTTPException(status_code=404, detail="Template not found")
-        bots = db.scalars(select(Bot).where(Bot.config_template_id == config_template.id).order_by(Bot.id.desc())).all()
-        bot_rows = []
-        for bot in bots:
-            channel_count = db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0
-            binding_count = db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0
-            bot_rows.append(
-                {
-                    "bot": bot,
-                    "channel_count": channel_count,
-                    "binding_count": binding_count,
-                }
-            )
-        return render(
-            request,
-            "template_detail.html",
-            page_title=f"模板详情 · {config_template.name}",
-            config_template=config_template,
-            bot_rows=bot_rows,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/templates/{template_id}/edit")
-async def edit_template_action(
-    request: Request,
-    template_id: int,
-    name: str = Form(...),
-    template_scope: str = Form("bot"),
-    channel_type: str = Form(""),
-    environment: str = Form("shared"),
-    description: str = Form(""),
-    config_json: str = Form(""),
-    is_enabled: str = Form("true"),
-):
-    enforce_role(request, "admin")
-    db = get_session()
-    try:
-        template = db.get(ConfigTemplate, template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
-        template.name = name.strip()
-        template.template_scope = template_scope.strip() or "bot"
-        template.channel_type = channel_type.strip() or None
-        template.environment = environment.strip() or "shared"
-        template.description = description.strip() or None
-        template.config_json = config_json.strip() or None
-        template.is_enabled = is_enabled == "true"
-        db.commit()
-        record_audit(db, "template.update", "template", template.id, f"更新模板 {template.name}")
-        return RedirectResponse(url=f"/templates/{template.id}?notice=" + quote("模板已更新"), status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/templates")
-async def create_template_action(
-    request: Request,
-    name: str = Form(...),
-    template_scope: str = Form("bot"),
-    channel_type: str = Form(""),
-    environment: str = Form("shared"),
-    description: str = Form(""),
-    config_json: str = Form(""),
-    is_enabled: str = Form("true"),
-):
-    enforce_role(request, "admin")
-    db = get_session()
-    try:
-        template = ConfigTemplate(
-            name=name.strip(),
-            template_scope=template_scope.strip() or "bot",
-            channel_type=channel_type.strip() or None,
-            environment=environment.strip() or "shared",
-            description=description.strip() or None,
-            config_json=config_json.strip() or None,
-            is_enabled=is_enabled == "true",
-        )
-        db.add(template)
-        db.commit()
-        record_audit(db, "template.create", "template", template.id, f"创建模板 {template.name}，环境 {template.environment}")
-        return RedirectResponse(url="/templates?notice=" + quote("模板已创建"), status_code=303)
     finally:
         db.close()
 

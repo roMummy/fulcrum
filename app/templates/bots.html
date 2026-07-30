@@ -1,111 +1,79 @@
 {% extends 'base.html' %}
 {% block page_intro %}
-<p>围绕机器人资产建立分组、模板、环境和标签的统一运营视图，让创建、筛选与批量启停发生在同一块数据面板里。</p>
+<p>创建机器人后继续接入企业微信账号，再按需开启插件。</p>
 {% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <button class="btn" type="button" data-modal-open="create-bot-modal">新建机器人</button>
-  <span class="chip chip-outline">共 {{ bots|length }} 个机器人</span>
-  <span class="chip">{{ groups|length }} 个分组</span>
-  <span class="chip chip-muted">{{ templates|length }} 个模板</span>
+  <span class="chip chip-outline">共 {{ bot_count }} 个机器人</span>
 </div>
 {% endblock %}
 {% block content %}
 <section class="card">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Filter</p>
-      <h2>筛选与结构化视角</h2>
-    </div>
-    <span class="chip chip-muted">只影响列表</span>
-  </div>
-  <form method="get" action="/bots" class="form-grid">
-    <label><span>分组</span><select name="group_id"><option value="0">全部分组</option>{% for group in groups %}<option value="{{ group.id }}" {% if group.id == group_id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label>
-    <label><span>模板</span><select name="template_id"><option value="0">全部模板</option>{% for template in templates %}<option value="{{ template.id }}" {% if template.id == template_id %}selected{% endif %}>{{ template.name }}</option>{% endfor %}</select></label>
-    <label><span>环境</span><select name="environment"><option value="" {% if not environment %}selected{% endif %}>全部环境</option><option value="prod" {% if environment == 'prod' %}selected{% endif %}>prod</option><option value="test" {% if environment == 'test' %}selected{% endif %}>test</option><option value="staging" {% if environment == 'staging' %}selected{% endif %}>staging</option><option value="dev" {% if environment == 'dev' %}selected{% endif %}>dev</option></select></label>
-    <div class="form-actions-inline">
-      <button class="btn btn-secondary" type="submit">应用筛选</button>
-      <a class="btn btn-ghost" href="/bots">重置</a>
-    </div>
-  </form>
-  <div class="stats-grid compact-grid top-gap">
-    <div class="stat-card nested-card">
-      <span>已启用</span>
-      <strong>{{ bots | selectattr('is_enabled') | list | length }}</strong>
-    </div>
-    <div class="stat-card nested-card">
-      <span>停用中</span>
-      <strong>{{ bots | rejectattr('is_enabled') | list | length }}</strong>
-    </div>
-    <div class="stat-card nested-card">
-      <span>当前环境筛选</span>
-      <strong>{{ environment or '全部' }}</strong>
-    </div>
-  </div>
-</section>
-
-<section class="card">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Portfolio table</p>
+      <p class="section-kicker">Bots</p>
       <h2>机器人列表</h2>
     </div>
     <span class="chip chip-outline">支持批量启停</span>
   </div>
-  <form method="post" action="/bots/batch-toggle">
+
+  {# 批量启停只提交机器人主键；删除动作使用表格外的独立表单，避免 HTML 嵌套表单。 #}
+  <form method="post" action="/bots/batch-toggle" id="batch-toggle-bots-form">
     <div class="toolbar">
       <div class="actions">
         <button class="btn btn-secondary" type="submit" name="action" value="enable">批量启用</button>
         <button class="btn btn-secondary" type="submit" name="action" value="disable">批量停用</button>
       </div>
-      <p>选中机器人后执行批量启停。</p>
+      <p class="muted-text">勾选机器人后执行批量操作。</p>
     </div>
     <table class="table">
-    <thead><tr><th class="col-id">ID</th><th>名称 / slug</th><th>分组 / 标签</th><th>模板 / 环境</th><th class="col-status">状态</th><th class="col-compact">前缀</th><th class="col-bool">启用</th><th class="col-action">操作</th></tr></thead>
-    <tbody>
-      {% for bot in bots %}
-      <tr>
-        <td class="col-id">
-          <label class="checkbox-cell">
-            <input type="checkbox" name="bot_ids" value="{{ bot.id }}" />
-            <span>{{ bot.id }}</span>
-          </label>
-        </td>
-        <td>
-          <div>{{ bot.name }}</div>
-          <div class="muted-text">{{ bot.slug }}</div>
-        </td>
-        <td>
-          <div>{{ bot.group.name if bot.group else '-' }}</div>
-          <div class="muted-text">{{ bot.tag_links | map(attribute='tag.name') | join(', ') or '-' }}</div>
-        </td>
-        <td>
-          <div>{{ bot.config_template.name if bot.config_template else '-' }}</div>
-          <div class="muted-text"><span class="chip chip-muted">{{ bot.environment }}</span></div>
-        </td>
-        <td class="col-status"><span class="badge badge-{{ bot.status|lower }}">{{ bot.status }}</span></td>
-        <td class="col-compact"><code>{{ bot.command_prefix }}</code></td>
-        <td class="col-bool"><span class="chip {% if bot.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '是' if bot.is_enabled else '否' }}</span></td>
-        <td class="actions table-actions">
-          <a class="btn btn-small" href="/bots/{{ bot.id }}">详情</a>
-          <form
-            method="post"
-            action="/bots/{{ bot.id }}/delete"
-            data-confirm-mode="match-text"
-            data-confirm-title="删除机器人"
-            data-confirm-message="此操作会级联删除该机器人关联的渠道、插件绑定和会话数据。"
-            data-confirm-match-text="{{ bot.name }}"
-            data-confirm-match-label="请输入机器人名称以确认删除："
-          >
-            <input type="hidden" name="confirmation_name" value="" />
-            <button class="btn btn-small btn-danger" type="submit">删除</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
+      <thead>
+        <tr>
+          <th class="col-id">选择</th>
+          <th>名称</th>
+          <th class="col-status">运行状态</th>
+          <th class="col-count">企业微信账号</th>
+          <th class="col-count">插件</th>
+          <th class="col-bool">启用状态</th>
+          <th class="col-action">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in bot_rows %}
+        <tr>
+          <td class="col-id"><input type="checkbox" name="bot_ids" value="{{ row.bot.id }}" aria-label="选择 {{ row.bot.name }}" /></td>
+          <td><a href="/bots/{{ row.bot.id }}"><strong>{{ row.bot.name }}</strong></a></td>
+          <td class="col-status"><span class="badge badge-{{ row.bot.status|lower }}">{{ row.bot.status }}</span></td>
+          <td class="col-count">{{ row.channel_count }}</td>
+          <td class="col-count">{{ row.binding_count }}</td>
+          <td class="col-bool"><span class="chip {% if row.bot.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if row.bot.is_enabled else '已停用' }}</span></td>
+          <td class="actions table-actions">
+            <a class="btn btn-small" href="/bots/{{ row.bot.id }}">详情</a>
+            <button class="btn btn-small btn-danger" type="submit" form="delete-bot-{{ row.bot.id }}">删除</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加企业微信账号。</p></div></td></tr>
+        {% endfor %}
+      </tbody>
     </table>
   </form>
+
+  {% for row in bot_rows %}
+  <form
+    id="delete-bot-{{ row.bot.id }}"
+    method="post"
+    action="/bots/{{ row.bot.id }}/delete"
+    data-confirm-mode="match-text"
+    data-confirm-title="删除机器人"
+    data-confirm-message="此操作会级联删除该机器人关联的企业微信账号、插件绑定和会话数据。"
+    data-confirm-match-text="{{ row.bot.name }}"
+    data-confirm-match-label="请输入机器人名称以确认删除："
+  >
+    <input type="hidden" name="confirmation_name" value="" />
+  </form>
+  {% endfor %}
 </section>
 
 <dialog class="app-modal" id="create-bot-modal">
@@ -114,20 +82,11 @@
       <div>
         <p class="section-kicker">Create</p>
         <h2>新建机器人</h2>
-        <p class="muted-text">这里创建新的机器人资产，保存后会直接出现在列表里。</p>
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/bots" class="form-grid">
-      <label><span>名称</span><input name="name" placeholder="例如：ABOT-分身1" required /></label>
-      <label><span>标识 slug</span><input name="slug" placeholder="例如：abot-clone-1" required /></label>
-      <label><span>命令前缀</span><input name="command_prefix" value="/" /></label>
-      <label><span>所属分组</span><select name="group_id"><option value="0">未分组</option>{% for group in groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
-      <label><span>配置模板</span><select name="config_template_id"><option value="0">不绑定模板</option>{% for template in templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}</select></label>
-      <label><span>环境</span><select name="environment"><option value="prod">prod</option><option value="test">test</option><option value="staging">staging</option><option value="dev">dev</option></select></label>
-      <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
-      <label class="full-row"><span>标签</span><input name="tags" placeholder="多个标签用逗号分隔，例如：生产, 微信, 客服" /></label>
-      <label class="full-row"><span>说明</span><textarea name="description" rows="3" placeholder="描述这个机器人的用途"></textarea></label>
+      <label class="full-row"><span>机器人名称</span><input name="name" maxlength="100" placeholder="例如：售后客服" required /></label>
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">创建机器人</button>
         <button class="btn btn-ghost" type="button" data-modal-close>取消</button>

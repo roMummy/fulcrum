@@ -366,8 +366,8 @@
   </div>
   <div class="stats-grid compact-grid">
     <div class="stat-card nested-card">
-      <span>在线 Wechat iPad</span>
-      <strong>{{ ops_snapshot.online_wechat_ipad }}</strong>
+      <span>在线企业微信账号</span>
+      <strong>{{ ops_snapshot.online_workwechat }}</strong>
     </div>
     <div class="stat-card nested-card">
       <span>异常渠道</span>
@@ -401,28 +401,20 @@
     <a class="chip chip-action" href="/bots">进入详情</a>
   </div>
   <table class="table">
-    <thead><tr><th>机器人</th><th>分组 / 环境</th><th>模板 / 标签</th><th class="col-status">状态</th><th class="col-count">渠道</th><th class="col-count">启用渠道</th><th class="col-count">插件</th><th class="col-count">启用插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th>机器人</th><th class="col-status">状态</th><th class="col-count">企业微信账号</th><th class="col-count">插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for row in bot_rows %}
       <tr>
         <td>{{ row.bot.name }}</td>
-        <td>
-          <div>{{ row.group }}</div>
-          <div class="muted-text"><span class="chip chip-muted">{{ row.environment }}</span></div>
-        </td>
-        <td>
-          <div>{{ row.template }}</div>
-          <div class="muted-text">{{ row.tags | join(', ') or '-' }}</div>
-        </td>
         <td class="col-status"><span class="badge badge-{{ row.bot.status|lower }}">{{ row.bot.status }}</span></td>
         <td class="col-count">{{ row.channels }}</td>
-        <td class="col-count">{{ row.online_channels }}</td>
         <td class="col-count">{{ row.plugins }}</td>
-        <td class="col-count">{{ row.enabled_plugins }}</td>
         <td class="col-count">{{ row.conversations }}</td>
         <td class="col-count">{{ row.messages }}</td>
         <td class="col-action"><a class="btn btn-small" href="/bots/{{ row.bot.id }}">进入机器人</a></td>
       </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty-state">当前还没有机器人。</td></tr>
       {% endfor %}
     </tbody>
   </table>

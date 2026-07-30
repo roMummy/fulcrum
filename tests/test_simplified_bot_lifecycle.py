@@ -2,7 +2,9 @@ import os
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 
@@ -17,15 +19,26 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_RUNTIME / 'test.db'}"
 os.environ["LOG_DIR"] = str(TEST_RUNTIME / "logs")
 os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 
-from app.core.db import Base
-from app.models.entities import Bot, MessageActivityHourly, PluginActivityHourly
+from app.core.db import Base, SessionLocal, engine as app_engine
+from app.main import app
+from app.models.entities import AdminUser, Bot, MessageActivityHourly, PluginActivityHourly
 from app.schemas.forms import BotCreate, BotUpdate
+from app.services.auth import hash_password
 from app.services.crud import create_bot, update_bot
 from app.services.ops import build_monitoring_snapshot
 
 
 DELETED_TABLES = {"bot_groups", "config_templates", "bot_tags", "bot_tag_links"}
 DELETED_BOT_FIELDS = {"slug", "command_prefix", "group_id", "config_template_id", "environment"}
+DELETED_PATHS = {
+    "/groups",
+    "/groups/{group_id}",
+    "/groups/{group_id}/edit",
+    "/templates",
+    "/templates/{template_id}",
+    "/templates/{template_id}/edit",
+    "/bots/{bot_id}/clone",
+}
 
 
 @pytest.fixture()
@@ -40,6 +53,35 @@ def db_session():
     finally:
         session.close()
         engine.dispose()
+
+
+@pytest.fixture()
+def authenticated_client():
+    """重建应用测试库并登录管理员，用真实表单链路验证机器人创建行为。"""
+
+    Base.metadata.drop_all(bind=app_engine)
+    Base.metadata.create_all(bind=app_engine)
+    with SessionLocal() as db:
+        db.add(
+            AdminUser(
+                username="admin",
+                display_name="管理员",
+                password_hash=hash_password("admin123"),
+                role="admin",
+                is_enabled=True,
+                auth_version=1,
+            )
+        )
+        db.commit()
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/login",
+            data={"username": "admin", "password": "admin123"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        yield client
 
 
 def test_removed_bot_metadata_is_absent_from_database_contract() -> None:
@@ -61,6 +103,82 @@ def test_bot_forms_only_expose_business_fields() -> None:
 
     assert set(BotCreate.model_fields) == {"name"}
     assert set(BotUpdate.model_fields) == {"name", "description"}
+
+
+def test_removed_business_routes_are_not_registered() -> None:
+    """已删除模块不能留下可绕过导航访问的旧 HTTP 接口。"""
+
+    registered_paths = {str(route.path) for route in app.routes if getattr(route, "path", None)}
+    assert DELETED_PATHS.isdisjoint(registered_paths)
+
+
+def test_minimal_bot_create_flow_and_duplicate_error(authenticated_client) -> None:
+    """真实 Web 创建流程只接收名称，并对重复名称给出可理解的错误。"""
+
+    created = authenticated_client.post(
+        "/bots",
+        data={"name": " 客服机器人 "},
+        follow_redirects=False,
+    )
+
+    assert created.status_code == 303
+    assert created.headers["location"].startswith("/bots/")
+    assert "notice=" in created.headers["location"]
+    with SessionLocal() as db:
+        bot = db.scalar(select(Bot).where(Bot.name == "客服机器人"))
+        assert bot is not None
+        assert bot.is_enabled is True
+        assert bot.status == "running"
+        bot_id = bot.id
+
+    # 创建成功后继续走真实页面渲染，防止精简字段后列表、详情或总览仍访问旧模板上下文。
+    list_page = authenticated_client.get("/bots")
+    detail_page = authenticated_client.get(f"/bots/{bot_id}")
+    dashboard_page = authenticated_client.get("/")
+    assert list_page.status_code == 200
+    assert detail_page.status_code == 200
+    assert dashboard_page.status_code == 200
+    assert "客服机器人" in list_page.text
+    assert "客服机器人" in detail_page.text
+    assert "客服机器人" in dashboard_page.text
+
+    duplicate = authenticated_client.post(
+        "/bots",
+        data={"name": "客服机器人"},
+        follow_redirects=False,
+    )
+
+    assert duplicate.status_code == 303
+    assert duplicate.headers["location"].startswith("/bots?notice=")
+    assert "tone=danger" in duplicate.headers["location"]
+
+
+def test_robot_templates_only_expose_the_minimal_workflow() -> None:
+    """模板源码不得继续渲染已删除字段或机器人复制入口。"""
+
+    bots_source = (PROJECT_ROOT / "app/templates/bots.html").read_text(encoding="utf-8")
+    detail_source = (PROJECT_ROOT / "app/templates/bot_detail.html").read_text(encoding="utf-8")
+    dashboard_source = (PROJECT_ROOT / "app/templates/dashboard.html").read_text(encoding="utf-8")
+    removed_form_names = (
+        "group_id",
+        "config_template_id",
+        "tags",
+        "slug",
+        "environment",
+        "command_prefix",
+    )
+
+    assert 'name="name"' in bots_source
+    for field_name in removed_form_names:
+        assert f'name="{field_name}"' not in bots_source
+        assert f'name="{field_name}"' not in detail_source
+    assert "/clone" not in detail_source
+    assert "复制机器人" not in detail_source
+    assert "分组 / 环境" not in dashboard_source
+    assert "模板 / 标签" not in dashboard_source
+
+    for filename in ("groups.html", "group_detail.html", "templates.html", "template_detail.html"):
+        assert not (PROJECT_ROOT / "app/templates" / filename).exists()
 
 
 def test_create_and_update_bot_use_minimal_contract(db_session) -> None:
