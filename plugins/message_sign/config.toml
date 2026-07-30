@@ -1,0 +1,32 @@
+[plugin]
+code = "message_sign"
+display_name = "消息签到"
+plugin_type = "command"
+version = "1.1.0"
+author = "abot"
+description = "迁移自 abot 的签到插件，支持签到、重复签到拦截、补签和签到历史持久化。"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["签到", "每日签到", "qd", "Qd", "QD", "上班", "牛马", "补签", "续签", "sign", "checkin", "message_sign"]
+require_mention = false
+
+[runtime]
+enable = true
+timezone = "Asia/Shanghai"
+command = ["签到", "每日签到", "qd", "Qd", "QD", "上班", "牛马", "sign", "checkin", "message_sign"]
+makeup_command = ["补签", "续签", "makeup"]
+min_point = 3
+max_point = 50
+streak_cycle = 1
+max_streak_point = 50
+makeup_cost = 10

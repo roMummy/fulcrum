@@ -1,0 +1,29 @@
+[plugin]
+code = "weather"
+display_name = "天气"
+plugin_type = "command"
+version = "1.0.0"
+author = "abot"
+description = "天气查询"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 90
+consume_policy = "continue"
+timeout_ms = 10000
+
+[matcher]
+commands = ["天气", "weather", "订阅天气", "取消订阅", "天气订阅"]
+require_mention = false
+
+[runtime]
+api_base = "https://mx564thnfv.re.qweatherapi.com"
+api_key = "32e692f94e364105808ea2c0302ef162"
+default_city = "Beijing"
+units = "metric"
+default_timeout = 10
+default_push_hour = 8

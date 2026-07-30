@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>查看机器人运行状态、关联渠道、插件绑定和复制/删除等维护动作。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <button class="btn" type="button" data-modal-open="edit-bot-modal">修改机器人</button>
+  <button class="btn btn-secondary" type="button" data-modal-open="clone-bot-modal">复制机器人</button>
+</div>
+{% endblock %}
+{% block content %}
+{# 机器人维护动作集中在顶部，删除动作保留确认弹窗，避免误删关联数据。 #}
+<section class="card action-zone">
+  <div class="toolbar">
+    <p>机器人 ID #{{ bot.id }}</p>
+    <div class="actions">
+      <form method="post" action="/bots/{{ bot.id }}/status-check">
+        <button class="btn btn-secondary" type="submit">状态检查</button>
+      </form>
+      <form method="post" action="/bots/{{ bot.id }}/toggle">
+        <button class="btn" type="submit">{{ '停用' if bot.is_enabled else '启用' }}</button>
+      </form>
+      <form
+        method="post"
+        action="/bots/{{ bot.id }}/delete"
+        data-confirm-mode="match-text"
+        data-confirm-title="删除机器人"
+        data-confirm-message="此操作会级联删除该机器人关联的渠道、插件绑定和会话数据。"
+        data-confirm-match-text="{{ bot.name }}"
+        data-confirm-match-label="请输入机器人名称以确认删除："
+      >
+        <input type="hidden" name="confirmation_name" value="" />
+        <button class="btn btn-danger" type="submit">删除机器人</button>
+      </form>
+    </div>
+  </div>
+
+</section>
+
+<section class="card">
+  <h2>运行检查摘要</h2>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card"><span>当前状态</span><strong><span class="badge badge-{{ bot.status|lower }}">{{ bot.status }}</span></strong></div>
+    <div class="stat-card"><span>所属分组</span><strong>{% if bot.group %}<a href="/groups/{{ bot.group.id }}">{{ bot.group.name }}</a>{% else %}-{% endif %}</strong></div>
+    <div class="stat-card"><span>运行环境</span><strong>{{ bot.environment }}</strong></div>
+    <div class="stat-card"><span>配置模板</span><strong>{% if bot.config_template %}<a href="/templates/{{ bot.config_template.id }}">{{ bot.config_template.name }}</a>{% else %}-{% endif %}</strong></div>
+    <div class="stat-card"><span>启用渠道</span><strong>{{ health_summary.enabled_channels }}</strong></div>
+    <div class="stat-card"><span>启用插件</span><strong>{{ health_summary.enabled_bindings }}</strong></div>
+    <div class="stat-card"><span>会话数</span><strong>{{ health_summary.conversation_count }}</strong></div>
+  </div>
+  <p class="muted-text">标签：{{ bot_tags or '-' }}</p>
+</section>
+
+<section class="card">
+  <h2>关联渠道</h2>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th class="col-status">状态</th></tr></thead>
+    <tbody>
+      {% for item in channels %}
+      <tr><td class="col-id">{{ item.id }}</td><td><a href="/channels/{{ item.id }}">{{ item.name }}</a></td><td class="col-type">{{ item.channel_type|channel_type_label }}</td><td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td></tr>
+      {% else %}
+      <tr><td colspan="4"><div class="empty-state"><strong>暂无关联渠道</strong><p>创建渠道后，这里会显示接入状态。</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>插件绑定</h2>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th>插件</th><th class="col-status">状态</th><th>配置</th></tr></thead>
+    <tbody>
+      {% for item in bindings %}
+      <tr>
+        <td class="col-id">{{ item.id }}</td>
+        <td>
+          {% if item.plugin %}
+          <div>{{ item.plugin.display_name }}</div>
+          <div class="muted-text"><code>{{ item.plugin.code }}</code></div>
+          {% else %}
+          <div>插件 #{{ item.plugin_id }}</div>
+          {% endif %}
+        </td>
+        <td class="col-status"><span class="badge {% if item.status == 'enabled' %}badge-enabled{% else %}badge-disabled{% endif %}">{{ item.status }}</span></td>
+        <td>{{ item.config_json or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4"><div class="empty-state"><strong>当前还没有插件绑定</strong><p>到插件管理页绑定后，这里会显示配置和启停状态。</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<dialog class="app-modal" id="edit-bot-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <p class="section-kicker">Edit</p>
+        <h2>修改机器人</h2>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/bots/{{ bot.id }}/edit" class="form-grid">
+      <label><span>名称</span><input name="name" value="{{ bot.name }}" required /></label>
+      <label><span>标识 slug</span><input name="slug" value="{{ bot.slug }}" required /></label>
+      <label><span>命令前缀</span><input name="command_prefix" value="{{ bot.command_prefix }}" /></label>
+      <label><span>所属分组</span><select name="group_id"><option value="0">未分组</option>{% for group in groups %}<option value="{{ group.id }}" {% if bot.group_id == group.id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label>
+      <label><span>配置模板</span><select name="config_template_id"><option value="0">不绑定模板</option>{% for template in templates %}<option value="{{ template.id }}" {% if bot.config_template_id == template.id %}selected{% endif %}>{{ template.name }}</option>{% endfor %}</select></label>
+      <label><span>环境</span><select name="environment"><option value="prod" {% if bot.environment == 'prod' %}selected{% endif %}>prod</option><option value="test" {% if bot.environment == 'test' %}selected{% endif %}>test</option><option value="staging" {% if bot.environment == 'staging' %}selected{% endif %}>staging</option><option value="dev" {% if bot.environment == 'dev' %}selected{% endif %}>dev</option></select></label>
+      <label><span>是否启用</span><select name="is_enabled"><option value="true" {% if bot.is_enabled %}selected{% endif %}>启用</option><option value="false" {% if not bot.is_enabled %}selected{% endif %}>停用</option></select></label>
+      <label class="full-row"><span>标签</span><input name="tags" value="{{ bot_tags }}" placeholder="多个标签用逗号分隔" /></label>
+      <label class="full-row"><span>说明</span><textarea name="description" rows="4">{{ bot.description or '' }}</textarea></label>
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">保存修改</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<dialog class="app-modal" id="clone-bot-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <h2>复制机器人</h2>
+        <p class="muted-text">跨环境复制时会默认停用 cloned bot、渠道和插件绑定，避免把生产配置直接带到测试环境运行。</p>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/bots/{{ bot.id }}/clone" class="form-grid">
+      <label><span>新机器人名称</span><input name="name" value="{{ bot.name }}-副本" required /></label>
+      <label><span>新 slug</span><input name="slug" value="{{ bot.slug }}-clone" required /></label>
+      <label><span>目标环境</span><select name="environment"><option value="test">test</option><option value="staging">staging</option><option value="dev">dev</option><option value="prod">prod</option></select></label>
+      <label><span>复制渠道</span><select name="copy_channels"><option value="true">复制</option><option value="false">不复制</option></select></label>
+      <label><span>复制插件绑定</span><select name="copy_plugins"><option value="true">复制</option><option value="false">不复制</option></select></label>
+      <div class="full-row form-actions-inline">
+        <button class="btn btn-secondary" type="submit">创建副本</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endblock %}

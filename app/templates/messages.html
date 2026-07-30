@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>在这里筛选和查看消息记录，快速定位入站、出站和会话问题。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <span class="chip chip-outline">当前结果 {{ messages|length }}</span>
+  <a class="btn btn-secondary" href="/conversations">查看会话</a>
+</div>
+{% endblock %}
+{% block content %}
+{# 消息页是排障高频入口，筛选条件固定在独立卡片中，结果列表保持可扫读。 #}
+<section class="card filter-card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Search console</p>
+      <h2>消息筛选面板</h2>
+    </div>
+    <span class="chip chip-outline">快速筛选</span>
+  </div>
+  <p class="muted-text">支持按关键词、方向、机器人、渠道和会话类型筛选消息。</p>
+  <form method="get" action="/messages" class="form-grid">
+    <label>
+      <span>关键词</span>
+      <input name="keyword" value="{{ keyword or '' }}" placeholder="搜索内容、发送者或消息 ID" />
+    </label>
+    <label>
+      <span>方向</span>
+      <select name="direction">
+        <option value="" {% if not direction %}selected{% endif %}>全部</option>
+        <option value="in" {% if direction == 'in' %}selected{% endif %}>入站</option>
+        <option value="out" {% if direction == 'out' %}selected{% endif %}>出站</option>
+      </select>
+    </label>
+    <label>
+      <span>机器人</span>
+      <select name="bot_id">
+        <option value="0">全部</option>
+        {% for bot in bots %}
+        <option value="{{ bot.id }}" {% if bot_id == bot.id %}selected{% endif %}>{{ bot.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>渠道</span>
+      <select name="channel_id">
+        <option value="0">全部</option>
+        {% for channel in channels %}
+        <option value="{{ channel.id }}" {% if channel_id == channel.id %}selected{% endif %}>{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>会话类型</span>
+      <select name="chat_type">
+        <option value="" {% if not chat_type %}selected{% endif %}>全部</option>
+        <option value="group" {% if chat_type == 'group' %}selected{% endif %}>群聊</option>
+        <option value="direct" {% if chat_type == 'direct' %}selected{% endif %}>私聊</option>
+      </select>
+    </label>
+    <div class="full-row form-actions-inline">
+      <button class="btn" type="submit">筛选</button>
+      <a class="btn btn-secondary" href="/messages">重置</a>
+    </div>
+  </form>
+  <div class="stats-grid compact-grid top-gap">
+    <div class="stat-card nested-card">
+      <span>入站消息</span>
+      <strong>{{ messages | selectattr('direction', 'equalto', 'in') | list | length }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>出站消息</span>
+      <strong>{{ messages | selectattr('direction', 'equalto', 'out') | list | length }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>当前关键词</span>
+      <strong>{{ keyword or '未设置' }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>总匹配数</span>
+      <strong>{{ pagination.total if pagination else messages|length }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Result set</p>
+      <h2>消息列表</h2>
+    </div>
+    <div class="chip-row">
+      <span class="chip chip-muted">支持跨机器人 / 渠道筛选</span>
+      {% if pagination %}
+      <span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>
+      <span class="chip chip-muted">共 {{ pagination.total }} 条</span>
+      {% endif %}
+    </div>
+  </div>
+  {# 消息结果需要像日志一样快速扫读，因此把会话编号提升为独立窄列，内容列只负责正文预览。 #}
+  <table class="table table-tight message-record-table">
+    <thead><tr><th class="col-id">ID</th><th class="col-compact">会话</th><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th class="col-status">状态</th><th>内容</th></tr></thead>
+    <tbody>
+      {% for item in messages %}
+      <tr>
+        <td class="col-id">#{{ item.id }}</td>
+        <td class="col-compact"><a class="record-link" href="/conversations/{{ item.conversation_id }}">#{{ item.conversation_id }}</a></td>
+        <td class="col-dir"><span class="chip {% if item.direction == 'in' %}chip-success{% else %}chip-outline{% endif %}">{{ item.direction }}</span></td>
+        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+        <td>{{ item.sender_name or item.sender_id or '-' }}</td>
+        <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
+        <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
+        <td>
+          {% set message_content = item.content or '' %}
+          {% set message_short = message_content[:100] ~ ('...' if message_content|length > 100 else '') %}
+          {% if message_content|length > 100 %}
+          <details class="message-preview-card">
+            <summary class="message-preview-toggle">
+              <span class="message-preview-short">{{ message_short }}</span>
+              <span class="message-preview-toggle-collapsed">展开全文</span>
+              <span class="message-preview-toggle-expanded">收起</span>
+            </summary>
+            <div class="message-preview message-preview-full">{{ message_content }}</div>
+          </details>
+          {% else %}
+          <div class="message-preview">{{ message_content }}</div>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8">
+          <div class="empty-state">
+            <strong>没有匹配消息</strong>
+            <p>可以去掉关键词，或切换方向、机器人和渠道后重新筛选。</p>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pagination %}
+  <div class="list-pagination">
+    <div class="list-pagination-summary">
+      当前显示 {{ pagination.from_index }} - {{ pagination.to_index }} / {{ pagination.total }}
+    </div>
+    <div class="list-pagination-actions">
+      {% set pagination_prefix = '/messages' ~ ('?' ~ pagination.query ~ '&' if pagination.query else '?') %}
+      {% if pagination.has_prev %}
+      <a class="btn btn-secondary" href="{{ pagination_prefix }}page={{ pagination.prev_page }}">上一页</a>
+      {% else %}
+      <span class="btn btn-secondary is-disabled" aria-disabled="true">上一页</span>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="btn btn-secondary" href="{{ pagination_prefix }}page={{ pagination.next_page }}">下一页</a>
+      {% else %}
+      <span class="btn btn-secondary is-disabled" aria-disabled="true">下一页</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

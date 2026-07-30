@@ -1,0 +1,35 @@
+[plugin]
+code = "message_summary"
+display_name = "消息总结"
+plugin_type = "command"
+version = "1.0.0"
+author = "abot"
+description = "群消息总结"
+default_enabled = true
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["group"]
+message_types = ["text"]
+priority = 110
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["总结", "日报"]
+require_mention = false
+
+[runtime]
+enabled = true
+commands = ["总结", "日报"]
+max_messages = 100
+include_mentions = true
+min_messages = 5
+api_base = "http://192.168.2.240/v1"
+api_key = "app-McGLzBhBjeBCSEi7n83MtuTo"
+app_mode = "chat"
+workflow_input_key = "query"
+workflow_session_key = "conversation_id"
+request_timeout_seconds = 40
+render_as_image = true

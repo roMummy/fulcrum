@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <button class="btn" type="button" data-modal-open="create-template-modal">新建模板</button>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <h2>模板列表</h2>
+      <p class="muted-text">进入详情后可以查看被哪些机器人使用，并直接修改模板配置。</p>
+    </div>
+  </div>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">范围</th><th class="col-type">渠道类型</th><th class="col-type">环境</th><th class="col-count">绑定机器人</th><th class="col-status">状态</th><th>配置</th><th class="col-action">操作</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="col-id">{{ row.template.id }}</td>
+        <td>{{ row.template.name }}</td>
+        <td class="col-type">{{ row.template.template_scope }}</td>
+        <td class="col-type">{{ row.template.channel_type|channel_type_label if row.template.channel_type else '-' }}</td>
+        <td class="col-type">{{ row.template.environment }}</td>
+        <td class="col-count">{{ row.bot_count }}</td>
+        <td class="col-status">{{ 'enabled' if row.template.is_enabled else 'disabled' }}</td>
+        <td><code>{{ row.template.config_json or '-' }}</code></td>
+        <td class="col-action"><a class="btn btn-small" href="/templates/{{ row.template.id }}">详情</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<dialog class="app-modal" id="create-template-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <h2>新建模板</h2>
+        <p class="muted-text">把写入动作独立出来后，模板列表会更像一个纯浏览界面。</p>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/templates" class="form-grid">
+      <label><span>名称</span><input name="name" placeholder="例如：客服模板" required /></label>
+      <label><span>模板范围</span><select name="template_scope"><option value="bot">bot</option><option value="channel">channel</option></select></label>
+      <label><span>渠道类型</span><input name="channel_type" placeholder="例如：wechat_ipad" /></label>
+      <label><span>环境</span><select name="environment"><option value="shared">shared</option><option value="prod">prod</option><option value="test">test</option><option value="staging">staging</option></select></label>
+      <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
+      <label class="full-row"><span>说明</span><textarea name="description" rows="3" placeholder="说明模板适用场景"></textarea></label>
+      <label class="full-row"><span>配置 JSON</span><textarea name="config_json" rows="5" placeholder='例如：{"command_prefix": "/kf", "dm_policy": "allowlist"}'></textarea></label>
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">创建模板</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endblock %}

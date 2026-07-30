@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>查看插件 Manifest、绑定运行态、最近执行和调度结果，优先定位插件是否可加载、可执行、可调度。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/plugins">返回插件管理</a>
+  <span class="chip chip-outline">绑定 {{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Plugin Registry</p>
+      <h2>运行时注册表</h2>
+      <p class="muted-text">这里汇总每个插件的加载状态、能力标签和执行入口。</p>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card nested-card">
+      <span>功能型插件</span>
+      <strong>{{ runtime_summary.functional_total }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>已迁移功能型</span>
+      <strong>{{ runtime_summary.functional_migrated }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>可执行功能型</span>
+      <strong>{{ runtime_summary.functional_executable }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>启用绑定</span>
+      <strong>{{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</strong>
+    </div>
+  </div>
+  <table class="table">
+    <thead><tr><th>插件</th><th class="col-status">Manifest</th><th class="col-type">分类</th><th class="col-status">状态</th><th class="col-type">来源</th><th>能力清单</th><th>后台页面</th><th class="col-compact">Schema</th><th class="col-bool">执行入口</th></tr></thead>
+    <tbody>
+      {% for plugin in plugins %}
+      {% set runtime_info = plugin_runtime_map.get(plugin.code, {}) %}
+      <tr>
+        <td><a href="/plugins/{{ plugin.id }}">{{ plugin.display_name }}</a></td>
+        <td class="col-status">
+          <span class="badge {% if runtime_info.manifest_valid %}badge-enabled{% else %}badge-error{% endif %}">{{ 'valid' if runtime_info.manifest_valid else 'invalid' }}</span>
+          {% if runtime_info.manifest_errors %}
+          <div class="muted-text">详情页可查看错误</div>
+          {% endif %}
+        </td>
+        <td class="col-type">{{ runtime_info.plugin_category or '-' }}</td>
+        <td class="col-status">{{ runtime_info.migration_state or '-' }}</td>
+        <td class="col-type">{{ runtime_info.architecture_source or '-' }}</td>
+        <td>{{ runtime_info.capabilities|join(', ') if runtime_info.capabilities else '-' }}</td>
+        <td>
+          {% if runtime_info.admin_extension and runtime_info.admin_extension.enabled %}
+          <a href="{{ runtime_info.admin_extension.base_path }}">进入业务后台</a>
+          {% else %}
+          {{ runtime_info.admin_surfaces|join(', ') if runtime_info.admin_surfaces else '-' }}
+          {% endif %}
+        </td>
+        <td class="col-compact">{{ runtime_info.schema_version or '-' }}</td>
+        <td class="col-bool">{{ '可执行' if runtime_info.supports_execution else '不可执行' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <table class="table">
+    <thead><tr><th class="col-id">绑定ID</th><th>插件</th><th>Bot</th><th class="col-status">配置状态</th><th class="col-status">运行态</th><th class="col-type">分类</th><th class="col-status">迁移状态</th><th>能力清单</th><th class="col-time">最近重载</th><th class="col-time">最近执行</th><th>执行摘要</th><th>最近调度</th><th class="col-action">操作</th></tr></thead>
+    <tbody>
+      {% for card in binding_cards %}
+      {% set item = card.binding %}
+      {% set runtime_info = card.runtime_info %}
+      {% set dispatch_view = card.dispatch_view or {} %}
+      <tr>
+        <td class="col-id">{{ item.id }}</td>
+        <td><a href="/plugins/{{ item.plugin_id }}">{{ item.plugin.display_name }}</a></td>
+        <td>{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }})</td>
+        <td class="col-status"><span class="badge {% if item.status == 'enabled' %}badge-enabled{% else %}badge-disabled{% endif %}">{{ item.status }}</span></td>
+        <td class="col-status"><span class="badge {% if card.runtime_view.display_status in ['ready', 'running', 'enabled'] %}badge-enabled{% elif card.runtime_view.display_status in ['error', 'failed'] %}badge-error{% else %}badge-info{% endif %}">{{ card.runtime_view.display_status }}</span></td>
+        <td class="col-type">{{ runtime_info.plugin_category or '-' }}</td>
+        <td class="col-status">{{ runtime_info.migration_state or '-' }}</td>
+        <td>{{ runtime_info.capabilities|join(', ') if runtime_info.capabilities else '-' }}</td>
+        <td class="col-time">{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}</td>
+        <td class="col-time">{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}</td>
+        <td>{{ card.runtime_view.last_execution_summary or '-' }}</td>
+        <td>
+          {% if dispatch_view %}
+          <span class="badge {% if dispatch_view.status in ['ok', 'success', 'executed'] %}badge-enabled{% elif dispatch_view.status in ['blocked', 'failed', 'error'] %}badge-error{% else %}badge-info{% endif %}">{{ dispatch_view.status }}</span>
+          <div class="muted-text">原因：{{ dispatch_view.message or '-' }}</div>
+          {% if dispatch_view.execution_source and dispatch_view.execution_source != '-' %}
+          <div class="muted-text">来源：{{ dispatch_view.execution_source }}</div>
+          {% endif %}
+          {% if dispatch_view.blocked_by_plugin_code %}
+          <div class="muted-text">被 {{ dispatch_view.blocked_by_plugin_code }} 截断</div>
+          {% endif %}
+          {% if dispatch_view.stop_reason %}
+          <div class="muted-text">停止：{{ dispatch_view.stop_reason }}</div>
+          {% endif %}
+          {% else %}
+          -
+          {% endif %}
+        </td>
+        <td class="col-action">
+          <div class="actions">
+            <form method="post" action="/plugins/{{ item.id }}/toggle">
+              <button class="btn btn-small" type="submit">{{ '禁用' if item.status == 'enabled' else '启用' }}</button>
+            </form>
+            <form method="post" action="/plugins/{{ item.id }}/reload">
+              <button class="btn btn-small btn-secondary" type="submit">重载</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="13"><div class="empty-state"><strong>暂无插件绑定</strong><p>先在插件管理页把插件绑定到机器人。</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

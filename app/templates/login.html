@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="auth-showcase auth-showcase-single">
+  <section class="card login-card auth-form-card">
+    <div class="section-head auth-card-head">
+      <div>
+        <p class="section-kicker">Account Access</p>
+        <h2>登录后台</h2>
+      </div>
+      <span class="chip chip-outline">管理员入口</span>
+    </div>
+    <p class="muted-text">请输入已初始化的管理员账号信息。</p>
+    <form method="post" action="/login" class="form-grid auth-form-grid">
+      <label class="full-row"><span>用户名</span><input name="username" autocomplete="username" value="{{ prefill_username or '' }}" required /></label>
+      <label class="full-row"><span>密码</span><input name="password" type="password" autocomplete="current-password" required /></label>
+      {% if require_captcha %}
+      <input type="hidden" name="captcha_token" value="{{ captcha_token }}" />
+      <label class="full-row">
+        <span>验证码</span>
+        <div class="auth-captcha-row">
+          <div class="auth-captcha-question">{{ captcha_question }}</div>
+          <input name="captcha_answer" inputmode="numeric" autocomplete="off" placeholder="填写结果" required />
+        </div>
+      </label>
+      {% endif %}
+      <div class="full-row auth-form-actions">
+        <button class="btn auth-submit" type="submit">登录</button>
+      </div>
+    </form>
+    <div class="panel inset-panel auth-tip-panel">
+      <strong>提示</strong>
+      <p class="muted-text">如果你刚完成首次安装，请先重启当前服务，再重新打开后台页面。</p>
+      <p class="muted-text">连续输错多次后会启用验证码校验。</p>
+      {% if needs_bootstrap_admin %}
+      <p class="muted-text">当前还没有可用管理员账号，请访问 `/setup` 完成首次安装。</p>
+      {% endif %}
+    </div>
+  </section>
+</section>
+{% endblock %}

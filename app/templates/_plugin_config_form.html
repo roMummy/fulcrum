@@ -1,0 +1,36 @@
+{% if config_view.mode == 'schema' %}
+<div class="full-row">
+  <strong>结构化表单</strong>
+  <small>{{ config_view.description }}</small>
+</div>
+{% for field in config_view.fields %}
+<label class="{% if field.field_type == 'textarea' %}full-row{% endif %}">
+  <span>{{ field.label }}{% if field.sensitive %}（敏感）{% endif %}</span>
+  {% if field.field_type == 'select' %}
+  <select name="schema__{{ field.name }}">
+    {% for option in field.options %}
+    <option value="{{ option.value }}" {% if field.value == option.value %}selected{% endif %}>{{ option.label }}</option>
+    {% endfor %}
+  </select>
+  {% elif field.field_type == 'boolean' %}
+  <select name="schema__{{ field.name }}">
+    <option value="true" {% if field.value %}selected{% endif %}>是</option>
+    <option value="false" {% if not field.value %}selected{% endif %}>否</option>
+  </select>
+  {% elif field.field_type == 'textarea' %}
+  <textarea name="schema__{{ field.name }}" rows="4" placeholder="{{ field.placeholder }}">{{ field.render_value }}</textarea>
+  {% else %}
+  <input
+    type="{% if field.field_type == 'password' %}password{% elif field.field_type == 'number' %}number{% else %}text{% endif %}"
+    name="schema__{{ field.name }}"
+    value="{{ field.render_value }}"
+    placeholder="{{ field.placeholder }}"
+  />
+  {% endif %}
+  <small>{{ field.description }}{% if field.masked_value %} 当前已保存：{{ field.masked_value }}{% endif %}</small>
+</label>
+{% endfor %}
+<label class="full-row"><span>掩码 JSON 预览</span><textarea rows="4" disabled>{{ config_view.preview_json }}</textarea></label>
+{% else %}
+<label class="full-row"><span>配置 JSON</span><textarea name="config_json" rows="4">{{ config_view.raw_config_json }}</textarea></label>
+{% endif %}

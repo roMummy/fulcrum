@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>查看当前企微渠道下的用户联系人。这里不展示群成员，群成员仍在群管理里维护。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道</a>
+  <a class="btn" href="/channels/{{ channel.id }}/workwechat/contacts/new">新增联系人</a>
+  <span class="chip chip-outline">渠道 #{{ channel.id }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">WorkWechat Contacts</p>
+      <h2>渠道联系人</h2>
+      <p class="muted-text">{{ list_view.intro_summary }}</p>
+    </div>
+    <div class="actions">
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
+        <select name="contact_kind">
+          <option value="all">全部</option>
+          <option value="external_contact">外部联系人</option>
+          <option value="internal_member">内部成员</option>
+        </select>
+        <button class="btn btn-secondary" type="submit">同步联系人</button>
+      </form>
+      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card nested-card"><span>联系人总数</span><strong>{{ list_view.total }}</strong></div>
+    <div class="stat-card nested-card"><span>有效</span><strong>{{ list_view.status_counts.get('active', 0) }}</strong></div>
+    <div class="stat-card nested-card"><span>已删除</span><strong>{{ list_view.status_counts.get('deleted', 0) }}</strong></div>
+    <div class="stat-card nested-card"><span>外部联系人</span><strong>{{ list_view.kind_counts.get('external_contact', 0) }}</strong></div>
+    <div class="stat-card nested-card"><span>内部成员</span><strong>{{ list_view.kind_counts.get('internal_member', 0) }}</strong></div>
+  </div>
+</section>
+
+<section class="card">
+  <form method="get" action="/channels/{{ channel.id }}/workwechat/contacts" class="form-grid">
+    <label><span>搜索</span><input name="q" value="{{ list_view.filters.query }}" placeholder="姓名 / 手机 / 邮箱 / 公司 / ID" /></label>
+    <label><span>联系人类型</span><select name="contact_kind">
+      <option value="" {% if not list_view.filters.contact_kind %}selected{% endif %}>全部</option>
+      <option value="external_contact" {% if list_view.filters.contact_kind == 'external_contact' %}selected{% endif %}>外部联系人</option>
+      <option value="internal_member" {% if list_view.filters.contact_kind == 'internal_member' %}selected{% endif %}>内部成员</option>
+      <option value="unknown" {% if list_view.filters.contact_kind == 'unknown' %}selected{% endif %}>未知</option>
+    </select></label>
+    <label><span>同步状态</span><select name="sync_status">
+      <option value="" {% if not list_view.filters.sync_status %}selected{% endif %}>全部</option>
+      <option value="active" {% if list_view.filters.sync_status == 'active' %}selected{% endif %}>有效</option>
+      <option value="deleted" {% if list_view.filters.sync_status == 'deleted' %}selected{% endif %}>已删除</option>
+      <option value="missing" {% if list_view.filters.sync_status == 'missing' %}selected{% endif %}>同步缺失</option>
+      <option value="unknown" {% if list_view.filters.sync_status == 'unknown' %}selected{% endif %}>未知</option>
+    </select></label>
+    <div class="form-actions">
+      <button class="btn btn-secondary" type="submit">筛选</button>
+      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">清空</a>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  {% if list_view['items'] %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>联系人</th>
+        <th>类型</th>
+        <th>公司</th>
+        <th>手机 / 邮箱</th>
+        <th class="col-status">状态</th>
+        <th class="col-action">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in list_view['items'] %}
+      <tr>
+        <td>
+          <div><a href="{{ item.detail_url }}">{{ item.name }}</a></div>
+          <div class="muted-text value-break">{{ item.contact_external_id }}</div>
+        </td>
+        <td>{{ item.contact_kind_label }}</td>
+        <td>
+          <div>{{ item.corp_name }}</div>
+          <div class="muted-text">{{ item.position }}</div>
+        </td>
+        <td>
+          <div>{{ item.mobile }}</div>
+          <div class="muted-text">{{ item.email }}</div>
+        </td>
+        <td class="col-status"><span class="badge badge-{{ item.sync_status }}">{{ item.sync_status_label }}</span></td>
+        <td class="col-action"><a class="btn btn-secondary" href="{{ item.detail_url }}">查看</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted-text">当前渠道还没有联系人。可以先手动新增，或通过上方按钮从企微 Hook 同步联系人。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>按机器人、渠道和会话类型定位群聊或私聊，进入详情后查看消息流和上下文。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <span class="chip chip-outline">当前结果 {{ conversations|length }}</span>
+  <a class="btn btn-secondary" href="/messages">查看消息</a>
+</div>
+{% endblock %}
+{% block content %}
+{# 筛选与结果拆开，避免用户在同一张大卡片里混淆“设置条件”和“查看数据”。 #}
+<section class="card filter-card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Conversation Filter</p>
+      <h2>会话筛选</h2>
+      <p class="muted-text">先缩小机器人和渠道范围，再进入会话详情排查消息流。</p>
+    </div>
+    <span class="chip chip-outline">群聊 / 私聊</span>
+  </div>
+  <form method="get" action="/conversations" class="form-grid">
+    <label>
+      <span>机器人</span>
+      <select name="bot_id">
+        <option value="0">全部</option>
+        {% for bot in bots %}
+        <option value="{{ bot.id }}" {% if bot_id == bot.id %}selected{% endif %}>{{ bot.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>渠道</span>
+      <select name="channel_id">
+        <option value="0">全部</option>
+        {% for channel in channels %}
+        <option value="{{ channel.id }}" {% if channel_id == channel.id %}selected{% endif %}>{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>会话类型</span>
+      <select name="chat_type">
+        <option value="" {% if not chat_type %}selected{% endif %}>全部</option>
+        <option value="group" {% if chat_type == 'group' %}selected{% endif %}>群聊</option>
+        <option value="direct" {% if chat_type == 'direct' %}selected{% endif %}>私聊</option>
+      </select>
+    </label>
+    <div class="full-row form-actions-inline">
+      <button class="btn" type="submit">筛选</button>
+      <a class="btn btn-secondary" href="/conversations">重置</a>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Conversation Inventory</p>
+      <h2>会话列表</h2>
+    </div>
+    <span class="chip chip-muted">共 {{ conversations|length }} 条</span>
+  </div>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th>Bot</th><th class="col-type">渠道</th><th>外部会话ID</th><th>标题</th><th class="col-type">类型</th><th class="col-time">最后消息时间</th><th class="col-action">操作</th></tr></thead>
+    <tbody>
+      {% for item in conversations %}
+      <tr>
+        <td class="col-id">{{ item.id }}</td>
+        <td>{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }})</td>
+        <td class="col-type">{{ item.channel_type|channel_type_label }}</td>
+        <td>{{ item.external_id }}</td>
+        <td>{{ item.title or '-' }}</td>
+        <td class="col-type">{{ item.chat_type }}</td>
+        <td class="col-time">{{ item.last_message_at|bj_time if item.last_message_at else '-' }}</td>
+        <td class="col-action"><a class="btn btn-small" href="/conversations/{{ item.id }}">详情</a></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8">
+          <div class="empty-state">
+            <strong>没有匹配会话</strong>
+            <p>可以放宽筛选条件，或先确认渠道是否已有消息入站。</p>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

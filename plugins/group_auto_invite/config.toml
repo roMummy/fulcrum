@@ -1,0 +1,29 @@
+[plugin]
+code = "group_auto_invite"
+display_name = "自动拉群"
+plugin_type = "command"
+version = "1.0.0"
+author = "abot"
+description = "Migrated scaffold from abot group_auto_invite"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 110
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["group_auto_invite"]
+require_mention = false
+
+[runtime]
+enabled = true
+admin_user_ids = []
+invite_directly = true
+require_direct_chat = true
+response_prefix = ""
+mappings = {}

@@ -1,0 +1,35 @@
+{
+  "provider_host": "0.0.0.0",
+  "provider_port": 8060,
+  "callback_url": "http://192.168.2.142:8180/webhooks/CHANNEL_ID/inbound",
+  "callback_secret": "replace-with-channel-bot-token",
+  "callback_timeout_seconds": 10,
+  "poll_interval_seconds": 2.0,
+  "listen_chats": [
+    "测试群",
+    "张三"
+  ],
+  "auto_expand_listen": true,
+  "auto_expand_scan_interval_seconds": 30.0,
+  "auto_expand_max_chats": 200,
+  "chat_alias_map": {
+    "group:测试群": "测试群",
+    "user:张三": "张三"
+  },
+  "self_name": "我的微信",
+  "provider_token": "replace-with-provider-token",
+  "fail_on_missing_wxauto": false,
+  "download_media": true,
+  "media_download_async": true,
+  "media_download_dir": "downloads",
+  "media_download_initial_delay_seconds": 1.5,
+  "media_download_retry_count": 2,
+  "media_download_retry_delay_seconds": 2.0,
+  "startup_retry_seconds": 5.0,
+  "poll_error_retry_seconds": 3.0,
+  "debug_dump_raw_messages": true,
+  "debug_dump_dir": "debug_messages",
+  "debug_recent_message_limit": 50,
+  "fallback_poll_strategy": "disabled",
+  "fallback_poll_chat": ""
+}

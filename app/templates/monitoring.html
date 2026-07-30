@@ -1,0 +1,150 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>先看服务健康、未关闭告警和最近审计，再进入具体记录定位故障来源。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <form
+    method="post"
+    action="/monitoring/restart-app"
+    data-confirm-mode="confirm"
+    data-confirm-title="重启 Multi Bot Admin"
+    data-confirm-message="这会在服务器上执行 deploy_restart_mba.sh，服务会短暂中断，确认继续吗？"
+  >
+    <button class="btn" type="submit">重启服务</button>
+  </form>
+  <span class="chip chip-outline">运行观测页</span>
+  <span class="chip chip-muted">24h 视角</span>
+</div>
+{% endblock %}
+{% block content %}
+{# 运维动作单独放在顶部，避免和健康数据混在一起导致误操作。 #}
+<section class="card action-zone">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Operations</p>
+      <h2>服务运维动作</h2>
+      <p class="muted-text">点击“重启服务”会调用服务器上的 `scripts/deploy_restart_mba.sh`。如果服务正在重启，当前页面可能会短暂断开。</p>
+    </div>
+    <div class="chip-row">
+      <span class="chip chip-outline"><code>scripts/deploy_restart_mba.sh</code></span>
+      <span class="chip chip-muted"><code>.run/deploy-restart-trigger.log</code></span>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Overview</p>
+      <h2>健康检查中心</h2>
+    </div>
+    <span class="chip chip-outline">实时运营观测</span>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card accent-card"><span>健康检查总数</span><strong>{{ stats.health_checks }}</strong></div>
+    <div class="stat-card danger-soft"><span>未关闭告警</span><strong>{{ stats.open_alerts }}</strong></div>
+    <div class="stat-card"><span>审计日志</span><strong>{{ stats.audit_logs }}</strong></div>
+    <div class="stat-card"><span>最近 24h 消息</span><strong>{{ stats.messages_24h }}</strong></div>
+    <div class="stat-card"><span>最近 24h Webhook 异常</span><strong>{{ stats.webhook_failures_24h }}</strong></div>
+  </div>
+</section>
+
+<div class="panel-grid panel-grid-stacked">
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Checks</p>
+        <h2>最近健康检查</h2>
+      </div>
+    </div>
+    {# 监控记录会持续增长，外层限制高度，避免单个记录区把整页撑得过长。 #}
+    <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight ops-record-table">
+      <thead><tr><th class="col-id">ID</th><th class="col-type">范围</th><th>目标</th><th class="col-status">状态</th><th>摘要</th><th class="col-time">时间</th></tr></thead>
+      <tbody>
+        {% for item in recent_health_checks %}
+        <tr>
+          <td class="col-id">#{{ item.id }}</td>
+          <td class="col-type">{{ item.scope }}</td>
+          <td>{{ item.target_type }}{% if item.target_id %} #{{ item.target_id }}{% endif %}</td>
+          <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
+          <td>{{ item.summary }}</td>
+          <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state"><strong>暂无健康检查记录</strong><p>执行状态检查后会在这里留下结果。</p></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Alerts</p>
+        <h2>告警记录</h2>
+      </div>
+    </div>
+    {# 告警消息可能很长，限制表格视口后仍可在区域内纵向滚动查看全部未关闭告警。 #}
+    <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight ops-record-table">
+      <thead><tr><th class="col-id">ID</th><th>来源</th><th class="col-status">级别</th><th>标题</th><th class="col-status">状态</th><th class="col-time">时间</th><th class="col-action">操作</th></tr></thead>
+      <tbody>
+        {% for item in open_alerts %}
+        <tr>
+          <td class="col-id">#{{ item.id }}</td>
+          <td>{{ item.source }}</td>
+          <td class="col-status"><span class="badge badge-{{ item.level|lower }}">{{ item.level }}</span></td>
+          <td>
+            <div>{{ item.title }}</div>
+            <div class="muted-text">{{ item.message }}</div>
+          </td>
+          <td class="col-status">{{ item.status }}</td>
+          <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+          <td class="actions table-actions">
+            {# 告警处理走单步确认后的轻量闭环：点击后直接标记 resolved，让未关闭列表立即收敛。 #}
+            <form method="post" action="/monitoring/alerts/{{ item.id }}/resolve">
+              <button class="btn btn-small" type="submit">已处理</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="empty-state"><strong>暂无未关闭告警</strong><p>当前没有需要立即处理的告警。</p></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Audit trail</p>
+      <h2>操作留痕 / 审计日志</h2>
+    </div>
+  </div>
+  {# 审计日志保留最近操作但固定阅读窗口，避免大量明细影响后续模块布局。 #}
+  <div class="record-scroll-panel record-scroll-panel-lg">
+  <table class="table table-tight ops-record-table">
+    <thead><tr><th class="col-id">ID</th><th>操作者</th><th>动作</th><th>对象</th><th>明细</th><th class="col-time">时间</th></tr></thead>
+    <tbody>
+      {% for item in recent_audits %}
+      <tr>
+        <td class="col-id">#{{ item.id }}</td>
+        <td>{{ item.actor }}</td>
+        <td><code>{{ item.action }}</code></td>
+        <td>{{ item.target_type }}{% if item.target_id %} #{{ item.target_id }}{% endif %}</td>
+        <td>{{ item.detail or '-' }}</td>
+        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6"><div class="empty-state"><strong>暂无审计日志</strong><p>关键操作完成后会出现在这里。</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

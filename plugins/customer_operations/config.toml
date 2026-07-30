@@ -1,0 +1,24 @@
+[plugin]
+code = "customer_operations"
+display_name = "客户运营"
+plugin_type = "observer"
+version = "0.1.0"
+author = "multi-bot-admin"
+description = "统一接收业务系统客户触达请求，校验企微渠道联系人状态并进入出站队列。"
+default_enabled = false
+
+[capability]
+channel_types = ["workwechat"]
+chat_types = ["direct"]
+message_types = ["text", "image", "file", "link_card", "mini_program"]
+priority = 120
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["客户运营", "customer_operations"]
+require_mention = false
+
+[runtime]
+enabled = true
+public_api = "/api/workwechat/customer-operations"

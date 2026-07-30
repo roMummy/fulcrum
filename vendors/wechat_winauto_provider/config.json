@@ -1,0 +1,32 @@
+{
+  "provider_host": "0.0.0.0",
+  "provider_port": 8060,
+  "callback_url": "http://192.168.2.142:8180/webhooks/2/inbound",
+  "callback_secret": "replace-with-channel-bot-token",
+  "callback_timeout_seconds": 10,
+  "poll_interval_seconds": 5.0,
+  "listen_chats": [
+    "水牛",
+    "BOT-测试"
+  ],
+  "chat_alias_map": {
+    "group:BOT-测试": "BOT-测试",
+    "user:水牛": "水牛"
+  },
+  "self_name": "我的微信",
+  "provider_token": "replace-with-provider-token",
+  "fail_on_missing_wxauto": false,
+  "download_media": true,
+  "media_download_async": true,
+  "media_download_dir": "downloads",
+  "media_download_initial_delay_seconds": 1.5,
+  "media_download_retry_count": 2,
+  "media_download_retry_delay_seconds": 2.0,
+  "startup_retry_seconds": 5.0,
+  "poll_error_retry_seconds": 3.0,
+  "debug_dump_raw_messages": true,
+  "debug_dump_dir": "debug_messages",
+  "debug_recent_message_limit": 50,
+  "fallback_poll_strategy": "pinned",
+  "fallback_poll_chat": "BOT-测试"
+}

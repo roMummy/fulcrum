@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="auth-showcase">
+  <div class="auth-showcase-copy">
+    <p class="auth-eyebrow">First Run</p>
+    <h1>跟着这几步做，就能把后台先跑起来</h1>
+    <p class="auth-lead">如果你现在只是先装起来试跑，直接选内置 SQLite 就可以。只有你明确要接正式数据库时，再选择 MariaDB。</p>
+    <div class="auth-feature-list auth-step-grid">
+      <div class="auth-feature-item">
+        <strong>01 先选数据库</strong>
+        <span>大多数第一次安装，直接选“内置 SQLite”。简单、快、不用额外准备数据库。</span>
+      </div>
+      <div class="auth-feature-item">
+        <strong>02 创建管理员</strong>
+        <span>设置一个你自己记得住的管理员用户名和密码，后面就用它登录后台。</span>
+      </div>
+      <div class="auth-feature-item">
+        <strong>03 安装后重启</strong>
+        <span>系统会自动生成配置。你只需要按提示重启服务，再回来登录即可。</span>
+      </div>
+    </div>
+  </div>
+
+  <section class="card login-card auth-form-card">
+    <div class="section-head auth-card-head">
+      <div>
+        <p class="section-kicker">Setup Wizard</p>
+        <h2>首次安装引导</h2>
+      </div>
+      <span class="chip chip-outline">推荐新手直接用 SQLite</span>
+    </div>
+    <p class="muted-text">不用研究太多参数。按顺序填完下面几项，点一次按钮就可以完成安装。</p>
+    <form method="post" action="/setup" class="form-grid" id="setup-form">
+      <label class="full-row">
+        <span>数据库类型</span>
+        <select name="database_mode" id="database-mode">
+          <option value="sqlite" {% if form_data.database_mode != 'mariadb' %}selected{% endif %}>内置 SQLite（推荐首次安装）</option>
+          <option value="mariadb" {% if form_data.database_mode == 'mariadb' %}selected{% endif %}>MariaDB</option>
+        </select>
+      </label>
+
+      <div class="panel inset-panel full-row auth-tip-panel">
+        <strong>怎么选？</strong>
+        <p class="muted-text">如果你现在不确定，就选“内置 SQLite”。只有在你已经准备好了 MariaDB，并且确定要正式部署时，再选 MariaDB。</p>
+      </div>
+
+      <div id="mariadb-fields" class="full-row" style="{% if form_data.database_mode == 'mariadb' %}display:block{% else %}display:none{% endif %};">
+        <div class="form-grid">
+          <label><span>主机地址</span><input name="db_host" value="{{ form_data.db_host or '127.0.0.1' }}" /></label>
+          <label><span>端口</span><input name="db_port" value="{{ form_data.db_port or '3306' }}" /></label>
+          <label><span>数据库名</span><input name="db_name" value="{{ form_data.db_name or 'multi_bot_admin' }}" /></label>
+          <label><span>数据库用户</span><input name="db_user" value="{{ form_data.db_user or 'multi_bot_admin' }}" /></label>
+          <label class="full-row"><span>数据库密码</span><input name="db_password" type="password" value="{{ form_data.db_password or '' }}" /></label>
+        </div>
+        <details class="panel inset-panel auth-tip-panel" style="margin-top: 12px;">
+          <summary><strong>MariaDB 环境要求与建库命令（点击展开）</strong></summary>
+          <p class="muted-text" style="margin-top: 10px;">版本要求：建议 MariaDB 10.6 及以上（字符集 utf8mb4）。</p>
+          <p class="muted-text">请在 MariaDB 管理账号下执行以下命令：</p>
+          <pre><code>CREATE DATABASE IF NOT EXISTS `{{ form_data.db_name or 'multi_bot_admin' }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '{{ form_data.db_user or 'multi_bot_admin' }}'@'%' IDENTIFIED BY '请替换为你的数据库密码';
+GRANT ALL PRIVILEGES ON `{{ form_data.db_name or 'multi_bot_admin' }}`.* TO '{{ form_data.db_user or 'multi_bot_admin' }}'@'%';
+FLUSH PRIVILEGES;</code></pre>
+          <p class="muted-text">如果你只允许本机访问，请把 <code>'%'</code> 改成 <code>'localhost'</code>。</p>
+        </details>
+      </div>
+
+      <label><span>管理员用户名</span><input name="admin_username" required value="{{ form_data.admin_username or 'admin' }}" /></label>
+      <label><span>管理员显示名</span><input name="admin_display_name" required value="{{ form_data.admin_display_name or '管理员' }}" /></label>
+      <label><span>管理员密码</span><input name="admin_password" type="password" required /></label>
+      <label><span>确认密码</span><input name="admin_password_confirm" type="password" required /></label>
+      <label class="full-row"><span>SECRET_KEY</span><input name="secret_key" required value="{{ form_data.secret_key or generated_secret_key }}" /></label>
+
+      <div class="panel inset-panel full-row auth-tip-panel">
+        <strong>你需要知道的就这几件事</strong>
+        <p class="muted-text">1. SQLite 会直接用项目内置数据库，不需要你额外准备东西。</p>
+        <p class="muted-text">2. MariaDB 只有在你已经有数据库地址、账号、密码时才需要填写。</p>
+        <p class="muted-text">3. 安装完成后一定要重启服务。重启后再次打开后台，就会进入登录页。</p>
+      </div>
+
+      <div class="full-row auth-form-actions">
+        <button class="btn auth-submit" type="submit">下一步：完成安装</button>
+      </div>
+    </form>
+  </section>
+</section>
+
+<script>
+  (function () {
+    const mode = document.getElementById('database-mode');
+    const maria = document.getElementById('mariadb-fields');
+    if (!mode || !maria) return;
+    const sync = () => {
+      maria.style.display = mode.value === 'mariadb' ? 'block' : 'none';
+    };
+    mode.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+{% endblock %}

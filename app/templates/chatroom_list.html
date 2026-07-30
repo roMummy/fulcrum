@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>查看当前渠道下的群列表、成员同步情况和群内插件配置概况。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
+  {% if list_view.sync_action or channel.channel_type == 'wechat_ipad' or channel.channel_type == 'workwechat' %}
+  <form method="post" action="{{ list_view.sync_action or ('/channels/' ~ channel.id ~ '/wechat-ipad/sync-chatrooms') }}">
+    <button class="btn btn-secondary" type="submit">{{ list_view.sync_button_label or '同步全部群资料' }}</button>
+  </form>
+  {% endif %}
+  <span class="chip chip-outline">渠道 #{{ channel.id }}</span>
+  <span class="chip chip-muted">{{ channel.name }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">Chatrooms</p>
+      <h2>群列表总览</h2>
+      <p class="muted-text">{{ list_view.intro_summary or '这里先看完整群列表；进入单群详情后，可以继续查看成员列表和插件配置。' }}</p>
+    </div>
+    <div class="chip-row">
+      <span class="chip chip-outline">群 {{ list_view.total }}</span>
+      <span class="chip chip-outline">插件绑定 {{ list_view.binding_total }}</span>
+      <span class="chip {% if list_view.overridden_chatroom_count %}chip-success{% else %}chip-muted{% endif %}">已覆盖 {{ list_view.overridden_chatroom_count }}</span>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card"><span>群总数</span><strong>{{ list_view.total }}</strong></div>
+    <div class="stat-card"><span>待启用群</span><strong>{{ list_view.pending_chatroom_count or 0 }}</strong></div>
+    <div class="stat-card"><span>已启用管理</span><strong>{{ list_view.active_chatroom_count or 0 }}</strong></div>
+    <div class="stat-card"><span>已停用</span><strong>{{ list_view.disabled_chatroom_count or 0 }}</strong></div>
+    <div class="stat-card"><span>有成员快照的群</span><strong>{{ list_view.member_snapshot_chatroom_count }}</strong></div>
+    <div class="stat-card"><span>继承 bot_plugin 的群</span><strong>{{ list_view.inherited_chatroom_count }}</strong></div>
+    <div class="stat-card"><span>存在群级覆盖的群</span><strong>{{ list_view.overridden_chatroom_count }}</strong></div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">Registry</p>
+      <h2>手动登记群</h2>
+      <p class="muted-text">还没收到消息的群也可以先手工登记。登记后默认处于待启用状态，确认后再打开。</p>
+    </div>
+  </div>
+  <form method="post" action="/channels/{{ channel.id }}/chatrooms/create" class="form-grid">
+    <label><span>群外部 ID</span><input name="external_id" placeholder="{% if channel.channel_type == 'wechat_ipad' %}例如：123456@chatroom{% else %}例如：group:运营群{% endif %}" required /></label>
+    <label><span>群名称</span><input name="name" placeholder="例如：运营群" /></label>
+    <label><span>备注</span><input name="remark" placeholder="例如：核心业务群" /></label>
+    <label class="full-row"><span>操作备注</span><textarea name="operator_note" rows="2" placeholder="例如：提前登记，待群内确认后启用"></textarea></label>
+    <div class="full-row"><button class="btn" type="submit">创建群登记</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">Checklist</p>
+      <h2>群清单</h2>
+      <p class="muted-text">每一行都可以进入单群详情，查看成员信息和该群的插件配置。</p>
+    </div>
+    <span class="chip chip-outline">{{ list_view["items"]|length }} 条记录</span>
+  </div>
+  {% if list_view["items"] %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>群</th>
+        <th class="col-status">状态</th>
+        <th class="col-compact">成员快照</th>
+        <th>角色概览</th>
+        <th>插件权限概况</th>
+        <th class="col-time">最近同步</th>
+        <th class="col-action">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in list_view["items"] %}
+      <tr>
+        <td>
+          <div><a href="/channels/{{ channel.id }}/chatrooms/{{ item.id }}">{{ item.name }}</a></div>
+          <div class="muted-text"><code>{{ item.external_id }}</code></div>
+          <div class="muted-text">群主 {{ item.owner_external_id }}</div>
+        </td>
+        <td class="col-status">
+          <div>{{ item.status_label }}</div>
+          <div class="muted-text">管理 {{ item.management_status_label }}</div>
+          <div class="muted-text">{{ item.sync_depth_label }}</div>
+          <div class="muted-text">来源 {{ item.observed_source }}</div>
+        </td>
+        <td class="col-compact">
+          <div>接口成员数 {{ item.member_count }}</div>
+          <div class="muted-text">本地成员记录 {{ item.member_record_count }}</div>
+        </td>
+        <td>{{ item.member_role_summary }}</td>
+        <td>
+          <div>总绑定 {{ item.scope_total }} / 覆盖 {{ item.scope_overridden }}</div>
+          <div class="muted-text">继承 {{ item.scope_inherited }}</div>
+          <div class="muted-text">有效启用 {{ item.scope_effective_enabled }} / 停用 {{ item.scope_effective_disabled }}</div>
+        </td>
+        <td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td>
+        <td class="col-action">
+          <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ item.id }}/management" style="margin-bottom:8px;">
+            <input type="hidden" name="management_status" value="{% if item.is_active %}disabled{% else %}enabled{% endif %}" />
+            <button class="btn btn-secondary" type="submit">{% if item.is_active %}停用该群{% else %}启用该群{% endif %}</button>
+          </form>
+          <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms/{{ item.id }}">查看成员与权限</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted-text">{{ list_view.empty_state_message or '当前还没有群数据，可以先等待消息进入，或手动执行同步。' }}</p>
+{% endif %}
+</section>
+{% endblock %}

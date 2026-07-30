@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
+  <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">进入业务后台</a>
+  {% endif %}
+  <button class="btn" type="button" data-modal-open="create-plugin-binding-modal">绑定到机器人</button>
+  <a class="btn btn-secondary" href="/plugins/runtime">查看全部运行状态</a>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="plugin-detail-hero">
+    <div>
+      <div class="chip-row">
+        <span class="chip chip-outline">{{ plugin.plugin_type or '插件' }}</span>
+        <span class="chip {% if plugin_runtime_info.manifest_valid %}chip-success{% else %}chip-muted{% endif %}">
+          {{ '状态正常' if plugin_runtime_info.manifest_valid else '需要处理' }}
+        </span>
+        <span class="chip {% if plugin_runtime_info.supports_execution %}chip-success{% else %}chip-muted{% endif %}">
+          {{ '可执行' if plugin_runtime_info.supports_execution else '仅配置型' }}
+        </span>
+      </div>
+      <h2 class="plugin-detail-title">{{ plugin.display_name }}</h2>
+      <p class="plugin-detail-description">{{ plugin.description or '这个插件暂时还没有补充描述。' }}</p>
+    </div>
+    <div class="plugin-detail-summary">
+      <div><span>插件编码</span><strong><code>{{ plugin.code }}</code></strong></div>
+      <div><span>默认状态</span><strong>{{ '默认启用' if plugin.default_enabled else '默认关闭' }}</strong></div>
+      <div><span>版本</span><strong>{{ plugin.version or '-' }}</strong></div>
+      <div><span>作者</span><strong>{{ plugin.author or '-' }}</strong></div>
+    </div>
+  </div>
+
+  <div class="plugin-detail-meta-grid">
+    <div class="subcard">
+      <strong>适用范围</strong>
+      <p class="muted-text">渠道：{{ plugin_runtime_info.channel_types|join('、') if plugin_runtime_info.channel_types else '未限制' }}</p>
+      <p class="muted-text">会话：{{ plugin_runtime_info.chat_types|join('、') if plugin_runtime_info.chat_types else '未限制' }}</p>
+      <p class="muted-text">消息：{{ plugin_runtime_info.message_types|join('、') if plugin_runtime_info.message_types else '未限制' }}</p>
+    </div>
+    <div class="subcard">
+      <strong>触发方式</strong>
+      <p class="muted-text">命令：{{ plugin_runtime_info.commands|join('、') if plugin_runtime_info.commands else '无固定命令' }}</p>
+      <p class="muted-text">是否必须提及：{{ '是' if plugin_runtime_info.require_mention else '否' }}</p>
+      <p class="muted-text">能力标签：{{ plugin_runtime_info.capabilities|join('、') if plugin_runtime_info.capabilities else '暂无' }}</p>
+    </div>
+  </div>
+</section>
+
+{% if plugin_runtime_info.manifest_errors or plugin_runtime_info.manifest_warnings %}
+<section class="card">
+  <h2>使用提醒</h2>
+  {% if plugin_runtime_info.manifest_errors %}
+  <div class="plugin-overview-alert plugin-overview-alert-danger">
+    <strong>当前插件还不能正常加载</strong>
+    <p>{{ plugin_runtime_info.manifest_errors|join('；') }}</p>
+  </div>
+  {% endif %}
+  {% if plugin_runtime_info.manifest_warnings %}
+  <div class="plugin-overview-alert plugin-overview-alert-warning">
+    <strong>当前插件还有一些提示项</strong>
+    <p>{{ plugin_runtime_info.manifest_warnings|join('；') }}</p>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <h2>当前绑定</h2>
+      <p class="muted-text">这里可以查看绑定状态、最近执行结果和配置入口。更多运行信息请到运行状态页查看。</p>
+    </div>
+  </div>
+  {% for card in binding_cards %}
+  {% set item = card.binding %}
+  {% set dispatch_view = card.dispatch_view or {} %}
+  <article class="plugin-binding-card">
+    <div class="plugin-binding-card-head">
+      <div>
+        <h3>{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }})</h3>
+        <div class="chip-row">
+          <span class="chip {% if item.status == 'enabled' %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if item.status == 'enabled' else '已停用' }}</span>
+          <span class="chip chip-outline">运行态 {{ card.runtime_view.display_status }}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-small btn-secondary" type="button" data-modal-open="edit-plugin-binding-{{ item.id }}">修改配置</button>
+        <form method="post" action="/plugins/{{ item.id }}/reload">
+          <button class="btn btn-small btn-secondary" type="submit">重载</button>
+        </form>
+      </div>
+    </div>
+    <div class="plugin-detail-meta-grid">
+      <div class="subcard">
+        <strong>最近执行</strong>
+        <p class="muted-text">时间：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}</p>
+        <p class="muted-text">摘要：{{ card.runtime_view.last_execution_summary or '-' }}</p>
+      </div>
+      <div class="subcard">
+        <strong>最近调度</strong>
+        <p class="muted-text">状态：{{ dispatch_view.status or '-' }}</p>
+        <p class="muted-text">说明：{{ dispatch_view.message or '-' }}</p>
+      </div>
+    </div>
+  </article>
+
+  <dialog class="app-modal" id="edit-plugin-binding-{{ item.id }}">
+    <div class="app-modal-card">
+      <div class="app-modal-head">
+        <div>
+          <h2>修改绑定配置</h2>
+          <p class="muted-text">{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }}) / {{ item.plugin.display_name if item.plugin else ('插件 #' ~ item.plugin_id) }}</p>
+        </div>
+        <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+      </div>
+      <form method="post" action="/plugins/{{ item.id }}/edit" class="form-grid">
+        <label><span>状态</span><select name="status">
+          <option value="enabled" {% if item.status == 'enabled' %}selected{% endif %}>启用</option>
+          <option value="disabled" {% if item.status == 'disabled' %}selected{% endif %}>停用</option>
+        </select></label>
+        <label><span>最近重载</span><input value="{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}" disabled /></label>
+        {% with config_view=card.config_view %}
+          {% include '_plugin_config_form.html' %}
+        {% endwith %}
+        <div class="full-row form-actions-inline">
+          <button class="btn" type="submit">保存配置</button>
+          <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+  {% else %}
+  <p class="muted-text">这个插件当前还没有绑定到任何机器人。</p>
+  {% endfor %}
+</section>
+
+<dialog class="app-modal" id="create-plugin-binding-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <h2>绑定到机器人</h2>
+        <p class="muted-text">这里给插件新建一个机器人绑定。日常只需要选择机器人和开关状态，详细配置可以后面再补。</p>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/plugins/bind" class="form-grid">
+      <input type="hidden" name="plugin_id" value="{{ plugin.id }}" />
+      <label><span>机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
+      <label><span>状态</span><select name="status"><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
+      {% with config_view=plugin_config_view %}
+        {% include '_plugin_config_form.html' %}
+      {% endwith %}
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">保存绑定</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<section class="card">
+  <details>
+    <summary><strong>查看技术信息</strong></summary>
+    <div class="plugin-detail-tech">
+      <div class="plugin-detail-meta-grid">
+        <div class="subcard">
+          <strong>目录与架构</strong>
+          <p class="muted-text">插件分类：{{ plugin_runtime_info.plugin_category or '-' }}</p>
+          <p class="muted-text">迁移状态：{{ plugin_runtime_info.migration_state or '-' }}</p>
+          <p class="muted-text">架构来源：{{ plugin_runtime_info.architecture_source or '-' }}</p>
+          <p class="muted-text">配置来源：{% if plugin_config_view.mode == 'schema' %}{{ plugin_config_view.title }} / {{ plugin_config_view.schema_version }}{% else %}仅 JSON 配置{% endif %}</p>
+        </div>
+        <div class="subcard">
+          <strong>执行参数</strong>
+          <p class="muted-text">执行能力：{{ plugin_runtime_info.execution_capability or '-' }}</p>
+          <p class="muted-text">优先级：{{ plugin_runtime_info.priority or '-' }}</p>
+          <p class="muted-text">消费策略：{{ plugin_runtime_info.consume_policy or '-' }}</p>
+          <p class="muted-text">超时：{{ plugin_runtime_info.timeout_ms or '-' }}</p>
+        </div>
+      </div>
+      <div class="plugin-detail-meta-grid">
+        <div class="subcard">
+          <strong>文件位置</strong>
+          <p class="muted-text">Config TOML：{{ plugin_runtime_info.config_path or '-' }}</p>
+          <p class="muted-text">逻辑入口：{{ plugin_runtime_info.entrypoint_path or '-' }}</p>
+          <p class="muted-text">后台页面：{{ plugin_runtime_info.admin_surfaces|join('、') if plugin_runtime_info.admin_surfaces else '-' }}</p>
+        </div>
+        <div class="subcard">
+          <strong>Manifest</strong>
+          <p class="muted-text">校验状态：{{ 'valid' if plugin_runtime_info.manifest_valid else 'invalid' }}</p>
+          <p class="muted-text">错误：{{ plugin_runtime_info.manifest_errors|join('；') if plugin_runtime_info.manifest_errors else '-' }}</p>
+          <p class="muted-text">提示：{{ plugin_runtime_info.manifest_warnings|join('；') if plugin_runtime_info.manifest_warnings else '-' }}</p>
+        </div>
+      </div>
+    </div>
+  </details>
+</section>
+{% endblock %}

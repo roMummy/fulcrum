@@ -1,0 +1,29 @@
+[plugin]
+code = "jd_sign_token"
+display_name = "京东签到令牌"
+plugin_type = "command"
+version = "1.1.0"
+author = "abot"
+description = "迁移自 abot 的京东签到令牌插件，支持向青龙面板新增或更新 JD_COOKIE。"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["设置京东", "jd_sign_token", "jd_token"]
+require_mention = false
+
+[runtime]
+enable = true
+command = ["设置京东", "jd_sign_token", "jd_token"]
+ql_host = "http://localhost:5700"
+client_id = ""
+client_secret = ""
+env_name = "JD_COOKIE"

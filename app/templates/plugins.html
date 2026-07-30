@@ -1,0 +1,280 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="stats-grid compact-grid">
+    <div class="stat-card nested-card">
+      <span>功能型插件</span>
+      <strong>{{ runtime_summary.functional_total }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>已迁移功能型</span>
+      <strong>{{ runtime_summary.functional_migrated }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>可执行功能型</span>
+      <strong>{{ runtime_summary.functional_executable }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>启用绑定</span>
+      <strong>{{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>Manifest 异常</span>
+      <strong>{{ runtime_summary.manifest_invalid }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>Manifest 告警</span>
+      <strong>{{ runtime_summary.manifest_warning }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <h2>机器人插件开关</h2>
+      <p class="muted-text">直接按机器人展开插件开关。没绑定过的插件，第一次打开时会自动创建绑定并启用。</p>
+    </div>
+    <span class="chip chip-outline">{{ plugin_toggle_matrix|length }} 个机器人</span>
+  </div>
+  {% if plugin_toggle_matrix %}
+  <div class="plugin-toggle-stack">
+    {% for row in plugin_toggle_matrix %}
+    <details class="plugin-toggle-panel" data-bot-panel="{{ row.bot_id }}" {% if open_bot_id == row.bot_id %}open{% endif %}>
+      <summary class="plugin-toggle-panel-head">
+        <div>
+          <h3>{{ row.bot_name }}</h3>
+          <p class="muted-text" data-enabled-summary>环境 {{ row.environment }}，当前启用 {{ row.enabled_count }} / {{ row.total_count }}</p>
+        </div>
+        <span class="plugin-toggle-summary-hint">展开配置插件开关</span>
+      </summary>
+      <div class="plugin-toggle-grid">
+        {% for item in row["items"] %}
+        <form method="post" action="/plugins/toggle-direct" class="plugin-switch-card {% if item.is_enabled %}plugin-switch-card-enabled{% endif %}" data-plugin-switch-form>
+          <input type="hidden" name="bot_id" value="{{ row.bot_id }}" />
+          <input type="hidden" name="plugin_id" value="{{ item.plugin_id }}" />
+          <input type="hidden" name="redirect_to" value="/plugins" />
+          <input type="hidden" name="open_bot_id" value="{{ row.bot_id }}" />
+          <div class="plugin-switch-copy">
+            <strong>{{ item.plugin_name }}</strong>
+            <p><code>{{ item.plugin_code }}</code></p>
+          </div>
+          <div class="plugin-switch-meta">
+            <span class="chip {% if item.status_tone == 'success' %}chip-success{% elif item.status_tone == 'outline' %}chip-outline{% else %}chip-muted{% endif %}" data-status-chip>{{ item.status_label }}</span>
+            {% if item.is_bound %}
+            <span class="chip chip-muted" data-bind-chip>已绑定</span>
+            {% else %}
+            <span class="chip chip-outline" data-bind-chip>未绑定</span>
+            {% endif %}
+            {% if item.supports_execution %}
+            <span class="chip chip-success">可执行</span>
+            {% endif %}
+          </div>
+          <button class="plugin-switch-toggle" type="submit" aria-label="{{ '关闭' if item.is_enabled else '开启' }} {{ item.plugin_name }}" data-toggle-button>
+            <span class="plugin-switch-track {% if item.is_enabled %}plugin-switch-track-on{% endif %}" data-toggle-track>
+              <span class="plugin-switch-thumb"></span>
+            </span>
+            <span data-toggle-label>{{ '关闭' if item.is_enabled else '开启' }}</span>
+          </button>
+          <p class="muted-text plugin-switch-feedback" data-plugin-feedback hidden></p>
+        </form>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="notice-card">
+    <strong>当前还没有机器人</strong>
+    <p>先创建机器人后，这里就可以直接按开关启停插件了。</p>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+(() => {
+  const forms = document.querySelectorAll('[data-plugin-switch-form]');
+  if (!forms.length) return;
+  for (const form of forms) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = form.querySelector('[data-toggle-button]');
+      const label = form.querySelector('[data-toggle-label]');
+      const track = form.querySelector('[data-toggle-track]');
+      const statusChip = form.querySelector('[data-status-chip]');
+      const bindChip = form.querySelector('[data-bind-chip]');
+      const feedback = form.querySelector('[data-plugin-feedback]');
+      const panel = form.closest('[data-bot-panel]');
+      const summary = panel ? panel.querySelector('[data-enabled-summary]') : null;
+      const previousLabel = label ? label.textContent : '';
+      if (button) button.disabled = true;
+      if (label) label.textContent = '处理中';
+      if (feedback) {
+        feedback.hidden = true;
+        feedback.textContent = '';
+      }
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: new FormData(form),
+          credentials: 'same-origin',
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.detail || payload.notice || '操作失败');
+        }
+        const isEnabled = Boolean(payload.is_enabled);
+        form.classList.toggle('plugin-switch-card-enabled', isEnabled);
+        if (track) track.classList.toggle('plugin-switch-track-on', isEnabled);
+        if (label) label.textContent = payload.button_label || (isEnabled ? '关闭' : '开启');
+        if (statusChip) {
+          statusChip.textContent = payload.status_label || (isEnabled ? '已启用' : '已停用');
+          statusChip.classList.remove('chip-success', 'chip-outline', 'chip-muted');
+          statusChip.classList.add(payload.status_tone === 'success' ? 'chip-success' : payload.status_tone === 'outline' ? 'chip-outline' : 'chip-muted');
+        }
+        if (bindChip) {
+          bindChip.textContent = payload.is_bound ? '已绑定' : '未绑定';
+          bindChip.classList.remove('chip-outline', 'chip-muted');
+          bindChip.classList.add(payload.is_bound ? 'chip-muted' : 'chip-outline');
+        }
+        if (summary) {
+          summary.textContent = summary.textContent.replace(/当前启用\s+\d+\s*\/\s*\d+/, `当前启用 ${payload.enabled_count} / ${payload.total_count}`);
+        }
+        if (feedback) {
+          feedback.hidden = false;
+          feedback.textContent = payload.notice || '已更新';
+        }
+      } catch (error) {
+        if (label) label.textContent = previousLabel || '重试';
+        if (feedback) {
+          feedback.hidden = false;
+          feedback.textContent = error instanceof Error ? error.message : '操作失败';
+        }
+      } finally {
+        if (button) button.disabled = false;
+        if (label && label.textContent === '处理中') {
+          label.textContent = previousLabel || '开启';
+        }
+      }
+    });
+  }
+})();
+</script>
+
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <h2>插件清单</h2>
+      <p class="muted-text">改成卡片视图后，每个插件的状态、能力和异常会更容易横向比较。</p>
+    </div>
+    <div class="actions">
+      <form method="post" action="/plugins/refresh">
+        <button class="btn btn-secondary" type="submit">刷新插件目录</button>
+      </form>
+      <a class="btn btn-secondary" href="/plugins/runtime">运行状态页</a>
+    </div>
+  </div>
+  <form method="get" action="/plugins" class="form-grid">
+    <label><span>搜索</span><input type="text" name="q" value="{{ plugin_filters.q }}" placeholder="名称 / 编码 / 描述 / 作者" /></label>
+    <label><span>插件类型</span><select name="plugin_type">{% for value, label in plugin_filter_options.plugin_types %}<option value="{{ value }}" {% if plugin_filters.plugin_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label><span>分类</span><select name="category">{% for value, label in plugin_filter_options.categories %}<option value="{{ value }}" {% if plugin_filters.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label><span>迁移状态</span><select name="migration_state">{% for value, label in plugin_filter_options.migration_states %}<option value="{{ value }}" {% if plugin_filters.migration_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label><span>执行能力</span><select name="execution_state">{% for value, label in plugin_filter_options.execution_states %}<option value="{{ value }}" {% if plugin_filters.execution_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label><span>Manifest</span><select name="manifest_state">{% for value, label in plugin_filter_options.manifest_states %}<option value="{{ value }}" {% if plugin_filters.manifest_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <div class="full-row actions">
+      <button class="btn" type="submit">搜索筛选</button>
+      <a class="btn btn-secondary" href="/plugins">清空条件</a>
+    </div>
+  </form>
+  <p class="muted-text">当前显示 {{ filtered_plugin_count }} / {{ total_plugin_count }} 个插件。</p>
+  {% if plugins %}
+  <div class="plugin-card-grid">
+    {% for plugin in plugins %}
+    {% set runtime_info = plugin_runtime_map.get(plugin.code, {}) %}
+    {% set has_manifest_errors = runtime_info.manifest_errors %}
+    {% set has_manifest_warnings = runtime_info.manifest_warnings %}
+    <article class="plugin-overview-card {% if has_manifest_errors %}plugin-overview-card-danger{% elif has_manifest_warnings %}plugin-overview-card-warning{% endif %}">
+      <div class="plugin-overview-head">
+        <div class="plugin-overview-title">
+          <a href="/plugins/{{ plugin.id }}">{{ plugin.display_name }}</a>
+          <p><code>{{ plugin.code }}</code></p>
+        </div>
+        <div class="plugin-overview-badges">
+          <span class="badge {% if runtime_info.manifest_valid %}badge-enabled{% else %}badge-error{% endif %}">
+            {{ 'Manifest 正常' if runtime_info.manifest_valid else 'Manifest 异常' }}
+          </span>
+          <span class="badge {% if runtime_info.supports_execution %}badge-info{% else %}badge-disabled{% endif %}">
+            {{ '可执行' if runtime_info.supports_execution else '不可执行' }}
+          </span>
+          <span class="badge {% if plugin.default_enabled %}badge-enabled{% else %}badge-disabled{% endif %}">
+            {{ '默认启用' if plugin.default_enabled else '默认关闭' }}
+          </span>
+        </div>
+      </div>
+
+      <p class="plugin-overview-description">{{ plugin.description or '暂无插件描述。' }}</p>
+
+      <div class="plugin-overview-meta">
+        <div><span>类型</span><strong>{{ plugin.plugin_type or '-' }}</strong></div>
+        <div><span>分类</span><strong>{{ runtime_info.plugin_category or '-' }}</strong></div>
+        <div><span>迁移状态</span><strong>{{ runtime_info.migration_state or '-' }}</strong></div>
+        <div><span>版本</span><strong>{{ plugin.version or '-' }}</strong></div>
+        <div><span>架构</span><strong>{{ runtime_info.architecture_source or 'legacy-json' }}</strong></div>
+        <div><span>作者</span><strong>{{ plugin.author or '-' }}</strong></div>
+      </div>
+
+      <div class="chip-row plugin-overview-tags">
+        {% if runtime_info.capabilities %}
+          {% for capability in runtime_info.capabilities %}
+          <span class="chip chip-muted">{{ capability }}</span>
+          {% endfor %}
+        {% else %}
+        <span class="chip chip-muted">暂无能力标签</span>
+        {% endif %}
+      </div>
+
+      {% if runtime_info.entrypoint_path %}
+      <p class="muted-text plugin-overview-path">入口：{{ runtime_info.entrypoint_path }}</p>
+      {% endif %}
+
+      {% if has_manifest_errors %}
+      <div class="plugin-overview-alert plugin-overview-alert-danger">
+        <strong>Manifest 错误</strong>
+        <p>{{ runtime_info.manifest_errors|join('；') }}</p>
+      </div>
+      {% elif has_manifest_warnings %}
+      <div class="plugin-overview-alert plugin-overview-alert-warning">
+        <strong>Manifest 提示</strong>
+        <p>{{ runtime_info.manifest_warnings|join('；') }}</p>
+      </div>
+      {% endif %}
+
+      <div class="plugin-overview-actions">
+        <a class="btn btn-secondary" href="/plugins/{{ plugin.id }}">查看详情</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="notice-card">
+    <strong>当前筛选条件下没有插件</strong>
+    <p>可以先清空筛选条件，或者刷新插件目录重新扫描。</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="toolbar">
+    <h2>后续操作</h2>
+    <div class="actions">
+      <a class="btn btn-secondary" href="/plugins/runtime">查看绑定运行态</a>
+    </div>
+  </div>
+  <p>当前页面只保留目录扫描结果、目录元信息和快速绑定入口。</p>
+  <p>机器人-插件绑定的启停、重载、运行摘要请前往 <a href="/plugins/runtime">/plugins/runtime</a>；已自动发现 schema 的结构化配置请前往单插件详情页。</p>
+</section>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>在这里管理机器人的各个接入渠道，查看配置状态并执行常用操作。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <button class="btn" type="button" data-modal-open="create-channel-modal">新增渠道</button>
+  <span class="chip chip-outline">总渠道 {{ channels|length }}</span>
+  <span class="chip">{{ bots|length }} 个机器人可绑定</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Coverage</p>
+      <h2>接入态势</h2>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card nested-card">
+      <span>启用中</span>
+      <strong>{{ channels | selectattr('is_enabled') | list | length }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>已配置 Webhook</span>
+      <strong>{{ channels | selectattr('webhook_path') | list | length }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>已录入 Token</span>
+      <strong>{{ channels | selectattr('bot_token_masked') | list | length }}</strong>
+    </div>
+    <div class="stat-card nested-card">
+      <span>Adapter Config</span>
+      <strong>{{ channels | selectattr('adapter_config_json') | list | length }}</strong>
+    </div>
+  </div>
+  <p class="muted-text">这些指标可以帮助你快速确认哪些渠道已经接通、哪些还缺少关键配置。</p>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Channel inventory</p>
+      <h2>渠道列表</h2>
+    </div>
+    <span class="chip chip-outline">当前清单</span>
+  </div>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">Adapter Config</th><th class="col-type">DM 策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
+    <tbody>
+      {% for channel in channels %}
+      {% set workwechat_cloud_poll_config = workwechat_cloud_poll_config_map.get(channel.id, {}) if workwechat_cloud_poll_config_map else {} %}
+      {% set is_workwechat_cloud_poll = channel.channel_type == 'workwechat' and workwechat_cloud_poll_config.workwechat_delivery_mode == 'cloud_poll' %}
+      <tr>
+        <td class="col-id">#{{ channel.id }}</td>
+        <td>
+          <div>{{ channel.name }}</div>
+          <div class="muted-text">{{ bot_name_map.get(channel.bot_id, 'Bot') }} (#{{ channel.bot_id }})</div>
+        </td>
+        <td class="col-type"><span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span></td>
+        <td>{{ '云端模式不需要' if is_workwechat_cloud_poll else (channel.api_base or '-') }}</td>
+        <td>{{ channel.bot_token_masked or '-' }}</td>
+        <td>{{ channel.webhook_path or '-' }}</td>
+        <td class="col-status"><span class="chip {% if channel.adapter_config_json %}chip-success{% else %}chip-muted{% endif %}">{{ '已配置' if channel.adapter_config_json else '缺失' }}</span></td>
+        <td class="col-type"><code>{{ channel.dm_policy }}</code></td>
+        <td class="col-status"><span class="badge badge-{{ channel.status|lower }}">{{ channel.status }}</span></td>
+        <td class="col-action"><a class="btn btn-small" href="/channels/{{ channel.id }}">详情</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<dialog class="app-modal" id="create-channel-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <p class="section-kicker">Provisioning</p>
+        <h2>新增渠道</h2>
+        <p class="muted-text">新增入口改成弹窗后，主页面会更专注在渠道状态和清单上。</p>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/channels" class="form-grid">
+      <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
+      <label><span>渠道名称</span><input name="name" placeholder="例如：微信主通道" required /></label>
+      <label><span>渠道类型</span><select name="channel_type" required>{% for item in builtin_channel_types %}<option value="{{ item }}">{{ item|channel_type_label }}</option>{% endfor %}</select></label>
+      <label><span>API Base</span><input name="api_base" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
+      <label><span>Bot Token</span><input name="bot_token" type="password" placeholder="仅首次录入或更新时填写" /></label>
+      <label><span>Webhook Path</span><input name="webhook_path" placeholder="/wechat/webhook" /></label>
+      <label><span>DM 策略</span><select name="dm_policy"><option value="allowlist">allowlist</option><option value="allow">allow</option><option value="deny">deny</option></select></label>
+      <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
+      <label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="2" placeholder="多个 ID 用逗号分隔"></textarea></label>
+      <div class="full-row card subcard" style="padding:16px;">
+        <p class="section-kicker">Wechat iPad 可选代理</p>
+        <p class="muted-text" style="margin-top:0;">仅在 `wechat_ipad` 渠道时生效。需要登录代理时，直接填写这里即可，不用自己拼接 JSON。</p>
+        <div class="panel-grid panel-grid-balanced">
+          <label><span>代理地址</span><input name="proxy_host" placeholder="例如：1.2.3.4" /></label>
+          <label><span>代理端口</span><input name="proxy_port" placeholder="例如：8080" /></label>
+          <label><span>代理用户名</span><input name="proxy_username" placeholder="可留空" /></label>
+          <label><span>代理密码</span><input name="proxy_password" type="password" placeholder="可留空" /></label>
+        </div>
+      </div>
+      <label class="full-row"><span>Adapter Config JSON</span><textarea name="adapter_config_json" rows="5" placeholder='{"wxid":"wxid_xxx","device_id":"..."}'></textarea></label>
+      <p class="muted-text full-row" style="margin:0;">`workwechat` 推荐生成云端授权码后走 WS/拉取模式，`API Base` 可留空；只有直连 HTTP provider 或 `wechat_ipad` 才需要填写 `API Base`。</p>
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">创建渠道</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endblock %}

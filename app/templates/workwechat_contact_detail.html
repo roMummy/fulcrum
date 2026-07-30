@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% set is_create = mode == 'create' %}
+{% set form_action = '/channels/' ~ channel.id ~ '/workwechat/contacts' if is_create else '/channels/' ~ channel.id ~ '/workwechat/contacts/' ~ detail.id ~ '/edit' %}
+{% block page_intro %}
+<p>维护当前企微渠道下的用户联系人。联系人资料独立于群成员快照。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">返回联系人</a>
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道</a>
+  <span class="chip chip-outline">渠道 #{{ channel.id }}</span>
+  {% if detail %}<span class="chip {% if detail.sync_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ detail.sync_status_label }}</span>{% endif %}
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">Contact Profile</p>
+      <h2>{{ '新增联系人' if is_create else detail.name }}</h2>
+      <p class="muted-text">这里保存的是渠道联系人，不会写入群成员表。</p>
+    </div>
+    {% if detail and detail.sync_status != 'deleted' %}
+    <form method="post" action="/channels/{{ channel.id }}/workwechat/contacts/{{ detail.id }}/mark-deleted" class="actions">
+      <select name="delete_reason">
+        <option value="deleted_by_contact">客户删除了我方账号</option>
+        <option value="deleted_by_staff">我方删除了客户</option>
+        <option value="sync_missing">同步缺失</option>
+        <option value="manual_archive">手动归档</option>
+      </select>
+      <input name="delete_event_key" placeholder="事件 key，可选" />
+      <button class="btn btn-danger" type="submit">标记删除</button>
+    </form>
+    {% elif detail %}
+    <form method="post" action="/channels/{{ channel.id }}/workwechat/contacts/{{ detail.id }}/restore">
+      <button class="btn" type="submit">恢复有效</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <form method="post" action="{{ form_action }}" class="form-grid">
+    <label><span>联系人类型</span><select name="contact_kind">
+      {% set current_kind = contact.contact_kind if contact else 'external_contact' %}
+      <option value="external_contact" {% if current_kind == 'external_contact' %}selected{% endif %}>外部联系人</option>
+      <option value="internal_member" {% if current_kind == 'internal_member' %}selected{% endif %}>内部成员</option>
+      <option value="unknown" {% if current_kind == 'unknown' %}selected{% endif %}>未知</option>
+    </select></label>
+    <label><span>联系人外部 ID</span><input name="contact_external_id" value="{{ contact.contact_external_id if contact else '' }}" placeholder="external_userid 或 userid" required /></label>
+    <label><span>直聊 conversation_id</span><input name="conversation_external_id" value="{{ contact.conversation_external_id if contact and contact.conversation_external_id else '' }}" placeholder="S:..." /></label>
+    <label><span>external_userid</span><input name="external_userid" value="{{ contact.external_userid if contact and contact.external_userid else '' }}" /></label>
+    <label><span>userid</span><input name="userid" value="{{ contact.userid if contact and contact.userid else '' }}" /></label>
+    <label><span>名称</span><input name="name" value="{{ contact.name if contact and contact.name else '' }}" required /></label>
+    <label><span>展示名</span><input name="display_name" value="{{ contact.display_name if contact and contact.display_name else '' }}" /></label>
+    <label><span>别名</span><input name="alias" value="{{ contact.alias if contact and contact.alias else '' }}" /></label>
+    <label><span>手机</span><input name="mobile" value="{{ contact.mobile if contact and contact.mobile else '' }}" /></label>
+    <label><span>邮箱</span><input name="email" value="{{ contact.email if contact and contact.email else '' }}" /></label>
+    <label><span>公司简称</span><input name="corp_name" value="{{ contact.corp_name if contact and contact.corp_name else '' }}" /></label>
+    <label><span>公司全称</span><input name="corp_full_name" value="{{ contact.corp_full_name if contact else '' }}" /></label>
+    <label><span>corp_id</span><input name="corp_id" value="{{ contact.corp_id if contact else '' }}" /></label>
+    <label><span>职位</span><input name="position" value="{{ contact.position if contact and contact.position else '' }}" /></label>
+    <label class="full-row"><span>头像 URL</span><input name="avatar_url" value="{{ contact.avatar_url if contact and contact.avatar_url else '' }}" /></label>
+    <label><span>性别</span><select name="gender">
+      {% set current_gender = contact.gender if contact else 'unknown' %}
+      <option value="unknown" {% if current_gender == 'unknown' %}selected{% endif %}>未知</option>
+      <option value="male" {% if current_gender == 'male' %}selected{% endif %}>男</option>
+      <option value="female" {% if current_gender == 'female' %}selected{% endif %}>女</option>
+    </select></label>
+    <label><span>账号类型</span><select name="contact_type">
+      {% set current_type = contact.contact_type if contact else 'unknown' %}
+      <option value="unknown" {% if current_type == 'unknown' %}selected{% endif %}>未知</option>
+      <option value="wechat" {% if current_type == 'wechat' %}selected{% endif %}>微信</option>
+      <option value="workwechat" {% if current_type == 'workwechat' %}selected{% endif %}>企业微信</option>
+    </select></label>
+    <label><span>我方 owner userid</span><input name="owner_userid" value="{{ detail.relations[0].owner_userid if detail and detail.relations else '' }}" /></label>
+    <label><span>我方 owner 名称</span><input name="owner_name" value="{{ detail.relations[0].owner_name if detail and detail.relations else '' }}" /></label>
+    <label class="full-row"><span>关系备注</span><input name="remark" value="{{ detail.relations[0].remark if detail and detail.relations and detail.relations[0].remark != '-' else '' }}" /></label>
+    <div class="form-actions">
+      <button class="btn" type="submit">{{ '创建联系人' if is_create else '保存联系人' }}</button>
+    </div>
+  </form>
+</section>
+
+{% if detail %}
+<section class="card">
+  <div class="toolbar">
+    <div>
+      <p class="section-kicker">Relations</p>
+      <h2>联系关系</h2>
+      <p class="muted-text">客户删除我方账号时，关系会标记删除；联系人主记录仍保留。</p>
+    </div>
+  </div>
+  {% if detail.relations %}
+  <table class="table">
+    <thead><tr><th>Owner</th><th>状态</th><th>备注</th><th>删除原因</th><th>创建时间</th></tr></thead>
+    <tbody>
+      {% for relation in detail.relations %}
+      <tr>
+        <td><div>{{ relation.owner_name }}</div><div class="muted-text">{{ relation.owner_userid }}</div></td>
+        <td><span class="badge badge-{{ relation.relationship_status }}">{{ relation.relationship_status_label }}</span></td>
+        <td>{{ relation.remark }}</td>
+        <td>{{ relation.delete_reason }}</td>
+        <td>{{ relation.createtime|bj_time if relation.createtime else '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted-text">当前联系人还没有 owner 关系。</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

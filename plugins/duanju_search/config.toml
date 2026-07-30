@@ -1,0 +1,26 @@
+[plugin]
+code = "duanju_search"
+display_name = "短剧搜索"
+plugin_type = "command"
+version = "1.0.0"
+author = "abot"
+description = "根据关键词搜索短剧结果，迁移自 abot"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["短剧", "短剧搜索", "搜索短剧", "短剧查询"]
+require_mention = false
+
+[runtime]
+api_url = "https://api.uuuka.com/api/search"
+result_limit = 3
+default_timeout = 10

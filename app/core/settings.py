@@ -1,0 +1,63 @@
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = "Multi Bot Admin"
+    app_env: str = "dev"
+    data_dir: str = str(Path(__file__).resolve().parents[2] / "data")
+    log_dir: str = str(Path(__file__).resolve().parents[2] / "logs")
+    vendors_dir: str = str(Path(__file__).resolve().parents[2] / "vendors")
+    database_url: str = f"sqlite:///{Path(__file__).resolve().parents[2] / 'data' / 'app.db'}"
+    database_echo: bool = False
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_recycle_seconds: int = 1800
+    database_pool_timeout_seconds: int = 30
+    plugins_dir: str = str(Path(__file__).resolve().parents[2] / "plugins")
+    secret_key: str = "change-me"
+    log_level: str = "INFO"
+    log_file_max_bytes: int = 10 * 1024 * 1024
+    # RotatingFileHandler backupCount counts backup files only.
+    # Use 9 backups so total files per log stream is at most 10 (current + 9 backups).
+    log_file_backup_count: int = 9
+    auth_seed_demo_users: bool | None = None
+    auth_bootstrap_admin_username: str = ""
+    auth_bootstrap_admin_password: str = ""
+    auth_bootstrap_admin_display_name: str = "Bootstrap Admin"
+    auth_cookie_max_age_seconds: int = 43200
+    auth_cookie_secure: bool | None = None
+    auth_cookie_samesite: str = "lax"
+    tool_api_key: str = ""
+    # 对外可访问的 MBA 基址。云端拉取模式下 provider 可能不在 MBA 同一台机器，
+    # 如果后台通过 127.0.0.1 登录，必须用这个配置生成文件下载链接，避免 provider 下载时连到自己的本机。
+    public_base_url: str = ""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def is_dev_like(self) -> bool:
+        return self.app_env.strip().lower() in {"dev", "local", "demo", "test"}
+
+    @property
+    def should_seed_demo_users(self) -> bool:
+        if self.auth_seed_demo_users is not None:
+            return self.auth_seed_demo_users
+        return False
+
+    @property
+    def should_use_secure_cookie(self) -> bool:
+        if self.auth_cookie_secure is not None:
+            return self.auth_cookie_secure
+        return not self.is_dev_like
+
+    @property
+    def has_bootstrap_admin_config(self) -> bool:
+        return bool(self.auth_bootstrap_admin_username.strip() and self.auth_bootstrap_admin_password)
+
+
+settings = Settings()
+Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
+Path(settings.log_dir).mkdir(parents=True, exist_ok=True)
+Path(settings.plugins_dir).mkdir(parents=True, exist_ok=True)
+Path(settings.vendors_dir).mkdir(parents=True, exist_ok=True)

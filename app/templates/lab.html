@@ -1,0 +1,267 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>用一个内置实验台测试进站调度、插件匹配、自动出站预览和手工出站，不再依赖外部渠道先跑通系统闭环。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <span class="chip chip-outline">Plugin Testbench</span>
+  <span class="chip chip-muted">Inbound + Outbound</span>
+</div>
+{% endblock %}
+{% block content %}
+<div class="panel-grid">
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Inbound</p>
+        <h2>进站实验</h2>
+      </div>
+      <span class="chip chip-outline">默认 dry-run 自动出站</span>
+    </div>
+    <form method="post" action="/lab/inbound" class="form-grid">
+      <label>
+        <span>渠道</span>
+        <select name="channel_id">
+          {% for channel in channels %}
+          <option value="{{ channel.id }}"{% if inbound_form.channel_id == channel.id %} selected{% endif %}>#{{ channel.id }} {{ channel.name }} / {{ channel.channel_type|channel_type_label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>会话 ID</span>
+        <input name="conversation_external_id" value="{{ inbound_form.conversation_external_id }}" required />
+      </label>
+      <label>
+        <span>会话标题</span>
+        <input name="conversation_title" value="{{ inbound_form.conversation_title }}" />
+      </label>
+      <label>
+        <span>聊天类型</span>
+        <select name="chat_type">
+          <option value="group"{% if inbound_form.chat_type == 'group' %} selected{% endif %}>group</option>
+          <option value="direct"{% if inbound_form.chat_type == 'direct' %} selected{% endif %}>direct</option>
+        </select>
+      </label>
+      <label>
+        <span>发送者 ID</span>
+        <input name="sender_id" value="{{ inbound_form.sender_id }}" />
+      </label>
+      <label>
+        <span>发送者名</span>
+        <input name="sender_name" value="{{ inbound_form.sender_name }}" />
+      </label>
+      <label>
+        <span>消息类型</span>
+        <select name="message_type">
+          <option value="text"{% if inbound_form.message_type == 'text' %} selected{% endif %}>text</option>
+          <option value="image"{% if inbound_form.message_type == 'image' %} selected{% endif %}>image</option>
+          <option value="event"{% if inbound_form.message_type == 'event' %} selected{% endif %}>event</option>
+        </select>
+      </label>
+      <label>
+        <span>事件类型</span>
+        <input name="event_type" value="{{ inbound_form.event_type }}" />
+      </label>
+      <label class="full-row">
+        <span>消息内容</span>
+        <textarea name="content" rows="4">{{ inbound_form.content }}</textarea>
+      </label>
+      <label class="full-row">
+        <span>最近消息记录</span>
+        <textarea name="recent_messages_text" rows="4" placeholder="每行一条，供 message_summary 等插件作为 recent_messages 输入">{{ inbound_form.recent_messages_text }}</textarea>
+      </label>
+      <label>
+        <span>事件键</span>
+        <input name="event_key" value="{{ inbound_form.event_key }}" />
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="mentioned_self" value="true"{% if inbound_form.mentioned_self %} checked{% endif %} />
+        <span>模拟 @ 自己</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="dry_run_outbound" value="true"{% if inbound_form.dry_run_outbound %} checked{% endif %} />
+        <span>自动出站仅预览，不真实发送</span>
+      </label>
+      <div class="full-row">
+        <button class="btn" type="submit">执行进站实验</button>
+      </div>
+    </form>
+
+    {% if inbound_result %}
+    <div class="stats-grid compact-grid">
+      <div class="stat-card"><span>Raw Event</span><strong>{{ inbound_result.raw_event_id or '-' }}</strong></div>
+      <div class="stat-card"><span>Mapped</span><strong>{{ 'yes' if inbound_result.mapped else 'no' }}</strong></div>
+    </div>
+    <div class="panel-grid panel-grid-stacked">
+      <section class="card nested-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Normalized</p>
+            <h2>标准化事件</h2>
+          </div>
+        </div>
+        <pre>{{ inbound_result.normalized_json }}</pre>
+      </section>
+      <section class="card nested-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Dispatch</p>
+            <h2>调度结果</h2>
+          </div>
+        </div>
+        <pre>{{ inbound_result.dispatch_json }}</pre>
+      </section>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <p class="section-kicker">Outbound</p>
+        <h2>出站实验</h2>
+      </div>
+      <span class="chip chip-outline">支持预览或真实发送</span>
+    </div>
+    <form method="post" action="/lab/outbound" class="form-grid">
+      <label>
+        <span>渠道</span>
+        <select name="channel_id">
+          {% for channel in channels %}
+          <option value="{{ channel.id }}"{% if outbound_form.channel_id == channel.id %} selected{% endif %}>#{{ channel.id }} {{ channel.name }} / {{ channel.channel_type|channel_type_label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>会话 ID</span>
+        <input name="conversation_external_id" value="{{ outbound_form.conversation_external_id }}" required />
+      </label>
+      <label>
+        <span>会话标题</span>
+        <input name="conversation_title" value="{{ outbound_form.conversation_title }}" />
+      </label>
+      <label>
+        <span>聊天类型</span>
+        <select name="chat_type">
+          <option value="group"{% if outbound_form.chat_type == 'group' %} selected{% endif %}>group</option>
+          <option value="direct"{% if outbound_form.chat_type == 'direct' %} selected{% endif %}>direct</option>
+        </select>
+      </label>
+      <label>
+        <span>消息类型</span>
+        <select name="message_type">
+          <option value="text"{% if outbound_form.message_type == 'text' %} selected{% endif %}>text</option>
+          <option value="image"{% if outbound_form.message_type == 'image' %} selected{% endif %}>image</option>
+          <option value="file"{% if outbound_form.message_type == 'file' %} selected{% endif %}>file</option>
+          <option value="voice"{% if outbound_form.message_type == 'voice' %} selected{% endif %}>voice</option>
+          <option value="video"{% if outbound_form.message_type == 'video' %} selected{% endif %}>video</option>
+        </select>
+      </label>
+      <label class="full-row">
+        <span>消息内容</span>
+        <textarea name="content" rows="4">{{ outbound_form.content }}</textarea>
+      </label>
+      <label class="full-row">
+        <span>附加 Payload JSON</span>
+        <textarea name="extra_payload_json" rows="5" placeholder='例如：{"xml":"<appmsg>...</appmsg>"}'>{{ outbound_form.extra_payload_json }}</textarea>
+      </label>
+      <div class="full-row hero-action-cluster">
+        <button class="btn btn-secondary" type="submit" name="submit_mode" value="preview">预览出站</button>
+        <button class="btn" type="submit" name="submit_mode" value="send">真实发送</button>
+      </div>
+    </form>
+
+    {% if outbound_result %}
+    <div class="stats-grid compact-grid">
+      <div class="stat-card"><span>Mode</span><strong>{{ outbound_result.mode or '-' }}</strong></div>
+      <div class="stat-card"><span>Message ID</span><strong>{{ outbound_result.message_id or '-' }}</strong></div>
+      <div class="stat-card"><span>Status</span><strong>{{ 'ok' if outbound_result.ok else 'error' }}</strong></div>
+      <div class="stat-card"><span>Adapter</span><strong>{{ outbound_result.adapter_provider or '-' }}</strong></div>
+    </div>
+    <div class="panel-grid panel-grid-stacked">
+      <section class="card nested-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Payload</p>
+            <h2>出站请求</h2>
+          </div>
+        </div>
+        <pre>{{ outbound_result.payload_json }}</pre>
+      </section>
+      {% if outbound_result.adapter_json %}
+      <section class="card nested-card">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Adapter</p>
+            <h2>Adapter 回执</h2>
+          </div>
+        </div>
+        <pre>{{ outbound_result.adapter_json }}</pre>
+      </section>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Conversation</p>
+      <h2>当前实验会话</h2>
+    </div>
+    {% if active_conversation %}
+    <span class="chip chip-outline">#{{ active_conversation.id }} / {{ active_conversation.channel_type|channel_type_label }}</span>
+    {% else %}
+    <span class="chip chip-muted">未选中会话</span>
+    {% endif %}
+  </div>
+  {% if active_conversation %}
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th class="col-status">状态</th><th>内容</th></tr></thead>
+    <tbody>
+      {% for item in active_messages %}
+      <tr>
+        <td class="col-id">#{{ item.id }}</td>
+        <td class="col-dir">{{ item.direction }}</td>
+        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+        <td>{{ item.sender_name or item.sender_id or '-' }}</td>
+        <td class="col-type">{{ item.message_type }}</td>
+        <td class="col-status">{{ item.status }}{% if item.external_status %} / {{ item.external_status }}{% endif %}</td>
+        <td>{{ item.content }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7">当前会话暂无消息</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted-text">执行一次进站实验或出站发送后，这里会显示对应会话里的消息记录。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Recent</p>
+      <h2>最近会话</h2>
+    </div>
+  </div>
+  <table class="table">
+    <thead><tr><th class="col-id">ID</th><th class="col-type">渠道</th><th>外部会话 ID</th><th>标题</th><th class="col-type">类型</th></tr></thead>
+    <tbody>
+      {% for item in recent_conversations %}
+      <tr>
+        <td class="col-id">#{{ item.id }}</td>
+        <td class="col-type">{{ item.channel_type|channel_type_label }}{% if item.channel_id %} / #{{ item.channel_id }}{% endif %}</td>
+        <td>{{ item.external_id }}</td>
+        <td>{{ item.title or '-' }}</td>
+        <td class="col-type">{{ item.chat_type }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">暂无会话记录</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

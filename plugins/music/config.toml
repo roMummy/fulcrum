@@ -1,0 +1,27 @@
+[plugin]
+code = "music"
+display_name = "音乐点播"
+plugin_type = "command"
+version = "1.0.0"
+author = "abot"
+description = "搜索歌曲并返回音乐卡片，迁移自 abot"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌"]
+require_mention = false
+
+[runtime]
+music_api_url = "http://192.168.2.240:5000"
+song_api_url = ""
+detail_level = "exhigh"
+default_timeout = 10

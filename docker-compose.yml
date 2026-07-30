@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-bot-admin
+    restart: unless-stopped
+    ports:
+      # 主服务容器端口统一为 8180，避开 Windows 主机常见 TCP 排除端口段。
+      - "8180:8180"
+    env_file:
+      - .env.docker
+    volumes:
+      - ./plugins:/app/plugins
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: multi-bot-admin-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: multi_bot_admin
+      MARIADB_USER: multi_bot_admin
+      MARIADB_PASSWORD: multi_bot_admin_pass
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mariadb_data:

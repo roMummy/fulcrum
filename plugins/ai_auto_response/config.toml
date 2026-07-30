@@ -1,0 +1,36 @@
+[plugin]
+code = "ai_auto_response"
+display_name = "AI自动回复"
+plugin_type = "ai"
+version = "1.0.0"
+author = "abot"
+description = "Migrated scaffold from abot ai_auto_response"
+default_enabled = false
+
+[capability]
+# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 140
+consume_policy = "continue"
+timeout_ms = 12000
+
+[matcher]
+commands = ["ai_auto_response"]
+require_mention = false
+
+[runtime]
+enabled = true
+api_base = "http://192.168.2.240/v1"
+api_key = "app-u5EnYq3ill19bm6pWJwGkY4D"
+app_mode = "workflow"
+workflow_input_key = "query"
+workflow_session_key = "conversation_id"
+request_timeout_seconds = 40
+history_limit = 8
+trigger_direct_chat = true
+trigger_group_mention = true
+trigger_group_probability = 0.0
+min_group_history = 3
+system_prompt = "You are a concise and friendly chat assistant in a multi-user conversation. Reply naturally in Chinese, keep it short, and avoid repeating the recent chat."

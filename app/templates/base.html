@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ page_title }} - Multi Bot Admin</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="{% if request.url.path in ['/login', '/setup', '/setup/completed'] %}auth-shell{% else %}app-shell{% endif %}">
+  <a class="skip-link" href="#main-content">跳到主内容</a>
+  {% if request.url.path in ['/login', '/setup', '/setup/completed'] %}
+  <main class="auth-layout" id="main-content" tabindex="-1">
+    <section class="auth-panel">
+      <div class="auth-brand">
+        <span class="brand-mark">MB</span>
+        <div>
+          <strong>Multi Bot Admin</strong>
+          <p>多机器人、渠道、消息与运行监控控制台</p>
+        </div>
+      </div>
+      {% if notice %}
+      <section class="notice-card{% if notice_tone == 'danger' %} notice-card-danger{% endif %}">{{ notice }}</section>
+      {% endif %}
+  {% else %}
+  <div class="app-frame">
+    {# 顶部菜单栏是本轮 UI 重构确认保留的主导航结构，后续页面只在模块内补二级入口。 #}
+    <header class="topbar">
+      <div class="topbar-main">
+        <a href="/" class="brand">
+          <span class="brand-mark">MB</span>
+          <span class="brand-copy">
+            <strong>Multi Bot Admin</strong>
+            <small>Operations Console</small>
+          </span>
+        </a>
+        {% set visible_nav_items = primary_nav_items|default(nav_items) %}
+        {% set overflow_nav_items = secondary_nav_items|default([]) %}
+        <nav class="topnav" aria-label="主导航">
+          {% for item in visible_nav_items %}
+          <a
+            href="{{ item.href }}"
+            class="nav-link{% if item.active %} active{% endif %}"
+          >{{ item.label }}</a>
+          {% endfor %}
+          {% if overflow_nav_items %}
+          <details class="nav-more"{% if secondary_nav_active %} open{% endif %}>
+            <summary class="nav-link nav-more-trigger{% if secondary_nav_active %} active{% endif %}">更多</summary>
+            <div class="nav-more-menu">
+              {% for item in overflow_nav_items %}
+              <a
+                href="{{ item.href }}"
+                class="nav-more-link{% if item.active %} active{% endif %}"
+              >{{ item.label }}</a>
+              {% endfor %}
+            </div>
+          </details>
+          {% endif %}
+        </nav>
+      </div>
+      {% if current_user %}
+      <div class="topbar-side">
+        <div class="identity-chip">
+          <span class="chip-label">当前用户</span>
+          <strong>{{ current_user.display_name }}</strong>
+          <span>{{ current_user.role }}</span>
+        </div>
+        <div class="topbar-actions">
+          <a class="btn btn-secondary btn-small" href="/profile/password">账号安全</a>
+          {% if current_user.role == "admin" %}
+          <a class="btn btn-secondary btn-small" href="/users">账号管理</a>
+          {% endif %}
+          <form method="post" action="/logout">
+            <button class="btn btn-secondary btn-small" type="submit">退出</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+    </header>
+
+    <main class="workspace" id="main-content" tabindex="-1">
+      <section class="page-hero">
+        <div class="page-hero-copy">
+          <p class="eyebrow">Multi-bot operations center</p>
+          <h1>{{ page_title }}</h1>
+          <div class="page-intro">{% block page_intro %}{% endblock %}</div>
+        </div>
+        <div class="page-hero-actions">{% block hero_actions %}{% endblock %}</div>
+      </section>
+
+      {% if notice %}
+      <section class="notice-card{% if notice_tone == 'danger' %} notice-card-danger{% endif %}">{{ notice }}</section>
+      {% endif %}
+
+      {% if section_nav_items %}
+      <nav class="section-tabs" aria-label="当前模块入口">
+        {% for item in section_nav_items %}
+        <a class="section-tab{% if item.active %} active{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+        {% endfor %}
+      </nav>
+      {% endif %}
+  {% endif %}
+
+      {% block content %}{% endblock %}
+
+  {% if request.url.path in ['/login', '/setup', '/setup/completed'] %}
+    </section>
+  </main>
+  {% endif %}
+  {% if request.url.path not in ['/login', '/setup', '/setup/completed'] %}
+    </main>
+  </div>
+  {% endif %}
+  <dialog class="app-modal" id="confirm-action-modal">
+    <div class="app-modal-card confirm-modal-card">
+      <div class="app-modal-head">
+        <div>
+          <p class="section-kicker">Confirm</p>
+          <h2 id="confirm-action-title">确认操作</h2>
+          <p class="muted-text" id="confirm-action-message">请确认是否继续。</p>
+        </div>
+        <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+      </div>
+      <label class="confirm-match-input" id="confirm-match-wrap" style="display:none;">
+        <span id="confirm-match-label">请输入确认内容：</span>
+        <input type="text" id="confirm-match-value" autocomplete="off" />
+      </label>
+      <p class="notice-card notice-card-danger" id="confirm-action-error" style="display:none;margin-top:12px;"></p>
+      <div class="form-actions-inline" style="margin-top:16px;">
+        <button class="btn" type="button" id="confirm-action-submit">确认继续</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </div>
+  </dialog>
+  <script>
+    (() => {
+      const forms = document.querySelectorAll("form[data-confirm-mode]");
+      if (!forms.length) return;
+      const dialog = document.getElementById("confirm-action-modal");
+      const titleEl = document.getElementById("confirm-action-title");
+      const messageEl = document.getElementById("confirm-action-message");
+      const submitEl = document.getElementById("confirm-action-submit");
+      const errorEl = document.getElementById("confirm-action-error");
+      const matchWrapEl = document.getElementById("confirm-match-wrap");
+      const matchLabelEl = document.getElementById("confirm-match-label");
+      const matchValueEl = document.getElementById("confirm-match-value");
+      let pendingForm = null;
+      let pendingMode = "confirm";
+      let pendingExpected = "";
+
+      const clearPending = () => {
+        pendingForm = null;
+        pendingMode = "confirm";
+        pendingExpected = "";
+        if (errorEl) {
+          errorEl.style.display = "none";
+          errorEl.textContent = "";
+        }
+        if (matchWrapEl) {
+          matchWrapEl.style.display = "none";
+        }
+        if (matchValueEl) {
+          matchValueEl.value = "";
+        }
+      };
+
+      const submitPending = () => {
+        if (!pendingForm) return;
+        if (pendingMode === "match-text") {
+          const entered = (matchValueEl?.value || "").trim();
+          if (entered !== pendingExpected) {
+            if (errorEl) {
+              errorEl.textContent = `输入不匹配，需准确输入：${pendingExpected}`;
+              errorEl.style.display = "block";
+            }
+            return;
+          }
+          const hiddenInput = pendingForm.querySelector('input[name="confirmation_name"]');
+          if (hiddenInput) {
+            hiddenInput.value = entered;
+          }
+        }
+        const targetForm = pendingForm;
+        clearPending();
+        if (dialog && typeof dialog.close === "function") {
+          dialog.close();
+        }
+        targetForm.dataset.confirmBypass = "true";
+        targetForm.submit();
+      };
+
+      if (submitEl) {
+        submitEl.addEventListener("click", submitPending);
+      }
+      if (dialog) {
+        dialog.addEventListener("close", clearPending);
+      }
+
+      forms.forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          if (form.dataset.confirmBypass === "true") {
+            form.dataset.confirmBypass = "";
+            return;
+          }
+          const mode = form.dataset.confirmMode || "confirm";
+          const title = form.dataset.confirmTitle || "确认操作";
+          const message = form.dataset.confirmMessage || "请确认是否继续。";
+          event.preventDefault();
+
+          if (!dialog || typeof dialog.showModal !== "function") {
+            if (!window.confirm(`${title}\n\n${message}`)) {
+              return;
+            }
+            form.dataset.confirmBypass = "true";
+            form.submit();
+            return;
+          }
+
+          pendingForm = form;
+          pendingMode = mode;
+          pendingExpected = (form.dataset.confirmMatchText || "").trim();
+          if (titleEl) {
+            titleEl.textContent = title;
+          }
+          if (messageEl) {
+            messageEl.textContent = message;
+          }
+          if (errorEl) {
+            errorEl.style.display = "none";
+            errorEl.textContent = "";
+          }
+          if (mode === "match-text") {
+            if (matchWrapEl) {
+              matchWrapEl.style.display = "grid";
+            }
+            if (matchLabelEl) {
+              matchLabelEl.textContent = form.dataset.confirmMatchLabel || "请输入确认内容：";
+            }
+            if (matchValueEl) {
+              matchValueEl.value = "";
+              matchValueEl.focus();
+            }
+          } else if (matchWrapEl) {
+            matchWrapEl.style.display = "none";
+          }
+          dialog.showModal();
+        });
+      });
+    })();
+
+    (() => {
+      const openers = document.querySelectorAll("[data-modal-open]");
+      const closers = document.querySelectorAll("[data-modal-close]");
+      const focusableSelector = "button, [href], input, select, textarea, summary, [tabindex]:not([tabindex='-1'])";
+      let lastModalTrigger = null;
+
+      openers.forEach((button) => {
+        button.addEventListener("click", () => {
+          const targetId = button.getAttribute("data-modal-open");
+          const dialog = targetId ? document.getElementById(targetId) : null;
+          if (dialog && typeof dialog.showModal === "function") {
+            lastModalTrigger = button;
+            dialog.showModal();
+            // 弹窗打开后把焦点移入弹窗，键盘用户不需要重新 Tab 很多次才能操作表单。
+            const firstFocusable = dialog.querySelector(focusableSelector);
+            if (firstFocusable) {
+              firstFocusable.focus();
+            }
+          }
+        });
+      });
+
+      closers.forEach((button) => {
+        button.addEventListener("click", () => {
+          const dialog = button.closest("dialog");
+          if (dialog) {
+            dialog.close();
+          }
+        });
+      });
+
+      document.querySelectorAll("dialog.app-modal").forEach((dialog) => {
+        dialog.addEventListener("close", () => {
+          if (lastModalTrigger && typeof lastModalTrigger.focus === "function") {
+            lastModalTrigger.focus();
+          }
+          lastModalTrigger = null;
+        });
+
+        dialog.addEventListener("click", (event) => {
+          const rect = dialog.getBoundingClientRect();
+          const withinDialog =
+            rect.top <= event.clientY &&
+            event.clientY <= rect.top + rect.height &&
+            rect.left <= event.clientX &&
+            event.clientX <= rect.left + rect.width;
+          if (!withinDialog) {
+            dialog.close();
+          }
+        });
+      });
+    })();
+
+    (() => {
+      const forms = document.querySelectorAll("form:not([data-plugin-switch-form])");
+      if (!forms.length) return;
+
+      // 普通表单提交后锁定提交按钮，减少用户连续点击造成重复创建、重复同步或重复重启。
+      forms.forEach((form) => {
+        form.addEventListener("submit", () => {
+          if (form.dataset.confirmMode && form.dataset.confirmBypass !== "true") return;
+          const submitters = form.querySelectorAll("button[type='submit'], input[type='submit']");
+          submitters.forEach((submitter) => {
+            submitter.dataset.originalText = submitter.textContent || "";
+            submitter.disabled = true;
+            if (submitter.tagName === "BUTTON") {
+              submitter.textContent = "处理中...";
+            }
+          });
+        });
+      });
+    })();
+
+    (() => {
+      const moreNavs = document.querySelectorAll(".nav-more");
+      if (!moreNavs.length) return;
+
+      // 顶部“更多”菜单是低频入口的承载点，点击外部和按 Esc 时收起，避免遮挡后续操作。
+      document.addEventListener("click", (event) => {
+        moreNavs.forEach((nav) => {
+          if (!nav.contains(event.target)) {
+            nav.open = false;
+          }
+        });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        moreNavs.forEach((nav) => {
+          nav.open = false;
+        });
+      });
+    })();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
