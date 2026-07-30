@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import os
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, inspect, text
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DELETED_TABLES = {"bot_groups", "config_templates", "bot_tags", "bot_tag_links"}
+DELETED_BOT_COLUMNS = {"slug", "command_prefix", "group_id", "config_template_id", "environment"}
+
+
+def _run_alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """在独立 SQLite 数据库中运行迁移，确保测试不会连接开发或生产实例。"""
+
+    runtime_dir = database_path.parent / "runtime"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "APP_ENV": "test",
+            "DATA_DIR": str(runtime_dir / "data"),
+            "DATABASE_URL": f"sqlite:///{database_path}",
+            "LOG_DIR": str(runtime_dir / "logs"),
+            "AUTH_SEED_DEMO_USERS": "false",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", *arguments],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def _current_revision(database_path: Path) -> str | None:
+    """直接读取版本表，避免测试结果依赖 Alembic 命令行输出格式。"""
+
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    return str(row[0]) if row else None
+
+
+def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) -> None:
+    """空库升级后必须精确匹配精简模型，且不能恢复机器人旧业务结构。"""
+
+    database_path = tmp_path / "saas.db"
+    _run_alembic(database_path, "upgrade", "head")
+
+    from app.core.db import Base
+    from app.models import entities  # noqa: F401
+
+    migration_engine = create_engine(f"sqlite:///{database_path}")
+    inspector = inspect(migration_engine)
+    actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
+
+    assert _current_revision(database_path) == "20260730_0001"
+    assert actual_tables == set(Base.metadata.tables)
+    assert DELETED_TABLES.isdisjoint(actual_tables)
+    assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})
+    migration_engine.dispose()
+
+
+def test_database_revision_guard_accepts_head_and_rejects_stale_revision(tmp_path: Path) -> None:
+    """业务进程只能在数据库版本与代码 head 完全一致时继续启动。"""
+
+    database_path = tmp_path / "guard.db"
+    _run_alembic(database_path, "upgrade", "head")
+
+    from app.services.database_lifecycle import assert_database_at_head
+
+    migration_engine = create_engine(f"sqlite:///{database_path}")
+    with migration_engine.connect() as connection:
+        assert_database_at_head(connection)
+
+    # 模拟数据库落后于代码版本；错误同时包含当前值和期望值，便于部署时快速定位。
+    with migration_engine.begin() as connection:
+        connection.execute(text("UPDATE alembic_version SET version_num = 'outdated'"))
+    with migration_engine.connect() as connection:
+        with pytest.raises(RuntimeError, match="database_revision_mismatch:outdated:20260730_0001"):
+            assert_database_at_head(connection)
+    migration_engine.dispose()
