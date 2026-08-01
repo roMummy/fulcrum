@@ -9,8 +9,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, Message, MessageAttachment, OpenApiApp, OpenApiAppChannel, TaskJob, WorkWechatContact
+from app.models.saas import Tenant
 from app.services.open_api_auth import set_open_api_secret
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
 from app.services.workwechat_cloud_poll import (
@@ -55,7 +58,19 @@ class WorkWechatCloudPollTests(unittest.TestCase):
         self.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
         TestingSession = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
         Base.metadata.create_all(bind=self.engine)
-        self.db = TestingSession()
+        with TestingSession() as platform_db:
+            tenant = Tenant(code="cloud-poll-test", name="云轮询测试租户", status="active")
+            platform_db.add(tenant)
+            platform_db.commit()
+            platform_db.refresh(tenant)
+            self.tenant_id = tenant.id
+
+        # 云轮询服务操作的机器人、渠道和任务都属于租户业务数据。测试夹具进入与
+        # 正式请求相同的可信租户上下文，依靠会话级隔离自动补齐并校验 tenant_id。
+        self.tenant_scope_context = tenant_scope(self.tenant_id)
+        self.tenant_scope_context.__enter__()
+        self.tenant_db_context = tenant_session(TestingSession)
+        self.db = self.tenant_db_context.__enter__()
 
         # 云轮询只依赖机器人主键；测试夹具不得重新引入已从产品模型删除的 slug。
         bot = Bot(name="Bot")
@@ -67,7 +82,8 @@ class WorkWechatCloudPollTests(unittest.TestCase):
         self.bot = bot
 
     def tearDown(self):
-        self.db.close()
+        self.tenant_db_context.__exit__(None, None, None)
+        self.tenant_scope_context.__exit__(None, None, None)
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 

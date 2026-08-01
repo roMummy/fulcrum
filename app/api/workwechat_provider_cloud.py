@@ -10,7 +10,9 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Channel, TaskJob
 from app.services.channel_events import ingest_inbound_event
@@ -41,10 +43,15 @@ async def register_workwechat_provider(request: Request):
     if not authorization_code:
         raise HTTPException(status_code=400, detail="authorization_code_required")
 
-    db = SessionLocal()
-    try:
-        channel = find_channel_by_authorization_code(db, authorization_code)
+    with platform_session(SessionLocal) as auth_db:
+        channel = find_channel_by_authorization_code(auth_db, authorization_code)
         if not channel:
+            raise HTTPException(status_code=401, detail="authorization_code_invalid")
+        credential = (int(channel.tenant_id), int(channel.id))
+
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, credential[1])
+        if channel is None:
             raise HTTPException(status_code=401, detail="authorization_code_invalid")
         try:
             result = exchange_authorization_code(
@@ -70,27 +77,22 @@ async def register_workwechat_provider(request: Request):
             "poll_interval_seconds": result["poll_interval_seconds"],
             "poll_batch_size": result["poll_batch_size"],
         }
-    finally:
-        db.close()
 
 
 @router.post("/poll")
 async def poll_workwechat_provider_jobs(request: Request):
-    channel = _load_channel_by_request_token(request)
-    config = load_cloud_poll_config(channel)
+    credential = _load_channel_credential_by_request_token(request)
     body = await _read_json_object(request)
-    batch_size = int(body.get("batch_size") or config.get("poll_batch_size") or 5)
-    db = SessionLocal()
-    try:
-        managed_channel = db.get(Channel, channel.id)
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        managed_channel = db.get(Channel, credential[1])
         if not managed_channel:
             raise HTTPException(status_code=404, detail="channel_not_found")
+        config = load_cloud_poll_config(managed_channel)
+        batch_size = int(body.get("batch_size") or config.get("poll_batch_size") or 5)
         jobs = claim_cloud_jobs(db, managed_channel, batch_size=batch_size)
-    finally:
-        db.close()
     return {
         "ok": True,
-        "channel_id": channel.id,
+        "channel_id": credential[1],
         "jobs": jobs,
         "poll_interval_seconds": int(config.get("poll_interval_seconds") or 3),
     }
@@ -98,41 +100,37 @@ async def poll_workwechat_provider_jobs(request: Request):
 
 @router.post("/jobs/{job_id}/complete")
 async def complete_workwechat_provider_job(job_id: int, request: Request):
-    channel = _load_channel_by_request_token(request)
+    credential = _load_channel_credential_by_request_token(request)
     body = await _read_json_object(request)
-    db = SessionLocal()
-    try:
-        managed_channel = db.get(Channel, channel.id)
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        managed_channel = db.get(Channel, credential[1])
         if not managed_channel:
             raise HTTPException(status_code=404, detail="channel_not_found")
-        return complete_cloud_job(db, managed_channel, job_id, body)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    finally:
-        db.close()
+        try:
+            return complete_cloud_job(db, managed_channel, job_id, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/jobs/{job_id}/fail")
 async def fail_workwechat_provider_job(job_id: int, request: Request):
-    channel = _load_channel_by_request_token(request)
+    credential = _load_channel_credential_by_request_token(request)
     body = await _read_json_object(request)
-    db = SessionLocal()
-    try:
-        managed_channel = db.get(Channel, channel.id)
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        managed_channel = db.get(Channel, credential[1])
         if not managed_channel:
             raise HTTPException(status_code=404, detail="channel_not_found")
-        return fail_cloud_job(
-            db,
-            managed_channel,
-            job_id,
-            error_code=str(body.get("error_code") or "cloud_job_failed"),
-            error_message=str(body.get("error_message") or body.get("error") or "cloud_job_failed"),
-            adapter_result=body.get("adapter_result") if isinstance(body.get("adapter_result"), dict) else {},
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    finally:
-        db.close()
+        try:
+            return fail_cloud_job(
+                db,
+                managed_channel,
+                job_id,
+                error_code=str(body.get("error_code") or "cloud_job_failed"),
+                error_message=str(body.get("error_message") or body.get("error") or "cloud_job_failed"),
+                adapter_result=body.get("adapter_result") if isinstance(body.get("adapter_result"), dict) else {},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/inbound")
@@ -140,9 +138,11 @@ async def receive_workwechat_provider_inbound(request: Request):
     body = await _read_json_object(request)
     if not body:
         raise HTTPException(status_code=400, detail="request body must be object")
-    db = SessionLocal()
-    try:
-        channel = _load_managed_channel_by_request_token(db, request)
+    credential = _load_channel_credential_by_request_token(request)
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, credential[1])
+        if channel is None:
+            raise HTTPException(status_code=401, detail="invalid_client_token")
         # 云端 provider 入站使用 client_token 绑定渠道，不再依赖渠道 Bot Token 或传统 webhook 签名。
         result = ingest_inbound_event(
             db,
@@ -195,8 +195,6 @@ async def receive_workwechat_provider_inbound(request: Request):
             "event_type": normalized.get("event_type"),
             "dispatch": result.get("dispatch"),
         }
-    finally:
-        db.close()
 
 
 @router.post("/inbound-upload")
@@ -204,9 +202,11 @@ async def upload_workwechat_provider_inbound_file(request: Request):
     body = await _read_json_object(request)
     if not body:
         raise HTTPException(status_code=400, detail="request body must be object")
-    db = SessionLocal()
-    try:
-        channel = _load_managed_channel_by_request_token(db, request)
+    credential = _load_channel_credential_by_request_token(request)
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, credential[1])
+        if channel is None:
+            raise HTTPException(status_code=401, detail="invalid_client_token")
         file_name = str(body.get("file_name") or body.get("name") or "upload.bin").strip() or "upload.bin"
         content_base64 = str(body.get("content_base64") or "").strip()
         if not content_base64:
@@ -245,51 +245,53 @@ async def upload_workwechat_provider_inbound_file(request: Request):
             "storage_path": str(stored["target_path"]),
             "download_url": download_url,
         }
-    finally:
-        db.close()
 
 
 @router.websocket("/ws")
 async def workwechat_provider_ws(websocket: WebSocket):
     client_token = str(websocket.query_params.get("client_token") or "").strip()
-    db = SessionLocal()
-    try:
-        channel = find_channel_by_client_token(db, client_token)
-        if not channel:
+    credential = _find_channel_credential_by_client_token(client_token)
+    if credential is None:
+        await websocket.close(code=1008)
+        return
+    channel_id = credential[1]
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, channel_id)
+        if channel is None:
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        workwechat_ws_registry.register(channel.id, websocket, loop=asyncio.get_running_loop())
-        pending_job_id = _find_pending_cloud_job_id(db, channel_id=int(channel.id or 0))
+        workwechat_ws_registry.register(channel_id, websocket, loop=asyncio.get_running_loop())
+        pending_job_id = _find_pending_cloud_job_id(db, channel_id=channel_id)
         if pending_job_id:
             # 兼容尚未升级的 provider：客户端重连后不一定主动 poll，服务端注册时补推一次唤醒。
             await websocket.send_text(json.dumps({"event_type": "job_available", "job_id": pending_job_id}, ensure_ascii=False))
-    finally:
-        db.close()
     try:
         while True:
             # 客户端可以发 heartbeat/status，当前版本只保持连接；后续再记录实时状态。
             await websocket.receive_text()
     except WebSocketDisconnect:
-        workwechat_ws_registry.unregister(channel.id, websocket)
+        workwechat_ws_registry.unregister(channel_id, websocket)
 
 
-def _load_channel_by_request_token(request: Request):
-    db = SessionLocal()
-    try:
-        return _load_managed_channel_by_request_token(db, request)
-    finally:
-        db.close()
-
-
-def _load_managed_channel_by_request_token(db, request: Request):
+def _load_channel_credential_by_request_token(request: Request) -> tuple[int, int]:
     token = str(request.headers.get("X-WorkWechat-Client-Token") or "").strip()
     if not token:
         raise HTTPException(status_code=401, detail="client_token_required")
-    channel = find_channel_by_client_token(db, token)
-    if not channel:
+    credential = _find_channel_credential_by_client_token(token)
+    if credential is None:
         raise HTTPException(status_code=401, detail="invalid_client_token")
-    return channel
+    return credential
+
+
+def _find_channel_credential_by_client_token(token: str) -> tuple[int, int] | None:
+    """在认证阶段把 client token 收敛为可信租户和渠道主键。"""
+
+    with platform_session(SessionLocal) as auth_db:
+        channel = find_channel_by_client_token(auth_db, token)
+        if channel is None:
+            return None
+        return int(channel.tenant_id), int(channel.id)
 
 
 async def _read_json_object(request: Request) -> dict[str, Any]:
