@@ -77,6 +77,7 @@ class Tenant(Base, TimestampMixin):
     sessions = relationship("TenantSession", back_populates="tenant", cascade="all, delete-orphan")
     subscriptions = relationship("TenantSubscription", back_populates="tenant", cascade="all, delete-orphan")
     provider_nodes = relationship("ProviderNode", back_populates="tenant", cascade="all, delete-orphan")
+    legacy_import_batches = relationship("LegacyImportBatch", back_populates="tenant", cascade="all, delete-orphan")
 
 
 class SaasPlan(Base, TimestampMixin):
@@ -196,6 +197,26 @@ class PlatformAuditLog(Base, TimestampMixin):
 
     actor = relationship("PlatformUser")
     target_tenant = relationship("Tenant")
+
+
+class LegacyImportBatch(Base, TimestampMixin):
+    """旧系统导入批次审计；唯一来源指纹用于数据库级阻止重复导入。"""
+
+    __tablename__ = "legacy_import_batches"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "source_fingerprint", name="uq_legacy_import_tenant_source"),
+        CheckConstraint("status IN ('completed')", name="ck_legacy_import_batches_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    # 指纹由脱敏来源标识和各核心表的数量/最大主键计算，不能反推出数据库密码。
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="completed", index=True)
+    # 报告只保存逐表数量、警告和错误代码，不保存渠道密钥、任务负载或来源连接串。
+    report_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    tenant = relationship("Tenant", back_populates="legacy_import_batches")
 
 
 class ProviderNode(Base, TenantOwnedMixin, TimestampMixin):
