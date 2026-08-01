@@ -7,7 +7,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.models.entities import Bot, Channel, Conversation, CustomerOperationRequest, TaskJob, WorkWechatContact
+from app.models.saas import Tenant
 from app.services.customer_operations import submit_customer_operation
 from app.services.task_queue import WORKWECHAT_CLOUD_OUTBOUND_JOB
 from app.services.workwechat_contacts import mark_workwechat_contact_deleted, upsert_workwechat_contact
@@ -18,7 +21,19 @@ class CustomerOperationTests(unittest.TestCase):
         self.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
         TestingSession = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
         Base.metadata.create_all(bind=self.engine)
-        self.db = TestingSession()
+        with TestingSession() as platform_db:
+            tenant = Tenant(code="customer-ops-test", name="客户运营测试租户", status="active")
+            platform_db.add(tenant)
+            platform_db.commit()
+            platform_db.refresh(tenant)
+            self.tenant_id = tenant.id
+
+        # 服务层写入必须在可信租户上下文内执行，由 before_flush 自动补齐所有
+        # 新业务对象的 tenant_id；测试不再逐个伪造字段来绕过真实隔离链路。
+        self.tenant_scope_context = tenant_scope(self.tenant_id)
+        self.tenant_scope_context.__enter__()
+        self.tenant_db_context = tenant_session(TestingSession)
+        self.db = self.tenant_db_context.__enter__()
 
         # 客户运营数据通过机器人主键关联，测试夹具不再携带旧 slug。
         bot = Bot(name="Bot")
@@ -36,7 +51,8 @@ class CustomerOperationTests(unittest.TestCase):
         self.channel = channel
 
     def tearDown(self):
-        self.db.close()
+        self.tenant_db_context.__exit__(None, None, None)
+        self.tenant_scope_context.__exit__(None, None, None)
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 

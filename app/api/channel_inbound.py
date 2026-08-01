@@ -9,9 +9,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel
-from app.services.crud import get_channel
 from app.services.inbound_files import INBOUND_FILE_ROOT, build_inbound_file_download_url, store_inbound_upload
 
 
@@ -45,13 +46,19 @@ def _assert_provider_upload_authorized(channel: Channel, request: Request) -> No
 
 @router.post("/webhooks/{channel_id}/inbound-upload")
 async def inbound_file_upload(channel_id: int, request: Request):
-    db = SessionLocal()
-    try:
-        channel = get_channel(db, channel_id)
+    # Provider 令牌先在非租户会话中解析成最小渠道身份，认证成功后才允许建立
+    # tenant_scope。这样 URL 主键和 JSON 正文都不能自行决定租户归属。
+    with platform_session(SessionLocal) as auth_db:
+        channel = auth_db.get(Channel, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         _assert_provider_upload_authorized(channel, request)
+        credential = (int(channel.tenant_id), int(channel.id))
 
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, credential[1])
+        if channel is None:
+            raise HTTPException(status_code=404, detail="Channel not found")
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="request body must be object")
@@ -92,8 +99,6 @@ async def inbound_file_upload(channel_id: int, request: Request):
             "storage_path": str(stored["target_path"]),
             "download_url": download_url,
         }
-    finally:
-        db.close()
 
 
 @router.get("/inbound-files/{channel_id}/{share_id}/{file_name}")
