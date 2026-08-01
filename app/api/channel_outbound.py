@@ -11,7 +11,7 @@ from app.core.tenant_db import open_tenant_session
 from app.models.entities import Channel, Conversation
 from app.services.crud import get_channel
 from app.services.ops import record_audit
-from app.services.outbound_files import OUTBOUND_FILE_ROOT, build_public_base_url, sanitize_upload_filename, store_outbound_upload
+from app.services.outbound_files import OUTBOUND_FILE_ROOT, build_public_base_url, resolve_tenant_share_file, store_outbound_upload
 from app.services.saas_auth import has_tenant_role
 from app.services.task_queue import enqueue_job
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
@@ -83,18 +83,22 @@ async def outbound_upload_action(
 
 @router.get("/outbound-files/{channel_id}/{share_id}/{file_name}")
 async def outbound_file_download(channel_id: int, share_id: str, file_name: str):
-    safe_name = sanitize_upload_filename(file_name, fallback="")
-    if not safe_name:
-        raise HTTPException(status_code=404, detail="file not found")
     with SessionLocal() as db:
         channel = db.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="file not found")
         tenant_id = int(channel.tenant_id)
-    target_path = OUTBOUND_FILE_ROOT / str(tenant_id) / "outbound_files" / str(channel_id) / share_id / safe_name
-    if not target_path.exists() or not target_path.is_file():
+    target_path = resolve_tenant_share_file(
+        root=OUTBOUND_FILE_ROOT,
+        tenant_id=tenant_id,
+        namespace="outbound_files",
+        channel_id=channel_id,
+        share_id=share_id,
+        file_name=file_name,
+    )
+    if target_path is None:
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(path=target_path, filename=safe_name)
+    return FileResponse(path=target_path, filename=target_path.name)
 
 
 @router.post("/channels/{channel_id}/outbound/upload-and-send")

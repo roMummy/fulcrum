@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from datetime import datetime
 
@@ -17,6 +18,7 @@ from app.core.settings import settings
 # 相同也落入同一个目录树。OUTBOUND_FILE_ROOT 保留为稳定的测试和运维定位入口。
 OUTBOUND_FILE_ROOT = Path(settings.data_dir) / "tenants"
 OUTBOUND_FILE_ROOT.mkdir(parents=True, exist_ok=True)
+SHARE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 def sanitize_upload_filename(value: str | None, *, fallback: str = "upload.bin") -> str:
@@ -25,6 +27,40 @@ def sanitize_upload_filename(value: str | None, *, fallback: str = "upload.bin")
     cleaned = "".join("_" if char in invalid_chars else char for char in normalized)
     cleaned = cleaned.replace("..", "_").strip(" .")
     return cleaned or fallback
+
+
+def resolve_tenant_share_file(
+    *,
+    root: Path,
+    tenant_id: int,
+    namespace: str,
+    channel_id: int,
+    share_id: str,
+    file_name: str,
+) -> Path | None:
+    """解析公开分享文件并强制限制在可信租户和渠道目录内。"""
+
+    if int(tenant_id or 0) <= 0 or int(channel_id or 0) <= 0:
+        return None
+    normalized_namespace = str(namespace or "").strip()
+    if normalized_namespace not in {"outbound_files", "inbound_files"}:
+        return None
+    normalized_share_id = str(share_id or "").strip().lower()
+    if SHARE_ID_PATTERN.fullmatch(normalized_share_id) is None:
+        return None
+    normalized_file_name = str(file_name or "").strip()
+    safe_name = sanitize_upload_filename(normalized_file_name, fallback="")
+    # 存储时文件名已经过同一净化函数处理。下载时若输入还会发生变化，说明请求
+    # 包含路径符号、连续点或平台不安全字符，必须直接拒绝而不是猜测目标文件。
+    if not safe_name or safe_name != normalized_file_name:
+        return None
+
+    channel_root = (root / str(tenant_id) / normalized_namespace / str(channel_id)).resolve()
+    target_path = (channel_root / normalized_share_id / safe_name).resolve()
+    # resolve 后再次验证包含关系，同时阻止目录穿越和分享目录内恶意符号链接。
+    if not target_path.is_relative_to(channel_root):
+        return None
+    return target_path if target_path.is_file() else None
 
 
 def build_public_base_url(request: Request) -> str:

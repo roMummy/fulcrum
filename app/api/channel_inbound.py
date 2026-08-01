@@ -14,6 +14,7 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel
 from app.services.inbound_files import INBOUND_FILE_ROOT, build_inbound_file_download_url, store_inbound_upload
+from app.services.outbound_files import resolve_tenant_share_file
 
 
 router = APIRouter(tags=["channel-inbound"])
@@ -105,15 +106,19 @@ async def inbound_file_upload(channel_id: int, request: Request):
 @router.get("/inbound-files/{channel_id}/{share_id}/{file_name}")
 async def inbound_file_download(channel_id: int, share_id: str, file_name: str):
     # 这个下载入口主要用于排障和后续插件处理时的人工回看，文件本身已经在主服务落盘。
-    safe_name = str(file_name or "").strip()
-    if not safe_name:
-        raise HTTPException(status_code=404, detail="file not found")
     with platform_session(SessionLocal) as db:
         channel = db.get(Channel, channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail="file not found")
         tenant_id = int(channel.tenant_id)
-    target_path = INBOUND_FILE_ROOT / str(tenant_id) / "inbound_files" / str(channel_id) / share_id / safe_name
-    if not target_path.exists() or not target_path.is_file():
+    target_path = resolve_tenant_share_file(
+        root=INBOUND_FILE_ROOT,
+        tenant_id=tenant_id,
+        namespace="inbound_files",
+        channel_id=channel_id,
+        share_id=share_id,
+        file_name=file_name,
+    )
+    if target_path is None:
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(path=target_path, filename=safe_name)
+    return FileResponse(path=target_path, filename=target_path.name)

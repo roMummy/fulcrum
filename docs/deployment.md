@@ -1,8 +1,8 @@
-# Deployment Guide
+# Multi Bot SaaS 部署指南
 
 ## Overview
 
-`Multi Bot Admin` supports two common deployment modes:
+`Multi Bot SaaS` 支持两种部署模式：
 
 - Local process deployment with Python virtualenv
 - Container deployment with Docker Compose
@@ -12,11 +12,7 @@ The application can run on either:
 - SQLite
 - MariaDB
 
-For `wechat_ipad`, the repository also includes a vendored provider directory copied from the `abot` project. It is recommended to deploy this provider separately and then configure its `API Base` in the admin system.
-
-Dedicated guide:
-
-- [Wechat iPad Provider 部署说明](/d:/learn/multi-bot-admin/docs/wechat_ipad_provider.md)
+SaaS 首期只开放企业微信。云端应用统一部署，客户 Windows PC 部署企业微信 Provider，并通过 HTTPS 主动连接云端，不要求客户开放入站端口。
 
 For development, SQLite is sufficient.  
 For production, especially when message volume is expected to grow to hundreds of thousands of rows or more, MariaDB is recommended.
@@ -40,18 +36,17 @@ AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 ```
 
-## First-Time Setup Wizard
+## 首次数据库和平台管理员初始化
 
-If the system starts without any enabled admin account, it will automatically redirect to `/setup`.
+生产启动不会自动建表或补列。首次部署必须先执行：
 
-The wizard supports:
+```bash
+.venv/bin/alembic upgrade head
+```
 
-- built-in SQLite for quick start
-- MariaDB for production deployment
-- admin account initialization
-- automatic `.env` generation
+数据库达到 Alembic head 后，若没有启用的平台管理员，访问后台会进入 `/setup`。该页面只创建平台管理员，不修改 `DATABASE_URL`、不生成 `SECRET_KEY`、不写 `.env`。
 
-Behavior notes:
+也可以在受限环境中配置 `AUTH_BOOTSTRAP_ADMIN_USERNAME`、`AUTH_BOOTSTRAP_ADMIN_PASSWORD` 和 `AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME`。密码只参与哈希，不能写入 Git、命令输出或日志。
 
 - SQLite mode can be used immediately after setup
 - MariaDB mode validates the connection, creates tables, initializes the admin, and then requires an app restart to switch the running process to the new database
@@ -104,7 +99,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 8180
+./.venv/bin/alembic upgrade head
+uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
 ### Windows PowerShell
@@ -114,10 +110,11 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8180
+./.venv/Scripts/alembic.exe upgrade head
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
-After the first startup, open the web page and complete the `/setup` wizard.
+启动后先检查 `/healthz` 和 `/readyz`，再进入 `/setup` 或平台登录页。
 
 ## Docker Deployment
 
@@ -131,7 +128,10 @@ The repository already includes:
 
 ```bash
 cp .env.docker.example .env.docker
-docker compose up -d --build
+docker compose build
+docker compose up -d mariadb
+docker compose run --rm app alembic upgrade head
+docker compose up -d app
 ```
 
 The default compose stack starts:
@@ -139,7 +139,7 @@ The default compose stack starts:
 - `app`
 - `mariadb`
 
-After the containers are ready, open the admin page and finish the `/setup` wizard to initialize the database and administrator account.
+容器启动后必须确认 `/healthz` 和 `/readyz` 都返回成功，再创建平台管理员和租户。
 
 ### Use SQLite in Docker
 
@@ -179,14 +179,14 @@ Make sure the following are persisted:
 
 On startup the application will:
 
-1. initialize database schema
-2. run runtime schema patching
-3. seed auth users if configured
-4. sync plugins from `plugins/`
-5. start background workers
+1. 校验数据库 revision 等于 Alembic head；
+2. 执行受控平台管理员种子、插件目录同步和必要数据回填；
+3. 数据库就绪后启动后台 Worker；
+4. revision 落后时保留 `/healthz`，让 `/readyz` 返回 503，并拒绝业务流量。
 
 ## Notes
 
-- Current schema evolution is based on `create_all + runtime patching`
-- Formal database migrations are not yet introduced
-- For long-term production maintenance, adding `Alembic` is strongly recommended
+- 已有数据库部署前必须备份，迁移失败时不得停止旧进程。
+- `scripts/deploy_restart_mba.sh` 要求已有数据库提供 `MBS_DB_BACKUP_COMMAND`；首次独立空库部署可显式设置 `MBS_INITIAL_DEPLOY=1`。
+- 旧系统数据导入见 [legacy-import.md](/data/multi-bot-saas/docs/legacy-import.md)，必须先 dry-run，再备份目标库并正式导入。
+- 下载分享码是 128 位随机值，服务端同时校验固定格式、租户目录、渠道目录和解析后的真实路径，不能用可预测 ID 替代。

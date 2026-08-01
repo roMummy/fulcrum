@@ -4,15 +4,13 @@
 
 ## 功能特性
 
-- 机器人管理：按名称快速创建，支持启停、状态检查和企业微信账号接入
-- 渠道管理：支持 `wechat_ipad`、`wechat_winauto`、`workwechat`、`telegram`、`openclaw`、`simulator`
-- 会话管理：查看消息、手动发送、出入站状态追踪
-- 插件管理：目录扫描、运行态装载、配置编辑、启停与重载
-- 异步任务：插件派发、消息出站、定时推送、后台轮询
-- 微信群能力：群资料、成员同步、退群/回群状态、最后活跃时间
-- `wechat_ipad` Provider：项目附带 `abot` 的 provider 目录，可单独部署后接入
-- AI 插件能力：Dify 对话、图片引用、图片/视频结果回发
-- 运行观测：健康检查、错误日志、任务状态、运行时详情
+- 平台管理：套餐、租户、订阅、节点额度和平台审计
+- 租户管理：独立员工账号、角色权限、会话和 CSRF 防护
+- 企业微信接入：首期只开放 `workwechat`，其他历史适配器不作为 SaaS 产品入口
+- Provider 节点：一次性激活码、设备凭证、心跳、长轮询、任务租约和多企微账号绑定
+- 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
+- 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
+- 旧系统迁移：只读来源、dry-run、外键重映射、批次审计和重复导入防护
 
 ## 技术栈
 
@@ -106,36 +104,39 @@ chmod +x scripts/deploy_restart_mba.sh
 
 - 拉取 `origin/main` 最新代码
 - 安装或更新依赖
-- 关闭旧的 `uvicorn` 进程
+- 检查数据库备份门禁
+- 在旧进程仍运行时执行 `alembic upgrade head`
+- 迁移成功后关闭旧的 `uvicorn` 进程
 - 重新启动服务
-- 检查 `/healthz`
+- 检查 `/healthz` 和 `/readyz`
 
 可选环境变量：
 
 ```bash
-MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
+MBS_GIT_BRANCH=main \
+MBS_PORT=8280 \
+MBS_DB_BACKUP_COMMAND='/opt/backup/multi-bot-saas-db.sh' \
+./scripts/deploy_restart_mba.sh
 ```
 
-### 3. 首次安装引导
+首次部署到确认过的独立空库时可显式设置 `MBS_INITIAL_DEPLOY=1`。已有数据库升级不得用该变量跳过备份门禁。
 
-首次启动且系统中还没有管理员账号时，会自动跳转到 `/setup`：
+### 3. 初始化数据库和平台管理员
 
-- 选择数据库类型：默认使用内置 SQLite，也支持切换到 MariaDB
-- 设置管理员用户名、显示名和密码
-- 自动生成或手动填写 `SECRET_KEY`
-- 提交后自动建表、初始化管理员，并写入项目根目录 `.env`
+首次启动前必须先升级数据库：
 
-推荐规则：
+```bash
+.venv/bin/alembic upgrade head
+```
 
-- 首次体验、本地调试：直接选 SQLite
-- 长期部署、大量消息入库：使用 MariaDB
+数据库达到 head 后启动服务。系统中没有平台管理员时会进入 `/setup`：
 
-说明：
+- 页面只创建 `platform_users` 平台管理员；
+- 不切换数据库、不建表、不写 `.env`；
+- 也可以通过 `AUTH_BOOTSTRAP_ADMIN_*` 受限环境变量自动创建首个平台管理员；
+- 平台管理员登录后再创建套餐、租户和租户初始管理员。
 
-- 使用 SQLite 时，初始化完成后可直接登录
-- 使用 MariaDB 时，向导会先验证连接并完成初始化，然后提示你重启服务切换到新数据库
-
-### 4. 手动配置环境变量（可选）
+### 4. 配置环境变量
 
 如果你不想使用引导页，也可以手动复制示例文件：
 
@@ -205,21 +206,11 @@ DATABASE_POOL_TIMEOUT_SECONDS=30
 
 ### 当前数据库初始化方式
 
-当前项目还未引入正式 migration 工具，启动时采用：
-
-- `Base.metadata.create_all()`
-- 运行时 schema 补列
-
-这套方式适合当前阶段快速迭代；如果后续进入长期生产维护，建议继续补 `Alembic`。
+生产数据库结构全部由 Alembic 管理。应用启动只校验当前 revision 是否等于唯一 head；不再执行 `Base.metadata.create_all()` 或运行时 `ALTER TABLE`。开发和测试临时库可以使用显式辅助函数，但该能力在生产环境禁用。
 
 ### 首次安装默认行为
 
-如果数据库中还没有启用中的管理员账号，系统会强制进入 `/setup` 安装向导。
-
-- 选择 SQLite 时，会直接初始化 `data/app.db`
-- 选择 MariaDB 时，会先验证连接并完成建表
-- 配置成功后会自动写入 `.env`
-- MariaDB 模式需要重启进程后，运行中的应用才会切换到新连接
+如果数据库 revision 未到 head，`/healthz` 仍用于存活检查，`/readyz` 返回 503，业务请求被拒绝且 Worker 不启动。数据库已迁移但没有平台管理员时，系统才允许进入 `/setup` 创建首个平台身份。
 
 ## Docker 部署
 
@@ -277,24 +268,9 @@ DATABASE_URL=sqlite:////app/data/app.db
 
 ## 渠道说明
 
-当前内置渠道类型：
+SaaS 首期页面、表单、服务层和开放接口只允许 `workwechat`。仓库中保留的其他历史适配器用于来源项目兼容和后续评估，不能通过 SaaS 管理入口新建渠道，也不应在生产 Worker 中启用。
 
-- `wechat_ipad`
-- `wechat_winauto`
-- `workwechat`
-- `telegram`
-- `openclaw`
-- `simulator`
-
-说明：
-
-- `wechat_ipad` 当前能力最完整，支持图片、语音、视频、群资料和成员同步等
-- `wechat_ipad` 建议先单独部署 provider，再把 `API Base` 配到渠道里
-- `wechat_winauto` 适合 Windows 桌面微信场景，推荐单独部署 Windows provider，通过 HTTP 和主服务解耦
-- `workwechat` 适合企业微信 Hook 协议，推荐单独启动 [WorkWechat Provider](/data/multi-bot-saas/docs/workwechat_provider.md)
-- `telegram` 目前支持文本、图片、轮询拉取；视频发送仍建议按渠道能力做降级
-- `openclaw` 依赖桥接端实现
-- `simulator` 适合本地调试
+企业微信客户侧使用独立 Windows Provider。节点通过一次性激活码换取设备凭证，随后主动上报心跳、发现企微账号并长轮询领取绑定渠道的任务。
 
 ### 跨机器发送图片和文件
 
@@ -376,32 +352,6 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 - 上传 Excel 并发送到指定群
 - 查询发送任务状态
 - 查询指定群的新消息
-
-### wechat_ipad Provider
-
-项目里附带了一份来自 `abot` 的 provider 目录：
-
-- [vendors/wechat_ipad_provider](/data/multi-bot-saas/vendors/wechat_ipad_provider)
-- [Wechat iPad Provider 部署说明](/data/multi-bot-saas/docs/wechat_ipad_provider.md)
-
-推荐使用方式：
-
-- 由用户自己单独启动 provider
-- 根据实际部署地址，在渠道管理里填写 `API Base`
-- 主应用不默认托管这个 Go 服务，避免部署和运维强耦合
-
-### wechat_winauto Provider
-
-仓库里也附带了 Windows `wxauto` provider 骨架：
-
-- [vendors/wechat_winauto_provider](/data/multi-bot-saas/vendors/wechat_winauto_provider)
-- [WinAuto Provider 接入方案](/data/multi-bot-saas/docs/wechat_winauto_provider.md)
-
-推荐使用方式：
-
-- 在 Windows 机器单独启动 provider
-- 保持桌面微信在线
-- 在渠道里填写 `API Base`
 
 ### workwechat Provider
 
