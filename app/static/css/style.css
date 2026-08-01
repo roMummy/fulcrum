@@ -3337,6 +3337,13 @@ textarea:focus-visible,
   box-shadow: none;
 }
 
+/* 节点名称可能混合资产编号和连续英文字符，局部允许任意断行，避免移动端撑宽整页。 */
+.provider-node-breakable {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* 移动端继续使用顶部菜单，只把导航压成横向可滚动，避免改成侧栏导致交互断层。 */
 @media (max-width: 1120px) {
   .topbar {

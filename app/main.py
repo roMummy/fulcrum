@@ -61,6 +61,11 @@ from app.services.plugin_schemas import (
     parse_config_json,
 )
 from app.services.plugin_runtime import execute_binding_action, get_plugin_runtime_meta
+from app.services.provider_nodes import (
+    ProviderNodeError,
+    list_provider_nodes,
+    validate_workwechat_provider_binding,
+)
 from app.services.init_db import init_db_with_seed
 from app.services.installer import (
     build_default_sqlite_url,
@@ -142,7 +147,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import platform_admin_router, platform_auth_router, tenant_admin_router, tenant_auth_router
+from app.web import platform_admin_router, platform_auth_router, provider_nodes_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -152,6 +157,7 @@ from app.web.auth_common import (
     TENANT_PASSWORD_PATH,
     TENANT_SESSION_COOKIE,
     platform_must_change_password_redirect,
+    require_tenant_csrf,
     tenant_must_change_password_redirect,
 )
 configure_logging()
@@ -177,6 +183,7 @@ app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
+app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = ("wechat_ipad", "wechat_winauto", "workwechat", "openclaw", "simulator", "telegram")
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
@@ -460,7 +467,7 @@ def render(request: Request, template: str, **context):
     # 顶部菜单按真实使用路线重排：总览、接入、机器人、插件、消息、排障。
     primary_nav_items = [
         nav_item("总览", "/", ("/",), exact_root=True),
-        nav_item("接入", "/channels", ("/channels",)),
+        nav_item("接入", "/channels", ("/channels", "/provider-nodes")),
         nav_item("机器人", "/bots", ("/bots",)),
         nav_item("插件", "/plugins", ("/plugins",)),
         nav_item("消息", "/conversations", ("/conversations", "/messages", "/lab")),
@@ -475,9 +482,10 @@ def render(request: Request, template: str, **context):
 
     # 二级入口只放当前任务域内的高频分支，避免顶部菜单横向堆满，同时让用户进入模块后能继续按业务路径切换。
     section_nav_items: list[dict[str, str | bool]] = []
-    if is_path_active(("/channels",)):
+    if is_path_active(("/channels", "/provider-nodes")):
         section_nav_items = [
             nav_item("渠道清单", "/channels", ("/channels",)),
+            nav_item("Provider 节点", "/provider-nodes", ("/provider-nodes",)),
         ]
     elif is_path_active(("/bots",)):
         section_nav_items = [
@@ -1903,6 +1911,7 @@ async def channels_page(request: Request):
     try:
         channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
         return render(
             request,
@@ -1913,6 +1922,7 @@ async def channels_page(request: Request):
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
+            provider_nodes=provider_nodes,
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -1928,6 +1938,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             raise HTTPException(status_code=404, detail="Channel not found")
         wechat_ipad_proxy_form = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
         message_page_size = 20
         raw_message_page = str(request.query_params.get("message_page", "1")).strip()
@@ -2000,6 +2011,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
+            provider_nodes=provider_nodes,
             recent_channel_messages=recent_channel_messages,
             message_pagination=message_pagination,
             token_preview=channel.bot_token_masked or "-",
@@ -2355,11 +2367,18 @@ async def create_channel_action(
     proxy_port: str = Form(""),
     proxy_username: str = Form(""),
     proxy_password: str = Form(""),
+    provider_node_id: int = Form(0),
+    provider_account_id: int = Form(0),
+    csrf_token: str = Form(""),
     is_enabled: str = Form("true"),
 ):
-    enforce_role(request, "ops")
+    principal = enforce_role(request, "ops")
     db = get_session()
     try:
+        if (channel_type or "").strip() == "workwechat":
+            if not has_tenant_role(principal, "tenant_admin"):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            require_tenant_csrf(db, request, csrf_token)
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
             channel_type=channel_type,
             adapter_config_json=adapter_config_json,
@@ -2370,6 +2389,18 @@ async def create_channel_action(
         )
         if adapter_error:
             return RedirectResponse(url="/channels?notice=" + quote(adapter_error), status_code=303)
+        try:
+            provider_node, provider_account = validate_workwechat_provider_binding(
+                db,
+                channel_type=channel_type,
+                provider_node_id=provider_node_id,
+                provider_account_id=provider_account_id,
+            )
+        except ProviderNodeError as exc:
+            return RedirectResponse(
+                url="/channels?notice=" + quote(f"Provider 绑定失败：{exc}") + "&tone=danger",
+                status_code=303,
+            )
         payload = ChannelCreate(
             bot_id=bot_id,
             name=name,
@@ -2380,6 +2411,8 @@ async def create_channel_action(
             dm_policy=dm_policy,
             allow_from=allow_from,
             adapter_config_json=merged_adapter_config_json,
+            provider_node_id=provider_node.id if provider_node else None,
+            provider_account_id=provider_account.id if provider_account else None,
             is_enabled=is_enabled == "true",
         )
         channel = create_channel(db, payload)
@@ -2406,14 +2439,21 @@ async def edit_channel_action(
     proxy_port: str = Form(""),
     proxy_username: str = Form(""),
     proxy_password: str = Form(""),
+    provider_node_id: int = Form(0),
+    provider_account_id: int = Form(0),
+    csrf_token: str = Form(""),
     is_enabled: str = Form("true"),
 ):
-    enforce_role(request, "ops")
+    principal = enforce_role(request, "ops")
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
+        if (channel_type or "").strip() == "workwechat" or channel.channel_type == "workwechat":
+            if not has_tenant_role(principal, "tenant_admin"):
+                raise HTTPException(status_code=403, detail="Permission denied")
+            require_tenant_csrf(db, request, csrf_token)
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
             channel_type=channel_type,
             adapter_config_json=adapter_config_json,
@@ -2424,6 +2464,19 @@ async def edit_channel_action(
         )
         if adapter_error:
             return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(adapter_error)}", status_code=303)
+        try:
+            provider_node, provider_account = validate_workwechat_provider_binding(
+                db,
+                channel_type=channel_type,
+                provider_node_id=provider_node_id,
+                provider_account_id=provider_account_id,
+                channel_id=channel.id,
+            )
+        except ProviderNodeError as exc:
+            return RedirectResponse(
+                url=f"/channels/{channel_id}?notice={quote(f'Provider 绑定失败：{exc}')}&tone=danger",
+                status_code=303,
+            )
         payload = ChannelUpdate(
             bot_id=bot_id,
             name=name,
@@ -2434,6 +2487,8 @@ async def edit_channel_action(
             dm_policy=dm_policy,
             allow_from=allow_from,
             adapter_config_json=merged_adapter_config_json,
+            provider_node_id=provider_node.id if provider_node else None,
+            provider_account_id=provider_account.id if provider_account else None,
             is_enabled=is_enabled == "true",
         )
         update_channel(db, channel, payload)

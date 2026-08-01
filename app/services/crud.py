@@ -56,6 +56,8 @@ def create_channel(db: Session, data: ChannelCreate) -> Channel:
         dm_policy=data.dm_policy,
         allow_from=(data.allow_from or "").strip() or None,
         adapter_config_json=adapter_config,
+        provider_node_id=data.provider_node_id,
+        provider_account_id=data.provider_account_id,
         bot_token_masked=mask_secret(token),
         is_enabled=data.is_enabled,
         status="online" if data.is_enabled else "offline",
@@ -79,6 +81,8 @@ def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channe
     channel.dm_policy = data.dm_policy
     channel.allow_from = (data.allow_from or "").strip() or None
     channel.adapter_config_json = (data.adapter_config_json or "").strip() or None
+    channel.provider_node_id = data.provider_node_id
+    channel.provider_account_id = data.provider_account_id
     channel.is_enabled = data.is_enabled
     channel.status = "online" if data.is_enabled else "offline"
     db.commit()

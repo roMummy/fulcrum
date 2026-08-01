@@ -78,9 +78,7 @@
       <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
         <button class="btn btn-secondary" type="submit">同步企微联系人</button>
       </form>
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/cloud-poll/authorization-code">
-        <button class="btn btn-secondary" type="submit">生成云端授权码</button>
-      </form>
+      {% if channel.provider_node %}<a class="btn btn-secondary" href="/provider-nodes/{{ channel.provider_node.id }}">查看 Provider 节点</a>{% endif %}
       <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
       <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
       {% endif %}
@@ -126,8 +124,9 @@
             <tr><th>API Base</th><td>{{ '云端模式不需要' if health_checks.api_base_not_required else (channel.api_base or '-') }}</td></tr>
             <tr><th>Allow From</th><td>{{ channel.allow_from or '-' }}</td></tr>
             {% if channel.channel_type == 'workwechat' %}
-            <tr><th>企微任务模式</th><td>{{ '云端 WS/拉取' if workwechat_cloud_poll_config.workwechat_delivery_mode == 'cloud_poll' else '直连 HTTP' }}</td></tr>
-            <tr><th>企微云端注册</th><td>{{ '已注册' if workwechat_cloud_poll_config.client_token_hash else ('授权码待使用' if workwechat_cloud_poll_config.authorization_code_hash else '未生成授权码') }}</td></tr>
+            <tr><th>企微任务模式</th><td>Provider 节点长轮询</td></tr>
+            <tr><th>Provider 节点</th><td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
+            <tr><th>企微账号</th><td>{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未绑定{% endif %}</td></tr>
             {% endif %}
             {% if channel.channel_type == 'wechat_ipad' %}
             <tr><th>登录代理</th><td>{{ wechat_ipad_proxy_form.proxy_ip or '未配置' }}</td></tr>
@@ -1219,9 +1218,12 @@
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/channels/{{ channel.id }}/edit" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}" {% if bot.id == channel.bot_id %}selected{% endif %}>{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label><span>渠道名称</span><input name="name" value="{{ channel.name }}" required /></label>
       <label><span>渠道类型</span><select name="channel_type" required>{% for item in builtin_channel_types %}<option value="{{ item }}" {% if item == channel.channel_type %}selected{% endif %}>{{ item|channel_type_label }}</option>{% endfor %}{% if channel.channel_type not in builtin_channel_types %}<option value="{{ channel.channel_type }}" selected>{{ channel.channel_type|channel_type_label }}</option>{% endif %}</select></label>
+      <label><span>Provider 节点</span><select name="provider_node_id" data-provider-node-select required><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}<option value="{{ node.id }}" {% if node.id == channel.provider_node_id %}selected{% endif %}>{{ node.name }}{% if node.status != 'active' %}（{{ node.status }}）{% endif %}</option>{% endfor %}</select></label>
+      <label><span>企微账号</span><select name="provider_account_id" data-provider-account-select required><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}{% for account in node.accounts if account.status == 'online' or account.id == channel.provider_account_id %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}" {% if account.id == channel.provider_account_id %}selected{% endif %}>{{ account.display_name or account.account_key }}{% if account.status != 'online' %}（{{ account.status }}）{% endif %}</option>{% endfor %}{% endfor %}</select></label>
       <label><span>API Base</span><input name="api_base" value="{{ channel.api_base or '' }}" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
       <label><span>Bot Token</span><input name="bot_token" type="password" placeholder="留空则保持当前 token" /></label>
       <label><span>Webhook Path</span><input name="webhook_path" value="{{ channel.webhook_path or '' }}" /></label>
@@ -1244,7 +1246,7 @@
       {% if channel.channel_type == 'wechat_ipad' %}
       <p class="muted-text full-row" style="margin:0;">`wechat_ipad` 需要先部署独立 provider，再在这里填写 `API Base`。</p>
       {% elif channel.channel_type == 'workwechat' %}
-      <p class="muted-text full-row" style="margin:0;">`workwechat` 推荐生成云端授权码后走 WS/拉取模式，`API Base` 可留空；只有兼容旧直连 HTTP provider 时才需要填写。</p>
+      <p class="muted-text full-row" style="margin:0;">企业微信渠道必须绑定已激活节点及其在线账号；保留当前离线账号时允许直接保存，改绑必须选择在线账号。</p>
       {% endif %}
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">保存修改</button>
@@ -1253,4 +1255,29 @@
     </form>
   </div>
 </dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const nodeSelect = document.querySelector("[data-provider-node-select]");
+  const accountSelect = document.querySelector("[data-provider-account-select]");
+  if (!nodeSelect || !accountSelect) return;
+  const options = Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]"));
+  const refreshAccounts = () => {
+    const nodeId = nodeSelect.value;
+    let firstVisible = null;
+    options.forEach((option) => {
+      const visible = option.dataset.providerNodeId === nodeId;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (visible && !firstVisible) firstVisible = option;
+    });
+    if (!options.some((option) => !option.hidden && option.value === accountSelect.value)) {
+      accountSelect.value = firstVisible ? firstVisible.value : "0";
+    }
+  };
+  nodeSelect.addEventListener("change", refreshAccounts);
+  refreshAccounts();
+})();
+</script>
 {% endblock %}

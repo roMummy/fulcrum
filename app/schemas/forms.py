@@ -20,6 +20,9 @@ class ChannelCreate(BaseModel):
     dm_policy: str = "allowlist"
     allow_from: str | None = None
     adapter_config_json: str | None = None
+    # 企业微信渠道必须绑定已验证的 Provider 节点账号；其他渠道保持为空。
+    provider_node_id: int | None = None
+    provider_account_id: int | None = None
     is_enabled: bool = True
 
 
@@ -33,6 +36,9 @@ class ChannelUpdate(BaseModel):
     dm_policy: str = "allowlist"
     allow_from: str | None = None
     adapter_config_json: str | None = None
+    # 编辑时仍由服务端重新校验租户和父子关系，不能只信任页面下拉选项。
+    provider_node_id: int | None = None
+    provider_account_id: int | None = None
     is_enabled: bool = True
 
 

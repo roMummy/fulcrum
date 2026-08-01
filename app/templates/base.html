@@ -83,7 +83,7 @@
       <section class="page-hero">
         <div class="page-hero-copy">
           <p class="eyebrow">Multi-bot operations center</p>
-          <h1>{{ page_title }}</h1>
+          <h1{% if page_title_class %} class="{{ page_title_class }}"{% endif %}>{{ page_title }}</h1>
           <div class="page-intro">{% block page_intro %}{% endblock %}</div>
         </div>
         <div class="page-hero-actions">{% block hero_actions %}{% endblock %}</div>

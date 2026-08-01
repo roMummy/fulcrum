@@ -47,7 +47,7 @@
     <span class="chip chip-outline">当前清单</span>
   </div>
   <table class="table">
-    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">Adapter Config</th><th class="col-type">DM 策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>Provider 绑定</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">Adapter Config</th><th class="col-type">DM 策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for channel in channels %}
       {% set workwechat_cloud_poll_config = workwechat_cloud_poll_config_map.get(channel.id, {}) if workwechat_cloud_poll_config_map else {} %}
@@ -59,6 +59,7 @@
           <div class="muted-text">{{ bot_name_map.get(channel.bot_id, 'Bot') }} (#{{ channel.bot_id }})</div>
         </td>
         <td class="col-type"><span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span></td>
+        <td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a><div class="muted-text">{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未选账号{% endif %}</div>{% else %}-{% endif %}</td>
         <td>{{ '云端模式不需要' if is_workwechat_cloud_poll else (channel.api_base or '-') }}</td>
         <td>{{ channel.bot_token_masked or '-' }}</td>
         <td>{{ channel.webhook_path or '-' }}</td>
@@ -83,9 +84,12 @@
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/channels" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label><span>渠道名称</span><input name="name" placeholder="例如：微信主通道" required /></label>
       <label><span>渠道类型</span><select name="channel_type" required>{% for item in builtin_channel_types %}<option value="{{ item }}">{{ item|channel_type_label }}</option>{% endfor %}</select></label>
+      <label><span>Provider 节点</span><select name="provider_node_id" data-provider-node-select required><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select></label>
+      <label><span>企微账号</span><select name="provider_account_id" data-provider-account-select required><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' %}{% for account in node.accounts if account.status == 'online' %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>{% endfor %}{% endfor %}</select></label>
       <label><span>API Base</span><input name="api_base" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
       <label><span>Bot Token</span><input name="bot_token" type="password" placeholder="仅首次录入或更新时填写" /></label>
       <label><span>Webhook Path</span><input name="webhook_path" placeholder="/wechat/webhook" /></label>
@@ -103,7 +107,7 @@
         </div>
       </div>
       <label class="full-row"><span>Adapter Config JSON</span><textarea name="adapter_config_json" rows="5" placeholder='{"wxid":"wxid_xxx","device_id":"..."}'></textarea></label>
-      <p class="muted-text full-row" style="margin:0;">`workwechat` 推荐生成云端授权码后走 WS/拉取模式，`API Base` 可留空；只有直连 HTTP provider 或 `wechat_ipad` 才需要填写 `API Base`。</p>
+      <p class="muted-text full-row" style="margin:0;">企业微信渠道必须绑定已激活节点及其在线账号；节点激活码在 Provider 节点页面生成。</p>
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">创建渠道</button>
         <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
@@ -111,4 +115,29 @@
     </form>
   </div>
 </dialog>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const nodeSelect = document.querySelector("[data-provider-node-select]");
+  const accountSelect = document.querySelector("[data-provider-account-select]");
+  if (!nodeSelect || !accountSelect) return;
+  const options = Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]"));
+  const refreshAccounts = () => {
+    const nodeId = nodeSelect.value;
+    let firstVisible = null;
+    options.forEach((option) => {
+      const visible = option.dataset.providerNodeId === nodeId;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (visible && !firstVisible) firstVisible = option;
+    });
+    if (!options.some((option) => !option.hidden && option.value === accountSelect.value)) {
+      accountSelect.value = firstVisible ? firstVisible.value : "0";
+    }
+  };
+  nodeSelect.addEventListener("change", refreshAccounts);
+  refreshAccounts();
+})();
+</script>
 {% endblock %}

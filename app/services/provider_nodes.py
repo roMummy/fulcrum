@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.models.entities import Channel, TaskJob
 from app.models.saas import (
     ProviderActivationCode,
     ProviderCredential,
@@ -198,6 +199,10 @@ def issue_activation_code(
         raise ProviderNodeError("provider_node_not_found")
     if node.status == "disabled":
         raise ProviderNodeError("provider_node_disabled")
+    if node.status == "active":
+        # 已激活节点不能直接再签发第二套设备凭证；管理员必须走重新激活流程，
+        # 先吊销旧密钥再生成新码，避免同一节点长期存在多把有效设备密钥。
+        raise ProviderNodeError("provider_node_reactivation_required")
 
     current = now_shanghai()
     # 模型不额外增加 invalidated_at；重新签发时把旧码标记为已消费，验证阶段只需
@@ -340,6 +345,165 @@ def disable_provider_node(db: Session, node_id: int) -> ProviderNode:
     db.commit()
     db.refresh(node)
     return node
+
+
+def revoke_provider_node_credentials(
+    db: Session,
+    node_id: int,
+    *,
+    reason: str = "provider_node_revoked",
+    allow_disabled: bool = False,
+) -> ProviderNode:
+    """吊销节点全部设备凭证并切回待激活状态，不自动生成或展示新激活码。"""
+
+    node = get_provider_node(db, node_id)
+    if node is None:
+        raise ProviderNodeError("provider_node_not_found")
+    if node.status == "disabled" and not allow_disabled:
+        raise ProviderNodeError("provider_node_disabled")
+    current = now_shanghai()
+    db.execute(
+        update(ProviderCredential)
+        .where(
+            ProviderCredential.tenant_id == node.tenant_id,
+            ProviderCredential.provider_node_id == node.id,
+            ProviderCredential.revoked_at.is_(None),
+        )
+        .values(revoked_at=current, revoke_reason=(reason or "provider_node_revoked")[:255])
+    )
+    db.execute(
+        update(ProviderActivationCode)
+        .where(
+            ProviderActivationCode.tenant_id == node.tenant_id,
+            ProviderActivationCode.provider_node_id == node.id,
+            ProviderActivationCode.consumed_at.is_(None),
+        )
+        .values(consumed_at=current)
+    )
+    node.status = "pending"
+    node.device_id = None
+    node.client_version = None
+    node.activated_at = None
+    node.last_heartbeat_at = None
+    node.disabled_at = None
+    db.commit()
+    db.refresh(node)
+    return node
+
+
+def reactivate_provider_node(
+    db: Session,
+    node_id: int,
+    *,
+    created_by_user_id: int | None = None,
+    ttl_minutes: int = 30,
+) -> IssuedActivationCode:
+    """吊销旧设备密钥后签发一次性重新激活码，原文仍只返回当前调用一次。"""
+
+    node = get_provider_node(db, node_id)
+    if node is None:
+        raise ProviderNodeError("provider_node_not_found")
+    if node.status == "disabled" and get_provider_node_quota(db)["remaining"] <= 0:
+        raise ProviderNodeLimitReached("provider_node_limit_reached")
+    revoke_provider_node_credentials(
+        db,
+        node_id,
+        reason="provider_node_reactivation",
+        allow_disabled=True,
+    )
+    return issue_activation_code(
+        db,
+        node_id,
+        created_by_user_id=created_by_user_id,
+        ttl_minutes=ttl_minutes,
+    )
+
+
+def validate_workwechat_provider_binding(
+    db: Session,
+    *,
+    channel_type: str,
+    provider_node_id: int | None,
+    provider_account_id: int | None,
+    channel_id: int | None = None,
+) -> tuple[ProviderNode | None, ProviderNodeAccount | None]:
+    """校验企微渠道绑定的租户、节点、账号、在线状态和唯一占用关系。"""
+
+    normalized_type = (channel_type or "").strip()
+    node_id = int(provider_node_id or 0)
+    account_id = int(provider_account_id or 0)
+    if normalized_type != "workwechat":
+        if node_id or account_id:
+            raise ProviderNodeError("workwechat_provider_binding_not_allowed")
+        return None, None
+    if not node_id or not account_id:
+        raise ProviderNodeError("workwechat_provider_binding_required")
+
+    tenant_id = require_tenant_id()
+    node = get_provider_node(db, node_id)
+    if node is None:
+        raise ProviderNodeError("provider_node_not_found")
+    if node.status != "active":
+        raise ProviderNodeError("provider_node_not_active")
+    account = db.scalar(
+        select(ProviderNodeAccount).where(
+            ProviderNodeAccount.id == account_id,
+            ProviderNodeAccount.tenant_id == tenant_id,
+            ProviderNodeAccount.provider_node_id == node.id,
+        )
+    )
+    if account is None:
+        raise ProviderNodeError("provider_account_not_found")
+
+    current_channel = db.get(Channel, int(channel_id)) if channel_id else None
+    retaining_current_binding = bool(
+        current_channel
+        and int(current_channel.provider_node_id or 0) == node.id
+        and int(current_channel.provider_account_id or 0) == account.id
+    )
+    if account.status != "online" and not retaining_current_binding:
+        raise ProviderNodeError("provider_account_not_online")
+    occupied = db.scalar(
+        select(Channel.id).where(
+            Channel.provider_account_id == account.id,
+            Channel.id != int(channel_id or 0),
+        )
+    )
+    if occupied is not None:
+        # 入站接口只携带节点账号键；一个账号若绑定多个渠道将无法唯一解析目标渠道，
+        # 因此即使另一个渠道已停用，也必须先显式解绑再重新分配。
+        raise ProviderNodeError("provider_account_already_bound")
+    return node, account
+
+
+def unbind_provider_channel(db: Session, node_id: int, channel_id: int) -> Channel:
+    """从节点详情页解绑渠道；存在运行中租约时拒绝，避免任务回报失去绑定依据。"""
+
+    node = get_provider_node(db, node_id)
+    if node is None:
+        raise ProviderNodeError("provider_node_not_found")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.id == int(channel_id),
+            Channel.provider_node_id == node.id,
+        )
+    )
+    if channel is None:
+        raise ProviderNodeError("provider_channel_not_found")
+    running_job = db.scalar(
+        select(TaskJob.id).where(
+            TaskJob.provider_node_id == node.id,
+            TaskJob.provider_account_id == channel.provider_account_id,
+            TaskJob.status == "running",
+        )
+    )
+    if running_job is not None:
+        raise ProviderNodeError("provider_channel_has_running_job")
+    channel.provider_node_id = None
+    channel.provider_account_id = None
+    db.commit()
+    db.refresh(channel)
+    return channel
 
 
 def provider_poll_allowed(db: Session, tenant_id: int) -> bool:

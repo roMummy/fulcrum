@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% block page_intro %}
+<p>查看客户电脑节点、企微账号发现状态和套餐额度。</p>
+{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  {% if can_manage_provider_nodes %}
+  <button class="btn" type="button" data-modal-open="create-provider-node-modal">新增节点</button>
+  {% endif %}
+  <span class="chip chip-outline">已用 {{ quota.used }} / {{ quota.limit }}</span>
+  <span class="chip {% if quota.remaining > 0 %}chip-success{% else %}chip-muted{% endif %}">剩余 {{ quota.remaining }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Quota</p>
+      <h2>节点额度</h2>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card nested-card"><span>套餐额度</span><strong>{{ quota.limit }}</strong></div>
+    <div class="stat-card nested-card"><span>已占用</span><strong>{{ quota.used }}</strong></div>
+    <div class="stat-card nested-card"><span>剩余额度</span><strong>{{ quota.remaining }}</strong></div>
+    <div class="stat-card nested-card"><span>节点总数</span><strong>{{ nodes|length }}</strong></div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Provider inventory</p>
+      <h2>节点列表</h2>
+    </div>
+    <span class="chip chip-outline">一个节点可承载多个企微账号</span>
+  </div>
+  <div class="table-scroll">
+    <table class="table">
+      <thead>
+        <tr><th>节点</th><th>状态</th><th>客户端版本</th><th>最近心跳</th><th>发现账号</th><th>绑定渠道</th><th class="col-action">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for node in nodes %}
+        <tr>
+          <td><strong>{{ node.name }}</strong><div class="muted-text">#{{ node.id }}</div></td>
+          <td><span class="chip {% if node.status == 'active' %}chip-success{% elif node.status == 'pending' %}chip-outline{% else %}chip-muted{% endif %}">{{ {'active':'已激活','pending':'待激活','disabled':'已停用'}.get(node.status, node.status) }}</span></td>
+          <td>{{ node.client_version or '-' }}</td>
+          <td>{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</td>
+          <td>{{ node.accounts|length }}</td>
+          <td>{{ bound_counts.get(node.id, 0) }}</td>
+          <td class="col-action"><a class="btn btn-small" href="/provider-nodes/{{ node.id }}">详情</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><span class="muted-text">当前还没有 Provider 节点。</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if can_manage_provider_nodes %}
+<dialog class="app-modal" id="create-provider-node-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <p class="section-kicker">Provisioning</p>
+        <h2>新增 Provider 节点</h2>
+      </div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/provider-nodes" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>节点名称</span><input name="name" maxlength="100" placeholder="例如：客服电脑A" required /></label>
+      <label class="full-row"><span>备注</span><textarea name="notes" rows="3" placeholder="可填写位置、负责人或资产编号"></textarea></label>
+      <p class="muted-text full-row" style="margin:0;">创建后会立即生成一次性激活码，仅在成功页面显示一次。</p>
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">创建并生成激活码</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endif %}
+{% endblock %}
