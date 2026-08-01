@@ -19,7 +19,10 @@ from fastapi import HTTPException
 
 from app.api.open_api import enqueue_open_file_request, enqueue_open_message_request, list_open_chatroom_options, list_open_conversation_options
 from app.core.db import Base, SessionLocal, engine
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.models.entities import Bot, Channel, Chatroom, Conversation, OpenApiApp, OpenApiAppChannel, TaskJob
+from app.models.saas import Tenant
 from app.services.open_api_auth import (
     OpenApiAuthError,
     authenticate_open_api_request,
@@ -36,13 +39,20 @@ class OpenApiTestCase(unittest.TestCase):
         self.assertIn(str(TEMP_ROOT), str(Path(database_path).resolve()))
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        with SessionLocal() as db:
+            tenant = Tenant(code="open-api-test", name="开放接口测试租户", status="active")
+            db.add(tenant)
+            db.commit()
+            db.refresh(tenant)
+            self.tenant_id = tenant.id
 
     def _create_open_app(self, db, *, status: str = "active") -> tuple[OpenApiApp, Channel]:
         # 开放接口资源关联使用数据库主键，机器人精简后不再构造第二套 slug 标识。
-        bot = Bot(name="开放接口测试机器人", status="running", is_enabled=True)
+        bot = Bot(tenant_id=self.tenant_id, name="开放接口测试机器人", status="running", is_enabled=True)
         db.add(bot)
         db.flush()
         channel = Channel(
+            tenant_id=self.tenant_id,
             bot_id=bot.id,
             name="企微云端测试渠道",
             channel_type="workwechat",
@@ -53,6 +63,7 @@ class OpenApiTestCase(unittest.TestCase):
         db.add(channel)
         db.flush()
         app = OpenApiApp(
+            tenant_id=self.tenant_id,
             name="收发单系统",
             app_key="supplier-order",
             bot_id=bot.id,
@@ -62,7 +73,7 @@ class OpenApiTestCase(unittest.TestCase):
         set_open_api_secret(app, "secret-001")
         db.add(app)
         db.flush()
-        db.add(OpenApiAppChannel(app_id=app.id, channel_id=channel.id))
+        db.add(OpenApiAppChannel(tenant_id=self.tenant_id, app_id=app.id, channel_id=channel.id))
         db.commit()
         db.refresh(app)
         db.refresh(channel)
@@ -83,7 +94,8 @@ class OpenApiTestCase(unittest.TestCase):
                 raw_body=raw_body,
             )
 
-        self.assertEqual(result.app.app_key, "supplier-order")
+        self.assertEqual(result.tenant_id, self.tenant_id)
+        self.assertEqual(result.app_id, app.id)
 
     def test_authenticate_open_api_request_rejects_invalid_signature_and_disabled_app(self):
         raw_body = b'{"request_id":"REQ-001"}'
@@ -119,7 +131,7 @@ class OpenApiTestCase(unittest.TestCase):
     def test_enqueue_open_file_request_creates_cloud_job_and_is_idempotent(self):
         source_file = Path(TEST_DIR) / "order.xls"
         source_file.write_text("test order file", encoding="utf-8")
-        with SessionLocal() as db:
+        with tenant_scope(self.tenant_id), tenant_session(SessionLocal) as db:
             app, channel = self._create_open_app(db)
             first = enqueue_open_file_request(
                 db,
@@ -172,7 +184,7 @@ class OpenApiTestCase(unittest.TestCase):
             self.assertIn("/outbound-files/", payload["payload"]["file_url"])
 
     def test_enqueue_open_message_request_creates_text_job_and_is_idempotent(self):
-        with SessionLocal() as db:
+        with tenant_scope(self.tenant_id), tenant_session(SessionLocal) as db:
             app, channel = self._create_open_app(db)
             first = enqueue_open_message_request(
                 db,
@@ -246,12 +258,13 @@ class OpenApiTestCase(unittest.TestCase):
             self.assertEqual(forbidden_context.exception.detail, "channel_not_allowed")
 
     def test_open_api_app_can_use_authorized_channel_from_another_bot(self):
-        with SessionLocal() as db:
+        with tenant_scope(self.tenant_id), tenant_session(SessionLocal) as db:
             app, _channel = self._create_open_app(db)
-            other_bot = Bot(name="另一个开放接口机器人", status="running", is_enabled=True)
+            other_bot = Bot(tenant_id=self.tenant_id, name="另一个开放接口机器人", status="running", is_enabled=True)
             db.add(other_bot)
             db.flush()
             other_channel = Channel(
+                tenant_id=self.tenant_id,
                 bot_id=other_bot.id,
                 name="另一个企微渠道",
                 channel_type="workwechat",
@@ -261,8 +274,9 @@ class OpenApiTestCase(unittest.TestCase):
             )
             db.add(other_channel)
             db.flush()
-            db.add(OpenApiAppChannel(app_id=app.id, channel_id=other_channel.id))
+            db.add(OpenApiAppChannel(tenant_id=self.tenant_id, app_id=app.id, channel_id=other_channel.id))
             chatroom = Chatroom(
+                tenant_id=self.tenant_id,
                 bot_id=other_bot.id,
                 channel_id=other_channel.id,
                 external_id="R:other-bot-room",
@@ -303,6 +317,7 @@ class OpenApiTestCase(unittest.TestCase):
         with SessionLocal() as db:
             app, channel = self._create_open_app(db)
             conversation = Conversation(
+                tenant_id=self.tenant_id,
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 channel_type=channel.channel_type,
@@ -313,6 +328,7 @@ class OpenApiTestCase(unittest.TestCase):
             db.add(conversation)
             db.flush()
             chatroom = Chatroom(
+                tenant_id=self.tenant_id,
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 external_id="R:supplier-room",
@@ -335,6 +351,7 @@ class OpenApiTestCase(unittest.TestCase):
         with SessionLocal() as db:
             app, channel = self._create_open_app(db)
             chatroom = Chatroom(
+                tenant_id=self.tenant_id,
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 external_id="R:supplier-room",

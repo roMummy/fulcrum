@@ -10,9 +10,11 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, Chatroom, Conversation, OpenApiApp, OpenApiAppChannel, TaskJob
-from app.services.open_api_auth import OpenApiAuthError, authenticate_open_api_request
+from app.services.open_api_auth import OpenApiAuthError, OpenApiAuthResult, authenticate_open_api_request
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job, parse_job_payload
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
@@ -30,15 +32,14 @@ async def open_send_file_api(request: Request):
     """
 
     raw_body = await request.body()
-    db = SessionLocal()
-    try:
-        app = _authenticate_request(db, request, raw_body)
+    with platform_session(SessionLocal) as auth_db:
+        credential = _authenticate_request(auth_db, request, raw_body)
+    with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
+        app = _load_authenticated_app(db, credential)
         payload = _parse_json_body(raw_body)
         result = enqueue_open_file_request(db, app=app, payload=payload, public_base_url=build_public_base_url(request))
         db.commit()
         return result
-    finally:
-        db.close()
 
 
 @router.post("/api/open/messages")
@@ -50,15 +51,14 @@ async def open_send_message_api(request: Request):
     """
 
     raw_body = await request.body()
-    db = SessionLocal()
-    try:
-        app = _authenticate_request(db, request, raw_body)
+    with platform_session(SessionLocal) as auth_db:
+        credential = _authenticate_request(auth_db, request, raw_body)
+    with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
+        app = _load_authenticated_app(db, credential)
         payload = _parse_json_body(raw_body)
         result = enqueue_open_message_request(db, app=app, payload=payload)
         db.commit()
         return result
-    finally:
-        db.close()
 
 
 @router.get("/api/open/jobs/{request_id}")
@@ -66,15 +66,14 @@ async def open_job_status_api(request_id: str, request: Request):
     """开放接口：按业务 request_id 查询任务状态。"""
 
     raw_body = b""
-    db = SessionLocal()
-    try:
-        app = _authenticate_request(db, request, raw_body)
+    with platform_session(SessionLocal) as auth_db:
+        credential = _authenticate_request(auth_db, request, raw_body)
+    with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
+        app = _load_authenticated_app(db, credential)
         job = find_open_api_job(db, app=app, request_id=request_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job_not_found")
         return {"ok": True, "request_id": request_id, "job": serialize_open_api_job(job)}
-    finally:
-        db.close()
 
 
 @router.get("/api/open/conversations")
@@ -86,13 +85,12 @@ async def open_conversations_api(request: Request, chat_type: str = "", q: str =
     """
 
     raw_body = b""
-    db = SessionLocal()
-    try:
-        app = _authenticate_request(db, request, raw_body)
+    with platform_session(SessionLocal) as auth_db:
+        credential = _authenticate_request(auth_db, request, raw_body)
+    with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
+        app = _load_authenticated_app(db, credential)
         items = list_open_conversation_options(db, app=app, chat_type=chat_type, q=q, limit=limit)
         return {"ok": True, "items": items}
-    finally:
-        db.close()
 
 
 @router.get("/api/open/chatrooms")
@@ -104,13 +102,12 @@ async def open_chatrooms_api(request: Request, q: str = "", limit: int = 500):
     """
 
     raw_body = b""
-    db = SessionLocal()
-    try:
-        app = _authenticate_request(db, request, raw_body)
+    with platform_session(SessionLocal) as auth_db:
+        credential = _authenticate_request(auth_db, request, raw_body)
+    with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
+        app = _load_authenticated_app(db, credential)
         items = list_open_chatroom_options(db, app=app, q=q, limit=limit)
         return {"ok": True, "items": items}
-    finally:
-        db.close()
 
 
 def enqueue_open_message_request(db: Session, *, app: OpenApiApp, payload: dict[str, Any]) -> dict[str, Any]:
@@ -404,11 +401,20 @@ def _chatroom_option_matches(item: dict[str, Any], keyword: str) -> bool:
     return keyword in haystack
 
 
-def _authenticate_request(db: Session, request: Request, raw_body: bytes) -> OpenApiApp:
+def _authenticate_request(db: Session, request: Request, raw_body: bytes) -> OpenApiAuthResult:
     try:
-        return authenticate_open_api_request(db, headers=dict(request.headers), raw_body=raw_body).app
+        return authenticate_open_api_request(db, headers=dict(request.headers), raw_body=raw_body)
     except OpenApiAuthError as exc:
         raise HTTPException(status_code=401, detail=exc.code) from exc
+
+
+def _load_authenticated_app(db: Session, credential: OpenApiAuthResult) -> OpenApiApp:
+    """在租户会话中重新加载开放应用，避免认证 ORM 对象跨越会话边界。"""
+
+    app = db.get(OpenApiApp, credential.app_id)
+    if app is None or int(app.tenant_id) != credential.tenant_id:
+        raise HTTPException(status_code=401, detail="app_not_found")
+    return app
 
 
 def _parse_json_body(raw_body: bytes) -> dict[str, Any]:

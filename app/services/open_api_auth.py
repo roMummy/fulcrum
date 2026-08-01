@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.entities import OpenApiApp
+from app.models.saas import Tenant
 from app.services.security import decrypt_secret, encrypt_secret
 
 
@@ -17,9 +18,10 @@ OPEN_API_TIMESTAMP_TOLERANCE_SECONDS = 300
 
 @dataclass(frozen=True)
 class OpenApiAuthResult:
-    """开放接口鉴权结果。"""
+    """开放接口认证阶段返回的最小可信身份，不把 ORM 对象带入业务会话。"""
 
-    app: OpenApiApp
+    tenant_id: int
+    app_id: int
 
 
 class OpenApiAuthError(ValueError):
@@ -64,12 +66,14 @@ def sign_open_api_request(secret: str, raw_body: bytes, timestamp: str) -> str:
 def authenticate_open_api_request(db: Session, *, headers: dict[str, str], raw_body: bytes) -> OpenApiAuthResult:
     """校验开放接口请求。
 
-    必填头：X-App-Key、X-Timestamp、X-Signature。
+    必填头：X-App-Key、X-Timestamp、X-Signature。X-Tenant-Code 用于共享数据库
+    中精确定位租户；旧客户端未发送时只兼容全库唯一的 app_key。
     时间戳窗口限制可以降低抓包重放风险；业务幂等仍由 request_id 处理。
     """
 
     normalized_headers = {str(key).lower(): str(value or "") for key, value in headers.items()}
     app_key = normalized_headers.get("x-app-key", "").strip()
+    tenant_code = normalized_headers.get("x-tenant-code", "").strip()
     timestamp = normalized_headers.get("x-timestamp", "").strip()
     signature = normalized_headers.get("x-signature", "").strip()
     if not app_key:
@@ -86,9 +90,17 @@ def authenticate_open_api_request(db: Session, *, headers: dict[str, str], raw_b
     if abs(int(time.time()) - timestamp_value) > OPEN_API_TIMESTAMP_TOLERANCE_SECONDS:
         raise OpenApiAuthError("timestamp_expired")
 
-    app = db.scalar(select(OpenApiApp).where(OpenApiApp.app_key == app_key))
-    if app is None:
+    stmt = select(OpenApiApp).where(OpenApiApp.app_key == app_key)
+    if tenant_code:
+        stmt = stmt.join(Tenant, Tenant.id == OpenApiApp.tenant_id).where(Tenant.code == tenant_code)
+    apps = db.scalars(stmt.order_by(OpenApiApp.id.asc()).limit(2)).all()
+    if not apps:
         raise OpenApiAuthError("app_not_found")
+    if len(apps) > 1:
+        # app_key 只在租户内唯一。未提供租户编码且出现重名时必须拒绝，不能按
+        # 查询顺序任选一个租户，否则相同签名密钥配置会造成身份串用。
+        raise OpenApiAuthError("tenant_code_required")
+    app = apps[0]
     if str(app.status or "").strip() != "active":
         raise OpenApiAuthError("app_disabled")
     secret = decrypt_secret(app.app_secret_encrypted)
@@ -97,4 +109,4 @@ def authenticate_open_api_request(db: Session, *, headers: dict[str, str], raw_b
     expected = sign_open_api_request(secret, raw_body, timestamp)
     if not hmac.compare_digest(expected, signature):
         raise OpenApiAuthError("invalid_signature")
-    return OpenApiAuthResult(app=app)
+    return OpenApiAuthResult(tenant_id=int(app.tenant_id), app_id=int(app.id))
