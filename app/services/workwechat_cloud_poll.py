@@ -215,7 +215,11 @@ def complete_provider_node_job(
     )
     if job.status == "completed":
         return {"ok": True, "job_id": job.id, "status": "completed", "idempotent": True}
-    return complete_cloud_job(db, channel, job.id, result_payload)
+    # 节点级请求正文额外携带一次性租约原文。旧渠道协议会把 cloud_result
+    # 持久化用于排障，因此必须在进入兼容完成逻辑前删除鉴权字段；任务表已经
+    # 单独保存 lease_token_hash，不需要也不允许再次保存原始租约。
+    persisted_result = {key: value for key, value in result_payload.items() if key != "lease_token"}
+    return complete_cloud_job(db, channel, job.id, persisted_result)
 
 
 def fail_provider_node_job(

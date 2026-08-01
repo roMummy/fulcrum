@@ -206,6 +206,14 @@ def test_one_device_polls_multiple_bound_accounts_and_completion_is_idempotent(p
     assert repeated.status_code == 200
     assert repeated.json()["idempotent"] is True
 
+    with tenant_scope(ids["tenant"]), tenant_session(factory) as db:
+        stored = db.get(TaskJob, first["job_id"])
+        assert stored is not None
+        # 租约原文只用于本次回报鉴权，数据库只能保存领取阶段写入的摘要；
+        # 完成结果不得因为复用整个请求体而把 lease_token 再写进 result_json。
+        assert first["lease_token"] not in str(stored.result_json or "")
+        assert "lease_token" not in json.loads(stored.result_json or "{}").get("cloud_result", {})
+
 
 def test_other_node_cannot_complete_job_and_expired_lease_is_rejected(provider_api_context) -> None:
     """同租户其他节点也不能回报不属于自己的任务，过期租约必须拒绝。"""
