@@ -149,7 +149,7 @@ The default compose stack starts:
 ./scripts/saas_smoke_test.sh http://127.0.0.1:8280
 ```
 
-脚本检查存活/就绪探针、平台和租户登录入口、Provider 无效激活码及缺失设备凭证的拒绝边界。需要同时扫描应用日志时设置 `MBS_SMOKE_LOG_FILE`，脚本只检查是否出现疑似 Provider 激活码或设备令牌，不输出匹配原文。
+脚本检查存活/就绪探针、平台和租户登录入口、Provider 无效激活码及缺失设备凭证的拒绝边界；随后使用临时数据库自动验证双租户创建、节点额度、一次性激活、双节点心跳、任务与租约隔离、到期只读以及进程重建后的任务恢复。业务冒烟不写入部署数据库。需要同时扫描应用日志时设置 `MBS_SMOKE_LOG_FILE`，脚本只检查是否出现疑似 Provider 激活码或设备令牌，不输出匹配原文。
 
 ### Use SQLite in Docker
 
