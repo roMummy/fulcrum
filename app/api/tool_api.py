@@ -6,9 +6,12 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from sqlalchemy import select
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.settings import settings
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Conversation, Message, TaskJob
+from app.models.saas import Tenant
 from app.services.crud import get_channel
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job
@@ -44,6 +47,20 @@ def enforce_tool_api_key(request: Request) -> None:
         raise HTTPException(status_code=401, detail="invalid_api_key")
 
 
+def authenticate_tool_tenant(request: Request) -> int:
+    """把全局工具密钥与显式租户编码组合成可信租户身份。"""
+
+    enforce_tool_api_key(request)
+    tenant_code = str(request.headers.get("X-Tenant-Code") or "").strip()
+    if not tenant_code:
+        raise HTTPException(status_code=400, detail="tenant_code_required")
+    with platform_session(SessionLocal) as auth_db:
+        tenant = auth_db.scalar(select(Tenant).where(Tenant.code == tenant_code, Tenant.status == "active"))
+        if tenant is None:
+            raise HTTPException(status_code=401, detail="tenant_not_found")
+        return int(tenant.id)
+
+
 @router.post("/api/tool/channels/{channel_id}/upload-and-send")
 async def tool_upload_and_send_action(
     channel_id: int,
@@ -54,9 +71,8 @@ async def tool_upload_and_send_action(
     chat_type: str = "group",
     message_type: str = "file",
 ):
-    enforce_tool_api_key(request)
-    db = SessionLocal()
-    try:
+    tenant_id = authenticate_tool_tenant(request)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -74,6 +90,7 @@ async def tool_upload_and_send_action(
             raise HTTPException(status_code=400, detail="empty file")
 
         stored = store_outbound_upload(
+            tenant_id=channel.tenant_id,
             channel_id=channel_id,
             file_name=file.filename or "upload.bin",
             content=file_bytes,
@@ -141,8 +158,6 @@ async def tool_upload_and_send_action(
             "download_url": download_url,
             "payload": outbound_payload,
         }
-    finally:
-        db.close()
 
 
 @router.get("/api/tool/channels/{channel_id}/messages")
@@ -153,9 +168,8 @@ async def tool_channel_messages_api(
     after_id: int = 0,
     limit: int = 50,
 ):
-    enforce_tool_api_key(request)
-    db = SessionLocal()
-    try:
+    tenant_id = authenticate_tool_tenant(request)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -203,15 +217,12 @@ async def tool_channel_messages_api(
             "count": len(messages),
             "messages": messages,
         }
-    finally:
-        db.close()
 
 
 @router.get("/api/tool/jobs/{job_id}")
 async def tool_job_status_api(job_id: int, request: Request):
-    enforce_tool_api_key(request)
-    db = SessionLocal()
-    try:
+    tenant_id = authenticate_tool_tenant(request)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         job = db.get(TaskJob, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -234,5 +245,3 @@ async def tool_job_status_api(job_id: int, request: Request):
                 "error_message": job.error_message,
             },
         }
-    finally:
-        db.close()

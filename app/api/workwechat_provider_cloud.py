@@ -220,6 +220,7 @@ async def upload_workwechat_provider_inbound_file(request: Request):
 
         # 文件内容仍落到主服务统一的 inbound_files 目录，后续插件读取路径和传统 webhook 模式保持一致。
         stored = store_inbound_upload(
+            tenant_id=channel.tenant_id,
             channel_id=channel.id,
             file_name=file_name,
             content=content,

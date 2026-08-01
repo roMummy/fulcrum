@@ -6,12 +6,13 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.core.db import SessionLocal
-from app.models.entities import Conversation
-from app.services.auth import has_required_role
+from app.core.db import SessionLocal, TenantSessionLocal
+from app.core.tenant_db import open_tenant_session
+from app.models.entities import Channel, Conversation
 from app.services.crud import get_channel
 from app.services.ops import record_audit
 from app.services.outbound_files import OUTBOUND_FILE_ROOT, build_public_base_url, sanitize_upload_filename, store_outbound_upload
+from app.services.saas_auth import has_tenant_role
 from app.services.task_queue import enqueue_job
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
 
@@ -23,7 +24,7 @@ def enforce_ops_role(request: Request):
     user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    if not has_required_role(user, "ops"):
+    if not has_tenant_role(user, "operator"):
         raise HTTPException(status_code=403, detail="Permission denied")
     return user
 
@@ -36,7 +37,7 @@ async def outbound_upload_action(
     message_type: str = Form("file"),
 ):
     enforce_ops_role(request)
-    db = SessionLocal()
+    db = open_tenant_session(TenantSessionLocal)
     try:
         channel = get_channel(db, channel_id)
         if not channel:
@@ -52,6 +53,7 @@ async def outbound_upload_action(
     if not content:
         raise HTTPException(status_code=400, detail="empty file")
     stored = store_outbound_upload(
+        tenant_id=channel.tenant_id,
         channel_id=channel_id,
         file_name=file.filename or "upload.bin",
         content=content,
@@ -84,7 +86,12 @@ async def outbound_file_download(channel_id: int, share_id: str, file_name: str)
     safe_name = sanitize_upload_filename(file_name, fallback="")
     if not safe_name:
         raise HTTPException(status_code=404, detail="file not found")
-    target_path = OUTBOUND_FILE_ROOT / str(channel_id) / share_id / safe_name
+    with SessionLocal() as db:
+        channel = db.get(Channel, channel_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        tenant_id = int(channel.tenant_id)
+    target_path = OUTBOUND_FILE_ROOT / str(tenant_id) / "outbound_files" / str(channel_id) / share_id / safe_name
     if not target_path.exists() or not target_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(path=target_path, filename=safe_name)
@@ -101,7 +108,7 @@ async def outbound_upload_and_send_action(
     message_type: str = Form("file"),
 ):
     enforce_ops_role(request)
-    db = SessionLocal()
+    db = open_tenant_session(TenantSessionLocal)
     try:
         channel = get_channel(db, channel_id)
         if not channel:
@@ -120,6 +127,7 @@ async def outbound_upload_and_send_action(
             raise HTTPException(status_code=400, detail="empty file")
 
         stored = store_outbound_upload(
+            tenant_id=channel.tenant_id,
             channel_id=channel_id,
             file_name=file.filename or "upload.bin",
             content=file_bytes,

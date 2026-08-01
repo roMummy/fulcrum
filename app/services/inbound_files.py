@@ -15,12 +15,13 @@ from app.services.outbound_files import build_public_base_url, sanitize_upload_f
 
 
 # 入站文件统一落到服务端自己的数据目录下，避免依赖 provider 客户端机器本地磁盘。
-INBOUND_FILE_ROOT = Path(settings.data_dir) / "inbound_files"
+INBOUND_FILE_ROOT = Path(settings.data_dir) / "tenants"
 INBOUND_FILE_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def store_inbound_upload(
     *,
+    tenant_id: int,
     channel_id: int,
     file_name: str,
     content: bytes,
@@ -33,12 +34,15 @@ def store_inbound_upload(
     normalized_type = str(message_type or "file").strip().lower() or "file"
     original_name = sanitize_upload_filename(file_name, fallback="upload.bin")
     share_id = secrets.token_hex(16)
-    target_dir = INBOUND_FILE_ROOT / str(channel_id) / share_id
+    if int(tenant_id or 0) <= 0:
+        raise ValueError("tenant_id_required")
+    target_dir = INBOUND_FILE_ROOT / str(tenant_id) / "inbound_files" / str(channel_id) / share_id
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / original_name
     target_path.write_bytes(content)
 
     metadata = {
+        "tenant_id": tenant_id,
         "channel_id": channel_id,
         "message_type": normalized_type,
         "file_name": original_name,

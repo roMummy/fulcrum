@@ -75,6 +75,7 @@ async def inbound_file_upload(channel_id: int, request: Request):
             raise HTTPException(status_code=400, detail="empty file")
 
         stored = store_inbound_upload(
+            tenant_id=channel.tenant_id,
             channel_id=channel.id,
             file_name=file_name,
             content=content,
@@ -107,7 +108,12 @@ async def inbound_file_download(channel_id: int, share_id: str, file_name: str):
     safe_name = str(file_name or "").strip()
     if not safe_name:
         raise HTTPException(status_code=404, detail="file not found")
-    target_path = INBOUND_FILE_ROOT / str(channel_id) / share_id / safe_name
+    with platform_session(SessionLocal) as db:
+        channel = db.get(Channel, channel_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        tenant_id = int(channel.tenant_id)
+    target_path = INBOUND_FILE_ROOT / str(tenant_id) / "inbound_files" / str(channel_id) / share_id / safe_name
     if not target_path.exists() or not target_path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(path=target_path, filename=safe_name)

@@ -242,6 +242,7 @@ def enqueue_open_file_request(db: Session, *, app: OpenApiApp, payload: dict[str
     content = str(payload.get("content") or "").strip()
 
     file_url, stored_meta = _resolve_open_file_url(
+        tenant_id=int(channel.tenant_id),
         channel_id=int(channel.id),
         payload=payload,
         file_name=file_name,
@@ -551,7 +552,14 @@ def _build_open_message_payload(*, conversation: Conversation, payload: dict[str
     return outbound_payload
 
 
-def _resolve_open_file_url(*, channel_id: int, payload: dict[str, Any], file_name: str, public_base_url: str) -> tuple[str, dict[str, Any]]:
+def _resolve_open_file_url(
+    *,
+    tenant_id: int,
+    channel_id: int,
+    payload: dict[str, Any],
+    file_name: str,
+    public_base_url: str,
+) -> tuple[str, dict[str, Any]]:
     file_url = str(payload.get("file_url") or "").strip()
     if file_url:
         return file_url, {"source": "remote_url", "file_name": file_name}
@@ -560,6 +568,7 @@ def _resolve_open_file_url(*, channel_id: int, payload: dict[str, Any], file_nam
     if not file_bytes:
         raise HTTPException(status_code=400, detail="file_url_or_file_content_required")
     stored = store_outbound_upload(
+        tenant_id=tenant_id,
         channel_id=channel_id,
         file_name=file_name,
         content=file_bytes,
