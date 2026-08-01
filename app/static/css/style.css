@@ -767,6 +767,15 @@ code {
   background: rgba(255, 255, 255, 0.46);
 }
 
+/* Provider 节点页会展示账号键、心跳、状态和操作等多列信息。滚动职责统一放在
+   外层容器，避免移动端为了塞进视口把每一列压成逐字断行。 */
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .plugin-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -2512,6 +2521,16 @@ code {
     max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  /* 已有 table-scroll 的多列表格由父容器提供横向滚动，表格本身恢复 table
+     布局并保留稳定列宽；table-tight 状态表列数少，继续使用上面的自适应规则。 */
+  .table-scroll > .table:not(.table-tight) {
+    display: table;
+    width: 100%;
+    min-width: 640px;
+    max-width: none;
+    overflow: visible;
   }
 
   .table th,
