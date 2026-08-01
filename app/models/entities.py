@@ -3,16 +3,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
 from app.core.db import Base
-from app.models.mixins import TimestampMixin
+from app.models.mixins import TenantOwnedMixin, TimestampMixin
 
 
-class Bot(Base, TimestampMixin):
+class Bot(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "bots"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_bots_tenant_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     # SaaS 租户只需要一个可识别的业务名称。内部关联统一使用主键，避免再维护
     # slug、分组、模板、标签和环境等与企业微信接入无关的第二套资产体系。
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="stopped")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -22,7 +23,7 @@ class Bot(Base, TimestampMixin):
     conversations = relationship("Conversation", back_populates="bot", cascade="all, delete-orphan")
 
 
-class Channel(Base, TimestampMixin):
+class Channel(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "channels"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -64,7 +65,7 @@ class Plugin(Base, TimestampMixin):
     bot_bindings = relationship("BotPlugin", back_populates="plugin", cascade="all, delete-orphan")
 
 
-class BotPlugin(Base, TimestampMixin):
+class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "bot_plugins"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -83,7 +84,7 @@ class BotPlugin(Base, TimestampMixin):
     plugin = relationship("Plugin", back_populates="bot_bindings")
 
 
-class Conversation(Base, TimestampMixin):
+class Conversation(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -100,7 +101,7 @@ class Conversation(Base, TimestampMixin):
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 
 
-class Chatroom(Base, TimestampMixin):
+class Chatroom(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "chatrooms"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -127,7 +128,7 @@ class Chatroom(Base, TimestampMixin):
     members = relationship("ChatroomMember", back_populates="chatroom", cascade="all, delete-orphan")
 
 
-class ChatroomMember(Base, TimestampMixin):
+class ChatroomMember(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "chatroom_members"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -148,7 +149,7 @@ class ChatroomMember(Base, TimestampMixin):
     channel = relationship("Channel")
 
 
-class WorkWechatContact(Base, TimestampMixin):
+class WorkWechatContact(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "workwechat_contacts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -199,7 +200,7 @@ class WorkWechatContact(Base, TimestampMixin):
     relations = relationship("WorkWechatContactRelation", back_populates="contact", cascade="all, delete-orphan")
 
 
-class WorkWechatContactRelation(Base, TimestampMixin):
+class WorkWechatContactRelation(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "workwechat_contact_relations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -229,10 +230,17 @@ class WorkWechatContactRelation(Base, TimestampMixin):
     contact = relationship("WorkWechatContact", back_populates="relations")
 
 
-class CustomerOperationRequest(Base, TimestampMixin):
+class CustomerOperationRequest(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "customer_operation_requests"
     __table_args__ = (
-        UniqueConstraint("channel_id", "request_id", name="uq_customer_operation_request_channel_request"),
+        # request_id 只保证同一租户、同一企微渠道内幂等，不允许一个租户的请求
+        # 占用另一个租户可独立使用的业务请求编号。
+        UniqueConstraint(
+            "tenant_id",
+            "channel_id",
+            "request_id",
+            name="uq_customer_operation_request_tenant_channel_request",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -263,7 +271,7 @@ class CustomerOperationRequest(Base, TimestampMixin):
     message = relationship("Message")
 
 
-class OpenApiApp(Base, TimestampMixin):
+class OpenApiApp(Base, TenantOwnedMixin, TimestampMixin):
     """开放接口接入应用。
 
     MBA 作为消息网关时，外部业务系统通过 app_key/app_secret 调用发送接口。
@@ -271,10 +279,11 @@ class OpenApiApp(Base, TimestampMixin):
     """
 
     __tablename__ = "open_api_apps"
+    __table_args__ = (UniqueConstraint("tenant_id", "app_key", name="uq_open_api_apps_tenant_app_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), index=True)
-    app_key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    app_key: Mapped[str] = mapped_column(String(100), index=True)
     app_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     app_secret_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     bot_id: Mapped[int | None] = mapped_column(ForeignKey("bots.id"), nullable=True, index=True)
@@ -288,7 +297,7 @@ class OpenApiApp(Base, TimestampMixin):
     default_channel = relationship("Channel")
 
 
-class OpenApiAppChannel(Base, TimestampMixin):
+class OpenApiAppChannel(Base, TenantOwnedMixin, TimestampMixin):
     """开放接口应用的渠道授权。
 
     一个业务系统通常代表一个客户公司；同一家公司可能有多个企业微信号，
@@ -296,7 +305,9 @@ class OpenApiAppChannel(Base, TimestampMixin):
     """
 
     __tablename__ = "open_api_app_channels"
-    __table_args__ = (UniqueConstraint("app_id", "channel_id", name="uq_open_api_app_channel"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "app_id", "channel_id", name="uq_open_api_app_tenant_channel"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     app_id: Mapped[int] = mapped_column(ForeignKey("open_api_apps.id"), index=True)
@@ -306,7 +317,7 @@ class OpenApiAppChannel(Base, TimestampMixin):
     channel = relationship("Channel")
 
 
-class GroupPluginScope(Base, TimestampMixin):
+class GroupPluginScope(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "group_plugin_scopes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -328,7 +339,7 @@ class GroupPluginScope(Base, TimestampMixin):
     bot_plugin = relationship("BotPlugin")
 
 
-class RawWebhookEvent(Base, TimestampMixin):
+class RawWebhookEvent(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "raw_webhook_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -342,7 +353,7 @@ class RawWebhookEvent(Base, TimestampMixin):
     channel = relationship("Channel")
 
 
-class Message(Base, TimestampMixin):
+class Message(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -361,7 +372,7 @@ class Message(Base, TimestampMixin):
     conversation = relationship("Conversation", back_populates="messages")
 
 
-class MessageAttachment(Base, TimestampMixin):
+class MessageAttachment(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "message_attachments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -385,7 +396,7 @@ class MessageAttachment(Base, TimestampMixin):
     conversation = relationship("Conversation")
 
 
-class TaskJob(Base, TimestampMixin):
+class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "task_jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -405,7 +416,7 @@ class TaskJob(Base, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class WeatherSubscription(Base, TimestampMixin):
+class WeatherSubscription(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "weather_subscriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -431,7 +442,7 @@ class WeatherSubscription(Base, TimestampMixin):
     conversation = relationship("Conversation")
 
 
-class SignInRecord(Base, TimestampMixin):
+class SignInRecord(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "sign_in_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -446,7 +457,7 @@ class SignInRecord(Base, TimestampMixin):
     last_sign_date: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class SignInHistory(Base, TimestampMixin):
+class SignInHistory(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "sign_in_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -462,7 +473,7 @@ class SignInHistory(Base, TimestampMixin):
     record = relationship("SignInRecord")
 
 
-class PointsAccount(Base, TimestampMixin):
+class PointsAccount(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "points_accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -472,7 +483,7 @@ class PointsAccount(Base, TimestampMixin):
     total_points: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class PointsTransaction(Base, TimestampMixin):
+class PointsTransaction(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "points_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -486,7 +497,7 @@ class PointsTransaction(Base, TimestampMixin):
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class PointsPrisonRecord(Base, TimestampMixin):
+class PointsPrisonRecord(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "points_prison_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -499,7 +510,7 @@ class PointsPrisonRecord(Base, TimestampMixin):
     bailed_out_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
-class ErrorLog(Base):
+class ErrorLog(Base, TenantOwnedMixin):
     __tablename__ = "error_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -509,7 +520,7 @@ class ErrorLog(Base):
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai)
 
 
-class PluginExecutionLog(Base, TimestampMixin):
+class PluginExecutionLog(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "plugin_execution_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -539,7 +550,7 @@ class PluginExecutionLog(Base, TimestampMixin):
     details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class MessageActivityHourly(Base):
+class MessageActivityHourly(Base, TenantOwnedMixin):
     __tablename__ = "message_activity_hourly"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -553,7 +564,7 @@ class MessageActivityHourly(Base):
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, onupdate=now_shanghai)
 
 
-class PluginActivityHourly(Base):
+class PluginActivityHourly(Base, TenantOwnedMixin):
     __tablename__ = "plugin_activity_hourly"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -576,7 +587,7 @@ class PluginActivityHourly(Base):
     updated_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, onupdate=now_shanghai)
 
 
-class HealthCheckRecord(Base, TimestampMixin):
+class HealthCheckRecord(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "health_check_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -588,7 +599,7 @@ class HealthCheckRecord(Base, TimestampMixin):
     details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class AlertRecord(Base, TimestampMixin):
+class AlertRecord(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "alert_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -604,7 +615,7 @@ class AlertRecord(Base, TimestampMixin):
     resolved_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class AuditLog(Base, TimestampMixin):
+class AuditLog(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
