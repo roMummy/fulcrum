@@ -1,8 +1,4 @@
 import json
-import base64
-import hashlib
-import hmac
-import random
 import subprocess
 import time as time_module
 from datetime import date, datetime, time, timedelta, timezone
@@ -23,18 +19,9 @@ from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
-from app.models.entities import AdminUser, AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
+from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
-from app.services.auth import (
-    AUTH_COOKIE_NAME,
-    build_auth_cookie,
-    get_user_by_cookie,
-    has_required_role,
-    hash_password,
-    normalize_role,
-    validate_password_change,
-    verify_password,
-)
+from app.services.auth import validate_password_change
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.channel_adapters import get_channel_adapter
 from app.services.channel_events import ingest_inbound_event, ingest_normalized_event
@@ -93,6 +80,7 @@ from app.services.runtime import (
     run_channel_health_check,
 )
 from app.services.task_queue import WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
+from app.services.saas_auth import TenantPrincipal, has_tenant_role, load_platform_principal, load_tenant_principal
 from app.services.workwechat_cloud_poll import issue_channel_authorization_code, is_cloud_poll_enabled, load_cloud_poll_config, notify_cloud_job_enqueued, resolve_outbound_job_type
 from app.services.security import (
     build_telegram_webhook_secret,
@@ -151,6 +139,18 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
+from app.web import platform_auth_router, tenant_auth_router
+from app.web.auth_common import (
+    PLATFORM_LOGIN_PATH,
+    PLATFORM_SESSION_COOKIE,
+    TENANT_CSRF_COOKIE,
+    TENANT_LOGIN_PATH,
+    TENANT_LOGOUT_PATH,
+    TENANT_PASSWORD_PATH,
+    TENANT_SESSION_COOKIE,
+    platform_must_change_password_redirect,
+    tenant_must_change_password_redirect,
+)
 configure_logging()
 logger = get_logger(__name__)
 
@@ -168,10 +168,11 @@ app.include_router(customer_operations_router)
 app.include_router(open_api_router)
 app.include_router(open_api_admin_router)
 app.include_router(workwechat_provider_cloud_router)
+# 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
+app.include_router(tenant_auth_router)
+app.include_router(platform_auth_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = ("wechat_ipad", "wechat_winauto", "workwechat", "openclaw", "simulator", "telegram")
-LOGIN_FAILURE_COOKIE_NAME = "mba_login_failures"
-LOGIN_CAPTCHA_THRESHOLD = 3
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
 
@@ -213,16 +214,6 @@ async def startup_event() -> None:
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     stop_background_workers()
-
-
-def auth_cookie_options() -> dict[str, object]:
-    return {
-        "httponly": True,
-        "max_age": settings.auth_cookie_max_age_seconds,
-        "secure": settings.should_use_secure_cookie,
-        "samesite": settings.auth_cookie_samesite,
-        "path": "/",
-    }
 
 
 def format_beijing_time(value):
@@ -510,6 +501,11 @@ def render(request: Request, template: str, **context):
         ]
     base_context = {
         "current_user": getattr(request.state, "current_user", None),
+        # 所有租户页面共用同一个可信 CSRF Cookie；状态变更表单必须把原始值放入
+        # 隐藏字段，由对应路由再与数据库会话摘要进行三方校验。
+        "csrf_token": request.cookies.get(TENANT_CSRF_COOKIE, ""),
+        "logout_action": TENANT_LOGOUT_PATH,
+        "password_action": TENANT_PASSWORD_PATH,
         "app_started_at": APP_STARTED_AT,
         "notice_tone": notice_tone,
         "nav_items": nav_items,
@@ -533,116 +529,6 @@ def infer_notice_tone(notice: str) -> str:
     if any(keyword in text for keyword in error_keywords):
         return "danger"
     return "default"
-
-
-def _sign_login_failure_count(count: int) -> str:
-    payload = str(max(int(count or 0), 0))
-    signature = hmac.new(settings.secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{payload}:{signature}".encode("utf-8")).decode("ascii")
-
-
-def read_login_failure_count(request: Request) -> int:
-    raw_value = str(request.cookies.get(LOGIN_FAILURE_COOKIE_NAME) or "").strip()
-    if not raw_value:
-        return 0
-    try:
-        decoded = base64.urlsafe_b64decode(raw_value.encode("ascii")).decode("utf-8")
-        payload, signature = decoded.rsplit(":", 1)
-        expected_signature = hmac.new(settings.secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected_signature, signature):
-            return 0
-        return max(int(payload), 0)
-    except Exception:
-        return 0
-
-
-def should_require_login_captcha(failure_count: int) -> bool:
-    return failure_count >= LOGIN_CAPTCHA_THRESHOLD
-
-
-def apply_login_failure_cookie(response: Response, count: int) -> None:
-    normalized = max(int(count or 0), 0)
-    if normalized <= 0:
-        response.delete_cookie(LOGIN_FAILURE_COOKIE_NAME, path="/")
-        return
-    response.set_cookie(
-        LOGIN_FAILURE_COOKIE_NAME,
-        _sign_login_failure_count(normalized),
-        httponly=True,
-        secure=settings.should_use_secure_cookie,
-        samesite=settings.auth_cookie_samesite,
-        path="/",
-        max_age=settings.auth_cookie_max_age_seconds,
-    )
-
-
-def build_login_page_context(
-    *,
-    notice: str = "",
-    needs_bootstrap_admin: bool = False,
-    has_any_user: bool = False,
-    username: str = "",
-    require_captcha: bool = False,
-) -> dict[str, object]:
-    context = {
-        "page_title": "登录",
-        "notice": notice,
-        "demo_mode_enabled": settings.should_seed_demo_users,
-        "needs_bootstrap_admin": needs_bootstrap_admin,
-        "has_any_user": has_any_user,
-        "require_captcha": require_captcha,
-        "prefill_username": username,
-    }
-    if require_captcha:
-        captcha_question, captcha_token = generate_login_captcha()
-        context["captcha_question"] = captcha_question
-        context["captcha_token"] = captcha_token
-    else:
-        context["captcha_question"] = ""
-        context["captcha_token"] = ""
-    return context
-
-
-def generate_login_captcha() -> tuple[str, str]:
-    left = random.randint(1, 20)
-    right = random.randint(1, 20)
-    operator = random.choice(("+", "-"))
-    if operator == "-" and left < right:
-        left, right = right, left
-    answer = left + right if operator == "+" else left - right
-    expires_at = int((now_shanghai() + timedelta(minutes=10)).timestamp())
-    payload = json.dumps(
-        {
-            "answer": answer,
-            "exp": expires_at,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    signature = hmac.new(settings.secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    token = base64.urlsafe_b64encode(f"{payload}.{signature}".encode("utf-8")).decode("ascii")
-    return f"{left} {operator} {right} = ?", token
-
-
-def verify_login_captcha(token: str, answer: str) -> bool:
-    cleaned_token = str(token or "").strip()
-    cleaned_answer = str(answer or "").strip()
-    if not cleaned_token or not cleaned_answer:
-        return False
-    try:
-        decoded = base64.urlsafe_b64decode(cleaned_token.encode("ascii")).decode("utf-8")
-        payload, signature = decoded.rsplit(".", 1)
-        expected_signature = hmac.new(settings.secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected_signature, signature):
-            return False
-        parsed = json.loads(payload)
-        expires_at = int(parsed.get("exp") or 0)
-        expected_answer = str(parsed.get("answer"))
-    except Exception:
-        return False
-    if expires_at < int(now_shanghai().timestamp()):
-        return False
-    return cleaned_answer == expected_answer
 
 
 def parse_json_object(raw_text: str) -> tuple[dict[str, object], str]:
@@ -1200,22 +1086,29 @@ def get_session() -> Session:
         raise
 
 
-def require_user(request: Request) -> AdminUser:
+def require_user(request: Request) -> TenantPrincipal:
+    """返回中间件从 SaaS 数据库会话恢复的可信租户身份。"""
+
     user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
 
 
-def enforce_role(request: Request, required_role: str) -> AdminUser:
+def enforce_role(request: Request, required_role: str) -> TenantPrincipal:
+    """兼容旧业务路由的角色名称，并在服务端按新租户角色层级强制鉴权。"""
+
     user = require_user(request)
-    if not has_required_role(user, required_role):
+    # 现有业务路由仍使用 admin/ops/readonly 三档名称；在完成页面租户化前统一映射，
+    # 避免把客户端展示角色或旧 AdminUser Cookie 当成新 SaaS 权限依据。
+    tenant_role = {
+        "admin": "tenant_admin",
+        "ops": "operator",
+        "readonly": "readonly",
+    }.get(required_role, required_role)
+    if not has_tenant_role(user, tenant_role):
         raise HTTPException(status_code=403, detail="Permission denied")
     return user
-
-
-def count_enabled_admins(db: Session) -> int:
-    return db.scalar(select(func.count(AdminUser.id)).where(AdminUser.role == "admin", AdminUser.is_enabled.is_(True))) or 0
 
 
 def parse_date_input(value: str) -> date | None:
@@ -1508,14 +1401,12 @@ async def request_logging_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    # 云端企微 Provider 接口是桌面客户端的机器到机器入口，不能依赖后台登录 Cookie；
-    # 这些接口内部会分别校验一次性授权码或 client token，因此这里仅放行到业务路由继续做鉴权。
+    """恢复平台与租户数据库会话，并按 URL 空间选择唯一可信身份。"""
+
+    # 云端企微 Provider 接口是桌面客户端的机器到机器入口，不能依赖后台登录 Cookie。
+    # 这些接口内部会分别校验一次性授权码或 client token，因此这里只放行到业务路由。
     public_prefixes = (
         "/static/",
-        "/healthz",
-        "/login",
-        "/setup",
-        "/setup/completed",
         "/webhooks/",
         # Open API 自身使用 X-App-Key/X-Timestamp/X-Signature 鉴权，不能再套后台登录态。
         "/api/open/",
@@ -1524,9 +1415,22 @@ async def auth_middleware(request: Request, call_next):
         "/api/workwechat/customer-operations",
         "/api/workwechat/provider",
     )
+    public_paths = {
+        "/healthz",
+        "/setup",
+        "/setup/completed",
+        TENANT_LOGIN_PATH,
+        PLATFORM_LOGIN_PATH,
+    }
     db = get_session()
     try:
-        request.state.current_user = get_user_by_cookie(db, request.cookies.get(AUTH_COOKIE_NAME))
+        # 两类会话始终分别恢复。租户业务只读取 current_user，平台路径只读取
+        # platform_principal，任何一方都不能通过同名账号或另一类 Cookie 自动升级身份。
+        request.state.current_user = load_tenant_principal(db, request.cookies.get(TENANT_SESSION_COOKIE))
+        request.state.platform_principal = load_platform_principal(
+            db,
+            request.cookies.get(PLATFORM_SESSION_COOKIE),
+        )
         request.state.setup_required = is_setup_required(db)
     finally:
         db.close()
@@ -1534,108 +1438,31 @@ async def auth_middleware(request: Request, call_next):
     if request.state.setup_required and request.url.path not in {"/setup", "/healthz"} and not request.url.path.startswith("/static/"):
         return RedirectResponse(url="/setup", status_code=303)
 
-    if request.url.path.startswith(public_prefixes) or request.url.path == "/":
-        if request.url.path == "/" and not request.state.current_user:
-            return RedirectResponse(url="/login", status_code=303)
+    path = request.url.path
+    if path in public_paths or path.startswith(public_prefixes):
         return await call_next(request)
 
-    if not request.state.current_user:
-        return RedirectResponse(url="/login", status_code=303)
+    if path.startswith("/platform"):
+        platform_principal = request.state.platform_principal
+        if platform_principal is None:
+            return RedirectResponse(url=PLATFORM_LOGIN_PATH, status_code=303)
+        password_redirect = platform_must_change_password_redirect(platform_principal, path)
+        if password_redirect is not None:
+            return RedirectResponse(url=password_redirect, status_code=303)
+        return await call_next(request)
+
+    tenant_principal = request.state.current_user
+    if tenant_principal is None:
+        return RedirectResponse(url=TENANT_LOGIN_PATH, status_code=303)
+    password_redirect = tenant_must_change_password_redirect(tenant_principal, path)
+    if password_redirect is not None:
+        return RedirectResponse(url=password_redirect, status_code=303)
     return await call_next(request)
 
 
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "service": "multi-bot-saas"}
-
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    pending_setup = read_setup_pending_restart_marker()
-    if pending_setup:
-        return RedirectResponse(
-            url="/setup/completed?notice=" + quote("检测到安装配置已经写入，但当前服务还没有重启，请先重启后再登录"),
-            status_code=303,
-        )
-    db = get_session()
-    try:
-        if is_setup_required(db):
-            return RedirectResponse(url="/setup", status_code=303)
-        has_admin = count_enabled_admins(db)
-        has_any_user = db.scalar(select(func.count(AdminUser.id))) or 0
-        failure_count = read_login_failure_count(request)
-        return render(
-            request,
-            "login.html",
-            **build_login_page_context(
-                notice=request.query_params.get("notice", ""),
-                needs_bootstrap_admin=not has_admin,
-                has_any_user=bool(has_any_user),
-                require_captcha=should_require_login_captcha(failure_count),
-            ),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/login")
-async def login_action(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    captcha_answer: str = Form(""),
-    captcha_token: str = Form(""),
-):
-    pending_setup = read_setup_pending_restart_marker()
-    if pending_setup:
-        return RedirectResponse(
-            url="/setup/completed?notice=" + quote("检测到安装配置已经写入，但当前服务还没有重启，请先重启后再登录"),
-            status_code=303,
-        )
-    db = get_session()
-    try:
-        has_admin = count_enabled_admins(db)
-        has_any_user = db.scalar(select(func.count(AdminUser.id))) or 0
-        failure_count = read_login_failure_count(request)
-        require_captcha = should_require_login_captcha(failure_count)
-        if require_captcha and not verify_login_captcha(captcha_token, captcha_answer):
-            response = render(
-                request,
-                "login.html",
-                response_status=400,
-                **build_login_page_context(
-                    notice="验证码不正确，请重新计算",
-                    needs_bootstrap_admin=not has_admin,
-                    has_any_user=bool(has_any_user),
-                    username=username.strip(),
-                    require_captcha=True,
-                ),
-            )
-            apply_login_failure_cookie(response, failure_count + 1)
-            return response
-        user = db.scalar(select(AdminUser).where(AdminUser.username == username.strip(), AdminUser.is_enabled.is_(True)))
-        if not user or not verify_password(password, user.password_hash):
-            next_failure_count = failure_count + 1
-            response = render(
-                request,
-                "login.html",
-                response_status=401,
-                **build_login_page_context(
-                    notice="用户名或密码错误",
-                    needs_bootstrap_admin=not has_admin,
-                    has_any_user=bool(has_any_user),
-                    username=username.strip(),
-                    require_captcha=should_require_login_captcha(next_failure_count),
-                ),
-            )
-            apply_login_failure_cookie(response, next_failure_count)
-            return response
-        response = RedirectResponse(url="/", status_code=303)
-        response.set_cookie(AUTH_COOKIE_NAME, build_auth_cookie(user), **auth_cookie_options())
-        apply_login_failure_cookie(response, 0)
-        return response
-    finally:
-        db.close()
 
 
 @app.get("/setup/completed", response_class=HTMLResponse)
@@ -1646,185 +1473,6 @@ async def setup_completed_page(request: Request):
         page_title="安装完成",
         notice=request.query_params.get("notice", ""),
     )
-
-
-@app.post("/logout")
-async def logout_action():
-    response = RedirectResponse(url="/login?notice=" + quote("已退出登录"), status_code=303)
-    response.delete_cookie(
-        AUTH_COOKIE_NAME,
-        path="/",
-        secure=settings.should_use_secure_cookie,
-        httponly=True,
-        samesite=settings.auth_cookie_samesite,
-    )
-    return response
-
-
-@app.get("/profile/password", response_class=HTMLResponse)
-async def password_page(request: Request):
-    user = require_user(request)
-    return render(
-        request,
-        "password.html",
-        page_title="账号安全",
-        notice=request.query_params.get("notice", ""),
-        current_user_detail=user,
-    )
-
-
-@app.post("/profile/password")
-async def change_password_action(
-    request: Request,
-    current_password: str = Form(...),
-    new_password: str = Form(...),
-    confirm_password: str = Form(...),
-):
-    user = require_user(request)
-    db = get_session()
-    try:
-        stored_user = db.get(AdminUser, user.id)
-        if not stored_user or not stored_user.is_enabled:
-            raise HTTPException(status_code=401, detail="Authentication required")
-        if not verify_password(current_password, stored_user.password_hash):
-            return render(
-                request,
-                "password.html",
-                page_title="账号安全",
-                notice="当前密码不正确",
-                response_status=400,
-                current_user_detail=stored_user,
-            )
-        if new_password != confirm_password:
-            return render(
-                request,
-                "password.html",
-                page_title="账号安全",
-                notice="两次输入的新密码不一致",
-                response_status=400,
-                current_user_detail=stored_user,
-            )
-        password_error = validate_password_change(new_password)
-        if password_error:
-            return render(
-                request,
-                "password.html",
-                page_title="账号安全",
-                notice=password_error,
-                response_status=400,
-                current_user_detail=stored_user,
-            )
-        stored_user.password_hash = hash_password(new_password)
-        stored_user.auth_version += 1
-        db.commit()
-        record_audit(db, "auth.password-change", "admin_user", stored_user.id, "用户主动修改密码", actor=stored_user.username)
-        response = RedirectResponse(url="/profile/password?notice=" + quote("密码已更新"), status_code=303)
-        response.set_cookie(AUTH_COOKIE_NAME, build_auth_cookie(stored_user), **auth_cookie_options())
-        return response
-    finally:
-        db.close()
-
-
-@app.get("/users", response_class=HTMLResponse)
-async def users_page(request: Request):
-    enforce_role(request, "admin")
-    db = get_session()
-    try:
-        users = db.scalars(select(AdminUser).order_by(AdminUser.id.asc())).all()
-        stats = {
-            "total": len(users),
-            "enabled": sum(1 for item in users if item.is_enabled),
-            "admins": sum(1 for item in users if item.role == "admin"),
-            "enabled_admins": sum(1 for item in users if item.role == "admin" and item.is_enabled),
-        }
-        return render(
-            request,
-            "users.html",
-            page_title="账号管理",
-            users=users,
-            stats=stats,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/users")
-async def create_user_action(
-    request: Request,
-    username: str = Form(...),
-    display_name: str = Form(...),
-    role: str = Form("readonly"),
-    password: str = Form(...),
-    is_enabled: str = Form("true"),
-):
-    actor = enforce_role(request, "admin")
-    db = get_session()
-    try:
-        cleaned_username = username.strip()
-        cleaned_display_name = display_name.strip()
-        normalized_role = normalize_role(role)
-        password_error = validate_password_change(password)
-        if not cleaned_username or not cleaned_display_name:
-            return RedirectResponse(url="/users?notice=" + quote("用户名和显示名不能为空"), status_code=303)
-        if password_error:
-            return RedirectResponse(url="/users?notice=" + quote(password_error), status_code=303)
-        existing = db.scalar(select(AdminUser).where(AdminUser.username == cleaned_username))
-        if existing:
-            return RedirectResponse(url="/users?notice=" + quote("用户名已存在"), status_code=303)
-        user = AdminUser(
-            username=cleaned_username,
-            display_name=cleaned_display_name,
-            password_hash=hash_password(password),
-            role=normalized_role,
-            is_enabled=is_enabled == "true",
-        )
-        db.add(user)
-        db.commit()
-        record_audit(
-            db,
-            "auth.user-create",
-            "admin_user",
-            user.id,
-            f"创建账号 {user.username}，角色 {user.role}",
-            actor=actor.username,
-        )
-        return RedirectResponse(url="/users?notice=" + quote("账号已创建"), status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/users/{user_id}/toggle")
-async def toggle_user_action(request: Request, user_id: int):
-    actor = enforce_role(request, "admin")
-    db = get_session()
-    try:
-        target = db.get(AdminUser, user_id)
-        if not target:
-            raise HTTPException(status_code=404, detail="User not found")
-        if target.id == actor.id and target.is_enabled:
-            return RedirectResponse(url="/users?notice=" + quote("不能停用当前登录账号"), status_code=303)
-        next_enabled = not target.is_enabled
-        if not next_enabled and target.role == "admin" and count_enabled_admins(db) <= 1:
-            return RedirectResponse(url="/users?notice=" + quote("至少保留一个启用中的管理员"), status_code=303)
-        target.is_enabled = next_enabled
-        if not next_enabled:
-            target.auth_version += 1
-        db.commit()
-        record_audit(
-            db,
-            "auth.user-toggle",
-            "admin_user",
-            target.id,
-            f"enabled={target.is_enabled}",
-            actor=actor.username,
-        )
-        return RedirectResponse(
-            url="/users?notice=" + quote(f"账号 {target.username} 已{'启用' if target.is_enabled else '停用'}"),
-            status_code=303,
-        )
-    finally:
-        db.close()
 
 
 @app.get("/", response_class=HTMLResponse)

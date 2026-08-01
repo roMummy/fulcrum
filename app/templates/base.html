@@ -7,9 +7,11 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-<body class="{% if request.url.path in ['/login', '/setup', '/setup/completed'] %}auth-shell{% else %}app-shell{% endif %}">
+{# 平台与租户登录页共用认证壳，但登录后的平台改密页仍使用正常应用布局。 #}
+{% set auth_shell_paths = ['/login', '/platform/login', '/setup', '/setup/completed'] %}
+<body class="{% if request.url.path in auth_shell_paths %}auth-shell{% else %}app-shell{% endif %}">
   <a class="skip-link" href="#main-content">跳到主内容</a>
-  {% if request.url.path in ['/login', '/setup', '/setup/completed'] %}
+  {% if request.url.path in auth_shell_paths %}
   <main class="auth-layout" id="main-content" tabindex="-1">
     <section class="auth-panel">
       <div class="auth-brand">
@@ -66,11 +68,10 @@
           <span>{{ current_user.role }}</span>
         </div>
         <div class="topbar-actions">
-          <a class="btn btn-secondary btn-small" href="/profile/password">账号安全</a>
-          {% if current_user.role == "admin" %}
-          <a class="btn btn-secondary btn-small" href="/users">账号管理</a>
-          {% endif %}
-          <form method="post" action="/logout">
+          <a class="btn btn-secondary btn-small" href="{{ password_action|default('/profile/password', true) }}">账号安全</a>
+          {# 注销是状态变更操作，必须提交当前数据库会话配套的 CSRF 原始值。 #}
+          <form method="post" action="{{ logout_action|default('/logout', true) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true) }}" />
             <button class="btn btn-secondary btn-small" type="submit">退出</button>
           </form>
         </div>
@@ -103,11 +104,11 @@
 
       {% block content %}{% endblock %}
 
-  {% if request.url.path in ['/login', '/setup', '/setup/completed'] %}
+  {% if request.url.path in auth_shell_paths %}
     </section>
   </main>
   {% endif %}
-  {% if request.url.path not in ['/login', '/setup', '/setup/completed'] %}
+  {% if request.url.path not in auth_shell_paths %}
     </main>
   </div>
   {% endif %}
