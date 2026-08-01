@@ -45,9 +45,18 @@ class Channel(Base, TenantOwnedMixin, TimestampMixin):
     runtime_info_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="offline")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 节点与发现账号绑定由服务端校验租户和父子关系，客户端任务不能临时改选账号。
+    provider_node_id: Mapped[int | None] = mapped_column(ForeignKey("provider_nodes.id"), nullable=True, index=True)
+    provider_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("provider_node_accounts.id"),
+        nullable=True,
+        index=True,
+    )
 
     bot = relationship("Bot", back_populates="channels")
     chatrooms = relationship("Chatroom", back_populates="channel", cascade="all, delete-orphan")
+    provider_node = relationship("ProviderNode")
+    provider_account = relationship("ProviderNodeAccount")
 
 
 class Plugin(Base, TimestampMixin):
@@ -414,6 +423,18 @@ class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     payload_json: Mapped[str] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_node_id: Mapped[int | None] = mapped_column(ForeignKey("provider_nodes.id"), nullable=True, index=True)
+    provider_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("provider_node_accounts.id"),
+        nullable=True,
+        index=True,
+    )
+    lease_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    lease_expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    claimed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    provider_node = relationship("ProviderNode")
+    provider_account = relationship("ProviderNodeAccount")
 
 
 class WeatherSubscription(Base, TenantOwnedMixin, TimestampMixin):

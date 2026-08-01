@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 from app.core.time import now_shanghai
-from app.models.mixins import TimestampMixin
+from app.models.mixins import TenantOwnedMixin, TimestampMixin
 
 
 # 允许值集中定义，后续认证和平台管理服务必须在写库前复用这些集合进行校验。
@@ -76,6 +76,7 @@ class Tenant(Base, TimestampMixin):
     users = relationship("TenantUser", back_populates="tenant", cascade="all, delete-orphan")
     sessions = relationship("TenantSession", back_populates="tenant", cascade="all, delete-orphan")
     subscriptions = relationship("TenantSubscription", back_populates="tenant", cascade="all, delete-orphan")
+    provider_nodes = relationship("ProviderNode", back_populates="tenant", cascade="all, delete-orphan")
 
 
 class SaasPlan(Base, TimestampMixin):
@@ -195,3 +196,101 @@ class PlatformAuditLog(Base, TimestampMixin):
 
     actor = relationship("PlatformUser")
     target_tenant = relationship("Tenant")
+
+
+class ProviderNode(Base, TenantOwnedMixin, TimestampMixin):
+    """客户电脑上的 Provider 安装实例，一个节点可以承载多个企微账号。"""
+
+    __tablename__ = "provider_nodes"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_provider_nodes_tenant_name"),
+        CheckConstraint("status IN ('pending', 'active', 'disabled')", name="ck_provider_nodes_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    device_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True, index=True)
+    client_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_heartbeat_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    activated_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disabled_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    tenant = relationship("Tenant", back_populates="provider_nodes")
+    accounts = relationship("ProviderNodeAccount", back_populates="node", cascade="all, delete-orphan")
+    activation_codes = relationship("ProviderActivationCode", back_populates="node", cascade="all, delete-orphan")
+    credentials = relationship("ProviderCredential", back_populates="node", cascade="all, delete-orphan")
+    heartbeats = relationship("ProviderHeartbeat", back_populates="node", cascade="all, delete-orphan")
+
+
+class ProviderNodeAccount(Base, TenantOwnedMixin, TimestampMixin):
+    """Provider 心跳发现的节点内企微账号，绑定渠道前仅作为候选资源。"""
+
+    __tablename__ = "provider_node_accounts"
+    __table_args__ = (
+        UniqueConstraint("provider_node_id", "account_key", name="uq_provider_node_account_key"),
+        CheckConstraint("status IN ('online', 'offline', 'unknown')", name="ck_provider_node_accounts_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_node_id: Mapped[int] = mapped_column(ForeignKey("provider_nodes.id"), nullable=False, index=True)
+    account_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    external_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="unknown", index=True)
+    last_seen_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    node = relationship("ProviderNode", back_populates="accounts")
+
+
+class ProviderActivationCode(Base, TenantOwnedMixin, TimestampMixin):
+    """一次性节点激活码；数据库只保存高熵原文的不可逆摘要。"""
+
+    __tablename__ = "provider_activation_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_node_id: Mapped[int] = mapped_column(ForeignKey("provider_nodes.id"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("tenant_users.id"), nullable=True, index=True)
+
+    node = relationship("ProviderNode", back_populates="activation_codes")
+
+
+class ProviderCredential(Base, TenantOwnedMixin, TimestampMixin):
+    """节点长期设备凭证；客户端持有原始 token，云端只保存摘要。"""
+
+    __tablename__ = "provider_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_node_id: Mapped[int] = mapped_column(ForeignKey("provider_nodes.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    device_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    fingerprint_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    issued_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_shanghai)
+    last_used_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoke_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    node = relationship("ProviderNode", back_populates="credentials")
+
+
+class ProviderHeartbeat(Base, TenantOwnedMixin):
+    """节点心跳审计快照，详细运行状态使用 JSON 保存并限制保留数量。"""
+
+    __tablename__ = "provider_heartbeats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_node_id: Mapped[int] = mapped_column(ForeignKey("provider_nodes.id"), nullable=False, index=True)
+    reported_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_shanghai, index=True)
+    client_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    hook_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    workwechat_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    accounts_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    node = relationship("ProviderNode", back_populates="heartbeats")
