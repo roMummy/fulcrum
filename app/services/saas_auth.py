@@ -20,6 +20,7 @@ from app.models.saas import (
     PlatformUser,
     Tenant,
     TenantSession,
+    TenantSubscription,
     TenantUser,
 )
 
@@ -52,6 +53,9 @@ class TenantPrincipal:
     display_name: str
     role: str
     must_change_password: bool
+    tenant_status: str
+    subscription_status: str | None
+    subscription_expires_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -108,7 +112,7 @@ def authenticate_tenant_user(
     username: str,
     password: str,
 ) -> TenantUser | None:
-    """在指定启用租户内验证员工，避免同名账号跨租户碰撞或枚举。"""
+    """在指定租户内验证员工；停用租户仍可登录读取历史数据，但写入由统一策略拒绝。"""
 
     normalized_tenant_code = (tenant_code or "").strip().lower()
     normalized_username = (username or "").strip()
@@ -117,7 +121,6 @@ def authenticate_tenant_user(
     tenant = db.scalar(
         select(Tenant).where(
             Tenant.code == normalized_tenant_code,
-            Tenant.status == "active",
         )
     )
     if tenant is None:
@@ -285,13 +288,19 @@ def load_tenant_principal(db: Session, raw_token: str | None, *, touch: bool = T
         return None
     if user is None or tenant is None or user.tenant_id != record.tenant_id:
         return None
-    if tenant.status != "active" or not user.is_enabled or user.role not in TENANT_ROLES:
+    if tenant.status not in {"active", "disabled"} or not user.is_enabled or user.role not in TENANT_ROLES:
         return None
     if user.auth_version != record.auth_version:
         return None
 
     if touch:
         _touch_session(db, record, current)
+    subscription = db.scalar(
+        select(TenantSubscription)
+        .where(TenantSubscription.tenant_id == tenant.id)
+        .order_by(TenantSubscription.starts_at.desc(), TenantSubscription.id.desc())
+        .limit(1)
+    )
     return TenantPrincipal(
         session_id=record.id,
         tenant_id=record.tenant_id,
@@ -300,6 +309,9 @@ def load_tenant_principal(db: Session, raw_token: str | None, *, touch: bool = T
         display_name=user.display_name,
         role=user.role,
         must_change_password=user.must_change_password,
+        tenant_status=tenant.status,
+        subscription_status=subscription.status if subscription else None,
+        subscription_expires_at=subscription.expires_at if subscription else None,
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +12,8 @@ import app.core.db as db_module
 import app.main as main_module
 from app.core.db import Base
 from app.models.entities import Bot
-from app.models.saas import Tenant, TenantUser
+from app.core.time import now_shanghai
+from app.models.saas import SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.saas_auth import hash_password
 
 
@@ -40,15 +42,30 @@ def tenant_web_context(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "start_background_workers", lambda: None)
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 
-    for module_name in ("app.web.tenant_auth", "app.web.platform_auth"):
+    for module_name in ("app.web.tenant_auth", "app.web.platform_auth", "app.web.tenant_admin"):
         route_module = importlib.import_module(module_name)
-        monkeypatch.setattr(route_module, "SessionLocal", factory)
+        if hasattr(route_module, "SessionLocal"):
+            monkeypatch.setattr(route_module, "SessionLocal", factory)
+        if hasattr(route_module, "TenantSessionLocal"):
+            monkeypatch.setattr(route_module, "TenantSessionLocal", factory)
 
     with factory() as db:
         alpha = Tenant(code="alpha", name="甲租户", status="active")
         beta = Tenant(code="beta", name="乙租户", status="active")
         db.add_all([alpha, beta])
         db.flush()
+        plan = SaasPlan(code="isolation-plan", name="隔离测试套餐", provider_node_limit=1, status="active")
+        db.add(plan)
+        db.flush()
+        db.add(
+            TenantSubscription(
+                tenant_id=alpha.id,
+                plan_id=plan.id,
+                status="active",
+                starts_at=now_shanghai(),
+                expires_at=now_shanghai() + timedelta(days=30),
+            )
+        )
         db.add(
             TenantUser(
                 tenant_id=alpha.id,
@@ -67,7 +84,7 @@ def tenant_web_context(tmp_path, monkeypatch):
         db.commit()
         db.refresh(alpha_bot)
         db.refresh(beta_bot)
-        ids = {"alpha_bot": alpha_bot.id, "beta_bot": beta_bot.id}
+        ids = {"alpha": alpha.id, "alpha_bot": alpha_bot.id, "beta_bot": beta_bot.id, "factory": factory}
 
     with TestClient(main_module.app, follow_redirects=False) as client:
         login = client.post(
@@ -105,3 +122,47 @@ def test_tenant_cannot_open_or_edit_other_tenant_bot(tenant_web_context) -> None
     assert detail.status_code == 404
     assert "乙租户机密机器人" not in detail.text
     assert edit.status_code == 404
+
+
+def test_expired_tenant_can_read_but_cannot_mutate(tenant_web_context) -> None:
+    """订阅到期后历史页面继续可读，所有普通业务 POST 在进入路由前统一拒绝。"""
+
+    client, ids = tenant_web_context
+    with ids["factory"]() as db:
+        subscription = db.query(TenantSubscription).filter(TenantSubscription.tenant_id == ids["alpha"]).one()
+        subscription.expires_at = now_shanghai() - timedelta(seconds=1)
+        db.commit()
+
+    readable = client.get("/bots")
+    blocked = client.post("/bots", data={"name": "到期后新增", "description": ""})
+
+    assert readable.status_code == 200
+    assert blocked.status_code == 403
+    assert blocked.json()["error"] == "tenant_expired"
+
+
+def test_tenant_admin_page_creates_employee_and_only_shows_initial_password_once(tenant_web_context) -> None:
+    """员工页面使用真实租户会话和 CSRF，初始密码不能在刷新后再次出现。"""
+
+    client, _ids = tenant_web_context
+    page = client.get("/tenant/users")
+    assert page.status_code == 200
+    csrf_token = client.cookies.get("mbs_tenant_csrf")
+
+    created = client.post(
+        "/tenant/users",
+        data={
+            "csrf_token": csrf_token,
+            "username": "operator-a",
+            "display_name": "运营甲",
+            "role": "operator",
+        },
+    )
+    assert created.status_code == 201
+    assert "一次性初始密码" in created.text
+    assert "operator-a" in created.text
+
+    refreshed = client.get("/tenant/users")
+    assert refreshed.status_code == 200
+    assert "一次性初始密码" not in refreshed.text
+    assert "operator-a" in refreshed.text

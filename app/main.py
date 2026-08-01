@@ -83,6 +83,7 @@ from app.services.runtime import (
 )
 from app.services.task_queue import WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
 from app.services.saas_auth import TenantPrincipal, has_tenant_role, load_platform_principal, load_tenant_principal
+from app.services.tenant_admin import TenantPolicyError, require_tenant_mutation_allowed
 from app.services.workwechat_cloud_poll import issue_channel_authorization_code, is_cloud_poll_enabled, load_cloud_poll_config, notify_cloud_job_enqueued, resolve_outbound_job_type
 from app.services.security import (
     build_telegram_webhook_secret,
@@ -141,7 +142,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import platform_admin_router, platform_auth_router, tenant_auth_router
+from app.web import platform_admin_router, platform_auth_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -174,6 +175,7 @@ app.include_router(workwechat_provider_cloud_router)
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
 app.include_router(platform_admin_router)
+app.include_router(tenant_admin_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = ("wechat_ipad", "wechat_winauto", "workwechat", "openclaw", "simulator", "telegram")
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
@@ -464,7 +466,9 @@ def render(request: Request, template: str, **context):
         nav_item("开放接口", "/open-api/apps", ("/open-api",)),
         nav_item("排障", "/monitoring", ("/monitoring", "/errors")),
     ]
-    secondary_nav_items: list[dict[str, str | bool]] = []
+    secondary_nav_items: list[dict[str, str | bool]] = [
+        nav_item("租户设置", "/tenant/users", ("/tenant",)),
+    ]
     nav_items = [*primary_nav_items, *secondary_nav_items]
     secondary_nav_active = any(bool(item["active"]) for item in secondary_nav_items)
 
@@ -501,6 +505,11 @@ def render(request: Request, template: str, **context):
         section_nav_items = [
             nav_item("监控审计", "/monitoring", ("/monitoring",)),
             nav_item("日志", "/errors", ("/errors",)),
+        ]
+    elif is_path_active(("/tenant",)):
+        section_nav_items = [
+            nav_item("员工管理", "/tenant/users", ("/tenant/users",)),
+            nav_item("订阅信息", "/tenant/subscription", ("/tenant/subscription",)),
         ]
     base_context = {
         "current_user": getattr(request.state, "current_user", None),
@@ -1468,6 +1477,16 @@ async def auth_middleware(request: Request, call_next):
     password_redirect = tenant_must_change_password_redirect(tenant_principal, path)
     if password_redirect is not None:
         return RedirectResponse(url=password_redirect, status_code=303)
+    if request.method.upper() not in {"GET", "HEAD", "OPTIONS"} and path not in {
+        TENANT_PASSWORD_PATH,
+        TENANT_LOGOUT_PATH,
+    }:
+        try:
+            # 所有租户浏览器写请求统一经过订阅策略；路由无需自行读取状态或日期，
+            # 新增页面也不会因为遗漏判断而在停用、挂起或到期后继续修改数据。
+            require_tenant_mutation_allowed(tenant_principal)
+        except TenantPolicyError as exc:
+            return JSONResponse(status_code=403, content={"ok": False, "error": str(exc)})
     # ContextVar 必须覆盖完整的 ASGI 调用链，页面内部新建的每个业务会话才能从
     # 已验证数据库会话恢复出的 principal 取得 tenant_id。退出请求时上下文会
     # 精确复位，异步线程复用也不会把本次租户泄漏到下一次请求。

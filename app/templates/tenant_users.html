@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block page_intro %}<p>维护当前租户员工、固定角色和登录状态。</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/subscription">查看订阅</a>{% endblock %}
+{% block content %}
+{% if initial_password %}
+<section class="notice-card"><strong>一次性初始密码</strong><p><code>{{ initial_password }}</code></p><p class="muted-text">该密码未保存明文，离开或刷新本页后无法再次查看。</p></section>
+{% endif %}
+
+{% if can_manage_users %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Create employee</p><h2>新增员工</h2></div></div>
+  <form method="post" action="/tenant/users" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label><span>用户名</span><input name="username" required /></label>
+    <label><span>显示名</span><input name="display_name" required /></label>
+    <label><span>角色</span><select name="role"><option value="readonly">只读</option><option value="operator">运营</option><option value="tenant_admin">租户管理员</option></select></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建员工</button></div>
+  </form>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Employees</p><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
+  <table class="table">
+    <thead><tr><th>账号</th><th>显示名</th><th>角色</th><th>状态</th>{% if can_manage_users %}<th>管理</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for user in users %}
+      <tr>
+        <td><code>{{ user.username }}</code><div class="muted-text">#{{ user.id }}</div></td>
+        {% if can_manage_users %}
+        <td colspan="4">
+          <form method="post" action="/tenant/users/{{ user.id }}" class="form-grid">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <label><span>显示名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
+            <label><span>角色</span><select name="role"><option value="readonly" {% if user.role == 'readonly' %}selected{% endif %}>只读</option><option value="operator" {% if user.role == 'operator' %}selected{% endif %}>运营</option><option value="tenant_admin" {% if user.role == 'tenant_admin' %}selected{% endif %}>租户管理员</option></select></label>
+            <label><span>启用</span><input name="is_enabled" type="checkbox" value="true" {% if user.is_enabled %}checked{% endif %} /></label>
+            <div class="full-row form-actions-inline"><button class="btn btn-small" type="submit">保存</button></div>
+          </form>
+          <form method="post" action="/tenant/users/{{ user.id }}/reset-password" class="form-actions-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn btn-small btn-secondary" type="submit">重置密码</button>
+          </form>
+        </td>
+        {% else %}
+        <td>{{ user.display_name }}</td><td>{{ user.role }}</td><td>{{ '启用' if user.is_enabled else '停用' }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

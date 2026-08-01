@@ -59,7 +59,7 @@ def session_factory(tmp_path, monkeypatch):
 
     # Task 6 会把两类认证路由拆到 app.web。这里兼容路由模块直接导入
     # SessionLocal 的实现方式，使测试在模块落地后仍只连接当前临时数据库。
-    for module_name in ("app.web.tenant_auth", "app.web.platform_auth"):
+    for module_name in ("app.web.tenant_auth", "app.web.platform_auth", "app.web.tenant_admin"):
         try:
             route_module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -68,6 +68,8 @@ def session_factory(tmp_path, monkeypatch):
             raise
         if hasattr(route_module, "SessionLocal"):
             monkeypatch.setattr(route_module, "SessionLocal", factory)
+        if hasattr(route_module, "TenantSessionLocal"):
+            monkeypatch.setattr(route_module, "TenantSessionLocal", factory)
 
     def override_get_db():
         """为使用 FastAPI Depends(get_db) 的新路由提供同一临时会话工厂。"""
