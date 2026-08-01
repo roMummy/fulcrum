@@ -7,6 +7,7 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy.engine import Connection
 
+from app.core.db import Base
 from app.core.settings import settings
 
 
@@ -40,3 +41,27 @@ def assert_database_at_head(connection: Connection) -> None:
     expected_revision = expected_database_revision()
     if current_revision != expected_revision:
         raise RuntimeError(f"database_revision_mismatch:{current_revision}:{expected_revision}")
+
+
+def current_database_revision(connection: Connection) -> str | None:
+    """读取当前连接的 Alembic revision，空库或旧库未建版本表时返回空。"""
+
+    return MigrationContext.configure(connection).get_current_revision()
+
+
+def prepare_development_database(connection: Connection) -> None:
+    """仅为开发和测试临时库创建模型结构并盖上当前 head 标记。
+
+    生产部署必须执行 ``alembic upgrade head``，不能调用此辅助函数。这里保留
+    显式开发能力，是为了让大量使用临时 SQLite 的聚焦测试无需启动外部数据库，
+    但已存在任意 revision 的数据库绝不会被本函数自动升级或覆盖。
+    """
+
+    if not settings.is_dev_like:
+        raise RuntimeError("development_database_helper_disabled")
+    context = MigrationContext.configure(connection)
+    if context.get_current_revision() is not None:
+        return
+    Base.metadata.create_all(bind=connection)
+    script = ScriptDirectory.from_config(build_alembic_config())
+    context.stamp(script, expected_database_revision())

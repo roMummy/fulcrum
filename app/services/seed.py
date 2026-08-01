@@ -15,22 +15,10 @@ DEFAULT_DEMO_USERS = [
 
 def seed_auth_users(db: Session):
     existing_users = db.scalars(select(AdminUser)).all()
-    existing_usernames = {user.username for user in existing_users}
     has_any_user = bool(existing_users)
-    has_admin = any(user.role == "admin" for user in existing_users)
-
     users_to_create: list[AdminUser] = []
-    if not has_admin and settings.has_bootstrap_admin_config and settings.auth_bootstrap_admin_username.strip() not in existing_usernames:
-        users_to_create.append(
-            AdminUser(
-                username=settings.auth_bootstrap_admin_username.strip(),
-                display_name=settings.auth_bootstrap_admin_display_name.strip() or "Bootstrap Admin",
-                password_hash=hash_password(settings.auth_bootstrap_admin_password),
-                role="admin",
-                is_enabled=True,
-            )
-        )
-
+    # AUTH_BOOTSTRAP_ADMIN_* 现在只用于独立的 platform_users 平台身份；旧 AdminUser
+    # 仅在显式演示模式下创建，避免生产环境出现一套无法用于 SaaS 平台登录的影子管理员。
     if not has_any_user and settings.should_seed_demo_users:
         users_to_create.extend(
             [
@@ -49,4 +37,3 @@ def seed_auth_users(db: Session):
     if users_to_create:
         db.add_all(users_to_create)
         db.commit()
-

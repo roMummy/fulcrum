@@ -70,15 +70,10 @@ from app.services.provider_nodes import (
     list_provider_nodes,
     validate_workwechat_provider_binding,
 )
-from app.services.init_db import init_db_with_seed
+from app.services.init_db import database_readiness, init_db_with_seed
 from app.services.installer import (
-    build_default_sqlite_url,
-    build_mariadb_url,
-    generate_secret_key,
     is_setup_required,
-    provision_database,
-    validate_database_connection,
-    write_env_file,
+    provision_platform_admin,
 )
 from app.services.runtime import (
     append_manual_message,
@@ -171,7 +166,6 @@ logger = get_logger(__name__)
 app = FastAPI(title=settings.app_name, version="1.0.0")
 APP_STARTED_AT = now_shanghai()
 APP_ROOT = Path(__file__).resolve().parents[1]
-SETUP_PENDING_RESTART_FILE = APP_ROOT / ".run" / "setup_pending_restart.json"
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(tool_api_router)
@@ -220,8 +214,10 @@ async def startup_event() -> None:
     db = SessionLocal()
     try:
         init_db_with_seed(db)
-        if not is_setup_required(db):
-            clear_setup_pending_restart_marker()
+    except Exception:
+        # 数据库未迁移到 head 时应用仍保留 liveness/readiness 探针，但绝不启动 Worker。
+        logger.exception("application started in database-not-ready mode")
+        return
     finally:
         db.close()
     start_background_workers()
@@ -259,34 +255,6 @@ def format_uptime(value):
     if seconds or not parts:
         parts.append(f"{seconds}秒")
     return "".join(parts[:3])
-
-
-def read_setup_pending_restart_marker() -> dict[str, str]:
-    try:
-        if not SETUP_PENDING_RESTART_FILE.exists():
-            return {}
-        raw = json.loads(SETUP_PENDING_RESTART_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def write_setup_pending_restart_marker(*, database_mode: str, database_url: str, admin_username: str) -> None:
-    SETUP_PENDING_RESTART_FILE.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "database_mode": str(database_mode or "").strip(),
-        "database_url": str(database_url or "").strip(),
-        "admin_username": str(admin_username or "").strip(),
-        "created_at": now_shanghai().isoformat(),
-    }
-    SETUP_PENDING_RESTART_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def clear_setup_pending_restart_marker() -> None:
-    try:
-        SETUP_PENDING_RESTART_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
 
 
 def get_cron_probe_snapshot() -> dict[str, str]:
@@ -1107,16 +1075,9 @@ def get_session() -> Session:
 
 
 def get_platform_session() -> Session:
-    """返回认证、安装和机器身份预检使用的显式平台会话。"""
+    """返回显式平台会话；结构校验只在应用启动阶段执行一次。"""
 
-    db = SessionLocal()
-    try:
-        init_db_with_seed(db)
-        return db
-    except Exception:
-        logger.exception("failed to initialize database session")
-        db.close()
-        raise
+    return SessionLocal()
 
 
 def require_user(request: Request) -> TenantPrincipal:
@@ -1436,6 +1397,23 @@ async def request_logging_middleware(request: Request, call_next):
 async def auth_middleware(request: Request, call_next):
     """恢复平台与租户数据库会话，并按 URL 空间选择唯一可信身份。"""
 
+    path = request.url.path
+    # 存活探针、就绪探针和静态资源不能依赖业务表查询；数据库落后时运维仍需
+    # 能读取 readyz 原因，并正常加载反向代理的静态错误页。
+    if path in {"/healthz", "/readyz"} or path.startswith("/static/"):
+        return await call_next(request)
+    readiness = database_readiness()
+    if not readiness["ready"]:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "ready": False,
+                "error": readiness["error"],
+                "expected_revision": readiness["expected_revision"],
+            },
+        )
+
     # 云端企微 Provider 接口是桌面客户端的机器到机器入口，不能依赖后台登录 Cookie。
     # 这些接口内部会分别校验一次性授权码或 client token，因此这里只放行到业务路由。
     public_prefixes = (
@@ -1451,6 +1429,7 @@ async def auth_middleware(request: Request, call_next):
     )
     public_paths = {
         "/healthz",
+        "/readyz",
         "/setup",
         "/setup/completed",
         TENANT_LOGIN_PATH,
@@ -1469,10 +1448,9 @@ async def auth_middleware(request: Request, call_next):
     finally:
         db.close()
 
-    if request.state.setup_required and request.url.path not in {"/setup", "/healthz"} and not request.url.path.startswith("/static/"):
+    if request.state.setup_required and path not in {"/setup", "/healthz", "/readyz"}:
         return RedirectResponse(url="/setup", status_code=303)
 
-    path = request.url.path
     if path in public_paths or path.startswith(public_prefixes):
         return await call_next(request)
 
@@ -1511,6 +1489,23 @@ async def auth_middleware(request: Request, call_next):
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "service": "multi-bot-saas"}
+
+
+@app.get("/readyz")
+async def readyz():
+    """只有数据库 revision 已到 head 且安全种子完成后才返回就绪。"""
+
+    readiness = database_readiness()
+    status_code = 200 if readiness["ready"] else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ok": bool(readiness["ready"]),
+            "ready": bool(readiness["ready"]),
+            "error": readiness["error"],
+            "expected_revision": readiness["expected_revision"],
+        },
+    )
 
 
 @app.get("/setup/completed", response_class=HTMLResponse)
@@ -2043,31 +2038,16 @@ async def channel_detail_page(request: Request, channel_id: int):
 async def setup_page(request: Request):
     db = get_platform_session()
     try:
-        pending_setup = read_setup_pending_restart_marker()
-        if pending_setup:
-            return RedirectResponse(
-                url="/setup/completed?notice=" + quote("安装配置已经写入，请先重启服务，再重新进入后台"),
-                status_code=303,
-            )
         if not is_setup_required(db):
-            clear_setup_pending_restart_marker()
-            return RedirectResponse(url="/login", status_code=303)
+            return RedirectResponse(url=PLATFORM_LOGIN_PATH, status_code=303)
         return render(
             request,
             "setup.html",
-            page_title="首次安装",
+            page_title="创建平台管理员",
             notice=request.query_params.get("notice", ""),
-            generated_secret_key=generate_secret_key(),
             form_data={
-                "database_mode": "sqlite",
-                "db_host": "127.0.0.1",
-                "db_port": "3306",
-                "db_name": "multi_bot_saas",
-                "db_user": "multi_bot_saas",
-                "db_password": "",
                 "admin_username": "admin",
-                "admin_display_name": "管理员",
-                "secret_key": settings.secret_key if settings.secret_key != "change-me" else "",
+                "admin_display_name": "平台管理员",
             },
         )
     finally:
@@ -2077,122 +2057,41 @@ async def setup_page(request: Request):
 @app.post("/setup")
 async def setup_action(
     request: Request,
-    database_mode: str = Form("sqlite"),
-    db_host: str = Form("127.0.0.1"),
-    db_port: str = Form("3306"),
-    db_name: str = Form("multi_bot_saas"),
-    db_user: str = Form("multi_bot_saas"),
-    db_password: str = Form(""),
     admin_username: str = Form(...),
-    admin_display_name: str = Form("管理员"),
+    admin_display_name: str = Form("平台管理员"),
     admin_password: str = Form(...),
     admin_password_confirm: str = Form(...),
-    secret_key: str = Form(...),
 ):
-    pending_setup = read_setup_pending_restart_marker()
-    if pending_setup:
-        return RedirectResponse(
-            url="/setup/completed?notice=" + quote("安装配置已经写入，请先重启服务，当前不会再次覆盖配置"),
-            status_code=303,
-        )
     form_data = {
-        "database_mode": str(database_mode or "sqlite").strip().lower() or "sqlite",
-        "db_host": str(db_host or "").strip(),
-        "db_port": str(db_port or "").strip(),
-        "db_name": str(db_name or "").strip(),
-        "db_user": str(db_user or "").strip(),
-        "db_password": str(db_password or "").strip(),
         "admin_username": str(admin_username or "").strip(),
-        "admin_display_name": str(admin_display_name or "").strip() or "管理员",
-        "secret_key": str(secret_key or "").strip(),
+        "admin_display_name": str(admin_display_name or "").strip() or "平台管理员",
     }
     db = get_platform_session()
     try:
         if not is_setup_required(db):
-            return RedirectResponse(url="/login", status_code=303)
+            return RedirectResponse(url=PLATFORM_LOGIN_PATH, status_code=303)
+        if not form_data["admin_username"]:
+            return render(request, "setup.html", page_title="创建平台管理员", notice="管理员用户名不能为空", form_data=form_data, response_status=400)
+        if len(form_data["admin_username"]) > 100:
+            return render(request, "setup.html", page_title="创建平台管理员", notice="管理员用户名长度不能超过 100", form_data=form_data, response_status=400)
+        if admin_password != admin_password_confirm:
+            return render(request, "setup.html", page_title="创建平台管理员", notice="两次输入的管理员密码不一致", form_data=form_data, response_status=400)
+        password_error = validate_password_change(admin_password)
+        if password_error:
+            return render(request, "setup.html", page_title="创建平台管理员", notice=password_error, form_data=form_data, response_status=400)
+        provision_error = provision_platform_admin(
+            db,
+            admin_username=form_data["admin_username"],
+            admin_password=admin_password,
+            admin_display_name=form_data["admin_display_name"],
+        )
+        if provision_error:
+            return render(request, "setup.html", page_title="创建平台管理员", notice=f"创建失败：{provision_error}", form_data=form_data, response_status=500)
     finally:
         db.close()
 
-    if form_data["database_mode"] not in {"sqlite", "mariadb"}:
-        form_data["database_mode"] = "sqlite"
-    if not form_data["admin_username"]:
-        return render(request, "setup.html", page_title="首次安装", notice="管理员用户名不能为空", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-    if len(form_data["admin_username"]) > 50:
-        return render(request, "setup.html", page_title="首次安装", notice="管理员用户名长度不能超过 50", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-    if admin_password != admin_password_confirm:
-        return render(request, "setup.html", page_title="首次安装", notice="两次输入的管理员密码不一致", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-    password_error = validate_password_change(admin_password)
-    if password_error:
-        return render(request, "setup.html", page_title="首次安装", notice=password_error, generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-    if len(form_data["secret_key"]) < 16:
-        return render(request, "setup.html", page_title="首次安装", notice="SECRET_KEY 至少需要 16 位", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-
-    if form_data["database_mode"] == "sqlite":
-        database_url = build_default_sqlite_url()
-    else:
-        try:
-            db_port_value = int(form_data["db_port"] or 3306)
-        except ValueError:
-            return render(request, "setup.html", page_title="首次安装", notice="MariaDB 端口格式不正确", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-        required_fields = ("db_host", "db_name", "db_user", "db_password")
-        if any(not form_data[key] for key in required_fields):
-            return render(request, "setup.html", page_title="首次安装", notice="MariaDB 连接信息必须填写完整", generated_secret_key=generate_secret_key(), form_data=form_data, response_status=400)
-        database_url = build_mariadb_url(
-            form_data["db_host"],
-            db_port_value,
-            form_data["db_name"],
-            form_data["db_user"],
-            form_data["db_password"],
-        )
-        connection_error = validate_database_connection(database_url)
-        if connection_error:
-            return render(
-                request,
-                "setup.html",
-                page_title="首次安装",
-                notice=format_setup_database_error(connection_error),
-                generated_secret_key=generate_secret_key(),
-                form_data=form_data,
-                response_status=400,
-            )
-
-    provision_error = provision_database(
-        database_url,
-        admin_username=form_data["admin_username"],
-        admin_password=admin_password,
-        admin_display_name=form_data["admin_display_name"],
-        secret_key=form_data["secret_key"],
-    )
-    if provision_error:
-        return render(
-            request,
-            "setup.html",
-            page_title="首次安装",
-            notice=f"初始化失败：{provision_error}",
-            generated_secret_key=generate_secret_key(),
-            form_data=form_data,
-            response_status=500,
-        )
-
-    write_env_file(
-        {
-            "APP_ENV": settings.app_env,
-            "SECRET_KEY": form_data["secret_key"],
-            "AUTH_SEED_DEMO_USERS": "false",
-            "AUTH_BOOTSTRAP_ADMIN_USERNAME": form_data["admin_username"],
-            "AUTH_BOOTSTRAP_ADMIN_PASSWORD": admin_password,
-            "AUTH_BOOTSTRAP_ADMIN_DISPLAY_NAME": form_data["admin_display_name"],
-            "DATABASE_URL": database_url,
-        }
-    )
-    write_setup_pending_restart_marker(
-        database_mode=form_data["database_mode"],
-        database_url=database_url,
-        admin_username=form_data["admin_username"],
-    )
-
     return RedirectResponse(
-        url="/setup/completed?notice=" + quote("安装已完成，请重启服务后重新进入后台"),
+        url=PLATFORM_LOGIN_PATH + "?notice=" + quote("平台管理员已创建，请登录后创建套餐和租户"),
         status_code=303,
     )
 

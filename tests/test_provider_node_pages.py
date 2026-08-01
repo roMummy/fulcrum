@@ -42,6 +42,13 @@ def provider_page_context(tmp_path, monkeypatch):
     monkeypatch.setattr(provider_nodes_web, "TenantSessionLocal", factory)
     monkeypatch.setattr(main_module, "init_db_with_seed", lambda _db: None)
     monkeypatch.setattr(main_module, "is_setup_required", lambda _db: False)
+    # 页面测试已经自行创建完整临时结构，且不会验证 Alembic；显式放行 readiness
+    # 只影响当前 monkeypatch 生命周期，不会削弱生产启动的 revision 校验。
+    monkeypatch.setattr(
+        main_module,
+        "database_readiness",
+        lambda: {"ready": True, "error": "", "expected_revision": "test-head"},
+    )
     monkeypatch.setattr(main_module, "start_background_workers", lambda: None)
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 

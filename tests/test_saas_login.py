@@ -52,8 +52,13 @@ def session_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "TenantSessionLocal", factory)
     monkeypatch.setattr(main_module, "init_db_with_seed", lambda _db: None)
     monkeypatch.setattr(main_module, "is_setup_required", lambda _db: False)
-    monkeypatch.setattr(main_module, "read_setup_pending_restart_marker", lambda: {})
-    monkeypatch.setattr(main_module, "clear_setup_pending_restart_marker", lambda: None)
+    # 本用例直接用 SQLAlchemy 元数据构造隔离临时库，并跳过正式启动初始化；因此
+    # 需要显式声明数据库已就绪，避免新的生产 revision 门禁把聚焦登录请求拦为 503。
+    monkeypatch.setattr(
+        main_module,
+        "database_readiness",
+        lambda: {"ready": True, "error": "", "expected_revision": "test-head"},
+    )
     monkeypatch.setattr(main_module, "start_background_workers", lambda: None)
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 
