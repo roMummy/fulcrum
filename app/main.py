@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, tool_api_router, workwechat_provider_cloud_router
+from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal, TenantSessionLocal
@@ -171,6 +171,7 @@ app.include_router(customer_operations_router)
 app.include_router(open_api_router)
 app.include_router(open_api_admin_router)
 app.include_router(workwechat_provider_cloud_router)
+app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
@@ -1434,6 +1435,7 @@ async def auth_middleware(request: Request, call_next):
         "/inbound-files/",
         "/api/workwechat/customer-operations",
         "/api/workwechat/provider",
+        "/api/provider",
     )
     public_paths = {
         "/healthz",

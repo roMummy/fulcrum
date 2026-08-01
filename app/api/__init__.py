@@ -4,7 +4,7 @@ from .customer_operations import router as customer_operations_router
 from .open_api import router as open_api_router
 from .open_api_admin import router as open_api_admin_router
 from .tool_api import router as tool_api_router
-from .workwechat_provider_cloud import router as workwechat_provider_cloud_router
+from .workwechat_provider_cloud import provider_router, router as workwechat_provider_cloud_router
 
 __all__ = [
     "tool_api_router",
@@ -14,4 +14,5 @@ __all__ = [
     "open_api_router",
     "open_api_admin_router",
     "workwechat_provider_cloud_router",
+    "provider_router",
 ]

@@ -51,6 +51,23 @@ def enqueue_job(
         "related_id": related_id,
         "payload_json": payload_json,
     }
+    if job_type in {WORKWECHAT_CLOUD_OUTBOUND_JOB, WORKWECHAT_CLOUD_CONTROL_JOB}:
+        # 节点级 Provider 任务的归属必须在入队时从已验证渠道绑定固化，客户端轮询
+        # 只能接收这些字段，不能通过请求正文临时指定其他节点或企微账号。
+        from app.models.entities import Channel
+        from app.models.saas import ProviderNodeAccount
+
+        channel_id = int(payload.get("channel_id") or 0)
+        channel = db.get(Channel, channel_id) if channel_id > 0 else None
+        if channel is not None and channel.provider_node_id and channel.provider_account_id:
+            account = db.get(ProviderNodeAccount, int(channel.provider_account_id))
+            if (
+                account is not None
+                and int(account.tenant_id) == int(channel.tenant_id)
+                and int(account.provider_node_id) == int(channel.provider_node_id)
+            ):
+                job_kwargs["provider_node_id"] = int(channel.provider_node_id)
+                job_kwargs["provider_account_id"] = int(channel.provider_account_id)
     if available_at is not None:
         job_kwargs["available_at"] = available_at
     job = TaskJob(**job_kwargs)

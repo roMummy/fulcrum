@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import SHANGHAI_TZ, now_shanghai
 from app.models.entities import Channel, Chatroom, Conversation, Message, MessageAttachment, TaskJob
+from app.models.saas import ProviderNodeAccount
 from app.services.open_webhooks import dispatch_open_message_event, dispatch_open_send_result_event
 from app.services.task_queue import (
     OUTBOUND_DISPATCH_JOB,
@@ -121,6 +122,162 @@ def claim_cloud_jobs(db: Session, channel: Channel, *, batch_size: int = DEFAULT
             break
     db.commit()
     return claimed
+
+
+def claim_provider_node_jobs(
+    db: Session,
+    *,
+    node_id: int,
+    batch_size: int = DEFAULT_POLL_BATCH_SIZE,
+    lease_seconds: int = DEFAULT_RUNNING_LEASE_SECONDS,
+) -> list[dict[str, Any]]:
+    """领取当前节点下多个已绑定企微账号的任务，并签发一次性租约令牌。"""
+
+    limit = max(1, min(50, int(batch_size or DEFAULT_POLL_BATCH_SIZE)))
+    current = now_shanghai()
+    candidates = db.scalars(
+        select(TaskJob)
+        .where(
+            TaskJob.job_type.in_((WORKWECHAT_CLOUD_OUTBOUND_JOB, WORKWECHAT_CLOUD_CONTROL_JOB)),
+            TaskJob.status == "pending",
+            TaskJob.provider_node_id == int(node_id),
+            TaskJob.provider_account_id.is_not(None),
+            TaskJob.available_at <= current,
+        )
+        .order_by(TaskJob.priority.desc(), TaskJob.id.asc())
+        .limit(limit * 4)
+        .with_for_update(skip_locked=True)
+    ).all()
+    claimed: list[dict[str, Any]] = []
+    for job in candidates:
+        account = db.get(ProviderNodeAccount, int(job.provider_account_id or 0))
+        payload = parse_job_payload(job)
+        channel = db.get(Channel, int(payload.get("channel_id") or 0))
+        if (
+            account is None
+            or channel is None
+            or int(account.provider_node_id) != int(node_id)
+            or int(channel.provider_node_id or 0) != int(node_id)
+            or int(channel.provider_account_id or 0) != int(account.id)
+            or int(channel.tenant_id) != int(job.tenant_id)
+            or int(account.tenant_id) != int(job.tenant_id)
+        ):
+            # 绑定不完整的任务保持 pending，等待管理员修正渠道；不能把它发给任意账号。
+            continue
+        conversation = None
+        if str(job.job_type or "") == WORKWECHAT_CLOUD_OUTBOUND_JOB:
+            conversation = db.get(Conversation, int(payload.get("conversation_id") or 0))
+            if conversation is None:
+                continue
+
+        raw_lease_token = generate_secret_token("please")
+        lease_expires_at = current + timedelta(seconds=max(30, int(lease_seconds or DEFAULT_RUNNING_LEASE_SECONDS)))
+        job.status = "running"
+        job.attempts = int(job.attempts or 0) + 1
+        job.started_at = current
+        job.locked_at = current
+        job.claimed_at = current
+        job.lease_token_hash = build_token_hash(raw_lease_token)
+        job.lease_expires_at = lease_expires_at
+        serialized = _serialize_cloud_job(job, payload, conversation)
+        serialized.update(
+            {
+                "provider_node_id": int(node_id),
+                "provider_account_id": int(account.id),
+                "provider_account_key": account.account_key,
+                "lease_token": raw_lease_token,
+                "lease_expires_at": lease_expires_at.isoformat(),
+            }
+        )
+        claimed.append(serialized)
+        if len(claimed) >= limit:
+            break
+    db.commit()
+    return claimed
+
+
+def complete_provider_node_job(
+    db: Session,
+    *,
+    node_id: int,
+    job_id: int,
+    lease_token: str,
+    result_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """校验设备节点和任务租约后完成任务；重复完成保持幂等。"""
+
+    job, channel = _load_provider_node_leased_job(
+        db,
+        node_id=node_id,
+        job_id=job_id,
+        lease_token=lease_token,
+        allow_completed=True,
+    )
+    if job.status == "completed":
+        return {"ok": True, "job_id": job.id, "status": "completed", "idempotent": True}
+    return complete_cloud_job(db, channel, job.id, result_payload)
+
+
+def fail_provider_node_job(
+    db: Session,
+    *,
+    node_id: int,
+    job_id: int,
+    lease_token: str,
+    error_code: str,
+    error_message: str,
+    adapter_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """校验节点租约后记录失败，不能回报其他节点或过期租约任务。"""
+
+    job, channel = _load_provider_node_leased_job(
+        db,
+        node_id=node_id,
+        job_id=job_id,
+        lease_token=lease_token,
+        allow_completed=False,
+    )
+    return fail_cloud_job(
+        db,
+        channel,
+        job.id,
+        error_code=error_code,
+        error_message=error_message,
+        adapter_result=adapter_result,
+    )
+
+
+def _load_provider_node_leased_job(
+    db: Session,
+    *,
+    node_id: int,
+    job_id: int,
+    lease_token: str,
+    allow_completed: bool,
+) -> tuple[TaskJob, Channel]:
+    """同时校验任务节点、渠道绑定、租约摘要和租约有效期。"""
+
+    job = db.get(TaskJob, int(job_id))
+    if job is None or int(job.provider_node_id or 0) != int(node_id):
+        raise ValueError("job_not_found")
+    payload = parse_job_payload(job)
+    channel = db.get(Channel, int(payload.get("channel_id") or 0))
+    if (
+        channel is None
+        or int(channel.provider_node_id or 0) != int(node_id)
+        or int(channel.provider_account_id or 0) != int(job.provider_account_id or 0)
+    ):
+        raise ValueError("job_not_found")
+    if allow_completed and job.status == "completed":
+        return job, channel
+    if job.status != "running":
+        raise ValueError("job_not_running")
+    normalized_lease = (lease_token or "").strip()
+    if not normalized_lease or build_token_hash(normalized_lease) != str(job.lease_token_hash or ""):
+        raise ValueError("lease_token_invalid")
+    if job.lease_expires_at is None or _parse_datetime(job.lease_expires_at) <= now_shanghai():
+        raise ValueError("lease_expired")
+    return job, channel
 
 
 def recover_stale_cloud_jobs(db: Session, channel: Channel, *, stale_seconds: int = DEFAULT_RUNNING_LEASE_SECONDS) -> int:

@@ -15,15 +15,27 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Channel, TaskJob
+from app.models.saas import ProviderNodeAccount
 from app.services.channel_events import ingest_inbound_event
 from app.services.inbound_files import build_inbound_file_download_url, store_inbound_upload
 from app.services.ops import record_audit, record_health_check
+from app.services.provider_nodes import (
+    ActivationCodeInvalid,
+    DeviceCredentialInvalid,
+    activate_provider_node,
+    authenticate_device_token,
+    provider_poll_allowed,
+    record_provider_heartbeat,
+)
 from app.services.task_queue import WORKWECHAT_CLOUD_CONTROL_JOB, WORKWECHAT_CLOUD_OUTBOUND_JOB, parse_job_payload
 from app.services.workwechat_cloud_poll import (
     claim_cloud_jobs,
+    claim_provider_node_jobs,
+    complete_provider_node_job,
     complete_cloud_job,
     exchange_authorization_code,
     fail_cloud_job,
+    fail_provider_node_job,
     find_channel_by_authorization_code,
     find_channel_by_client_token,
     load_cloud_poll_config,
@@ -32,6 +44,198 @@ from app.services.workwechat_ws_sessions import workwechat_ws_registry
 
 
 router = APIRouter(prefix="/api/workwechat/provider", tags=["workwechat-provider-cloud"])
+provider_router = APIRouter(prefix="/api/provider", tags=["provider-node-cloud"])
+
+
+@provider_router.post("/activate")
+async def activate_provider_device(request: Request):
+    """使用一次性激活码换取节点设备密钥，不接受客户端指定租户或渠道。"""
+
+    body = await _read_json_object(request)
+    if "tenant_id" in body or "channel_id" in body:
+        raise HTTPException(status_code=400, detail="tenant_or_channel_not_allowed")
+    activation_code = str(body.get("activation_code") or "").strip()
+    fingerprint = str(body.get("fingerprint") or body.get("device_fingerprint") or "").strip()
+    if not activation_code or not fingerprint:
+        raise HTTPException(status_code=400, detail="activation_code_and_fingerprint_required")
+    with platform_session(SessionLocal) as db:
+        try:
+            activated = activate_provider_node(
+                db,
+                activation_code,
+                fingerprint=fingerprint,
+                client_version=str(body.get("client_version") or "").strip(),
+            )
+        except ActivationCodeInvalid as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+    base_url = str(request.base_url).rstrip("/")
+    return {
+        "ok": True,
+        "device_id": activated.device_id,
+        "device_token": activated.raw_device_token,
+        "heartbeat_url": f"{base_url}/api/provider/heartbeat",
+        "poll_url": f"{base_url}/api/provider/poll",
+        "poll_timeout_seconds": 25,
+    }
+
+
+@provider_router.post("/heartbeat")
+async def provider_node_heartbeat(request: Request):
+    """记录节点状态和账号摘要；心跳在租户到期后仍保持可用。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        node = record_provider_heartbeat(
+            db,
+            node_id=identity.node_id,
+            client_version=str(body.get("client_version") or "").strip(),
+            hook_status=str(body.get("hook_status") or "").strip(),
+            workwechat_status=str(body.get("workwechat_status") or body.get("process_status") or "").strip(),
+            accounts=body.get("accounts") if isinstance(body.get("accounts"), list) else [],
+            details=body.get("details") if isinstance(body.get("details"), dict) else {},
+        )
+        poll_allowed = provider_poll_allowed(db, identity.tenant_id)
+    return {
+        "ok": True,
+        "device_id": identity.device_id,
+        "node_id": identity.node_id,
+        "server_time": now_shanghai().isoformat(),
+        "poll_allowed": poll_allowed,
+        "last_heartbeat_at": node.last_heartbeat_at.isoformat() if node.last_heartbeat_at else None,
+    }
+
+
+@provider_router.post("/poll")
+async def poll_provider_node_jobs(request: Request):
+    """一个设备密钥领取节点下多个企微账号任务。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        if not provider_poll_allowed(db, identity.tenant_id):
+            return {"ok": True, "jobs": [], "read_only": True, "poll_interval_seconds": 20}
+        jobs = claim_provider_node_jobs(
+            db,
+            node_id=identity.node_id,
+            batch_size=int(body.get("batch_size") or 5),
+            lease_seconds=int(body.get("lease_seconds") or 900),
+        )
+    return {"ok": True, "jobs": jobs, "read_only": False, "poll_interval_seconds": 3}
+
+
+@provider_router.post("/jobs/{job_id}/complete")
+async def complete_provider_job(job_id: int, request: Request):
+    """使用设备身份和任务租约完成任务。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        try:
+            return complete_provider_node_job(
+                db,
+                node_id=identity.node_id,
+                job_id=job_id,
+                lease_token=str(body.get("lease_token") or "").strip(),
+                result_payload=body,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409 if str(exc) == "lease_expired" else 404, detail=str(exc)) from exc
+
+
+@provider_router.post("/jobs/{job_id}/fail")
+async def fail_provider_job(job_id: int, request: Request):
+    """使用设备身份和任务租约回报失败。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        try:
+            return fail_provider_node_job(
+                db,
+                node_id=identity.node_id,
+                job_id=job_id,
+                lease_token=str(body.get("lease_token") or "").strip(),
+                error_code=str(body.get("error_code") or "provider_job_failed"),
+                error_message=str(body.get("error_message") or body.get("error") or "provider_job_failed"),
+                adapter_result=body.get("adapter_result") if isinstance(body.get("adapter_result"), dict) else {},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409 if str(exc) == "lease_expired" else 404, detail=str(exc)) from exc
+
+
+@provider_router.post("/inbound")
+async def receive_provider_node_inbound(request: Request):
+    """按设备节点和稳定账号键解析已绑定渠道后接收入站事件。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    if not body:
+        raise HTTPException(status_code=400, detail="request body must be object")
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        if not provider_poll_allowed(db, identity.tenant_id):
+            raise HTTPException(status_code=403, detail="tenant_read_only")
+        channel = _load_channel_for_node_account(db, node_id=identity.node_id, body=body)
+        result = ingest_inbound_event(
+            db,
+            channel,
+            body,
+            headers={key: value for key, value in request.headers.items()},
+            source="provider_node_cloud",
+        )
+        normalized = result["normalized"]
+        return {
+            "ok": True,
+            "deduplicated": result["deduplicated"],
+            "event_id": result["raw_event_id"],
+            "mapped": result["mapped"],
+            "event_type": normalized.get("event_type"),
+            "dispatch": result.get("dispatch"),
+        }
+
+
+@provider_router.post("/inbound-upload")
+async def upload_provider_node_inbound_file(request: Request):
+    """按节点账号绑定保存入站文件，客户端不能直接指定渠道主键。"""
+
+    identity = _load_device_identity(request)
+    body = await _read_json_object(request)
+    if not body:
+        raise HTTPException(status_code=400, detail="request body must be object")
+    with tenant_scope(identity.tenant_id), tenant_session(TenantSessionLocal) as db:
+        if not provider_poll_allowed(db, identity.tenant_id):
+            raise HTTPException(status_code=403, detail="tenant_read_only")
+        channel = _load_channel_for_node_account(db, node_id=identity.node_id, body=body)
+        content_base64 = str(body.get("content_base64") or "").strip()
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid_content_base64") from exc
+        if not content:
+            raise HTTPException(status_code=400, detail="empty file")
+        stored = store_inbound_upload(
+            tenant_id=channel.tenant_id,
+            channel_id=channel.id,
+            file_name=str(body.get("file_name") or body.get("name") or "upload.bin").strip() or "upload.bin",
+            content=content,
+            content_type=str(body.get("content_type") or "").strip() or None,
+            message_type=str(body.get("message_type") or "file").strip() or "file",
+            source_event_key=str(body.get("source_event_key") or body.get("event_key") or "").strip() or None,
+        )
+        return {
+            "ok": True,
+            "provider_account_key": str(body.get("provider_account_key") or "").strip(),
+            "file_name": stored["file_name"],
+            "file_size": stored["file_size"],
+            "content_type": stored["content_type"],
+            "share_id": stored["share_id"],
+            "download_url": build_inbound_file_download_url(
+                request,
+                channel_id=channel.id,
+                share_id=stored["share_id"],
+                file_name=quote(stored["file_name"]),
+            ),
+        }
 
 
 @router.post("/register")
@@ -292,6 +496,47 @@ def _find_channel_credential_by_client_token(token: str) -> tuple[int, int] | No
         if channel is None:
             return None
         return int(channel.tenant_id), int(channel.id)
+
+
+def _load_device_identity(request: Request):
+    """从请求头设备密钥恢复最小可信节点身份。"""
+
+    raw_token = str(request.headers.get("X-Provider-Device-Token") or "").strip()
+    if not raw_token:
+        authorization = str(request.headers.get("Authorization") or "").strip()
+        if authorization.lower().startswith("bearer "):
+            raw_token = authorization[7:].strip()
+    with platform_session(SessionLocal) as db:
+        try:
+            return authenticate_device_token(db, raw_token)
+        except DeviceCredentialInvalid as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+def _load_channel_for_node_account(db, *, node_id: int, body: dict[str, Any]) -> Channel:
+    """通过节点内稳定账号键解析唯一已绑定企微渠道。"""
+
+    account_key = str(body.get("provider_account_key") or body.get("account_key") or "").strip()
+    if not account_key:
+        raise HTTPException(status_code=400, detail="provider_account_key_required")
+    account = db.scalar(
+        select(ProviderNodeAccount).where(
+            ProviderNodeAccount.provider_node_id == int(node_id),
+            ProviderNodeAccount.account_key == account_key,
+        )
+    )
+    if account is None:
+        raise HTTPException(status_code=404, detail="provider_account_not_found")
+    channel = db.scalar(
+        select(Channel).where(
+            Channel.channel_type == "workwechat",
+            Channel.provider_node_id == int(node_id),
+            Channel.provider_account_id == account.id,
+        )
+    )
+    if channel is None:
+        raise HTTPException(status_code=404, detail="provider_account_channel_not_bound")
+    return channel
 
 
 async def _read_json_object(request: Request) -> dict[str, Any]:

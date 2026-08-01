@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
@@ -15,8 +16,11 @@ from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import (
     ProviderActivationCode,
     ProviderCredential,
+    ProviderHeartbeat,
     ProviderNode,
+    ProviderNodeAccount,
     SaasPlan,
+    Tenant,
     TenantSubscription,
 )
 from app.services.saas_auth import credential_matches, hash_credential
@@ -332,6 +336,98 @@ def disable_provider_node(db: Session, node_id: int) -> ProviderNode:
             ProviderActivationCode.consumed_at.is_(None),
         )
         .values(consumed_at=current)
+    )
+    db.commit()
+    db.refresh(node)
+    return node
+
+
+def provider_poll_allowed(db: Session, tenant_id: int) -> bool:
+    """到期或停用租户仍可心跳，但不能领取新的 Provider 任务。"""
+
+    tenant = db.get(Tenant, int(tenant_id))
+    if tenant is None or tenant.status != "active":
+        return False
+    subscription = _current_subscription(db, tenant_id)
+    if subscription is None:
+        # 历史自营租户可能尚未补订阅；迁移完成前保留兼容，不影响正式租户策略。
+        return True
+    if subscription.status != "active":
+        return False
+    return not (
+        subscription.expires_at
+        and ensure_shanghai_datetime(subscription.expires_at) <= now_shanghai()
+    )
+
+
+def record_provider_heartbeat(
+    db: Session,
+    *,
+    node_id: int,
+    client_version: str = "",
+    hook_status: str = "",
+    workwechat_status: str = "",
+    accounts: list[dict] | None = None,
+    details: dict | None = None,
+) -> ProviderNode:
+    """更新节点在线状态并同步节点内发现账号，但不自动改变渠道绑定。"""
+
+    node = get_provider_node(db, node_id)
+    if node is None or node.status != "active":
+        raise DeviceCredentialInvalid("provider_node_inactive")
+    current = now_shanghai()
+    normalized_accounts = [item for item in (accounts or []) if isinstance(item, dict)]
+    node.client_version = (client_version or "").strip() or node.client_version
+    node.last_heartbeat_at = current
+
+    seen_keys: set[str] = set()
+    for item in normalized_accounts:
+        account_key = str(item.get("account_key") or "").strip()
+        if not account_key or account_key in seen_keys:
+            continue
+        seen_keys.add(account_key)
+        account = db.scalar(
+            select(ProviderNodeAccount).where(
+                ProviderNodeAccount.tenant_id == node.tenant_id,
+                ProviderNodeAccount.provider_node_id == node.id,
+                ProviderNodeAccount.account_key == account_key,
+            )
+        )
+        if account is None:
+            account = ProviderNodeAccount(
+                tenant_id=node.tenant_id,
+                provider_node_id=node.id,
+                account_key=account_key,
+            )
+            db.add(account)
+        account.display_name = str(item.get("display_name") or item.get("name") or "").strip() or None
+        account.external_user_id = str(item.get("external_user_id") or item.get("userid") or "").strip() or None
+        reported_status = str(item.get("status") or "unknown").strip().lower()
+        account.status = reported_status if reported_status in {"online", "offline", "unknown"} else "unknown"
+        account.last_seen_at = current
+        account.metadata_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+
+    # 本次心跳没有上报的旧账号只标记离线，不删除记录，确保渠道绑定主键稳定。
+    for account in db.scalars(
+        select(ProviderNodeAccount).where(
+            ProviderNodeAccount.tenant_id == node.tenant_id,
+            ProviderNodeAccount.provider_node_id == node.id,
+        )
+    ).all():
+        if account.account_key not in seen_keys:
+            account.status = "offline"
+
+    db.add(
+        ProviderHeartbeat(
+            tenant_id=node.tenant_id,
+            provider_node_id=node.id,
+            reported_at=current,
+            client_version=node.client_version,
+            hook_status=(hook_status or "").strip() or None,
+            workwechat_status=(workwechat_status or "").strip() or None,
+            accounts_json=json.dumps(normalized_accounts, ensure_ascii=False, sort_keys=True),
+            details_json=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+        )
     )
     db.commit()
     db.refresh(node)
