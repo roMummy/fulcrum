@@ -18,7 +18,10 @@ os.environ["LOG_DIR"] = str(Path(TEST_DIR) / "logs")
 Path(os.environ["LOG_DIR"]).mkdir(parents=True, exist_ok=True)
 
 from app.core.db import Base, SessionLocal, engine
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.models.entities import Bot, Channel, Conversation, Message, MessageAttachment, OpenApiApp, OpenApiAppChannel, TaskJob
+from app.models.saas import Tenant
 from app.services.channel_events import ingest_normalized_event
 from app.services.open_webhooks import (
     build_message_event_envelope,
@@ -51,6 +54,21 @@ class OpenWebhookTestCase(unittest.TestCase):
         self.assertIn(str(TEMP_ROOT), str(Path(database_path).resolve()))
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        # SessionLocal 在这里是显式的平台旁路，只负责创建租户根实体；后续 Webhook
+        # 业务数据必须进入租户感知会话，避免测试继续依赖租户化前的隐式全局数据。
+        with SessionLocal() as platform_db:
+            tenant = Tenant(code="open-webhook-test", name="开放 Webhook 测试租户", status="active")
+            platform_db.add(tenant)
+            platform_db.commit()
+            platform_db.refresh(tenant)
+            self.tenant_id = tenant.id
+
+    def _tenant_db(self):
+        """返回绑定当前测试租户的作用域和数据库会话上下文。"""
+
+        # 两个上下文必须保持相同生命周期：tenant_scope 提供可信租户编号，
+        # tenant_session 负责为新增对象自动补齐 tenant_id 并过滤所有业务查询。
+        return tenant_scope(self.tenant_id), tenant_session(SessionLocal)
 
     def _create_message_graph(self, db):
         # Webhook 通过机器人主键建立归属，精简后的机器人不再维护额外 slug 标识。
@@ -133,7 +151,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         return app, channel
 
     def test_build_message_event_envelope_uses_unified_contract(self):
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             _app, channel, conversation, message, attachment = self._create_message_graph(db)
             envelope = build_message_event_envelope(
                 event_type="file.received",
@@ -149,7 +168,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         self.assertEqual(envelope["attachments"][0]["storage_path"], "/tmp/return.xls")
 
     def test_list_webhook_apps_for_channel_filters_active_channel_apps(self):
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             app, channel, _conversation, _message, _attachment = self._create_message_graph(db)
             apps = list_webhook_apps_for_channel(db, channel)
 
@@ -179,7 +199,8 @@ class OpenWebhookTestCase(unittest.TestCase):
             "<tr><td>SPLIT-001</td><td>圆通</td><td>YT1234567890123</td></tr></table>",
             encoding="utf-8",
         )
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             _app, channel = self._create_channel_with_webhook_app(db)
             normalized = {
                 "provider": "workwechat",
@@ -218,7 +239,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         self.assertEqual(bodies[1]["attachments"][0]["download_url"], "http://mba.test/inbound-files/1/share/return.xls")
 
     def test_open_webhook_delivery_job_posts_enqueued_envelope(self):
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             app, _channel = self._create_channel_with_webhook_app(db)
             payload = {
                 "app_id": app.id,
@@ -236,7 +258,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         self.assertEqual(json.loads(request.data.decode("utf-8"))["event_id"], "evt-job-001")
 
     def test_supplier_order_webhook_skips_non_return_message(self):
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             _app, channel = self._create_channel_with_webhook_app(db)
             normalized = {
                 "provider": "workwechat",
@@ -272,7 +295,8 @@ class OpenWebhookTestCase(unittest.TestCase):
         video_file = Path(TEST_DIR) / "supplier-video.mp4"
         # 即使视频二进制里偶然出现回单字段，也不应该进入收发单 Excel 回单解析链路。
         video_file.write_bytes(b"\x00\x00video-data \xe5\x88\x86\xe5\x8d\x95ID \xe8\xbf\x90\xe5\x8d\x95\xe5\x8f\xb7 YT1234567890123")
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             _app, channel = self._create_channel_with_webhook_app(db)
             normalized = {
                 "provider": "workwechat",
@@ -318,7 +342,8 @@ class OpenWebhookTestCase(unittest.TestCase):
             "<tr><td>SPLIT-001</td><td>圆通</td><td>YT1234567890123</td></tr></table>",
             encoding="utf-8",
         )
-        with SessionLocal() as db:
+        tenant_context, db_context = self._tenant_db()
+        with tenant_context, db_context as db:
             _app, channel = self._create_channel_with_webhook_app(db)
             db.add(
                 MessageAttachment(
