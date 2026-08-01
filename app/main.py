@@ -141,7 +141,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import platform_auth_router, tenant_auth_router
+from app.web import platform_admin_router, platform_auth_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -173,6 +173,7 @@ app.include_router(workwechat_provider_cloud_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
+app.include_router(platform_admin_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = ("wechat_ipad", "wechat_winauto", "workwechat", "openclaw", "simulator", "telegram")
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})

@@ -1,0 +1,342 @@
+"""平台租户、套餐、订阅和初始管理员管理页面。"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, time
+from urllib.parse import quote
+
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
+from app.core.db import SessionLocal
+from app.core.time import SHANGHAI_TZ, format_shanghai_time
+from app.services.platform_admin import (
+    PlatformAdminError,
+    create_tenant_with_subscription,
+    current_subscription,
+    dashboard_stats,
+    get_tenant_detail,
+    list_plans,
+    list_tenants,
+    renew_tenant_subscription,
+    reset_tenant_admin_password,
+    save_plan,
+    set_tenant_status,
+)
+from app.web.auth_common import (
+    PLATFORM_CSRF_COOKIE,
+    PLATFORM_LOGIN_PATH,
+    PLATFORM_LOGOUT_PATH,
+    PLATFORM_PASSWORD_PATH,
+    require_platform_csrf,
+)
+
+
+router = APIRouter(prefix="/platform", tags=["platform-admin"])
+templates = Jinja2Templates(directory="app/templates")
+
+
+def _require_platform_principal(request: Request):
+    """只接受中间件从平台会话恢复的身份，不读取租户身份或表单角色。"""
+
+    principal = getattr(request.state, "platform_principal", None)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Platform authentication required")
+    return principal
+
+
+def _platform_context(
+    request: Request,
+    *,
+    page_title: str,
+    active: str,
+    notice: str = "",
+    notice_tone: str = "",
+    **extra,
+) -> dict[str, object]:
+    """构造与租户工作台隔离的平台导航和身份操作上下文。"""
+
+    principal = _require_platform_principal(request)
+    nav_items = [
+        {"label": "平台概览", "href": "/platform/dashboard", "active": active == "dashboard"},
+        {"label": "租户管理", "href": "/platform/tenants", "active": active == "tenants"},
+        {"label": "套餐管理", "href": "/platform/plans", "active": active == "plans"},
+    ]
+    context: dict[str, object] = {
+        "request": request,
+        "page_title": page_title,
+        "current_user": principal,
+        "primary_nav_items": nav_items,
+        "secondary_nav_items": [],
+        "secondary_nav_active": False,
+        "section_nav_items": [],
+        "module_links": {},
+        "notice": notice,
+        "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice else "info"),
+        "csrf_token": request.cookies.get(PLATFORM_CSRF_COOKIE, ""),
+        "password_action": PLATFORM_PASSWORD_PATH,
+        "logout_action": PLATFORM_LOGOUT_PATH,
+        "format_time": format_shanghai_time,
+        "current_subscription": current_subscription,
+    }
+    context.update(extra)
+    return context
+
+
+def _parse_expiry(value: str) -> datetime | None:
+    """把日期表单解析为上海时区当天结束，空值表示长期有效。"""
+
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = date.fromisoformat(normalized)
+    except ValueError as exc:
+        raise PlatformAdminError("subscription_expiry_invalid") from exc
+    return datetime.combine(parsed, time.max, tzinfo=SHANGHAI_TZ)
+
+
+def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectResponse:
+    """统一生成不包含任何凭证原文的平台页面跳转。"""
+
+    suffix = f"?notice={quote(notice)}"
+    if danger:
+        suffix += "&tone=danger"
+    return RedirectResponse(url=path + suffix, status_code=303)
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def platform_dashboard_page(request: Request):
+    """展示平台关键统计和最近租户。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="平台概览",
+            active="dashboard",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            stats=dashboard_stats(db),
+            tenants=list_tenants(db)[:8],
+        )
+        return templates.TemplateResponse(request, "platform_dashboard.html", context)
+
+
+@router.get("/tenants", response_class=HTMLResponse)
+async def platform_tenants_page(request: Request):
+    """展示租户清单和开通表单。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="租户管理",
+            active="tenants",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            tenants=list_tenants(db),
+            plans=[plan for plan in list_plans(db) if plan.status == "active"],
+        )
+        return templates.TemplateResponse(request, "platform_tenants.html", context)
+
+
+@router.post("/tenants", response_class=HTMLResponse)
+async def platform_tenant_create_action(
+    request: Request,
+    code: str = Form(""),
+    name: str = Form(""),
+    plan_id: int = Form(0),
+    expires_on: str = Form(""),
+    admin_username: str = Form("admin"),
+    admin_display_name: str = Form("企业管理员"),
+    contact_name: str = Form(""),
+    contact_phone: str = Form(""),
+    notes: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """开通租户并在当前响应页一次性展示初始密码。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            created = create_tenant_with_subscription(
+                db,
+                code=code,
+                name=name,
+                plan_id=plan_id,
+                expires_at=_parse_expiry(expires_on),
+                admin_username=admin_username,
+                admin_display_name=admin_display_name,
+                contact_name=contact_name,
+                contact_phone=contact_phone,
+                notes=notes,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformAdminError as exc:
+            return _redirect("/platform/tenants", f"租户创建失败：{exc}", danger=True)
+        tenant = get_tenant_detail(db, created.tenant_id)
+        context = _platform_context(
+            request,
+            page_title=f"租户详情：{tenant.name}",
+            active="tenants",
+            notice="租户创建成功。请立即安全交付初始密码，离开本页后无法再次查看。",
+            tenant=tenant,
+            subscription=current_subscription(tenant),
+            plans=list_plans(db),
+            initial_password=created.initial_password,
+            reset_user_id=created.admin_user_id,
+        )
+        return templates.TemplateResponse(request, "platform_tenant_detail.html", context, status_code=201)
+
+
+@router.get("/tenants/{tenant_id}", response_class=HTMLResponse)
+async def platform_tenant_detail_page(tenant_id: int, request: Request):
+    """展示租户订阅、员工和维护动作。"""
+
+    with SessionLocal() as db:
+        tenant = get_tenant_detail(db, tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        context = _platform_context(
+            request,
+            page_title=f"租户详情：{tenant.name}",
+            active="tenants",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            tenant=tenant,
+            subscription=current_subscription(tenant),
+            plans=list_plans(db),
+            initial_password="",
+            reset_user_id=0,
+        )
+        return templates.TemplateResponse(request, "platform_tenant_detail.html", context)
+
+
+@router.post("/tenants/{tenant_id}/status")
+async def platform_tenant_status_action(
+    tenant_id: int,
+    request: Request,
+    status: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """启用或停用租户。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            set_tenant_status(db, tenant_id=tenant_id, status=status, actor_user_id=principal.user_id)
+        except PlatformAdminError as exc:
+            return _redirect(f"/platform/tenants/{tenant_id}", f"状态更新失败：{exc}", danger=True)
+    return _redirect(f"/platform/tenants/{tenant_id}", "租户状态已更新")
+
+
+@router.post("/tenants/{tenant_id}/renew")
+async def platform_tenant_renew_action(
+    tenant_id: int,
+    request: Request,
+    plan_id: int = Form(0),
+    expires_on: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """为租户切换套餐或延长有效期。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            renew_tenant_subscription(
+                db,
+                tenant_id=tenant_id,
+                plan_id=plan_id,
+                expires_at=_parse_expiry(expires_on),
+                actor_user_id=principal.user_id,
+            )
+        except PlatformAdminError as exc:
+            return _redirect(f"/platform/tenants/{tenant_id}", f"续期失败：{exc}", danger=True)
+    return _redirect(f"/platform/tenants/{tenant_id}", "租户套餐和有效期已更新")
+
+
+@router.post("/tenants/{tenant_id}/admins/{user_id}/reset-password", response_class=HTMLResponse)
+async def platform_tenant_admin_reset_action(
+    tenant_id: int,
+    user_id: int,
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    """重置租户管理员密码，并只在本次响应展示原文。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            initial_password = reset_tenant_admin_password(
+                db,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformAdminError as exc:
+            return _redirect(f"/platform/tenants/{tenant_id}", f"密码重置失败：{exc}", danger=True)
+        tenant = get_tenant_detail(db, tenant_id)
+        context = _platform_context(
+            request,
+            page_title=f"租户详情：{tenant.name}",
+            active="tenants",
+            notice="管理员密码已重置。请立即安全交付，离开本页后无法再次查看。",
+            tenant=tenant,
+            subscription=current_subscription(tenant),
+            plans=list_plans(db),
+            initial_password=initial_password,
+            reset_user_id=user_id,
+        )
+        return templates.TemplateResponse(request, "platform_tenant_detail.html", context)
+
+
+@router.get("/plans", response_class=HTMLResponse)
+async def platform_plans_page(request: Request):
+    """展示套餐清单和创建编辑表单。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="套餐管理",
+            active="plans",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            plans=list_plans(db),
+        )
+        return templates.TemplateResponse(request, "platform_plans.html", context)
+
+
+@router.post("/plans")
+async def platform_plan_save_action(
+    request: Request,
+    plan_id: int = Form(0),
+    code: str = Form(""),
+    name: str = Form(""),
+    provider_node_limit: int = Form(1),
+    status: str = Form("active"),
+    description: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """创建或更新套餐。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            save_plan(
+                db,
+                plan_id=plan_id,
+                code=code,
+                name=name,
+                provider_node_limit=provider_node_limit,
+                status=status,
+                description=description,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformAdminError as exc:
+            return _redirect("/platform/plans", f"套餐保存失败：{exc}", danger=True)
+    return _redirect("/platform/plans", "套餐已保存")

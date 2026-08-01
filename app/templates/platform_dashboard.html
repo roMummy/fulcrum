@@ -1,0 +1,32 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>集中查看租户开通规模、套餐配置和员工账号总量。</p>{% endblock %}
+{% block hero_actions %}<a class="btn" href="/platform/tenants">开通租户</a>{% endblock %}
+{% block content %}
+<div class="stats-grid compact-grid">
+  <div class="stat-card accent-card"><span>租户总数</span><strong>{{ stats.tenant_total }}</strong><div class="muted-text">平台已登记租户</div></div>
+  <div class="stat-card"><span>启用租户</span><strong>{{ stats.tenant_active }}</strong><div class="muted-text">当前允许登录</div></div>
+  <div class="stat-card"><span>套餐数量</span><strong>{{ stats.plan_total }}</strong><div class="muted-text">含停用套餐</div></div>
+  <div class="stat-card"><span>员工账号</span><strong>{{ stats.user_total }}</strong><div class="muted-text">所有租户员工</div></div>
+</div>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Recent tenants</p><h2>最近开通租户</h2></div><a class="btn btn-secondary" href="/platform/tenants">查看全部</a></div>
+  <table class="table">
+    <thead><tr><th>租户</th><th>状态</th><th>套餐</th><th>有效期</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for tenant in tenants %}
+      {% set subscription = current_subscription(tenant) %}
+      <tr>
+        <td><strong>{{ tenant.name }}</strong><div class="muted-text"><code>{{ tenant.code }}</code> / #{{ tenant.id }}</div></td>
+        <td><span class="chip {% if tenant.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ tenant.status }}</span></td>
+        <td>{{ subscription.plan.name if subscription and subscription.plan else '-' }}</td>
+        <td>{{ format_time(subscription.expires_at) if subscription and subscription.expires_at else '长期有效' }}</td>
+        <td><a class="btn btn-small btn-secondary" href="/platform/tenants/{{ tenant.id }}">详情</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty-state"><strong>暂无租户</strong><p>先创建套餐，再开通首个租户。</p></div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

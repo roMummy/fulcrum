@@ -1,0 +1,30 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>配置租户可分配的 Provider 节点额度，首期不引入消息量或员工数计费。</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/platform/tenants">租户管理</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Plan</p><h2>新增套餐</h2></div></div>
+  <form method="post" action="/platform/plans" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="plan_id" value="0" />
+    <label><span>套餐编码</span><input name="code" required placeholder="standard" /></label>
+    <label><span>套餐名称</span><input name="name" required placeholder="标准版" /></label>
+    <label><span>Provider 节点额度</span><input name="provider_node_limit" type="number" min="0" value="1" required /></label>
+    <label><span>状态</span><select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+    <label class="full-row"><span>说明</span><textarea name="description" rows="3"></textarea></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建套餐</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>套餐清单</h2></div></div>
+  <table class="table">
+    <thead><tr><th>套餐</th><th>编码</th><th>节点额度</th><th>状态</th><th>说明</th></tr></thead>
+    <tbody>
+      {% for plan in plans %}
+      <tr><td><strong>{{ plan.name }}</strong></td><td><code>{{ plan.code }}</code></td><td>{{ plan.provider_node_limit }}</td><td><span class="chip {% if plan.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ plan.status }}</span></td><td>{{ plan.description or '-' }}</td></tr>
+      {% else %}<tr><td colspan="5"><div class="empty-state"><strong>暂无套餐</strong></div></td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

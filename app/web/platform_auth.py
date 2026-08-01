@@ -143,14 +143,14 @@ async def platform_login_action(
 
 @router.get(PLATFORM_HOME_PATH)
 async def platform_home(request: Request):
-    """提供首期最小平台落点；完整平台控制台上线前先进入账号安全页。"""
+    """验证平台会话后进入实际平台控制台。"""
 
     raw_token = platform_session_token(request)
     with SessionLocal() as db:
         principal = load_platform_principal(db, raw_token)
     if principal is None:
         return RedirectResponse(url=PLATFORM_LOGIN_PATH, status_code=303)
-    return RedirectResponse(url=PLATFORM_PASSWORD_PATH, status_code=303)
+    return RedirectResponse(url="/platform/dashboard", status_code=303)
 
 
 @router.post(PLATFORM_LOGOUT_PATH)

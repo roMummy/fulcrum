@@ -6,6 +6,7 @@
 """
 
 from app.web.platform_auth import router as platform_auth_router
+from app.web.platform_admin import router as platform_admin_router
 from app.web.tenant_auth import router as tenant_auth_router
 
-__all__ = ["platform_auth_router", "tenant_auth_router"]
+__all__ = ["platform_admin_router", "platform_auth_router", "tenant_auth_router"]
