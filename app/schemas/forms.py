@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.services.channel_labels import require_saas_enabled_channel_type
 
 
 class BotCreate(BaseModel):
@@ -25,6 +27,13 @@ class ChannelCreate(BaseModel):
     provider_account_id: int | None = None
     is_enabled: bool = True
 
+    @field_validator("channel_type")
+    @classmethod
+    def validate_channel_type(cls, value: str) -> str:
+        """阻止后台脚本或后续批量入口绕过页面创建非企微渠道。"""
+
+        return require_saas_enabled_channel_type(value)
+
 
 class ChannelUpdate(BaseModel):
     bot_id: int
@@ -40,6 +49,13 @@ class ChannelUpdate(BaseModel):
     provider_node_id: int | None = None
     provider_account_id: int | None = None
     is_enabled: bool = True
+
+    @field_validator("channel_type")
+    @classmethod
+    def validate_channel_type(cls, value: str) -> str:
+        """编辑同样执行产品范围校验，不能把企微渠道改回历史类型。"""
+
+        return require_saas_enabled_channel_type(value)
 
 
 class BotPluginBindCreate(BaseModel):

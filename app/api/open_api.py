@@ -14,6 +14,7 @@ from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, Chatroom, Conversation, OpenApiApp, OpenApiAppChannel, TaskJob
+from app.services.channel_labels import SAAS_ENABLED_CHANNEL_TYPES
 from app.services.open_api_auth import OpenApiAuthError, OpenApiAuthResult, authenticate_open_api_request
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job, parse_job_payload
@@ -433,7 +434,7 @@ def _load_default_channel(db: Session, app: OpenApiApp) -> Channel:
     if channel_id <= 0:
         raise HTTPException(status_code=400, detail="default_channel_not_configured")
     channel = db.get(Channel, channel_id)
-    if channel is None or not channel.is_enabled:
+    if channel is None or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES or not channel.is_enabled:
         raise HTTPException(status_code=404, detail="channel_not_found")
     return channel
 
@@ -451,7 +452,13 @@ def _load_authorized_channels(db: Session, app: OpenApiApp) -> list[Channel]:
     if not channel_ids:
         raise HTTPException(status_code=400, detail="authorized_channels_not_configured")
     channels = db.scalars(
-        select(Channel).where(Channel.id.in_(channel_ids), Channel.is_enabled.is_(True)).order_by(Channel.id.asc())
+        select(Channel)
+        .where(
+            Channel.id.in_(channel_ids),
+            Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES),
+            Channel.is_enabled.is_(True),
+        )
+        .order_by(Channel.id.asc())
     ).all()
     return channels
 

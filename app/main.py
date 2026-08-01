@@ -27,7 +27,11 @@ from app.services.auth import validate_password_change
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.channel_adapters import get_channel_adapter
 from app.services.channel_events import ingest_inbound_event, ingest_normalized_event
-from app.services.channel_labels import get_channel_type_label
+from app.services.channel_labels import (
+    SAAS_ENABLED_CHANNEL_TYPES,
+    get_channel_type_label,
+    require_saas_enabled_channel_type,
+)
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.crud import (
     bind_plugin,
@@ -185,7 +189,7 @@ app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
-BUILTIN_CHANNEL_TYPES = ("wechat_ipad", "wechat_winauto", "workwechat", "openclaw", "simulator", "telegram")
+BUILTIN_CHANNEL_TYPES = SAAS_ENABLED_CHANNEL_TYPES
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
 
@@ -1909,7 +1913,12 @@ async def delete_bot_action(request: Request, bot_id: int, confirmation_name: st
 async def channels_page(request: Request):
     db = get_session()
     try:
-        channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+        # 历史数据库可能仍有旧渠道记录；SaaS 租户页面只展示当前产品允许的企业微信渠道。
+        channels = db.scalars(
+            select(Channel)
+            .where(Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES))
+            .order_by(Channel.id.desc())
+        ).all()
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
@@ -1934,7 +1943,7 @@ async def channel_detail_page(request: Request, channel_id: int):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel:
+        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         wechat_ipad_proxy_form = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
@@ -2375,12 +2384,15 @@ async def create_channel_action(
     principal = enforce_role(request, "ops")
     db = get_session()
     try:
-        if (channel_type or "").strip() == "workwechat":
-            if not has_tenant_role(principal, "tenant_admin"):
-                raise HTTPException(status_code=403, detail="Permission denied")
-            require_tenant_csrf(db, request, csrf_token)
+        try:
+            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not has_tenant_role(principal, "tenant_admin"):
+            raise HTTPException(status_code=403, detail="Permission denied")
+        require_tenant_csrf(db, request, csrf_token)
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=channel_type,
+            channel_type=normalized_channel_type,
             adapter_config_json=adapter_config_json,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
@@ -2392,7 +2404,7 @@ async def create_channel_action(
         try:
             provider_node, provider_account = validate_workwechat_provider_binding(
                 db,
-                channel_type=channel_type,
+                channel_type=normalized_channel_type,
                 provider_node_id=provider_node_id,
                 provider_account_id=provider_account_id,
             )
@@ -2404,7 +2416,7 @@ async def create_channel_action(
         payload = ChannelCreate(
             bot_id=bot_id,
             name=name,
-            channel_type=channel_type,
+            channel_type=normalized_channel_type,
             api_base=api_base,
             bot_token=bot_token,
             webhook_path=webhook_path,
@@ -2448,14 +2460,17 @@ async def edit_channel_action(
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel:
+        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
-        if (channel_type or "").strip() == "workwechat" or channel.channel_type == "workwechat":
-            if not has_tenant_role(principal, "tenant_admin"):
-                raise HTTPException(status_code=403, detail="Permission denied")
-            require_tenant_csrf(db, request, csrf_token)
+        try:
+            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not has_tenant_role(principal, "tenant_admin"):
+            raise HTTPException(status_code=403, detail="Permission denied")
+        require_tenant_csrf(db, request, csrf_token)
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=channel_type,
+            channel_type=normalized_channel_type,
             adapter_config_json=adapter_config_json,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
@@ -2467,7 +2482,7 @@ async def edit_channel_action(
         try:
             provider_node, provider_account = validate_workwechat_provider_binding(
                 db,
-                channel_type=channel_type,
+                channel_type=normalized_channel_type,
                 provider_node_id=provider_node_id,
                 provider_account_id=provider_account_id,
                 channel_id=channel.id,
@@ -2480,7 +2495,7 @@ async def edit_channel_action(
         payload = ChannelUpdate(
             bot_id=bot_id,
             name=name,
-            channel_type=channel_type,
+            channel_type=normalized_channel_type,
             api_base=api_base,
             bot_token=bot_token,
             webhook_path=webhook_path,

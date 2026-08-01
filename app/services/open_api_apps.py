@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.entities import Channel, OpenApiApp, OpenApiAppChannel
+from app.services.channel_labels import require_saas_enabled_channel_type
 from app.services.open_api_auth import set_open_api_secret
 
 
@@ -31,15 +32,20 @@ def list_open_api_apps(db: Session) -> list[OpenApiApp]:
 
 
 def list_authorized_channel_ids(db: Session, app_id: int) -> list[int]:
-    """列出开放应用已授权渠道 ID。
-    """
+    """列出开放应用当前仍可用的企业微信授权渠道 ID。"""
 
     app = db.get(OpenApiApp, int(app_id or 0))
     if app is None:
         return []
-    rows = db.scalars(select(OpenApiAppChannel).where(OpenApiAppChannel.app_id == app.id)).all()
-    ids = [int(row.channel_id) for row in rows]
-    return ids
+    rows = db.scalars(
+        select(OpenApiAppChannel.channel_id)
+        .join(Channel, Channel.id == OpenApiAppChannel.channel_id)
+        .where(
+            OpenApiAppChannel.app_id == app.id,
+            Channel.channel_type == "workwechat",
+        )
+    ).all()
+    return [int(channel_id) for channel_id in rows]
 
 
 def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> OpenApiApp:
@@ -58,6 +64,7 @@ def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> Open
     channel = db.get(Channel, int(data.default_channel_id or 0))
     if channel is None:
         raise ValueError("默认渠道不存在")
+    require_saas_enabled_channel_type(channel.channel_type)
     existing = db.scalar(select(OpenApiApp).where(OpenApiApp.app_key == normalized_key))
     if existing is not None and (app is None or int(existing.id) != int(app.id)):
         raise ValueError("app_key 已存在")
@@ -95,6 +102,11 @@ def _sync_authorized_channels(db: Session, *, app: OpenApiApp, primary_channel_i
     normalized_ids.add(int(primary_channel_id))
     valid_channels = db.scalars(select(Channel).where(Channel.id.in_(normalized_ids))).all()
     valid_ids = {int(channel.id) for channel in valid_channels}
+    if valid_ids != normalized_ids:
+        raise ValueError("授权渠道不存在")
+    for channel in valid_channels:
+        # 不能通过多选授权字段把历史旧渠道重新暴露给外部系统。
+        require_saas_enabled_channel_type(channel.channel_type)
     existing = db.scalars(select(OpenApiAppChannel).where(OpenApiAppChannel.app_id == app.id)).all()
     existing_by_channel = {int(row.channel_id): row for row in existing}
     for row in existing:

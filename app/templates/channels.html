@@ -87,7 +87,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label><span>渠道名称</span><input name="name" placeholder="例如：微信主通道" required /></label>
-      <label><span>渠道类型</span><select name="channel_type" required>{% for item in builtin_channel_types %}<option value="{{ item }}">{{ item|channel_type_label }}</option>{% endfor %}</select></label>
+      <input type="hidden" name="channel_type" value="workwechat" />
+      <label><span>渠道类型</span><input value="企业微信 Hook" disabled /></label>
       <label><span>Provider 节点</span><select name="provider_node_id" data-provider-node-select required><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select></label>
       <label><span>企微账号</span><select name="provider_account_id" data-provider-account-select required><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' %}{% for account in node.accounts if account.status == 'online' %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>{% endfor %}{% endfor %}</select></label>
       <label><span>API Base</span><input name="api_base" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
@@ -96,16 +97,6 @@
       <label><span>DM 策略</span><select name="dm_policy"><option value="allowlist">allowlist</option><option value="allow">allow</option><option value="deny">deny</option></select></label>
       <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
       <label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="2" placeholder="多个 ID 用逗号分隔"></textarea></label>
-      <div class="full-row card subcard" style="padding:16px;">
-        <p class="section-kicker">Wechat iPad 可选代理</p>
-        <p class="muted-text" style="margin-top:0;">仅在 `wechat_ipad` 渠道时生效。需要登录代理时，直接填写这里即可，不用自己拼接 JSON。</p>
-        <div class="panel-grid panel-grid-balanced">
-          <label><span>代理地址</span><input name="proxy_host" placeholder="例如：1.2.3.4" /></label>
-          <label><span>代理端口</span><input name="proxy_port" placeholder="例如：8080" /></label>
-          <label><span>代理用户名</span><input name="proxy_username" placeholder="可留空" /></label>
-          <label><span>代理密码</span><input name="proxy_password" type="password" placeholder="可留空" /></label>
-        </div>
-      </div>
       <label class="full-row"><span>Adapter Config JSON</span><textarea name="adapter_config_json" rows="5" placeholder='{"wxid":"wxid_xxx","device_id":"..."}'></textarea></label>
       <p class="muted-text full-row" style="margin:0;">企业微信渠道必须绑定已激活节点及其在线账号；节点激活码在 Provider 节点页面生成。</p>
       <div class="full-row form-actions-inline">

@@ -12,6 +12,7 @@ from app.core.tenant_db import open_tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Channel, OpenApiApp
 from app.services.auth import has_required_role
+from app.services.channel_labels import SAAS_ENABLED_CHANNEL_TYPES
 from app.services.open_api_apps import OpenApiAppInput, list_authorized_channel_ids, list_open_api_apps, upsert_open_api_app
 
 
@@ -34,7 +35,12 @@ async def open_api_apps_page(request: Request):
             notice_tone=request.query_params.get("tone", ""),
         )
         apps = list_open_api_apps(db)
-        channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+        # 开放应用配置页只能授权当前 SaaS 产品开放的企业微信渠道。
+        channels = db.scalars(
+            select(Channel)
+            .where(Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES))
+            .order_by(Channel.id.desc())
+        ).all()
         editing_app = _load_editing_app(db, request)
         context["apps"] = apps
         context["channels"] = channels

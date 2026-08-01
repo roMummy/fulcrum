@@ -32,7 +32,7 @@
   </div>
 
   {# Provider 专项动作数量较多，默认折叠，避免用户刚进详情页就被一组相似按钮淹没。 #}
-  {% if channel.channel_type in ['wechat_ipad', 'wechat_winauto', 'workwechat'] %}
+  {% if channel.channel_type == 'workwechat' %}
   <details class="action-disclosure provider-action-panel">
     <summary>
       <div class="action-disclosure-copy">
@@ -1221,7 +1221,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}" {% if bot.id == channel.bot_id %}selected{% endif %}>{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label><span>渠道名称</span><input name="name" value="{{ channel.name }}" required /></label>
-      <label><span>渠道类型</span><select name="channel_type" required>{% for item in builtin_channel_types %}<option value="{{ item }}" {% if item == channel.channel_type %}selected{% endif %}>{{ item|channel_type_label }}</option>{% endfor %}{% if channel.channel_type not in builtin_channel_types %}<option value="{{ channel.channel_type }}" selected>{{ channel.channel_type|channel_type_label }}</option>{% endif %}</select></label>
+      <input type="hidden" name="channel_type" value="workwechat" />
+      <label><span>渠道类型</span><input value="企业微信 Hook" disabled /></label>
       <label><span>Provider 节点</span><select name="provider_node_id" data-provider-node-select required><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}<option value="{{ node.id }}" {% if node.id == channel.provider_node_id %}selected{% endif %}>{{ node.name }}{% if node.status != 'active' %}（{{ node.status }}）{% endif %}</option>{% endfor %}</select></label>
       <label><span>企微账号</span><select name="provider_account_id" data-provider-account-select required><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}{% for account in node.accounts if account.status == 'online' or account.id == channel.provider_account_id %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}" {% if account.id == channel.provider_account_id %}selected{% endif %}>{{ account.display_name or account.account_key }}{% if account.status != 'online' %}（{{ account.status }}）{% endif %}</option>{% endfor %}{% endfor %}</select></label>
       <label><span>API Base</span><input name="api_base" value="{{ channel.api_base or '' }}" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
