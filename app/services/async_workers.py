@@ -9,8 +9,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.logging import get_logger
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import BotPlugin, Channel, Conversation, ErrorLog, Message, MessageAttachment, Plugin, RawWebhookEvent, TaskJob
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
@@ -107,10 +109,11 @@ def _worker_loop() -> None:
 
 
 def _run_single_job() -> bool:
-    db = SessionLocal()
-    try:
-        job = claim_next_job(
-            db,
+    # 调度阶段只在平台会话领取任务并复制最小身份，不能把平台会话中的 ORM 对象
+    # 直接交给执行阶段使用。tenant_id 来自任务表本身，不读取 payload 同名字段。
+    with platform_session(SessionLocal) as scheduler_db:
+        claimed_job = claim_next_job(
+            scheduler_db,
             job_types=(
                 PLUGIN_DISPATCH_JOB,
                 OUTBOUND_DISPATCH_JOB,
@@ -119,37 +122,41 @@ def _run_single_job() -> bool:
                 OPEN_WEBHOOK_DELIVERY_JOB,
             ),
         )
-        if not job:
+        if not claimed_job:
             return False
-    finally:
-        db.close()
+        job_id = int(claimed_job.id)
+        tenant_id = int(claimed_job.tenant_id)
 
-    db = SessionLocal()
-    try:
-        job = db.get(TaskJob, job.id)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        job = db.get(TaskJob, job_id)
         if not job:
-            return False
-        payload = parse_job_payload(job)
-        if job.job_type == PLUGIN_DISPATCH_JOB:
-            result = _process_plugin_dispatch_job(db, payload)
-        elif job.job_type == OUTBOUND_DISPATCH_JOB:
-            result = _process_outbound_dispatch_job(db, job, payload)
-        elif job.job_type == WEATHER_PUSH_JOB:
-            result = _process_weather_push_job(payload)
-        elif job.job_type == INBOUND_MEDIA_FETCH_JOB:
-            result = _process_inbound_media_fetch_job(db, payload)
-        elif job.job_type == OPEN_WEBHOOK_DELIVERY_JOB:
-            result = process_open_webhook_delivery_job(db, payload)
-        else:
-            raise ValueError(f"unsupported job type: {job.job_type}")
-        complete_job(db, job, result=result)
-        return True
-    except Exception as exc:
-        fail_job(db, job, error_message=str(exc))
-        logger.exception("job processing failed", extra={"job_id": job.id, "job_type": job.job_type})
-        return True
-    finally:
-        db.close()
+            # 任务在领取后若无法从绑定租户重新加载，说明租户归属或数据状态异常。
+            # 不尝试切回平台会话执行，避免在隔离失效时调用任何外部 Provider。
+            logger.error("claimed job missing in tenant scope", extra={"job_id": job_id, "tenant_id": tenant_id})
+            return True
+        try:
+            payload = parse_job_payload(job)
+            if job.job_type == PLUGIN_DISPATCH_JOB:
+                result = _process_plugin_dispatch_job(db, payload)
+            elif job.job_type == OUTBOUND_DISPATCH_JOB:
+                result = _process_outbound_dispatch_job(db, job, payload)
+            elif job.job_type == WEATHER_PUSH_JOB:
+                result = _process_weather_push_job(payload)
+            elif job.job_type == INBOUND_MEDIA_FETCH_JOB:
+                result = _process_inbound_media_fetch_job(db, payload)
+            elif job.job_type == OPEN_WEBHOOK_DELIVERY_JOB:
+                result = process_open_webhook_delivery_job(db, payload)
+            else:
+                raise ValueError(f"unsupported job type: {job.job_type}")
+            complete_job(db, job, result=result)
+            return True
+        except Exception as exc:
+            fail_job(db, job, error_message=str(exc))
+            logger.exception(
+                "job processing failed",
+                extra={"job_id": job.id, "job_type": job.job_type, "tenant_id": tenant_id},
+            )
+            return True
 
 
 def _run_due_channel_pollers() -> bool:
@@ -424,6 +431,9 @@ def _process_outbound_dispatch_job(db: Session, job: TaskJob, payload: dict[str,
     conversation = db.get(Conversation, int(payload.get("conversation_id") or 0))
     if not conversation:
         raise ValueError("conversation_not_found")
+    if int(conversation.channel_id or 0) != int(channel.id):
+        # 两个资源即使都属于当前租户，也不能把甲渠道任务重定向到乙渠道会话。
+        raise ValueError("conversation_channel_mismatch")
     outbound_payload = payload.get("payload")
     if not isinstance(outbound_payload, dict):
         raise ValueError("payload_missing")
@@ -489,6 +499,8 @@ def _process_inbound_media_fetch_job(db: Session, payload: dict[str, Any]) -> di
     channel = db.get(Channel, int(payload.get("channel_id") or attachment.channel_id or 0))
     if not channel:
         raise ValueError("channel_not_found")
+    if int(attachment.channel_id or 0) != int(channel.id):
+        raise ValueError("attachment_channel_mismatch")
     try:
         result = download_wechat_media_attachment(db, attachment=attachment, channel=channel)
         if result.get("queued_cloud_compensation"):
