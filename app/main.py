@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, tool_api_router, workwechat_provider_cloud_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, TenantSessionLocal
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import open_tenant_session
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
 from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
@@ -1076,6 +1078,14 @@ async def resolve_wechat_ipad_login_profile(request: Request) -> str | None:
 
 
 def get_session() -> Session:
+    """返回绑定当前已认证租户的业务会话。"""
+
+    return open_tenant_session(TenantSessionLocal)
+
+
+def get_platform_session() -> Session:
+    """返回认证、安装和机器身份预检使用的显式平台会话。"""
+
     db = SessionLocal()
     try:
         init_db_with_seed(db)
@@ -1422,7 +1432,7 @@ async def auth_middleware(request: Request, call_next):
         TENANT_LOGIN_PATH,
         PLATFORM_LOGIN_PATH,
     }
-    db = get_session()
+    db = get_platform_session()
     try:
         # 两类会话始终分别恢复。租户业务只读取 current_user，平台路径只读取
         # platform_principal，任何一方都不能通过同名账号或另一类 Cookie 自动升级身份。
@@ -1457,7 +1467,11 @@ async def auth_middleware(request: Request, call_next):
     password_redirect = tenant_must_change_password_redirect(tenant_principal, path)
     if password_redirect is not None:
         return RedirectResponse(url=password_redirect, status_code=303)
-    return await call_next(request)
+    # ContextVar 必须覆盖完整的 ASGI 调用链，页面内部新建的每个业务会话才能从
+    # 已验证数据库会话恢复出的 principal 取得 tenant_id。退出请求时上下文会
+    # 精确复位，异步线程复用也不会把本次租户泄漏到下一次请求。
+    with tenant_scope(tenant_principal.tenant_id):
+        return await call_next(request)
 
 
 @app.get("/healthz")
@@ -1984,7 +1998,7 @@ async def channel_detail_page(request: Request, channel_id: int):
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
-    db = get_session()
+    db = get_platform_session()
     try:
         pending_setup = read_setup_pending_restart_marker()
         if pending_setup:
@@ -2049,7 +2063,7 @@ async def setup_action(
         "admin_display_name": str(admin_display_name or "").strip() or "管理员",
         "secret_key": str(secret_key or "").strip(),
     }
-    db = get_session()
+    db = get_platform_session()
     try:
         if not is_setup_required(db):
             return RedirectResponse(url="/login", status_code=303)
@@ -4457,7 +4471,9 @@ def resolve_selected_log_path(tab: str, *, selected_file_name: str) -> Path:
 
 @app.post("/webhooks/{channel_id}/inbound")
 async def inbound_webhook(channel_id: int, request: Request):
-    db = get_session()
+    # Webhook 将在 Task 10 按渠道凭证恢复 tenant_id；当前阶段必须显式使用平台
+    # 预检会话，不能伪造一个租户上下文或依赖客户端提交的编号。
+    db = get_platform_session()
     try:
         channel = get_channel(db, channel_id)
         if not channel:

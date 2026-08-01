@@ -50,6 +50,20 @@ def _open_session(session_factory: SessionFactory) -> Session:
     return db
 
 
+def open_tenant_session(session_factory: SessionFactory | None = None) -> Session:
+    """打开并返回绑定当前可信租户的会话，由调用方负责关闭。"""
+
+    # Web 路由沿用项目现有的 try/finally + db.close() 生命周期，无法直接持有
+    # contextmanager 对象。这里复用与 tenant_session() 完全相同的绑定逻辑，确保
+    # 旧路由只需替换会话入口即可获得查询过滤和写入校验，不必一次性重写数十个页面。
+    tenant_id = require_tenant_id()
+    factory = session_factory or _default_tenant_session_factory()
+    db = _open_session(factory)
+    db.info[_SESSION_MODE_KEY] = _TENANT_MODE
+    db.info[_SESSION_TENANT_ID_KEY] = tenant_id
+    return db
+
+
 def _require_bound_tenant(db: Session) -> int:
     """校验会话创建时绑定的租户与当前 ContextVar 仍保持一致。"""
 
@@ -178,11 +192,7 @@ def tenant_session(session_factory: SessionFactory | None = None) -> Iterator[Se
 
     # 在打开连接前即要求可信作用域，确保“缺少租户上下文”默认拒绝，并避免
     # 无效请求白白占用连接池。一个会话从创建到关闭只能服务这个 tenant_id。
-    tenant_id = require_tenant_id()
-    factory = session_factory or _default_tenant_session_factory()
-    db = _open_session(factory)
-    db.info[_SESSION_MODE_KEY] = _TENANT_MODE
-    db.info[_SESSION_TENANT_ID_KEY] = tenant_id
+    db = open_tenant_session(session_factory)
     try:
         yield db
     except BaseException:
