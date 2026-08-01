@@ -141,6 +141,16 @@ The default compose stack starts:
 
 容器启动后必须确认 `/healthz` 和 `/readyz` 都返回成功，再创建平台管理员和租户。
 
+### 基础冒烟验证
+
+应用就绪后运行：
+
+```bash
+./scripts/saas_smoke_test.sh http://127.0.0.1:8280
+```
+
+脚本检查存活/就绪探针、平台和租户登录入口、Provider 无效激活码及缺失设备凭证的拒绝边界。需要同时扫描应用日志时设置 `MBS_SMOKE_LOG_FILE`，脚本只检查是否出现疑似 Provider 激活码或设备令牌，不输出匹配原文。
+
 ### Use SQLite in Docker
 
 If you want SQLite instead of MariaDB, update `.env.docker`:

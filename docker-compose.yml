@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: multi-bot-saas-app
     restart: unless-stopped
+    stop_grace_period: 15s
     ports:
       # SaaS 服务使用独立端口，允许原 multi-bot-admin 在同一台服务器继续运行。
       - "8280:8280"
@@ -23,6 +24,7 @@ services:
     image: mariadb:11.4
     container_name: multi-bot-saas-mariadb
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       # 生产密码只能由未提交的环境文件注入，Compose 不提供可误用的固定密码。
       MARIADB_ROOT_PASSWORD: ${MBS_DB_ROOT_PASSWORD:?请在环境中设置 MBS_DB_ROOT_PASSWORD}
