@@ -19,7 +19,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.tenant_context import tenant_scope
-from app.core.tenant_db import open_tenant_session
+from app.core.tenant_db import open_tenant_session, platform_session, tenant_session
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
 from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
@@ -4471,15 +4471,14 @@ def resolve_selected_log_path(tab: str, *, selected_file_name: str) -> Path:
 
 @app.post("/webhooks/{channel_id}/inbound")
 async def inbound_webhook(channel_id: int, request: Request):
-    # Webhook 将在 Task 10 按渠道凭证恢复 tenant_id；当前阶段必须显式使用平台
-    # 预检会话，不能伪造一个租户上下文或依赖客户端提交的编号。
-    db = get_platform_session()
-    try:
-        channel = get_channel(db, channel_id)
+    body = await request.body()
+    # URL 中的 channel_id 只能用于定位待校验凭证。平台会话完成签名预检后只保留
+    # 可信 tenant_id 和渠道主键，后续事件、日志、告警及审计全部在租户会话中处理。
+    with platform_session(SessionLocal) as auth_db:
+        channel = get_channel(auth_db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
 
-        body = await request.body()
         secret = decrypt_secret(channel.bot_token_encrypted)
         if channel.channel_type == "telegram":
             expected_secret = build_telegram_webhook_secret(secret, channel.id)
@@ -4489,6 +4488,12 @@ async def inbound_webhook(channel_id: int, request: Request):
             provided_signature = request.headers.get("X-Signature") or request.headers.get("X-Abot-Signature")
             timestamp = request.headers.get("X-Timestamp") or request.headers.get("X-Abot-Timestamp") or ""
             signature_valid = verify_webhook_signature(secret, body, provided_signature, timestamp=timestamp)
+        credential = (int(channel.tenant_id), int(channel.id))
+
+    with tenant_scope(credential[0]), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, credential[1])
+        if channel is None:
+            raise HTTPException(status_code=404, detail="Channel not found")
         if not signature_valid:
             db.add(ErrorLog(source="webhook", level="ERROR", message=f"渠道 #{channel.id} Webhook 签名校验失败"))
             db.commit()
@@ -4570,8 +4575,6 @@ async def inbound_webhook(channel_id: int, request: Request):
             "event_type": normalized.get("event_type"),
             "dispatch": result.get("dispatch"),
         }
-    finally:
-        db.close()
 
 
 @app.post("/channels/{channel_id}/outbound")

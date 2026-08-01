@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from starlette.requests import Request
 
+import app.main as main_app
 import app.services.async_workers as async_workers
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
-from app.models.entities import Bot, Channel, OpenApiApp, TaskJob
+from app.models.entities import Bot, Channel, ErrorLog, OpenApiApp, TaskJob
 from app.models.saas import Tenant
 from app.services.open_api_auth import (
     OpenApiAuthError,
@@ -19,6 +22,7 @@ from app.services.open_api_auth import (
     set_open_api_secret,
     sign_open_api_request,
 )
+from app.services.security import encrypt_secret
 from app.services.task_queue import OUTBOUND_DISPATCH_JOB, enqueue_job
 
 
@@ -123,3 +127,72 @@ def test_worker_rejects_cross_tenant_channel_before_provider_call(machine_db, mo
         stored = db.get(TaskJob, job_id)
         assert stored.status == "failed"
         assert stored.error_message == "channel_not_found"
+
+
+def test_worker_recovers_running_jobs_inside_each_tenant_scope(machine_db) -> None:
+    """启动恢复只能逐租户修改任务，不能用平台会话批量写租户数据。"""
+
+    alpha_id, beta_id = _create_tenants(machine_db)
+    job_ids: list[int] = []
+    for tenant_id in (alpha_id, beta_id):
+        with tenant_scope(tenant_id), tenant_session(machine_db) as db:
+            job = enqueue_job(
+                db,
+                job_type=OUTBOUND_DISPATCH_JOB,
+                payload={"channel_id": 1, "conversation_id": 1, "payload": {"content": "待恢复"}},
+            )
+            job.status = "running"
+            db.commit()
+            job_ids.append(int(job.id))
+
+    assert async_workers._recover_running_jobs_for_all_tenants() == 2
+
+    with machine_db() as db:
+        assert [db.get(TaskJob, job_id).status for job_id in job_ids] == ["pending", "pending"]
+
+
+def test_webhook_signature_rejection_is_recorded_in_channel_tenant(machine_db, monkeypatch) -> None:
+    """Webhook 预检可查全局渠道，但拒绝记录必须回到该渠道租户。"""
+
+    tenant_id, _other_tenant_id = _create_tenants(machine_db)
+    with tenant_scope(tenant_id), tenant_session(machine_db) as db:
+        bot = Bot(name="Webhook 机器人")
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            bot_id=bot.id,
+            name="Webhook 企微",
+            channel_type="workwechat",
+            bot_token_encrypted=encrypt_secret("webhook-secret"),
+        )
+        db.add(channel)
+        db.commit()
+        channel_id = int(channel.id)
+
+    monkeypatch.setattr(main_app, "SessionLocal", machine_db)
+    monkeypatch.setattr(main_app, "TenantSessionLocal", machine_db)
+    body = b"{}"
+    consumed = False
+
+    async def receive():
+        nonlocal consumed
+        if consumed:
+            return {"type": "http.disconnect"}
+        consumed = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/webhooks/{channel_id}/inbound",
+            "headers": [(b"x-timestamp", b"171111"), (b"x-signature", b"sha256=bad")],
+        },
+        receive,
+    )
+    response = asyncio.run(main_app.inbound_webhook(channel_id, request))
+
+    assert response.status_code == 401
+    with tenant_scope(tenant_id), tenant_session(machine_db) as db:
+        error = db.query(ErrorLog).filter(ErrorLog.source == "webhook").one()
+        assert error.tenant_id == tenant_id

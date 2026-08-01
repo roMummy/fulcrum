@@ -15,6 +15,7 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import BotPlugin, Channel, Conversation, ErrorLog, Message, MessageAttachment, Plugin, RawWebhookEvent, TaskJob
+from app.models.saas import Tenant
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
 from app.services.inbound_media import download_wechat_media_attachment, mark_attachment_failed
@@ -56,20 +57,7 @@ def start_background_workers() -> None:
     global _worker_thread
     if _worker_thread and _worker_thread.is_alive():
         return
-    db = SessionLocal()
-    try:
-        recover_running_jobs(
-            db,
-            job_types=(
-                PLUGIN_DISPATCH_JOB,
-                OUTBOUND_DISPATCH_JOB,
-                WEATHER_PUSH_JOB,
-                INBOUND_MEDIA_FETCH_JOB,
-                OPEN_WEBHOOK_DELIVERY_JOB,
-            ),
-        )
-    finally:
-        db.close()
+    _recover_running_jobs_for_all_tenants()
     _stop_event.clear()
     _worker_thread = threading.Thread(target=_worker_loop, name="multi-bot-admin-worker", daemon=True)
     _worker_thread.start()
@@ -87,25 +75,42 @@ def _worker_loop() -> None:
     while not _stop_event.is_set():
         try:
             worked = _run_single_job()
-            polled = _run_due_channel_pollers()
-            douyu_polled = _run_due_douyu_pollers()
-            news_polled = _run_due_daily_news_pollers()
-            synced = _run_due_wechat_ipad_message_sync()
-            heartbeated = _run_due_wechat_ipad_heartbeats()
-            recovered = _run_due_wechat_ipad_auto_recover()
             alerted = _run_due_operational_alerts()
         except Exception:
             logger.exception("background worker loop crashed")
             worked = False
-            polled = False
-            douyu_polled = False
-            news_polled = False
-            synced = False
-            heartbeated = False
-            recovered = False
             alerted = False
-        if not worked and not polled and not douyu_polled and not news_polled and not synced and not heartbeated and not recovered and not alerted:
+        # SaaS 首期只开放企业微信，云端 Provider 通过独立长轮询接口领取任务。
+        # 旧 Telegram、微信 iPad 和插件定时轮询函数暂时保留供代码迁移参考，
+        # 但不再从生产 Worker 主循环触发，避免平台会话跨租户扫描旧渠道。
+        if not worked and not alerted:
             _stop_event.wait(0.5)
+
+
+def _list_tenant_ids() -> list[int]:
+    """使用平台会话只读取租户主键，业务处理必须另开租户会话。"""
+
+    with platform_session(SessionLocal) as db:
+        return [int(tenant_id) for tenant_id in db.scalars(select(Tenant.id).order_by(Tenant.id.asc())).all()]
+
+
+def _recover_running_jobs_for_all_tenants() -> int:
+    """启动时按租户恢复中断任务，禁止平台会话直接修改租户任务。"""
+
+    recovered_count = 0
+    for tenant_id in _list_tenant_ids():
+        with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+            recovered_count += recover_running_jobs(
+                db,
+                job_types=(
+                    PLUGIN_DISPATCH_JOB,
+                    OUTBOUND_DISPATCH_JOB,
+                    WEATHER_PUSH_JOB,
+                    INBOUND_MEDIA_FETCH_JOB,
+                    OPEN_WEBHOOK_DELIVERY_JOB,
+                ),
+            )
+    return recovered_count
 
 
 def _run_single_job() -> bool:
@@ -542,13 +547,13 @@ def _run_due_operational_alerts() -> bool:
     if now - _last_operational_alert_eval_at < 60:
         return False
     _last_operational_alert_eval_at = now
-    db = SessionLocal()
-    try:
-        result = evaluate_operational_alerts(db)
-        logger.debug("operational alerts evaluated", extra=result)
-        return bool(result.get("active") or result.get("resolved"))
-    finally:
-        db.close()
+    worked = False
+    for tenant_id in _list_tenant_ids():
+        with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+            result = evaluate_operational_alerts(db)
+            logger.debug("operational alerts evaluated", extra={"tenant_id": tenant_id, **result})
+            worked = worked or bool(result.get("active") or result.get("resolved"))
+    return worked
 
 
 def _coerce_int(value: Any) -> int | None:

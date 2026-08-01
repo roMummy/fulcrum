@@ -7,7 +7,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
-from app.core.db import SessionLocal
+from app.core.db import TenantSessionLocal
+from app.core.tenant_db import open_tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Channel, OpenApiApp
 from app.services.auth import has_required_role
@@ -23,7 +24,9 @@ async def open_api_apps_page(request: Request):
     """开放接口应用配置页。"""
 
     _enforce_admin_role(request)
-    db = SessionLocal()
+    # 登录中间件已经用数据库会话恢复可信 tenant_id，并覆盖当前请求的
+    # tenant_scope；管理页必须继续使用租户会话，不能通过平台会话看到其他租户应用。
+    db = open_tenant_session(TenantSessionLocal)
     try:
         context = _build_page_context(
             request,
@@ -60,7 +63,8 @@ async def open_api_app_save_action(
     """创建或更新开放接口应用。"""
 
     _enforce_admin_role(request)
-    db = SessionLocal()
+    # 表单中的应用、默认渠道和授权渠道都只能在当前租户作用域内解析。
+    db = open_tenant_session(TenantSessionLocal)
     try:
         app = upsert_open_api_app(
             db,

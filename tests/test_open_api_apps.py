@@ -4,7 +4,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import Base
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.models.entities import Bot, Channel
+from app.models.saas import Tenant
 from app.services.open_api_apps import OpenApiAppInput, list_authorized_channel_ids, upsert_open_api_app
 
 
@@ -13,7 +16,19 @@ class OpenApiAppsTestCase(unittest.TestCase):
         self.engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
         TestingSession = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
         Base.metadata.create_all(bind=self.engine)
-        self.db = TestingSession()
+        with TestingSession() as platform_db:
+            tenant = Tenant(code="open-api-app-test", name="开放应用测试租户", status="active")
+            platform_db.add(tenant)
+            platform_db.commit()
+            platform_db.refresh(tenant)
+            self.tenant_id = tenant.id
+
+        # 开放应用、机器人和渠道都属于租户业务数据。夹具通过正式租户会话创建，
+        # 让服务测试同时覆盖自动补齐 tenant_id 和跨租户默认拒绝的基础约束。
+        self.tenant_scope_context = tenant_scope(self.tenant_id)
+        self.tenant_scope_context.__enter__()
+        self.tenant_db_context = tenant_session(TestingSession)
+        self.db = self.tenant_db_context.__enter__()
         # 应用授权测试通过机器人主键绑定资源，不再依赖已删除的 slug 字段。
         bot = Bot(name="Bot")
         self.db.add(bot)
@@ -30,7 +45,8 @@ class OpenApiAppsTestCase(unittest.TestCase):
         self.db.commit()
 
     def tearDown(self):
-        self.db.close()
+        self.tenant_db_context.__exit__(None, None, None)
+        self.tenant_scope_context.__exit__(None, None, None)
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 

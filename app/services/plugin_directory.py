@@ -18,9 +18,11 @@ from typing import Any, Mapping, Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
+from app.core.db import TenantSessionLocal
 from app.core.logging import get_logger
 from app.core.settings import settings
+from app.core.tenant_context import tenant_scope
+from app.core.tenant_db import tenant_session
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin
 
 
@@ -114,6 +116,7 @@ class DiscoveredPlugin:
 
 @dataclass(frozen=True)
 class PluginDispatchContext:
+    tenant_id: int
     bot_id: int
     channel_id: int
     channel_type: str
@@ -787,6 +790,7 @@ def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) 
     message = normalized_event.get("message") or {}
     details = normalized_event.get("details") or {}
     return PluginDispatchContext(
+        tenant_id=int(channel.tenant_id),
         bot_id=channel.bot_id,
         channel_id=channel.id,
         channel_type=channel.channel_type,
@@ -938,7 +942,11 @@ def _execute_candidate(
             "message_id": message_id or 0,
         },
     )
-    typing_heartbeat = _start_channel_typing_indicator(static_context.channel_id, conversation_id)
+    typing_heartbeat = _start_channel_typing_indicator(
+        static_context.tenant_id,
+        static_context.channel_id,
+        conversation_id,
+    )
 
     try:
         if loaded and loaded.supports_handler and loaded.instance:
@@ -1118,7 +1126,8 @@ def _execute_candidate(
 
 
 class _TypingHeartbeat:
-    def __init__(self, channel_id: int, conversation_id: int) -> None:
+    def __init__(self, tenant_id: int, channel_id: int, conversation_id: int) -> None:
+        self.tenant_id = tenant_id
         self.channel_id = channel_id
         self.conversation_id = conversation_id
         self._stop_event = threading.Event()
@@ -1133,39 +1142,43 @@ class _TypingHeartbeat:
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            _emit_channel_typing_indicator_once(self.channel_id, self.conversation_id)
+            _emit_channel_typing_indicator_once(self.tenant_id, self.channel_id, self.conversation_id)
             if self._stop_event.wait(TELEGRAM_TYPING_HEARTBEAT_INTERVAL_SECONDS):
                 return
 
 
-def _start_channel_typing_indicator(channel_id: int, conversation_id: int | None) -> _TypingHeartbeat | None:
+def _start_channel_typing_indicator(
+    tenant_id: int,
+    channel_id: int,
+    conversation_id: int | None,
+) -> _TypingHeartbeat | None:
     if not conversation_id:
         return None
-    heartbeat = _TypingHeartbeat(int(channel_id or 0), int(conversation_id or 0))
+    heartbeat = _TypingHeartbeat(int(tenant_id or 0), int(channel_id or 0), int(conversation_id or 0))
     heartbeat.start()
     return heartbeat
 
 
-def _emit_channel_typing_indicator_once(channel_id: int, conversation_id: int | None) -> None:
+def _emit_channel_typing_indicator_once(tenant_id: int, channel_id: int, conversation_id: int | None) -> None:
     if not conversation_id:
         return
     from app.services.channel_adapters.service import dispatch_channel_action
 
-    db = SessionLocal()
     try:
-        channel = db.get(Channel, int(channel_id or 0))
-        conversation = db.get(Conversation, int(conversation_id or 0))
-        if not channel or not conversation:
-            return
-        result = dispatch_channel_action(channel, conversation, action="typing")
+        # ContextVar 不会自动传播到新线程，因此心跳对象显式携带由父任务确认的
+        # tenant_id，并在每次发送前重建租户作用域和独立会话。
+        with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+            channel = db.get(Channel, int(channel_id or 0))
+            conversation = db.get(Conversation, int(conversation_id or 0))
+            if not channel or not conversation:
+                return
+            result = dispatch_channel_action(channel, conversation, action="typing")
     except Exception:
         logger.debug(
             "channel typing indicator failed",
             extra={"channel_id": channel_id, "conversation_id": conversation_id},
         )
         return
-    finally:
-        db.close()
     if not bool(result.get("ok")):
         logger.debug(
             "channel typing indicator skipped",
