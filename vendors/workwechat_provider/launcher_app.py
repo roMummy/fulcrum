@@ -76,7 +76,7 @@ APP_ROOT = resolve_local_app_root()
 DISTRIBUTION_ROOT = resolve_distribution_root()
 CONFIG_PATH = APP_ROOT / "config.json"
 AUTOSTART_NAME = "WorkWechatProvider"
-AUTHORIZATION_CODE_PATTERN = re.compile(r"^wwauth[-_][A-Za-z0-9_-]{6,}$")
+ACTIVATION_CODE_PATTERN = re.compile(r"^pact_[A-Za-z0-9_-]{20,}$")
 DEFAULT_CONFIG_TEXT = """{
   "provider_host": "0.0.0.0",
   "provider_port": 8181,
@@ -105,10 +105,13 @@ DEFAULT_CONFIG_TEXT = """{
   "outbound_file_cache_dir": "data/outbound_file_cache",
   "cloud_poll_enabled": false,
   "cloud_base_url": "",
-  "authorization_code": "",
-  "client_token": "",
-  "cloud_channel_id": null,
-  "provider_name": "",
+  "provider_node_name": "",
+  "activation_code": "",
+  "device_token": "",
+  "device_id": "",
+  "heartbeat_interval_seconds": 20,
+  "poll_timeout_seconds": 25,
+  "provider_accounts": [],
   "poll_interval_seconds": 30,
   "poll_batch_size": 5
 }
@@ -346,56 +349,80 @@ def load_config_dict(config_path: Path) -> dict:
             parsed = json.loads(DEFAULT_CONFIG_TEXT)
         except json.JSONDecodeError:
             return {}
-        return parsed if isinstance(parsed, dict) else {}
+        return migrate_legacy_cloud_config(parsed if isinstance(parsed, dict) else {})
     try:
         parsed = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return migrate_legacy_cloud_config(parsed if isinstance(parsed, dict) else {})
 
 
-def save_cloud_authorization_config(config_path: Path, cloud_base_url: str, authorization_code: str) -> dict:
-    # 客户端只保存云端地址和一次性授权码，不再要求客服或运维填写 channel_id、bot_id、API Base。
-    # Provider 首次连接云端时会用授权码换取 client_token，云端根据授权码哈希自行匹配渠道。
-    config = load_config_dict(config_path)
+def migrate_legacy_cloud_config(config: dict) -> dict:
+    """清理旧的渠道凭证；旧 client_token 不能升级成节点 device_token。"""
+
+    migrated = dict(config or {})
+    legacy_authorization = str(migrated.get("authorization_code") or "").strip()
+    legacy_client_token = str(migrated.get("client_token") or "").strip()
+    legacy_channel_id = migrated.get("cloud_channel_id")
+    if not str(migrated.get("activation_code") or "").strip() and legacy_authorization.startswith("pact_"):
+        migrated["activation_code"] = legacy_authorization
+    if legacy_authorization or legacy_client_token or legacy_channel_id not in (None, ""):
+        migrated["legacy_cloud_registration_detected"] = True
+        migrated["authorization_code"] = ""
+        migrated["client_token"] = ""
+        migrated["cloud_channel_id"] = None
+    return migrated
+
+
+def _write_private_config(config_path: Path, config: dict) -> None:
+    """原子保存本地凭证，并尽可能把配置权限限制为当前用户。"""
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = config_path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        temp_path.chmod(0o600)
+    except OSError:
+        pass
+    temp_path.replace(config_path)
+    try:
+        config_path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def save_cloud_authorization_config(config_path: Path, cloud_base_url: str, activation_code: str) -> dict:
+    # 函数名保留以兼容既有 UI 调用，但保存内容已经切换为节点激活码。
+    config = migrate_legacy_cloud_config(load_config_dict(config_path))
     normalized_base_url = str(cloud_base_url or "").strip().rstrip("/")
-    normalized_authorization_code = str(authorization_code or "").strip()
-    # 云端地址和授权码在 UI 上是相邻输入项，现场最容易把云端地址误粘到授权码里；
-    # 保存前先做格式校验，避免 provider 后台一直拿错误授权码注册并停留在“待注册”。
+    normalized_activation_code = str(activation_code or "").strip()
     if not normalized_base_url.startswith(("http://", "https://")):
         raise ValueError("cloud_base_url_invalid")
-    if not AUTHORIZATION_CODE_PATTERN.match(normalized_authorization_code):
-        raise ValueError("authorization_code_invalid")
+    if not ACTIVATION_CODE_PATTERN.match(normalized_activation_code):
+        raise ValueError("activation_code_invalid")
     previous_base_url = str(config.get("cloud_base_url") or "").strip().rstrip("/")
-    previous_authorization_code = str(config.get("authorization_code") or "").strip()
+    previous_activation_code = str(config.get("activation_code") or "").strip()
 
     config["cloud_poll_enabled"] = True
     config["cloud_base_url"] = normalized_base_url
-    config["authorization_code"] = normalized_authorization_code
+    config["activation_code"] = normalized_activation_code
+    if normalized_base_url != previous_base_url or normalized_activation_code != previous_activation_code:
+        # 新激活码代表管理员明确要求换绑节点；旧设备密钥必须清空，不能继续连接原节点。
+        config["device_token"] = ""
+        config["device_id"] = ""
 
-    # 授权码或云端域名变化时，旧 client_token 可能已经绑定到另一个渠道或服务器；
-    # 这里主动清空，保证下一次启动会重新注册，避免拿旧 token 连接错渠道。
-    if normalized_base_url != previous_base_url or normalized_authorization_code != previous_authorization_code:
-        config["client_token"] = ""
-        config["cloud_channel_id"] = None
-
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    _write_private_config(config_path, config)
     return config
 
 
 def build_cloud_registration_label(config: dict) -> str:
-    # 云端注册成功后 authorization_code 会被 Provider 主动清空，避免一次性授权码继续留在客服电脑上；
-    # 因此 UI 必须以长期 client_token 作为“已注册”的判断依据，不能再依赖授权码是否存在。
-    client_token = str(config.get("client_token") or "").strip()
-    authorization_code = str(config.get("authorization_code") or "").strip()
-    channel_id = config.get("cloud_channel_id")
-    if client_token:
-        if channel_id not in (None, ""):
-            return f"已注册 · 渠道 {channel_id}"
-        return "已注册"
-    if authorization_code:
-        return "待注册"
+    # 设备密钥只用于后台请求，窗口只展示是否已激活，不展示设备编号或密钥片段。
+    if str(config.get("device_token") or "").strip():
+        return "已激活"
+    if str(config.get("activation_code") or "").strip():
+        return "待激活"
+    if config.get("legacy_cloud_registration_detected"):
+        return "需要重新激活"
     return "未配置"
 
 
@@ -537,9 +564,9 @@ class LauncherWindow(QWidget):
         self.cloud_base_input = QLineEdit()
         self.cloud_base_input.setPlaceholderText("https://server.example.com")
         self.authorization_code_input = QLineEdit()
-        self.authorization_code_input.setPlaceholderText("wwauth_xxx")
+        self.authorization_code_input.setPlaceholderText("pact_xxx")
         self.authorization_code_input.setEchoMode(QLineEdit.PasswordEchoOnEdit)
-        self.cloud_save_button = QPushButton("保存授权")
+        self.cloud_save_button = QPushButton("保存激活码")
         self.cloud_status_label = QLabel("未配置")
         self.cloud_status_label.setObjectName("CardHelper")
         self.autostart_checkbox = QCheckBox("开机自启")
@@ -638,11 +665,11 @@ class LauncherWindow(QWidget):
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(8)
 
-        title_label = QLabel("云端授权")
+        title_label = QLabel("节点激活")
         title_label.setObjectName("CardTitle")
         base_label = QLabel("云端地址")
         base_label.setObjectName("CardHelper")
-        code_label = QLabel("授权码")
+        code_label = QLabel("激活码")
         code_label.setObjectName("CardHelper")
         self.cloud_save_button.setObjectName("PrimaryButton")
 
@@ -721,11 +748,10 @@ class LauncherWindow(QWidget):
         return load_config_dict(CONFIG_PATH)
 
     def load_cloud_authorization_fields(self) -> None:
-        # 窗口启动时回显已保存的云端地址；授权码兑换成功后会被 provider 清空，
-        # 这时状态文案显示“已注册”，客服不需要再看到历史授权码。
+        # 窗口启动时回显云端地址；激活码兑换成功后会被清空，只显示“已激活”。
         cfg = self.load_config()
         self.cloud_base_input.setText(str(cfg.get("cloud_base_url") or ""))
-        self.authorization_code_input.setText(str(cfg.get("authorization_code") or ""))
+        self.authorization_code_input.setText(str(cfg.get("activation_code") or ""))
         self.render_cloud_registration_status(cfg)
 
     def render_cloud_registration_status(self, cfg: dict | None = None) -> None:
@@ -733,7 +759,7 @@ class LauncherWindow(QWidget):
         self.cloud_status_label.setText(build_cloud_registration_label(cfg or self.load_config()))
 
     def save_cloud_authorization(self) -> None:
-        # 保存动作只写本地配置，不向云端探测；注册由 provider 启动后的 WS/HTTP 流程统一处理。
+        # 保存动作只写本地配置；真正的一次性激活由 provider 启动后的节点协议完成。
         try:
             save_cloud_authorization_config(
                 CONFIG_PATH,
@@ -744,9 +770,9 @@ class LauncherWindow(QWidget):
             # 这里给客服看可执行的中文提示，而不是后端枚举值；注册错误仍由 provider 日志记录细节。
             message_map = {
                 "cloud_base_url_invalid": "云端地址需要以 http:// 或 https:// 开头。",
-                "authorization_code_invalid": "授权码需要填写后台生成的 wwauth_xxx，不要填写云端地址。",
+                "activation_code_invalid": "激活码需要填写后台生成的 pact_xxx，旧渠道授权码不能继续使用。",
             }
-            QMessageBox.warning(self, "授权配置有误", message_map.get(str(exc), "授权配置格式不正确。"))
+            QMessageBox.warning(self, "激活配置有误", message_map.get(str(exc), "激活配置格式不正确。"))
             return
         self.load_cloud_authorization_fields()
         self.cloud_status_label.setText("已保存")

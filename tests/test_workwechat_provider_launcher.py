@@ -312,23 +312,23 @@ class WorkWechatProviderLauncherTests(unittest.TestCase):
         self.assertTrue(LAUNCHER_APP.should_auto_start_from_status(ready))
         self.assertFalse(LAUNCHER_APP.should_auto_start_from_status(missing))
 
-    def test_save_cloud_authorization_config_enables_cloud_without_channel_id(self):
+    def test_save_cloud_authorization_config_enables_node_activation_without_channel_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
 
             saved = LAUNCHER_APP.save_cloud_authorization_config(
                 config_path,
                 "https://cloud.example.com/",
-                "wwauth-demo123",
+                "pact_demo1234567890abcdefghi",
             )
 
         self.assertTrue(saved["cloud_poll_enabled"])
         self.assertEqual(saved["cloud_base_url"], "https://cloud.example.com")
-        self.assertEqual(saved["authorization_code"], "wwauth-demo123")
+        self.assertEqual(saved["activation_code"], "pact_demo1234567890abcdefghi")
         self.assertNotIn("channel_id", saved)
         self.assertNotIn("bot_id", saved)
 
-    def test_save_cloud_authorization_config_clears_token_when_authorization_changes(self):
+    def test_save_cloud_authorization_config_clears_device_identity_when_activation_changes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
             config_path.write_text(
@@ -336,9 +336,9 @@ class WorkWechatProviderLauncherTests(unittest.TestCase):
                 {
                   "cloud_poll_enabled": true,
                   "cloud_base_url": "https://cloud.example.com",
-                  "authorization_code": "",
-                  "client_token": "wwclient-old",
-                  "cloud_channel_id": 12
+                  "activation_code": "",
+                  "device_token": "pdev_old-token",
+                  "device_id": "pnode_old-device"
                 }
                 """,
                 encoding="utf-8",
@@ -347,20 +347,20 @@ class WorkWechatProviderLauncherTests(unittest.TestCase):
             saved = LAUNCHER_APP.save_cloud_authorization_config(
                 config_path,
                 "https://cloud.example.com",
-                "wwauth-new123",
+                "pact_new1234567890abcdefghij",
             )
 
-        self.assertEqual(saved["authorization_code"], "wwauth-new123")
-        self.assertEqual(saved["client_token"], "")
-        self.assertIsNone(saved["cloud_channel_id"])
+        self.assertEqual(saved["activation_code"], "pact_new1234567890abcdefghij")
+        self.assertEqual(saved["device_token"], "")
+        self.assertEqual(saved["device_id"], "")
 
     def test_save_cloud_authorization_config_rejects_url_as_authorization_code(self):
         # 启动器现场配置时云端地址和授权码相邻，最常见误操作是把云端地址粘到授权码输入框；
-        # 这里提前拦截，避免 provider 后台反复拿 URL 注册并一直停留在“待注册”。
+        # 这里提前拦截，避免 Provider 后台反复拿 URL 激活并一直停留在“待激活”。
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
 
-            with self.assertRaisesRegex(ValueError, "authorization_code_invalid"):
+            with self.assertRaisesRegex(ValueError, "activation_code_invalid"):
                 LAUNCHER_APP.save_cloud_authorization_config(
                     config_path,
                     "https://cloud.example.com",
@@ -376,28 +376,27 @@ class WorkWechatProviderLauncherTests(unittest.TestCase):
                 LAUNCHER_APP.save_cloud_authorization_config(
                     config_path,
                     "cloud.example.com",
-                    "wwauth-demo123",
+                    "pact_demo1234567890abcdefghi",
                 )
 
-    def test_build_cloud_registration_label_uses_client_token_after_code_consumed(self):
-        # 授权码兑换成功后会被清空，UI 不能因为 authorization_code 为空就误判成“未配置”。
+    def test_build_cloud_registration_label_uses_device_token_after_code_consumed(self):
+        # 激活码兑换成功后会被清空，UI 只根据设备密钥判断已激活，不展示密钥内容。
         label = LAUNCHER_APP.build_cloud_registration_label(
             {
-                "authorization_code": "",
-                "client_token": "wwclient-demo",
-                "cloud_channel_id": 3,
+                "activation_code": "",
+                "device_token": "pdev_demo",
+                "device_id": "pnode_demo",
             }
         )
 
-        self.assertEqual(label, "已注册 · 渠道 3")
+        self.assertEqual(label, "已激活")
 
-    def test_build_cloud_registration_label_shows_pending_before_token_exists(self):
+    def test_build_cloud_registration_label_shows_pending_before_device_token_exists(self):
         label = LAUNCHER_APP.build_cloud_registration_label(
             {
-                "authorization_code": "wwauth-demo",
-                "client_token": "",
-                "cloud_channel_id": None,
+                "activation_code": "pact_demo1234567890abcdefghi",
+                "device_token": "",
             }
         )
 
-        self.assertEqual(label, "待注册")
+        self.assertEqual(label, "待激活")

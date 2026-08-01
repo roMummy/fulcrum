@@ -28,10 +28,13 @@
   "outbound_file_cache_dir": "data/outbound_file_cache",
   "cloud_poll_enabled": false,
   "cloud_base_url": "",
-  "authorization_code": "",
-  "client_token": "",
-  "cloud_channel_id": null,
-  "provider_name": "",
+  "provider_node_name": "客服电脑A",
+  "activation_code": "",
+  "device_token": "",
+  "device_id": "",
+  "heartbeat_interval_seconds": 20,
+  "poll_timeout_seconds": 25,
+  "provider_accounts": [],
   "poll_interval_seconds": 30,
   "poll_batch_size": 5
 }

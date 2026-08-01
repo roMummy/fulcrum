@@ -1,6 +1,6 @@
 # WorkWechat Provider
 
-这是 `Multi Bot Admin` 的企业微信 Hook 高层 provider。
+这是 `Multi Bot SaaS` 的企业微信 Hook 高层 Provider。
 
 它不复用 `wechat_winauto`，对应主服务中的独立渠道类型：
 
@@ -40,7 +40,7 @@ cd D:\learn\multi-bot-admin\vendors\workwechat_provider
 ```text
 1. 打开企业微信并登录
 2. 双击 WorkWechatProvider.exe
-3. 首次使用时在小窗口填写云端地址和授权码，点击“保存授权”
+3. 首次使用时在小窗口填写云端地址和节点激活码，点击“保存激活码”
 4. 启动器会自动检测企业微信并启动 provider/hook
 5. 小窗口显示“运行正常”后最小化到托盘
 ```
@@ -72,7 +72,7 @@ cd D:\learn\multi-bot-admin\vendors\workwechat_provider
 - Hook runtime 调用 `InjectWeChat` 失败后，必须先检测是否已有 `WXWork.exe`；如果已有企业微信进程，不允许继续调用会拉起新客户端的 `InjectWeChatMultiOpen`，避免重复打开企业微信。
 - 客户端版本显示先读进程 `exe` 路径；读不到时必须从常见安装目录兜底，例如 `C:\Program Files (x86)\WXWork\WXWork.exe`。UI 健康轮询刷新时要保留并刷新版本字段，不能把版本覆盖回“未知”。
 - UI 全局字体使用 `Microsoft YaHei UI`；窗口图标、托盘图标和标题区 LOGO 使用内置 Qt 绘制，不依赖额外图片资源。
-- UI 只允许客服填写云端地址和授权码；不要再让客服填写渠道编号、机器人编号、Provider API Base 或回调密钥。
+- UI 只允许客服填写云端地址和节点激活码；不要再让客服填写渠道编号、机器人编号、Provider API Base 或回调密钥。
 - 桌面 exe 图标由 `generate_launcher_icon.py` 生成到 `assets\workwechat-provider.ico`，最终 UI 打包命令必须带 `--icon`，避免桌面仍显示 PyInstaller 默认图标。
 - PyInstaller onefile 解包到 `_MEI...` 临时目录是正常行为，不代表交付了多个文件；交付目录仍只应暴露 `WorkWechatProvider.exe`。启动器会把内部 server/runtime 复制到 `%LOCALAPPDATA%\WorkWechatProvider\runtime\<build>`，并把 `config.json`、`logs`、`data` 放到 `%LOCALAPPDATA%\WorkWechatProvider`。
 - 若打包日志继续提示 `tencent.mm.pbc.dll` 缺失，要保留为 Hook 注入稳定性的待排查项；目标机器注入异常时优先补齐该 DLL 并加入打包命令。
@@ -108,21 +108,21 @@ WorkWechatProvider.exe
 
 ## 主服务配置
 
-### 推荐：云端 WS/拉取模式
+### 推荐：节点心跳和长轮询模式
 
 企业本地部署 provider、主服务部署在云端时，云端通常不能直接访问企业内网的 `127.0.0.1:8181` 或局域网 provider 地址。推荐使用云端 WS/拉取模式：
 
 ```text
-1. 在云端后台打开企业微信渠道详情
-2. 展开 Provider 专项操作，点击“生成云端授权码”
-3. 把云端域名和授权码交给企业现场客服
-4. 客服在 WorkWechatProvider.exe 小窗口里填写云端地址和授权码
-5. provider 首次连接云端后用授权码换取 client_token，之后通过 WebSocket 实时收任务，HTTP poll 做补偿
+1. 租户管理员在 Provider 节点页面创建节点并生成一次性激活码
+2. 把云端域名和激活码交给企业现场客服
+3. 客服在 WorkWechatProvider.exe 小窗口里填写云端地址和激活码
+4. Provider 首次连接云端后用激活码换取节点设备密钥
+5. Provider 持续上报心跳，并通过 HTTPS 长轮询领取该节点下全部已绑定企微账号任务
 ```
 
-这个模式下客户端不需要配置渠道编号、机器人编号、Provider API Base、callback_url 或 callback_secret。授权码只使用一次，云端只保存授权码哈希；如果重新生成授权码，旧授权码会立即失效。
+这个模式下客户端不需要配置租户编号、渠道编号、机器人编号、Provider API Base、callback_url 或 callback_secret。激活码只使用一次，云端只保存激活码摘要；设备密钥只保存在客户电脑，日志和界面不会显示原文。
 
-主服务渠道里的 `API Base` 只是兼容旧直连 HTTP provider 的字段；云端 WS/拉取模式下可以留空，生成云端授权码后后台会按 `cloud_poll` 模式判断，不再要求填写该字段。
+主服务渠道里的 `API Base` 只是兼容旧直连 HTTP Provider 的字段；节点模式下渠道改为绑定本租户节点及其已发现企微账号。
 
 本地 `config.json` 只需要关注：
 
@@ -130,11 +130,31 @@ WorkWechatProvider.exe
 {
   "cloud_poll_enabled": true,
   "cloud_base_url": "https://cloud.example.com",
-  "authorization_code": "wwauth_xxx"
+  "provider_node_name": "客服电脑A",
+  "activation_code": "pact_xxx",
+  "device_token": "",
+  "device_id": "",
+  "heartbeat_interval_seconds": 20,
+  "poll_timeout_seconds": 25
 }
 ```
 
-注册成功后 provider 会自动清空 `authorization_code`，保存 `client_token` 和云端返回的渠道绑定信息。任务处理有本地锁和已处理缓存，WebSocket 重连、HTTP 补偿或云端重放不会重复执行同一个任务。
+激活成功后 Provider 会自动清空 `activation_code`，原子保存 `device_token/device_id`。任务由云端固化 `provider_account_key`，客户端只能分派到唯一匹配的在线 Hook；本地使用 `job_id + payload_hash` 防重，云端重放时只补结果回报，不重复发送。
+
+旧版本的 `authorization_code/client_token/cloud_channel_id` 不能直接升级为节点设备身份。新版本会识别并清理这些字段，窗口显示“需要重新激活”，管理员需要在 SaaS 节点页面重新生成一次性激活码。
+
+同一台电脑运行多个企微 Hook 端点时，可在高级配置中声明本地账号端点：
+
+```json
+{
+  "provider_accounts": [
+    {"account_key": "zhangsan", "hook_api_base": "http://127.0.0.1:8989"},
+    {"account_key": "lisi", "hook_api_base": "http://127.0.0.1:8990"}
+  ]
+}
+```
+
+`account_key` 必须与对应 Hook `/status` 返回的 `current_user_id` 一致。账号缺失、离线或出现重复匹配时，Provider 会拒绝执行任务并向云端回报错误，不会自动选择其他账号。
 
 ### 兼容：直连 HTTP 模式
 

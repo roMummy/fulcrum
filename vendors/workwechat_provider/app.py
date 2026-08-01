@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import base64
 import copy
+import contextvars
 import hashlib
 import hmac
 import json
 import logging
 import os
+import random
 import re
 import socket
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -103,6 +106,18 @@ class ProviderConfig(BaseModel):
     outbound_file_cache_dir: str = "data/outbound_file_cache"
     cloud_poll_enabled: bool = False
     cloud_base_url: str = ""
+    # SaaS 节点协议使用一次性激活码换取长期设备密钥；设备密钥只保存在客户电脑，
+    # 不再与单个渠道绑定。旧 authorization_code/client_token 字段仅保留迁移兼容。
+    provider_node_name: str = ""
+    activation_code: str = ""
+    device_token: str = ""
+    device_id: str = ""
+    heartbeat_interval_seconds: int = Field(default=20, ge=5, le=300)
+    poll_timeout_seconds: int = Field(default=25, ge=5, le=120)
+    # 一个节点可以管理多个本地 Hook 端点。每项至少包含 hook_api_base；account_key
+    # 可以留空，由 Hook /status 返回的 current_user_id 作为稳定账号键。
+    provider_accounts: list[dict[str, Any]] = Field(default_factory=list)
+    legacy_cloud_registration_detected: bool = False
     authorization_code: str = ""
     client_token: str = ""
     cloud_channel_id: int | None = None
@@ -120,7 +135,33 @@ def load_config() -> ProviderConfig:
     if not CONFIG_PATH.exists():
         return ProviderConfig()
     raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    return ProviderConfig.model_validate(raw if isinstance(raw, dict) else {})
+    migrated, _changed = migrate_legacy_cloud_config(raw if isinstance(raw, dict) else {})
+    return ProviderConfig.model_validate(migrated)
+
+
+def migrate_legacy_cloud_config(raw: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """把旧的每渠道云端配置收口为节点配置，并标记需要重新激活的现场。
+
+    旧 client_token 与新 device_token 的信任范围不同，不能直接改名复用。只有现场已经
+    把新 pact_ 激活码填进旧授权码输入框时可以无损迁移；真正的 wwauth_/client_token
+    只能清理后提示管理员重新生成节点激活码，避免把渠道凭证升级成节点凭证。
+    """
+
+    migrated = dict(raw or {})
+    changed = False
+    legacy_authorization = str(migrated.get("authorization_code") or "").strip()
+    legacy_client_token = str(migrated.get("client_token") or "").strip()
+    legacy_channel_id = migrated.get("cloud_channel_id")
+    if not str(migrated.get("activation_code") or "").strip() and legacy_authorization.startswith("pact_"):
+        migrated["activation_code"] = legacy_authorization
+        changed = True
+    if legacy_authorization or legacy_client_token or legacy_channel_id not in (None, ""):
+        migrated["legacy_cloud_registration_detected"] = True
+        migrated["authorization_code"] = ""
+        migrated["client_token"] = ""
+        migrated["cloud_channel_id"] = None
+        changed = True
+    return migrated, changed
 
 
 config = load_config()
@@ -134,6 +175,11 @@ cloud_ws_thread: threading.Thread | None = None
 cloud_poll_fallback_thread: threading.Thread | None = None
 cloud_ws_stop_event = threading.Event()
 cloud_poll_lock = threading.Lock()
+active_hook_api_base: contextvars.ContextVar[str] = contextvars.ContextVar("active_hook_api_base", default="")
+active_provider_account_key: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_provider_account_key",
+    default="",
+)
 delivery_confirmation_lock = threading.Lock()
 cloud_status: dict[str, Any] = {
     "enabled": False,
@@ -262,6 +308,7 @@ def mask_sensitive_headers(headers: Any) -> dict[str, str]:
         "x-signature",
         "x-api-key",
         "x-access-token",
+        "x-provider-device-token",
     }
     masked: dict[str, str] = {}
     for key, value in dict(headers or {}).items():
@@ -272,6 +319,23 @@ def mask_sensitive_headers(headers: Any) -> dict[str, str]:
         else:
             masked[key_text] = value_text
     return masked
+
+
+def redact_sensitive_payload(value: Any) -> Any:
+    """递归脱敏请求体中的凭证字段，避免调试日志记录激活码或设备密钥原文。"""
+
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower()
+            if any(marker in normalized_key for marker in ("token", "secret", "password", "activation_code", "authorization_code")):
+                redacted[str(key)] = mask_secret(str(item or ""))
+            else:
+                redacted[str(key)] = redact_sensitive_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_payload(item) for item in value]
+    return value
 
 
 def mask_secret(value: str) -> str:
@@ -328,6 +392,11 @@ def config_debug_snapshot() -> dict[str, Any]:
         "outbound_file_cache_dir": str(resolve_outbound_file_cache_dir()),
         "cloud_poll_enabled": config.cloud_poll_enabled,
         "cloud_base_url": config.cloud_base_url,
+        "provider_node_name": config.provider_node_name,
+        "device_id": config.device_id,
+        "device_token": mask_secret(config.device_token),
+        "activation_code": mask_secret(config.activation_code),
+        "provider_account_count": len(config.provider_accounts),
         "cloud_channel_id": config.cloud_channel_id,
         "provider_name": config.provider_name,
         "client_token": mask_secret(config.client_token),
@@ -373,13 +442,15 @@ def assert_provider_authorized(request: Request) -> None:
 
 def build_hook_url() -> str:
     path = config.hook_api_path if config.hook_api_path.startswith("/") else f"/{config.hook_api_path}"
-    return f"{config.hook_api_base.rstrip('/')}{path}"
+    hook_api_base = active_hook_api_base.get().strip() or config.hook_api_base
+    return f"{hook_api_base.rstrip('/')}{path}"
 
 
 def build_hook_status_url() -> str:
     # Hook runtime 的状态接口用于排查真实消息是否能推到 provider；
     # 与 /api 同源，只把路径固定替换为 /status。
-    return f"{config.hook_api_base.rstrip('/')}/status"
+    hook_api_base = active_hook_api_base.get().strip() or config.hook_api_base
+    return f"{hook_api_base.rstrip('/')}/status"
 
 
 def resolve_hook_runtime_dir() -> Path:
@@ -617,7 +688,7 @@ def post_json(url: str, body: dict[str, Any], *, timeout: int, headers: dict[str
             "url": url,
             "timeout": timeout,
             "headers": mask_sensitive_headers(req.headers),
-            "body": body,
+            "body": redact_sensitive_payload(body),
         },
     )
     try:
@@ -664,24 +735,34 @@ def get_json(url: str, *, timeout: int, headers: dict[str, str] | None = None) -
         raise RuntimeError(str(exc.reason or exc)) from exc
 
 
-def cloud_post_json(path: str, body: dict[str, Any], token: str = "") -> dict[str, Any]:
+def cloud_post_json(
+    path: str,
+    body: dict[str, Any],
+    token: str = "",
+    *,
+    device_token: str = "",
+    timeout: int | None = None,
+) -> dict[str, Any]:
     if not config.cloud_base_url:
         raise RuntimeError("missing_cloud_base_url")
     normalized_path = path if path.startswith("/") else f"/{path}"
     headers = {}
-    if token:
+    if device_token:
+        headers["X-Provider-Device-Token"] = device_token
+    elif token:
         headers["X-WorkWechat-Client-Token"] = token
     return post_json(
         f"{config.cloud_base_url.rstrip('/')}{normalized_path}",
         body,
-        timeout=config.request_timeout_seconds,
+        timeout=int(timeout or config.request_timeout_seconds),
         headers=headers,
     )
 
 
 def save_config_updates(updates: dict[str, Any]) -> None:
     global config
-    # 注册成功后把云端返回的 token 和回调配置保存到本地，现场无需再手动编辑渠道编号。
+    # 激活成功后把设备凭证原子保存到稳定目录；临时文件 chmod 为仅当前用户可读写，
+    # Windows 会忽略部分 POSIX 权限位，但仍保留原子 replace，避免断电写坏配置。
     current: dict[str, Any] = {}
     if CONFIG_PATH.exists():
         try:
@@ -689,13 +770,163 @@ def save_config_updates(updates: dict[str, Any]) -> None:
             current = parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             current = {}
+    current, _changed = migrate_legacy_cloud_config(current)
     current.update(updates)
-    CONFIG_PATH.write_text(json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = CONFIG_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        temp_path.chmod(0o600)
+    except OSError:
+        pass
+    temp_path.replace(CONFIG_PATH)
+    try:
+        CONFIG_PATH.chmod(0o600)
+    except OSError:
+        pass
     config = ProviderConfig.model_validate(current)
     log_info_event(
         "workwechat provider local config updated",
         {key: mask_secret(str(value)) if "token" in key or "code" in key else value for key, value in updates.items()},
     )
+
+
+def uses_provider_node_protocol() -> bool:
+    """判断当前是否使用节点协议；全新配置默认进入节点协议，旧 client_token 仍可短期兼容。"""
+
+    return bool(config.device_token or config.activation_code or not config.client_token)
+
+
+def build_device_fingerprint() -> str:
+    """生成不含本机明文标识的稳定设备指纹，只把摘要提交给云端。"""
+
+    raw = "|".join(
+        [
+            socket.gethostname(),
+            str(uuid.getnode()),
+            os.environ.get("COMPUTERNAME", ""),
+            os.environ.get("PROCESSOR_IDENTIFIER", ""),
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def activate_provider_node_if_needed() -> dict[str, Any]:
+    """用一次性激活码换取节点设备凭证，成功后立即清空激活码。"""
+
+    if config.device_token:
+        return {"ok": True, "activated": False, "reason": "device_token_exists"}
+    if not config.activation_code:
+        return {"ok": False, "activated": False, "error": "missing_activation_code"}
+    response = cloud_post_json(
+        "/api/provider/activate",
+        {
+            "activation_code": config.activation_code,
+            "fingerprint": build_device_fingerprint(),
+            "client_version": config.required_workwechat_version,
+        },
+    )
+    if not response_ok(response):
+        return {"ok": False, "activated": False, "error": response.get("detail") or response.get("error") or response}
+    device_token = str(response.get("device_token") or "").strip()
+    device_id = str(response.get("device_id") or "").strip()
+    if not device_token or not device_id:
+        return {"ok": False, "activated": False, "error": "activation_response_missing_device_identity"}
+    save_config_updates(
+        {
+            "activation_code": "",
+            "device_token": device_token,
+            "device_id": device_id,
+            "authorization_code": "",
+            "client_token": "",
+            "cloud_channel_id": None,
+            "legacy_cloud_registration_detected": False,
+            "heartbeat_interval_seconds": int(response.get("heartbeat_interval_seconds") or config.heartbeat_interval_seconds),
+            "poll_timeout_seconds": int(response.get("poll_timeout_seconds") or config.poll_timeout_seconds),
+        }
+    )
+    return {"ok": True, "activated": True, "device_id": device_id}
+
+
+def list_local_provider_accounts() -> list[dict[str, Any]]:
+    """探测本机 Hook 账号并返回云端心跳摘要，不用配置内容冒充在线账号。"""
+
+    configured_accounts = config.provider_accounts or [{"hook_api_base": config.hook_api_base}]
+    accounts: list[dict[str, Any]] = []
+    for configured in configured_accounts:
+        if not isinstance(configured, dict):
+            continue
+        hook_api_base = str(configured.get("hook_api_base") or config.hook_api_base).strip().rstrip("/")
+        configured_key = str(configured.get("account_key") or "").strip()
+        status_payload: dict[str, Any] = {}
+        status = "offline"
+        try:
+            status_payload = get_json(f"{hook_api_base}/status", timeout=config.request_timeout_seconds)
+            discovered_key = str(status_payload.get("current_user_id") or "").strip()
+            account_key = configured_key or discovered_key
+            if discovered_key and account_key and (not configured_key or configured_key == discovered_key):
+                status = "online" if response_ok(status_payload) else "offline"
+            else:
+                status = "unknown"
+        except Exception as exc:
+            account_key = configured_key
+            status_payload = {"error": str(exc)}
+        if not account_key:
+            continue
+        accounts.append(
+            {
+                "account_key": account_key,
+                "display_name": str(configured.get("display_name") or account_key).strip(),
+                "external_user_id": str(status_payload.get("current_user_id") or account_key).strip(),
+                "status": status,
+                # hook_api_base 只用于本地任务分派，不发送给云端，避免暴露客户内网端口布局。
+                "_hook_api_base": hook_api_base,
+            }
+        )
+    return accounts
+
+
+def send_provider_heartbeat_once() -> dict[str, Any]:
+    """上报节点和本机账号摘要；到期租户仍可正常心跳。"""
+
+    activated = activate_provider_node_if_needed()
+    if not activated.get("ok") or not config.device_token:
+        return activated
+    local_accounts = list_local_provider_accounts()
+    response = cloud_post_json(
+        "/api/provider/heartbeat",
+        {
+            "client_version": config.required_workwechat_version,
+            "hook_status": "running" if any(item.get("status") == "online" for item in local_accounts) else "degraded",
+            "workwechat_status": "running" if local_accounts else "unknown",
+            "accounts": [{key: value for key, value in item.items() if not key.startswith("_")} for item in local_accounts],
+            "details": {"provider_node_name": config.provider_node_name},
+        },
+        device_token=config.device_token,
+    )
+    return response
+
+
+def resolve_local_provider_account(job: dict[str, Any]) -> dict[str, Any] | None:
+    """按云端签发的账号键唯一匹配本地在线 Hook，禁止客户端自行改选账号。"""
+
+    account_key = str(job.get("provider_account_key") or "").strip()
+    if not account_key:
+        return None
+    matches = [item for item in list_local_provider_accounts() if item.get("account_key") == account_key and item.get("status") == "online"]
+    return matches[0] if len(matches) == 1 else None
+
+
+def current_local_account_key() -> str:
+    """返回当前回调对应的唯一在线账号键；多账号无法判定时拒绝猜测。"""
+
+    callback_account_key = active_provider_account_key.get().strip()
+    if callback_account_key:
+        return callback_account_key
+    online_accounts = [item for item in list_local_provider_accounts() if item.get("status") == "online"]
+    if len(online_accounts) != 1:
+        return ""
+    return str(online_accounts[0].get("account_key") or "").strip()
 
 
 def register_cloud_client_if_needed() -> dict[str, Any]:
@@ -742,6 +973,37 @@ def poll_cloud_jobs_once() -> dict[str, Any]:
 
 
 def _poll_cloud_jobs_once_locked() -> dict[str, Any]:
+    if uses_provider_node_protocol():
+        activation = activate_provider_node_if_needed()
+        if not activation.get("ok"):
+            return activation
+        if not config.device_token:
+            return {"ok": False, "error": "missing_device_token"}
+        delivery_flush = flush_pending_delivery_confirmations()
+        response = cloud_post_json(
+            "/api/provider/poll",
+            {"batch_size": config.poll_batch_size},
+            device_token=config.device_token,
+            timeout=max(config.request_timeout_seconds, config.poll_timeout_seconds + 5),
+        )
+        http_status = int(response.get("http_status") or 200)
+        if http_status == 401:
+            # 设备密钥被吊销后立即停止后台轮询，避免持续打满云端日志；UI 通过该状态提示重新激活。
+            cloud_status["authentication_stopped"] = True
+            cloud_status["last_error"] = "device_reactivation_required"
+            cloud_ws_stop_event.set()
+            return {"ok": False, "error": "device_reactivation_required", "http_status": 401}
+        jobs = response.get("jobs") if isinstance(response.get("jobs"), list) else []
+        results = [process_cloud_job(job) for job in jobs if isinstance(job, dict)]
+        return {
+            "ok": response_ok(response),
+            "http_status": http_status,
+            "job_count": len(jobs),
+            "results": results,
+            "read_only": bool(response.get("read_only")),
+            "delivery_flush": delivery_flush,
+        }
+
     registration = register_cloud_client_if_needed()
     if not registration.get("ok"):
         return registration
@@ -761,31 +1023,56 @@ def _poll_cloud_jobs_once_locked() -> dict[str, Any]:
 def process_cloud_job(job: dict[str, Any]) -> dict[str, Any]:
     job_id = int(job.get("job_id") or 0)
     payload_hash = str(job.get("payload_hash") or "").strip()
+    lease_token = str(job.get("lease_token") or "").strip()
     if not job_id or not payload_hash:
         return {"ok": False, "status": "invalid_job"}
+    local_account: dict[str, Any] | None = None
+    is_node_job = bool(str(job.get("provider_account_key") or "").strip() or lease_token)
+    if is_node_job:
+        local_account = resolve_local_provider_account(job)
+        if local_account is None:
+            result = {
+                "ok": False,
+                "status": "provider_account_not_uniquely_available",
+                "job_id": job_id,
+                "provider_account_key": str(job.get("provider_account_key") or ""),
+            }
+            report_cloud_job_fail_for_lease(job_id, "provider_account_not_uniquely_available", result, lease_token)
+            return result
     state_dir = resolve_cloud_jobs_state_dir()
     if cloud_jobs.has_processed_payload_conflict(state_dir, job_id=job_id, payload_hash=payload_hash):
         result = {"ok": False, "status": "payload_hash_conflict", "job_id": job_id}
-        report_cloud_job_fail(job_id, "payload_hash_conflict", result)
+        report_cloud_job_fail_for_lease(job_id, "payload_hash_conflict", result, lease_token)
         return result
     if cloud_jobs.is_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash):
         result = {"ok": True, "status": "already_processed", "job_id": job_id}
-        report_cloud_job_complete(job_id, {"adapter_result": result})
+        report_cloud_job_complete_for_lease(job_id, {"adapter_result": result}, lease_token)
         return result
     if not cloud_jobs.try_acquire_job_lock(state_dir, job_id=job_id, payload_hash=payload_hash, event_id=str(job.get("event_id") or "")):
         return {"ok": False, "status": "locked", "job_id": job_id}
 
     wait_for_delivery = False
+    hook_context = active_hook_api_base.set(str((local_account or {}).get("_hook_api_base") or ""))
     try:
         action = str(job.get("action") or "").strip()
         if action:
-            return process_cloud_control_job(job, action, state_dir=state_dir, job_id=job_id, payload_hash=payload_hash)
+            return process_cloud_control_job(
+                job,
+                action,
+                state_dir=state_dir,
+                job_id=job_id,
+                payload_hash=payload_hash,
+                lease_token=lease_token,
+            )
         command = build_hook_command(job.get("payload") if isinstance(job.get("payload"), dict) else {})
         wait_for_delivery = should_wait_for_delivery_confirmation(command)
         if wait_for_delivery:
             pending_record = build_pending_delivery_record(
                 job_id=job_id,
                 payload_hash=payload_hash,
+                lease_token=lease_token,
+                provider_account_key=str(job.get("provider_account_key") or ""),
+                hook_api_base=str((local_account or {}).get("_hook_api_base") or ""),
                 command=command,
                 accepted_response={},
                 adapter_result={
@@ -826,20 +1113,22 @@ def process_cloud_job(job: dict[str, Any]) -> dict[str, Any]:
                     "delivery_confirmation": pending_summary,
                 }
             cloud_jobs.mark_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash, result=adapter_result)
-            report_cloud_job_complete(job_id, {"adapter_result": adapter_result})
+            report_cloud_job_complete_for_lease(job_id, {"adapter_result": adapter_result}, lease_token)
         else:
             if wait_for_delivery:
                 remove_pending_delivery_confirmation(job_id)
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
-            report_cloud_job_fail(job_id, "hook_send_failed", adapter_result)
+            report_cloud_job_fail_for_lease(job_id, "hook_send_failed", adapter_result, lease_token)
         return adapter_result
     except Exception as exc:
         if wait_for_delivery:
             remove_pending_delivery_confirmation(job_id)
         cloud_jobs.release_job_lock(state_dir, job_id=job_id)
         result = {"ok": False, "status": "failed", "error": str(exc)}
-        report_cloud_job_fail(job_id, "hook_send_exception", result)
+        report_cloud_job_fail_for_lease(job_id, "hook_send_exception", result, lease_token)
         return result
+    finally:
+        active_hook_api_base.reset(hook_context)
 
 
 def process_cloud_control_job(
@@ -849,6 +1138,7 @@ def process_cloud_control_job(
     state_dir: Path,
     job_id: int,
     payload_hash: str,
+    lease_token: str = "",
 ) -> dict[str, Any]:
     # 云端控制任务不是发消息，而是让客服电脑本地执行 Hook 查询；结果仍通过 complete 接口回传服务端统一落库。
     payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
@@ -872,10 +1162,10 @@ def process_cloud_control_job(
         }
         if adapter_result["ok"]:
             cloud_jobs.mark_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash, result=adapter_result)
-            report_cloud_job_complete(job_id, {"adapter_result": adapter_result})
+            report_cloud_job_complete_for_lease(job_id, {"adapter_result": adapter_result}, lease_token)
         else:
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
-            report_cloud_job_fail(job_id, "hook_chatroom_sync_failed", adapter_result)
+            report_cloud_job_fail_for_lease(job_id, "hook_chatroom_sync_failed", adapter_result, lease_token)
         return adapter_result
 
     if action == "sync_chatroom_members":
@@ -883,7 +1173,7 @@ def process_cloud_control_job(
         if not conversation_id:
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
             result = {"ok": False, "status": "missing_conversation_id", "action": action}
-            report_cloud_job_fail(job_id, "missing_conversation_id", result)
+            report_cloud_job_fail_for_lease(job_id, "missing_conversation_id", result, lease_token)
             return result
         page_result = fetch_hook_pages(
             hook_type=11040,
@@ -905,10 +1195,10 @@ def process_cloud_control_job(
         }
         if adapter_result["ok"]:
             cloud_jobs.mark_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash, result=adapter_result)
-            report_cloud_job_complete(job_id, {"adapter_result": adapter_result})
+            report_cloud_job_complete_for_lease(job_id, {"adapter_result": adapter_result}, lease_token)
         else:
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
-            report_cloud_job_fail(job_id, "hook_chatroom_member_sync_failed", adapter_result)
+            report_cloud_job_fail_for_lease(job_id, "hook_chatroom_member_sync_failed", adapter_result, lease_token)
         return adapter_result
 
     if action == "sync_contacts":
@@ -925,7 +1215,7 @@ def process_cloud_control_job(
             else:
                 cloud_jobs.release_job_lock(state_dir, job_id=job_id)
                 result = {"ok": False, "status": "unsupported_contact_kind", "action": action, "contact_kind": kind}
-                report_cloud_job_fail(job_id, "unsupported_contact_kind", result)
+                report_cloud_job_fail_for_lease(job_id, "unsupported_contact_kind", result, lease_token)
                 return result
             page_result = fetch_hook_pages(
                 hook_type=hook_type,
@@ -952,10 +1242,10 @@ def process_cloud_control_job(
         }
         if adapter_result["ok"]:
             cloud_jobs.mark_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash, result=adapter_result)
-            report_cloud_job_complete(job_id, {"adapter_result": adapter_result})
+            report_cloud_job_complete_for_lease(job_id, {"adapter_result": adapter_result}, lease_token)
         else:
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
-            report_cloud_job_fail(job_id, "hook_contact_sync_failed", adapter_result)
+            report_cloud_job_fail_for_lease(job_id, "hook_contact_sync_failed", adapter_result, lease_token)
         return adapter_result
 
     if action == "download_inbound_media":
@@ -972,25 +1262,73 @@ def process_cloud_control_job(
         }
         if adapter_result["ok"]:
             cloud_jobs.mark_job_processed(state_dir, job_id=job_id, payload_hash=payload_hash, result=adapter_result)
-            report_cloud_job_complete(job_id, {"adapter_result": adapter_result})
+            report_cloud_job_complete_for_lease(job_id, {"adapter_result": adapter_result}, lease_token)
         else:
             cloud_jobs.release_job_lock(state_dir, job_id=job_id)
-            report_cloud_job_fail(job_id, "inbound_media_download_failed", adapter_result)
+            report_cloud_job_fail_for_lease(job_id, "inbound_media_download_failed", adapter_result, lease_token)
         return adapter_result
 
     cloud_jobs.release_job_lock(state_dir, job_id=job_id)
     result = {"ok": False, "status": "unsupported_action", "action": action}
-    report_cloud_job_fail(job_id, "unsupported_cloud_control_action", result)
+    report_cloud_job_fail_for_lease(job_id, "unsupported_cloud_control_action", result, lease_token)
     return result
 
 
-def report_cloud_job_complete(job_id: int, result: dict[str, Any]) -> dict[str, Any]:
+def report_cloud_job_complete_for_lease(job_id: int, result: dict[str, Any], lease_token: str) -> dict[str, Any]:
+    """新任务附加租约，旧任务保持原调用形态以兼容历史客户端测试和协议。"""
+
+    if lease_token:
+        return report_cloud_job_complete(job_id, result, lease_token=lease_token)
+    return report_cloud_job_complete(job_id, result)
+
+
+def report_cloud_job_fail_for_lease(
+    job_id: int,
+    error_code: str,
+    adapter_result: dict[str, Any],
+    lease_token: str,
+) -> dict[str, Any]:
+    """按任务是否携带租约选择节点或旧协议回报参数。"""
+
+    if lease_token:
+        return report_cloud_job_fail(job_id, error_code, adapter_result, lease_token=lease_token)
+    return report_cloud_job_fail(job_id, error_code, adapter_result)
+
+
+def report_cloud_job_complete(job_id: int, result: dict[str, Any], *, lease_token: str = "") -> dict[str, Any]:
+    if uses_provider_node_protocol():
+        if not config.device_token:
+            return {"ok": False, "error": "missing_device_token"}
+        return cloud_post_json(
+            f"/api/provider/jobs/{int(job_id)}/complete",
+            {**result, "lease_token": lease_token},
+            device_token=config.device_token,
+        )
     if not config.client_token:
         return {"ok": False, "error": "missing_client_token"}
     return cloud_post_json(f"/api/workwechat/provider/jobs/{int(job_id)}/complete", result, token=config.client_token)
 
 
-def report_cloud_job_fail(job_id: int, error_code: str, adapter_result: dict[str, Any]) -> dict[str, Any]:
+def report_cloud_job_fail(
+    job_id: int,
+    error_code: str,
+    adapter_result: dict[str, Any],
+    *,
+    lease_token: str = "",
+) -> dict[str, Any]:
+    if uses_provider_node_protocol():
+        if not config.device_token:
+            return {"ok": False, "error": "missing_device_token"}
+        return cloud_post_json(
+            f"/api/provider/jobs/{int(job_id)}/fail",
+            {
+                "lease_token": lease_token,
+                "error_code": error_code,
+                "error_message": str(adapter_result.get("error") or adapter_result.get("status") or error_code),
+                "adapter_result": adapter_result,
+            },
+            device_token=config.device_token,
+        )
     if not config.client_token:
         return {"ok": False, "error": "missing_client_token"}
     return cloud_post_json(
@@ -1052,6 +1390,9 @@ def build_pending_delivery_record(
     *,
     job_id: int,
     payload_hash: str,
+    lease_token: str = "",
+    provider_account_key: str = "",
+    hook_api_base: str = "",
     command: dict[str, Any],
     accepted_response: dict[str, Any],
     adapter_result: dict[str, Any],
@@ -1064,6 +1405,11 @@ def build_pending_delivery_record(
     return {
         "job_id": int(job_id),
         "payload_hash": payload_hash,
+        # 租约和账号键必须随 pending 状态持久化；Provider 重启后补报 complete/fail
+        # 仍要使用云端签发的原始租约，不能退回旧的无租约回报方式。
+        "lease_token": lease_token,
+        "provider_account_key": provider_account_key,
+        "hook_api_base": hook_api_base,
         "command_type": command_type,
         "message_type": DELIVERY_CONFIRMATION_MESSAGE_TYPES.get(command_type, "message"),
         "conversation_external_id": str(data.get("conversation_id") or "").strip(),
@@ -1227,7 +1573,11 @@ def _report_pending_delivery_completed(record: dict[str, Any]) -> dict[str, Any]
             "accepted_at": record.get("accepted_at"),
         },
     }
-    result = report_cloud_job_complete(int(record["job_id"]), {"adapter_result": adapter_result})
+    result = report_cloud_job_complete_for_lease(
+        int(record["job_id"]),
+        {"adapter_result": adapter_result},
+        str(record.get("lease_token") or ""),
+    )
     if isinstance(result, dict):
         result.setdefault("adapter_result", adapter_result)
     return result
@@ -1251,7 +1601,12 @@ def _report_pending_delivery_timeout(record: dict[str, Any]) -> dict[str, Any]:
             "accepted_at": record.get("accepted_at"),
         },
     }
-    return report_cloud_job_fail(int(record["job_id"]), "delivery_confirmation_timeout", adapter_result)
+    return report_cloud_job_fail_for_lease(
+        int(record["job_id"]),
+        "delivery_confirmation_timeout",
+        adapter_result,
+        str(record.get("lease_token") or ""),
+    )
 
 
 def _cloud_job_report_accepted(result: dict[str, Any]) -> bool:
@@ -1286,9 +1641,13 @@ def _find_pending_delivery_match(records: dict[str, dict[str, Any]], normalized:
     echo_message_type = _normalize_delivery_message_type(str(message.get("message_type") or ""))
     echo_content = _normalize_delivery_text(str(message.get("content") or ""))
     echo_file_name = _normalize_delivery_file_name(str(details.get("file_name") or ""))
+    echo_account_key = str(details.get("self_user_id") or normalized.get("provider_account_key") or "").strip()
     exact_matches: list[tuple[float, str]] = []
     fallback_matches: list[tuple[float, str]] = []
     for key, record in records.items():
+        record_account_key = str(record.get("provider_account_key") or "").strip()
+        if record_account_key and echo_account_key and record_account_key != echo_account_key:
+            continue
         if str(record.get("conversation_external_id") or "").strip() != echo_conversation_id:
             continue
         record_message_type = _normalize_delivery_message_type(str(record.get("message_type") or ""))
@@ -1380,7 +1739,20 @@ def start_cloud_ws_if_needed() -> dict[str, Any]:
     if not config.cloud_poll_enabled:
         return {"started": False, "reason": "cloud_poll_disabled"}
     cloud_ws_stop_event.clear()
+    cloud_status["authentication_stopped"] = False
     started = False
+    if uses_provider_node_protocol():
+        # 节点协议使用带超时的 HTTP 长轮询，不再为每个渠道建立 WebSocket；一个线程
+        # 即可领取节点下全部已绑定账号任务，并按 provider_account_key 分派到本地 Hook。
+        if not (cloud_poll_fallback_thread and cloud_poll_fallback_thread.is_alive()):
+            cloud_poll_fallback_thread = threading.Thread(
+                target=run_provider_node_poll_loop,
+                name="workwechat-provider-node-poll",
+                daemon=True,
+            )
+            cloud_poll_fallback_thread.start()
+            started = True
+        return {"started": started, "reason": "" if started else "already_running", "protocol": "provider_node"}
     if not (cloud_ws_thread and cloud_ws_thread.is_alive()):
         cloud_ws_thread = threading.Thread(target=run_cloud_ws_loop, name="workwechat-cloud-ws", daemon=True)
         cloud_ws_thread.start()
@@ -1394,6 +1766,59 @@ def start_cloud_ws_if_needed() -> dict[str, Any]:
 
 def stop_cloud_ws() -> None:
     cloud_ws_stop_event.set()
+
+
+def compute_cloud_retry_delay(attempt: int, http_status: int = 0, *, random_value: float | None = None) -> float:
+    """为限流、服务端错误和网络异常计算带抖动退避，避免大量节点同步重试。"""
+
+    bounded_attempt = max(1, min(8, int(attempt or 1)))
+    base = min(60.0, float(2 ** bounded_attempt))
+    if int(http_status or 0) == 429:
+        base = max(5.0, base)
+    jitter_source = random.random() if random_value is None else max(0.0, min(1.0, float(random_value)))
+    return round(base * (0.75 + jitter_source * 0.5), 3)
+
+
+def run_provider_node_poll_loop() -> None:
+    """持续执行节点激活、心跳和长轮询；401 停止，429/5xx 与网络错误退避。"""
+
+    failure_count = 0
+    next_heartbeat_at = 0.0
+    while not cloud_ws_stop_event.is_set():
+        try:
+            now_epoch = time.time()
+            if now_epoch >= next_heartbeat_at:
+                heartbeat = send_provider_heartbeat_once()
+                heartbeat_status = int(heartbeat.get("http_status") or 200)
+                next_heartbeat_at = now_epoch + max(5, int(config.heartbeat_interval_seconds or 20))
+                if heartbeat_status == 401:
+                    cloud_status["authentication_stopped"] = True
+                    cloud_status["last_error"] = "device_reactivation_required"
+                    cloud_ws_stop_event.set()
+                    break
+            result = poll_cloud_jobs_once()
+            cloud_status["last_poll_at"] = _now_text()
+            http_status = int(result.get("http_status") or 200)
+            if http_status == 401 or result.get("error") == "device_reactivation_required":
+                cloud_status["authentication_stopped"] = True
+                cloud_status["last_error"] = "device_reactivation_required"
+                cloud_ws_stop_event.set()
+                break
+            if result.get("ok"):
+                failure_count = 0
+                cloud_status["last_error"] = ""
+                interval = 20 if result.get("read_only") else 3
+            else:
+                failure_count += 1
+                cloud_status["last_error"] = str(result.get("error") or result)
+                interval = compute_cloud_retry_delay(failure_count, http_status)
+            if cloud_ws_stop_event.wait(interval):
+                break
+        except Exception as exc:
+            failure_count += 1
+            cloud_status["last_error"] = str(exc)
+            if cloud_ws_stop_event.wait(compute_cloud_retry_delay(failure_count)):
+                break
 
 
 def run_cloud_ws_loop() -> None:
@@ -1598,6 +2023,8 @@ def resolve_inbound_file_cache_dir() -> Path:
 
 
 def build_main_service_upload_url() -> str:
+    if config.cloud_poll_enabled and config.cloud_base_url and config.device_token:
+        return f"{config.cloud_base_url.rstrip('/')}/api/provider/inbound-upload"
     if config.cloud_poll_enabled and config.cloud_base_url and config.client_token:
         # 云端模式下文件上传也走 provider 专用 client_token 入口，不再反推传统 callback_url。
         return f"{config.cloud_base_url.rstrip('/')}/api/workwechat/provider/inbound-upload"
@@ -1794,7 +2221,9 @@ def upload_inbound_file_to_main_service(
     if not upload_url:
         return {"download_error": "missing_callback_url"}
     upload_headers: dict[str, str] = {}
-    if config.cloud_poll_enabled and config.client_token:
+    if config.cloud_poll_enabled and config.device_token:
+        upload_headers["X-Provider-Device-Token"] = config.device_token
+    elif config.cloud_poll_enabled and config.client_token:
         # 云端上传使用注册后保存的 client_token，和消息入站、任务领取保持同一套鉴权。
         upload_headers["X-WorkWechat-Client-Token"] = config.client_token
     elif config.provider_token:
@@ -1810,6 +2239,7 @@ def upload_inbound_file_to_main_service(
         return {"download_error": "inbound_file_empty"}
 
     payload = {
+        "provider_account_key": current_local_account_key(),
         "message_type": message_type,
         "file_name": file_name or source_file.name,
         "content_type": "application/octet-stream",
@@ -2069,6 +2499,7 @@ def pick_int(payload: dict[str, Any], *keys: str) -> int | None:
 def normalize_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     hook_type = coerce_int(payload.get("type"))
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    callback_account_token = active_provider_account_key.set(str(data.get("self_user_id") or "").strip())
     contact_event_type = {
         11063: "contact_request",
         11076: "contact_added",
@@ -2107,12 +2538,16 @@ def normalize_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
     download_meta = {}
-    if message_type in {"image", "file", "video", "voice"}:
-        download_meta = download_inbound_hook_media_if_needed(data, message_type=message_type)
+    try:
+        if message_type in {"image", "file", "video", "voice"}:
+            download_meta = download_inbound_hook_media_if_needed(data, message_type=message_type)
+    finally:
+        # 文件下载和上传可能需要账号键；归一化完成后立即恢复上下文，避免线程池复用时串账号。
+        active_provider_account_key.reset(callback_account_token)
     is_self_sent = bool(data.get("is_self_sent"))
 
     # 统一结构直接交给主服务 workwechat adapter；主服务仍会再做一次容错归一化。
-    return {
+    normalized = {
         "event_key": event_key,
         "event_type": contact_event_type or "message",
         "conversation": {
@@ -2148,6 +2583,10 @@ def normalize_hook_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "raw_data": data,
         },
     }
+    # Hook runtime 会把当前登录账号写入 self_user_id；节点协议用它把入站事件路由到
+    # 云端已绑定渠道。字段为空时由 push_callback 再做一次本地状态探测。
+    normalized["provider_account_key"] = str(data.get("self_user_id") or "").strip()
+    return normalized
 
 
 def build_message_content(data: dict[str, Any], message_type: str) -> str:
@@ -2188,6 +2627,20 @@ def sign_callback(body: bytes, timestamp: str) -> str:
 
 
 def push_callback(payload: dict[str, Any]) -> dict[str, Any]:
+    if config.cloud_poll_enabled and config.cloud_base_url and config.device_token:
+        node_payload = dict(payload)
+        node_payload["provider_account_key"] = str(
+            node_payload.get("provider_account_key") or current_local_account_key()
+        ).strip()
+        if not node_payload["provider_account_key"]:
+            return {"ok": False, "error": "provider_account_not_uniquely_available"}
+        response = cloud_post_json(
+            "/api/provider/inbound",
+            node_payload,
+            device_token=config.device_token,
+        )
+        log_debug_event("provider node inbound response from main service", response)
+        return response
     if config.cloud_poll_enabled and config.cloud_base_url and config.client_token:
         # 云端 WS 负责唤醒和任务通知；入站消息仍用短 HTTP 请求上报，但鉴权统一使用 client_token。
         log_debug_event(
