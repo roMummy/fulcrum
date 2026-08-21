@@ -7,6 +7,7 @@
 
 from app.web.platform_auth import router as platform_auth_router
 from app.web.platform_admin import router as platform_admin_router
+from app.web.platform_billing import router as platform_billing_router
 from app.web.public_site import router as public_site_router
 from app.web.billing import router as billing_router
 from app.web.provider_nodes import router as provider_nodes_router
@@ -16,6 +17,7 @@ from app.web.tenant_admin import router as tenant_admin_router
 __all__ = [
     "platform_admin_router",
     "platform_auth_router",
+    "platform_billing_router",
     "billing_router",
     "provider_nodes_router",
     "public_site_router",

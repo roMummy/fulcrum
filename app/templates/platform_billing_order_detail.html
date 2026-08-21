@@ -1,0 +1,38 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>{{ status_labels.get(order.status, order.status) }}</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/platform/billing/orders">返回订单</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <dl class="detail-grid">
+    <div><dt>企业</dt><dd>{{ order.tenant.name }}</dd></div>
+    <div><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
+    <div><dt>套餐</dt><dd>{{ order.plan.name }}</dd></div>
+    <div><dt>机器人额度</dt><dd>{{ order.bot_limit_snapshot }}</dd></div>
+    <div><dt>计费周期</dt><dd>{{ '月付' if order.billing_cycle == 'monthly' else '年付' }}</dd></div>
+    <div><dt>金额</dt><dd>¥{{ format_yuan(order.amount_cents) }}</dd></div>
+    <div><dt>交易流水号</dt><dd>{{ order.payment_reference or '-' }}</dd></div>
+    <div><dt>提交时间</dt><dd>{{ format_time(order.payment_submitted_at) }}</dd></div>
+    <div><dt>审核时间</dt><dd>{{ format_time(order.reviewed_at) }}</dd></div>
+    <div><dt>状态</dt><dd>{{ status_labels.get(order.status, order.status) }}</dd></div>
+  </dl>
+  {% if has_payment_proof %}<a class="btn btn-secondary" href="/platform/billing/orders/{{ order.id }}/proof">下载付款凭证</a>{% endif %}
+  {% if order.rejection_reason %}<section class="notice-card notice-card-danger">驳回原因：{{ order.rejection_reason }}</section>{% endif %}
+</section>
+
+{% if order.status == 'payment_submitted' %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Review</p><h2>审核操作</h2></div></div>
+  <form method="post" action="/platform/billing/orders/{{ order.id }}/approve" data-confirm-mode="confirm" data-confirm-title="批准订单" data-confirm-message="批准后将立即创建或续期订阅。">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn" type="submit">批准并开通</button>
+  </form>
+  <form method="post" action="/platform/billing/orders/{{ order.id }}/reject" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>驳回原因</span><textarea name="reason" rows="3" maxlength="1000" required></textarea></label>
+    <div class="full-row form-actions-inline"><button class="btn btn-secondary" type="submit">驳回凭证</button></div>
+  </form>
+</section>
+{% elif order.status == 'approved' and order.fulfilled_subscription %}
+<section class="notice-card">已开通订阅，有效期至 {{ format_time(order.fulfilled_subscription.expires_at) }}。</section>
+{% endif %}
+{% endblock %}

@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
@@ -122,13 +122,38 @@ def get_tenant_order(db: Session, *, tenant_id: int, order_id: int) -> BillingOr
 def get_billing_order(db: Session, *, order_id: int, for_update: bool = False) -> BillingOrder:
     """供平台审核读取订单，可选行锁用于保护状态检查和订阅履约。"""
 
-    query = select(BillingOrder).where(BillingOrder.id == int(order_id))
+    query = (
+        select(BillingOrder)
+        .where(BillingOrder.id == int(order_id))
+        .options(
+            selectinload(BillingOrder.tenant),
+            selectinload(BillingOrder.plan),
+            selectinload(BillingOrder.reviewed_by_user),
+            selectinload(BillingOrder.fulfilled_subscription),
+        )
+    )
     if for_update:
         query = query.with_for_update()
     order = db.scalar(query)
     if order is None:
         raise BillingError("order_not_found")
     return order
+
+
+def list_billing_orders(db: Session) -> list[BillingOrder]:
+    """返回平台订单清单，待审核状态优先，其余按最新创建时间排列。"""
+
+    status_priority = case(
+        (BillingOrder.status == "payment_submitted", 0),
+        (BillingOrder.status == "pending_payment", 1),
+        (BillingOrder.status == "rejected", 2),
+        else_=3,
+    )
+    return db.scalars(
+        select(BillingOrder)
+        .options(selectinload(BillingOrder.tenant), selectinload(BillingOrder.plan))
+        .order_by(status_priority.asc(), BillingOrder.id.desc())
+    ).all()
 
 
 def list_tenant_orders(db: Session, *, tenant_id: int) -> list[BillingOrder]:

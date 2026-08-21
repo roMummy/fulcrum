@@ -63,6 +63,7 @@ def _platform_context(
         {"label": "平台概览", "href": "/platform/dashboard", "active": active == "dashboard"},
         {"label": "租户管理", "href": "/platform/tenants", "active": active == "tenants"},
         {"label": "套餐管理", "href": "/platform/plans", "active": active == "plans"},
+        {"label": "订单审核", "href": "/platform/billing/orders", "active": active == "billing"},
     ]
     context: dict[str, object] = {
         "request": request,
