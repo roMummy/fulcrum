@@ -102,6 +102,12 @@ def begin_account_connection(
         status="stopped",
     )
     values = dict(connection_values)
+    provider_node_id = int(values.get("provider_node_id") or 0) or None
+    provider_account_id = int(values.get("provider_account_id") or 0) or None
+    if not definition.requires_executor_binding:
+        # 执行端主键是企业微信专项配置，其他渠道即使收到伪造表单值也必须清空。
+        provider_node_id = None
+        provider_account_id = None
     channel = add_channel(
         db,
         ChannelCreate(
@@ -114,8 +120,8 @@ def begin_account_connection(
             dm_policy="allowlist",
             allow_from="",
             adapter_config_json=str(values.get("adapter_config_json") or ""),
-            provider_node_id=int(values.get("provider_node_id") or 0) or None,
-            provider_account_id=int(values.get("provider_account_id") or 0) or None,
+            provider_node_id=provider_node_id,
+            provider_account_id=provider_account_id,
             is_enabled=False,
         ),
         status="draft",

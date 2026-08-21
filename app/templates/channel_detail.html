@@ -4,8 +4,8 @@
 {%- endmacro %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <button class="btn" type="button" data-modal-open="edit-channel-modal">修改配置</button>
-  <span class="chip chip-outline">渠道 #{{ channel.id }}</span>
+  <button class="btn" type="button" data-modal-open="edit-channel-modal">高级设置</button>
+  <span class="chip chip-outline">账号 #{{ channel.id }}</span>
   <span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span>
   <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span>
 </div>
@@ -14,26 +14,25 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Operations</p>
-      <h2>渠道配置与常用操作</h2>
-      <p class="muted-text">当前机器人：{{ bot_name_map.get(channel.bot_id, 'Bot') }} (#{{ channel.bot_id }}) / {{ channel.name }}</p>
+      <p class="section-kicker">Account</p>
+      <h2>账号状态与常用操作</h2>
     </div>
     <div class="actions">
       <form method="post" action="/channels/{{ channel.id }}/health-check">
         <button class="btn btn-secondary" type="submit">健康检查</button>
       </form>
       <form method="post" action="/channels/{{ channel.id }}/toggle">
-        <button class="btn" type="submit">{{ '停用渠道' if channel.is_enabled else '启用渠道' }}</button>
+        <button class="btn" type="submit">{{ '停用账号' if channel.is_enabled else '启用账号' }}</button>
       </form>
     </div>
   </div>
 
-  {# Provider 专项动作数量较多，默认折叠，避免用户刚进详情页就被一组相似按钮淹没。 #}
+  {# 企业微信客户端专项动作默认折叠，首屏只保留账号状态和常用业务操作。 #}
   {% if channel.channel_type == 'workwechat' %}
   <details class="action-disclosure provider-action-panel">
     <summary>
       <div class="action-disclosure-copy">
-        <h3>Provider 专项操作</h3>
+        <h3>企业微信客户端操作</h3>
       </div>
       <span class="action-disclosure-hint"></span>
     </summary>
@@ -74,7 +73,7 @@
       <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
         <button class="btn btn-secondary" type="submit">同步企微联系人</button>
       </form>
-      {% if channel.provider_node %}<a class="btn btn-secondary" href="/provider-nodes/{{ channel.provider_node.id }}">查看 Provider 节点</a>{% endif %}
+      {% if channel.provider_node %}<a class="btn btn-secondary" href="/provider-nodes/{{ channel.provider_node.id }}">查看企业微信客户端</a>{% endif %}
       <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
       <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
       {% endif %}
@@ -86,42 +85,43 @@
   <div class="stack-panel">
       <div class="stats-grid compact-grid time-metric-grid">
         <div class="metric-item ">
-          <span>Token 预览</span>
-          <strong>{{ token_preview }}</strong>
+          <span>连接状态</span>
+          <strong>{{ connection.label }}</strong>
         </div>
         <div class="metric-item ">
-          <span>当前状态</span>
-          <strong>{{ channel.status or '-' }}</strong>
+          <span>平台</span>
+          <strong>{{ channel.channel_type|channel_type_label }}</strong>
         </div>
         <div class="metric-item ">
-          <span>API Base</span>
-          <strong>{{ '云端模式不需要' if health_checks.api_base_not_required else ('已配置' if health_checks.api_base else '缺失') }}</strong>
+          <span>机器人</span>
+          <strong>{{ bot_name_map.get(channel.bot_id, '机器人') }}</strong>
         </div>
         <div class="metric-item ">
-          <span>Webhook</span>
-          <strong>{{ '云端模式不需要' if health_checks.webhook_not_required else ('已配置' if health_checks.webhook_path else '缺失') }}</strong>
+          <span>额度</span>
+          <strong>{{ '已占用' if binding and binding.status == 'active' else '未占用' }}</strong>
         </div>
         <div class="metric-item ">
-          <span>Adapter Config</span>
-          <strong>{{ '已配置' if health_checks.adapter_config else '缺失' }}</strong>
+          <span>可用余额</span>
+          <strong>{{ quota.remaining if quota else '-' }}</strong>
         </div>
         <div class="metric-item metric-item-time ">
-          <span>最近健康检查</span>
-          <strong class="stat-value stat-value-time">{{ channel_health_timeline.latest.created_at|bj_time if channel_health_timeline.latest else '-' }}</strong>
+          <span>最近在线</span>
+          <strong class="stat-value stat-value-time">{{ last_online_at|bj_time if last_online_at else '-' }}</strong>
         </div>
       </div>
-      <div class="subsection">
+      {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
+      <details class="action-disclosure">
+        <summary><div class="action-disclosure-copy"><h3>高级连接信息</h3></div><span class="action-disclosure-hint"></span></summary>
+        <div class="action-disclosure-body">
         <table class="table table-tight">
           <tbody>
-            <tr><th>Bot Token</th><td>{{ '已单独保存' if health_checks.bot_token else '未配置' }}</td></tr>
             <tr><th>最近成功</th><td>{{ channel_health_timeline.latest_success_at|bj_time if channel_health_timeline.latest_success_at else '-' }}</td></tr>
             <tr><th>最近失败</th><td>{{ channel_health_timeline.latest_failure_at|bj_time if channel_health_timeline.latest_failure_at else '-' }}</td></tr>
-            <tr><th>Webhook Path</th><td>{{ '云端模式不需要' if health_checks.webhook_not_required else (channel.webhook_path or '-') }}</td></tr>
-            <tr><th>API Base</th><td>{{ '云端模式不需要' if health_checks.api_base_not_required else (channel.api_base or '-') }}</td></tr>
-            <tr><th>Allow From</th><td>{{ channel.allow_from or '-' }}</td></tr>
+            <tr><th>服务地址</th><td>{{ '客户端主动连接' if health_checks.api_base_not_required else (channel.api_base or '-') }}</td></tr>
+            <tr><th>私聊策略</th><td>{{ channel.dm_policy or '-' }}</td></tr>
             {% if channel.channel_type == 'workwechat' %}
-            <tr><th>企微任务模式</th><td>Provider 节点长轮询</td></tr>
-            <tr><th>Provider 节点</th><td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
+            <tr><th>连接方式</th><td>企业微信客户端主动连接</td></tr>
+            <tr><th>企业微信客户端</th><td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
             <tr><th>企微账号</th><td>{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未绑定{% endif %}</td></tr>
             {% endif %}
             {% if channel.channel_type == 'wechat_ipad' %}
@@ -129,7 +129,8 @@
             {% endif %}
           </tbody>
         </table>
-      </div>
+        </div>
+      </details>
   </div>
 </section>
 
@@ -1203,16 +1204,16 @@
     <div class="app-modal-head">
       <div>
         <p class="section-kicker">Edit</p>
-        <h2>修改渠道配置</h2>
+        <h2>账号高级设置</h2>
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/channels/{{ channel.id }}/edit" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}" {% if bot.id == channel.bot_id %}selected{% endif %}>{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
-      <label><span>渠道名称</span><input name="name" value="{{ channel.name }}" required /></label>
+      <input type="hidden" name="bot_id" value="{{ channel.bot_id }}" />
+      <label class="full-row"><span>账号名称</span><input name="name" value="{{ channel.name }}" required /></label>
       <input type="hidden" name="channel_type" value="{{ channel.channel_type }}" />
-      <label><span>渠道类型</span><input value="{{ channel_definition.label }}" disabled /></label>
+      <label><span>平台</span><input value="{{ channel_definition.label }}" disabled /></label>
       {% if channel_config_field_map.get('provider_node_id') %}
       <label><span>{{ channel_config_field_map.provider_node_id.label }}</span><select name="provider_node_id" data-provider-node-select><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}<option value="{{ node.id }}" {% if node.id == channel.provider_node_id %}selected{% endif %}>{{ node.name }}{% if node.status != 'active' %}（{{ node.status }}）{% endif %}</option>{% endfor %}</select></label>
       {% endif %}
@@ -1246,9 +1247,6 @@
       {% endif %}
       {% if channel_config_field_map.get('allow_from') %}
       <label class="full-row"><span>{{ channel_config_field_map.allow_from.label }}</span><textarea name="allow_from" rows="{{ channel_config_field_map.allow_from.rows or 3 }}">{{ channel.allow_from or '' }}</textarea></label>
-      {% endif %}
-      {% if channel_config_field_map.get('adapter_config_json') %}
-      <label class="full-row"><span>{{ channel_config_field_map.adapter_config_json.label }}</span><textarea name="adapter_config_json" rows="{{ channel_config_field_map.adapter_config_json.rows or 5 }}">{{ channel.adapter_config_json or '' }}</textarea></label>
       {% endif %}
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">保存修改</button>

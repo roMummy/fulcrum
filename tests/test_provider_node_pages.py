@@ -68,7 +68,13 @@ def provider_page_context(tmp_path, monkeypatch):
     with factory() as db:
         alpha = Tenant(code="alpha", name="甲租户", status="active")
         beta = Tenant(code="beta", name="乙租户", status="active")
-        plan = SaasPlan(code="provider-pages", name="节点页面套餐", provider_node_limit=5, status="active")
+        plan = SaasPlan(
+            code="provider-pages",
+            name="节点页面套餐",
+            provider_node_limit=5,
+            bot_limit=5,
+            status="active",
+        )
         db.add_all([alpha, beta, plan])
         db.flush()
         db.add(
@@ -98,15 +104,26 @@ def provider_page_context(tmp_path, monkeypatch):
             )
         ]
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人")
-        active_node = ProviderNode(tenant_id=alpha.id, name="客服电脑A", status="active")
+        active_node = ProviderNode(
+            tenant_id=alpha.id,
+            name="客服电脑A",
+            status="active",
+            device_id="provider-pages-alpha-active",
+        )
         disabled_node = ProviderNode(tenant_id=alpha.id, name="停用电脑", status="disabled")
-        beta_node = ProviderNode(tenant_id=beta.id, name="乙节点", status="active")
+        beta_node = ProviderNode(
+            tenant_id=beta.id,
+            name="乙节点",
+            status="active",
+            device_id="provider-pages-beta-active",
+        )
         db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node])
         db.flush()
         account_a = ProviderNodeAccount(
             tenant_id=alpha.id,
             provider_node_id=active_node.id,
             account_key="account-a",
+            external_user_id="workwechat-account-a",
             display_name="企微甲",
             status="online",
             last_seen_at=now_shanghai(),

@@ -1,0 +1,233 @@
+{% extends 'base.html' %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/channels">返回账号清单</a>
+  {% if quota %}<span class="chip chip-outline">剩余额度 {{ quota.remaining }}</span>{% endif %}
+</div>
+{% endblock %}
+{% block content %}
+{% set step_number = 1 if stage in ['choose', 'wechat_method'] else (3 if stage == 'confirm' else 2) %}
+<nav class="connection-steps" aria-label="账号接入进度">
+  <div class="connection-step{% if step_number >= 1 %} is-active{% endif %}"><span>1</span><strong>选择平台</strong></div>
+  <div class="connection-step{% if step_number >= 2 %} is-active{% endif %}"><span>2</span><strong>连接账号</strong></div>
+  <div class="connection-step{% if step_number >= 3 %} is-active{% endif %}"><span>3</span><strong>确认启用</strong></div>
+</nav>
+
+{% if quota_error %}
+<section class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</section>
+{% endif %}
+
+{% if stage == 'choose' %}
+<section class="work-surface connection-surface">
+  <div class="section-head">
+    <div><p class="section-kicker">Platform</p><h2>选择账号平台</h2></div>
+  </div>
+  <div class="connection-choice-list">
+    <a class="connection-choice" href="/channels/connect?platform=wechat">
+      <span class="connection-choice-mark">微</span>
+      <span><strong>个人微信</strong><small>iPad 协议或 Windows 客户端</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=workwechat">
+      <span class="connection-choice-mark">企</span>
+      <span><strong>企业微信</strong><small>连接企业微信客户端中的在线账号</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=telegram">
+      <span class="connection-choice-mark">TG</span>
+      <span><strong>Telegram</strong><small>使用 Bot Token 验证机器人身份</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+  </div>
+</section>
+{% elif stage == 'wechat_method' %}
+<section class="work-surface connection-surface">
+  <div class="section-head">
+    <div><p class="section-kicker">Connection</p><h2>选择个人微信连接方式</h2></div>
+  </div>
+  <div class="connection-choice-list">
+    <a class="connection-choice" href="/channels/connect?channel_type=wechat_ipad">
+      <span class="connection-choice-mark">扫</span>
+      <span><strong>iPad 协议</strong><small>连接协议服务后扫码登录</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=wechat_winauto">
+      <span class="connection-choice-mark">Win</span>
+      <span><strong>Windows 客户端</strong><small>连接本地客户端并读取当前微信账号</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+  </div>
+  <div class="form-actions-inline top-gap"><a class="btn btn-secondary" href="/channels/connect">上一步</a></div>
+</section>
+{% elif stage == 'configure' %}
+<section class="work-surface connection-surface">
+  <div class="section-head">
+    <div>
+      <p class="section-kicker">Connect</p>
+      <h2>
+        {% if requested_type == 'telegram' %}连接 Telegram
+        {% elif requested_type == 'workwechat' %}连接企业微信
+        {% elif requested_type == 'wechat_ipad' %}连接微信 iPad 协议
+        {% else %}连接微信 Windows 客户端{% endif %}
+      </h2>
+    </div>
+  </div>
+  <form method="post" action="/channels/connect/start" class="form-grid connection-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="channel_type" value="{{ requested_type }}" />
+    <label class="full-row"><span>账号名称</span><input name="display_name" maxlength="100" autocomplete="off" placeholder="例如：售后客服" required /></label>
+    {% if requested_type == 'telegram' %}
+    <label class="full-row"><span>Bot Token</span><input name="bot_token" type="password" autocomplete="off" required /></label>
+    {% elif requested_type in ['wechat_ipad', 'wechat_winauto'] %}
+    <label class="full-row"><span>{% if requested_type == 'wechat_ipad' %}协议服务地址{% else %}客户端地址{% endif %}</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="http://127.0.0.1:{% if requested_type == 'wechat_ipad' %}8848{% else %}8182{% endif %}" required /></label>
+    <label class="full-row"><span>访问凭证</span><input name="bot_token" type="password" autocomplete="off" /></label>
+    {% elif requested_type == 'workwechat' %}
+    <label>
+      <span>企业微信客户端</span>
+      <select name="provider_node_id" id="connection-provider-node" required>
+        <option value="">请选择已连接客户端</option>
+        {% for node in provider_nodes if node.status == 'active' %}
+        <option value="{{ node.id }}">{{ node.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>在线账号</span>
+      <select name="provider_account_id" id="connection-provider-account" required>
+        <option value="">请选择在线账号</option>
+        {% for node in provider_nodes if node.status == 'active' %}
+          {% for account in node.accounts if account.status == 'online' %}
+          <option value="{{ account.id }}" data-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>
+          {% endfor %}
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
+    <div class="full-row form-actions-inline">
+      <button class="btn" type="submit">验证账号</button>
+      <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}">上一步</a>
+      {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes">连接新客户端</a>{% endif %}
+    </div>
+  </form>
+</section>
+{% elif stage == 'progress' and channel %}
+<section class="work-surface connection-surface"{% if channel.channel_type == 'wechat_ipad' %} id="connection-ipad-flow"{% endif %}>
+  <div class="section-head">
+    <div><p class="section-kicker">Verification</p><h2>{{ channel.channel_type|channel_type_label }}账号验证</h2></div>
+    <span class="chip {% if connection.state == 'failed' %}badge-error{% else %}chip-muted{% endif %}" id="connection-state-label">{{ connection.label }}</span>
+  </div>
+  <div class="connection-progress-body">
+    {% if channel.channel_type == 'wechat_ipad' %}
+    <div class="connection-qrcode-panel">
+      <img id="connection-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url if wechat_ipad_overview and wechat_ipad_overview.qrcode_image_url else '' }}" alt="微信登录二维码"{% if not wechat_ipad_overview or not wechat_ipad_overview.qrcode_visible %} hidden{% endif %} />
+      <div>
+        <strong id="connection-progress-title">使用微信扫码登录</strong>
+        <p class="muted-text" id="connection-progress-message" aria-live="polite">{{ wechat_ipad_overview.last_status_summary if wechat_ipad_overview else connection.message }}</p>
+        <div class="form-actions-inline top-gap">
+          <button class="btn" type="button" id="connection-ipad-start">获取二维码</button>
+          <button class="btn btn-secondary" type="button" id="connection-ipad-refresh">重新扫码</button>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p aria-live="polite">{{ connection.message or '正在检查账号连接状态' }}</p>
+    {% endif %}
+    <form method="post" action="/channels/{{ channel.id }}/connect/verify" class="form-actions-inline top-gap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn" type="submit">重新验证</button>
+      <a class="btn btn-secondary" href="/channels">稍后继续</a>
+    </form>
+  </div>
+</section>
+{% elif stage == 'confirm' and channel %}
+<section class="work-surface connection-surface">
+  <div class="section-head">
+    <div><p class="section-kicker">Confirm</p><h2>确认启用账号</h2></div>
+    <span class="chip chip-success">验证成功</span>
+  </div>
+  <dl class="connection-confirm-list">
+    <div><dt>平台</dt><dd>{{ channel.channel_type|channel_type_label }}</dd></div>
+    <div><dt>已验证账号</dt><dd>{{ connection.display_name }}</dd></div>
+    <div><dt>额度占用</dt><dd>1 个机器人额度</dd></div>
+  </dl>
+  <form method="post" action="/channels/{{ channel.id }}/connect/finalize" class="form-grid connection-form top-gap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>显示名称</span><input name="display_name" maxlength="100" value="{{ connection.display_name }}" autocomplete="off" required /></label>
+    <div class="full-row form-actions-inline">
+      <button class="btn" type="submit">确认并启用</button>
+      <a class="btn btn-secondary" href="/channels">取消</a>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if stage == 'configure' and requested_type == 'workwechat' %}
+<script>
+  (() => {
+    const nodeSelect = document.getElementById("connection-provider-node");
+    const accountSelect = document.getElementById("connection-provider-account");
+    if (!nodeSelect || !accountSelect) return;
+    const syncAccounts = () => {
+      const nodeId = nodeSelect.value;
+      Array.from(accountSelect.options).forEach((option, index) => {
+        if (index === 0) return;
+        option.hidden = option.dataset.nodeId !== nodeId;
+        option.disabled = option.hidden;
+      });
+      if (accountSelect.selectedOptions[0]?.disabled) accountSelect.value = "";
+    };
+    nodeSelect.addEventListener("change", syncAccounts);
+    syncAccounts();
+  })();
+</script>
+{% endif %}
+
+{% if stage == 'progress' and channel and channel.channel_type == 'wechat_ipad' %}
+<script>
+  (() => {
+    const startButton = document.getElementById("connection-ipad-start");
+    const refreshButton = document.getElementById("connection-ipad-refresh");
+    const image = document.getElementById("connection-qrcode-image");
+    const message = document.getElementById("connection-progress-message");
+    let pollTimer = 0;
+
+    // 扫码接口只返回统一页面需要的状态和二维码地址；登录成功后再调用通用身份验证路由。
+    const renderFlow = (payload) => {
+      const overview = payload?.overview || {};
+      message.textContent = overview.last_status_summary || payload?.message || "等待扫码";
+      if (overview.qrcode_image_url) {
+        image.src = overview.qrcode_image_url;
+        image.hidden = !overview.qrcode_visible;
+      }
+      if (overview.login_state === "online" || overview.qrcode_status === "success") {
+        window.clearTimeout(pollTimer);
+        document.querySelector('form[action$="/connect/verify"]')?.requestSubmit();
+        return;
+      }
+      pollTimer = window.setTimeout(poll, 1800);
+    };
+    const requestFlow = async (url) => {
+      startButton.disabled = true;
+      refreshButton.disabled = true;
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({login_profile: "ipad"}),
+        });
+        if (!response.ok) throw new Error("登录服务暂时不可用");
+        renderFlow(await response.json());
+      } catch (error) {
+        message.textContent = error instanceof Error ? error.message : "登录服务暂时不可用";
+      } finally {
+        startButton.disabled = false;
+        refreshButton.disabled = false;
+      }
+    };
+    const poll = () => requestFlow("/channels/{{ channel.id }}/wechat-ipad/login-flow/poll");
+    startButton.addEventListener("click", () => requestFlow("/channels/{{ channel.id }}/wechat-ipad/login-flow/start"));
+    refreshButton.addEventListener("click", () => requestFlow("/channels/{{ channel.id }}/wechat-ipad/login-flow/refresh"));
+  })();
+</script>
+{% endif %}
+{% endblock %}

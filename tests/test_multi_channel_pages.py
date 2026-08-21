@@ -35,8 +35,8 @@ def _channel_form(ids: dict, csrf_token: str, **overrides) -> dict[str, object]:
     return payload
 
 
-def test_channel_page_lists_all_formal_channel_types(provider_page_context) -> None:
-    """租户创建入口必须直接展示统一目录中的四种正式渠道。"""
+def test_account_page_uses_compact_business_list(provider_page_context) -> None:
+    """账号接入首页只展示业务清单，不再平铺协议和执行端字段。"""
 
     client, _ids = provider_page_context
     _login(client, "admin")
@@ -44,15 +44,12 @@ def test_channel_page_lists_all_formal_channel_types(provider_page_context) -> N
     response = client.get("/channels")
 
     assert response.status_code == 200
-    assert 'select name="channel_type"' in response.text
-    for channel_type, label in (
-        ("workwechat", "企业微信 Hook"),
-        ("wechat_ipad", "微信 iPad 协议"),
-        ("wechat_winauto", "微信 Windows"),
-        ("telegram", "Telegram"),
-    ):
-        assert f'value="{channel_type}"' in response.text
-        assert label in response.text
+    assert "账号接入" in response.text
+    assert "账号总数" in response.text
+    assert "剩余额度" in response.text
+    assert 'href="/channels/connect"' in response.text
+    for removed_text in ("API Base", "Webhook", "Adapter Config", "新增渠道"):
+        assert removed_text not in response.text
 
 
 @pytest.mark.parametrize("channel_type", ("wechat_ipad", "wechat_winauto", "telegram"))

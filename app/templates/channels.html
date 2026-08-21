@@ -1,168 +1,76 @@
 {% extends 'base.html' %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <button class="btn" type="button" data-modal-open="create-channel-modal">新增渠道</button>
-  <span class="chip chip-outline">总渠道 {{ channels|length }}</span>
-  <span class="chip">{{ bots|length }} 个机器人可绑定</span>
+  <a class="btn" href="/channels/connect">接入账号</a>
+  {% if quota %}<span class="chip chip-outline">剩余额度 {{ quota.remaining }}</span>{% endif %}
 </div>
 {% endblock %}
 {% block content %}
-<section class="work-surface">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Coverage</p>
-      <h2>接入态势</h2>
-    </div>
+{% set online_total = account_rows | selectattr('channel.is_enabled') | list | length %}
+<section class="metric-band account-metric-band" aria-label="账号接入概览">
+  <div class="metric-item">
+    <span>账号总数</span>
+    <strong>{{ account_rows|length }}</strong>
   </div>
-  <div class="stats-grid compact-grid">
-    <div class="metric-item ">
-      <span>启用中</span>
-      <strong>{{ channels | selectattr('is_enabled') | list | length }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>已配置 Webhook</span>
-      <strong>{{ channels | selectattr('webhook_path') | list | length }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>已录入 Token</span>
-      <strong>{{ channels | selectattr('bot_token_masked') | list | length }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>Adapter Config</span>
-      <strong>{{ channels | selectattr('adapter_config_json') | list | length }}</strong>
-    </div>
+  <div class="metric-item">
+    <span>已启用</span>
+    <strong>{{ online_total }}</strong>
   </div>
-  <p class="muted-text">这些指标可以帮助你快速确认哪些渠道已经接通、哪些还缺少关键配置。</p>
+  <div class="metric-item">
+    <span>剩余额度</span>
+    <strong>{{ quota.remaining if quota else '-' }}</strong>
+  </div>
 </section>
 
-<section class="work-surface">
+{% if quota_error %}
+<section class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</section>
+{% endif %}
+
+<section class="work-surface account-inventory">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Channel inventory</p>
-      <h2>渠道列表</h2>
+      <p class="section-kicker">Accounts</p>
+      <h2>账号清单</h2>
     </div>
-    <span class="chip chip-outline">当前清单</span>
   </div>
-  <table class="table">
-    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>执行端绑定</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">扩展配置</th><th class="col-type">私聊策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
-    <tbody>
-      {% for channel in channels %}
-      {% set workwechat_cloud_poll_config = workwechat_cloud_poll_config_map.get(channel.id, {}) if workwechat_cloud_poll_config_map else {} %}
-      {% set is_workwechat_cloud_poll = channel.channel_type == 'workwechat' and workwechat_cloud_poll_config.workwechat_delivery_mode == 'cloud_poll' %}
-      <tr>
-        <td class="col-id">#{{ channel.id }}</td>
-        <td>
-          <div>{{ channel.name }}</div>
-          <div class="muted-text">{{ bot_name_map.get(channel.bot_id, 'Bot') }} (#{{ channel.bot_id }})</div>
-        </td>
-        <td class="col-type"><span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span></td>
-        <td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a><div class="muted-text">{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未选账号{% endif %}</div>{% else %}-{% endif %}</td>
-        <td>{{ '云端模式不需要' if is_workwechat_cloud_poll else (channel.api_base or '-') }}</td>
-        <td>{{ channel.bot_token_masked or '-' }}</td>
-        <td>{{ channel.webhook_path or '-' }}</td>
-        <td class="col-status"><span class="chip {% if channel.adapter_config_json %}chip-success{% else %}chip-muted{% endif %}">{{ '已配置' if channel.adapter_config_json else '缺失' }}</span></td>
-        <td class="col-type"><code>{{ channel.dm_policy }}</code></td>
-        <td class="col-status"><span class="badge badge-{{ channel.status|lower }}">{{ channel.status }}</span></td>
-        <td class="col-action"><a class="btn btn-small" href="/channels/{{ channel.id }}">详情</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% if account_rows %}
+  {# 账号清单使用连续记录行，移动端重新排版，不依赖固定宽表产生横向页面滚动。 #}
+  <div class="record-list account-record-list">
+    {% for row in account_rows %}
+    <article class="record-row account-record-row">
+      <div class="record-primary">
+        <a class="record-link" href="/channels/{{ row.channel.id }}">{{ row.connection.display_name }}</a>
+        <span>{{ row.channel.channel_type|channel_type_label }}</span>
+      </div>
+      <dl class="record-meta">
+        <div>
+          <dt>连接状态</dt>
+          <dd><span class="chip {% if row.channel.is_enabled %}chip-success{% elif row.connection.state == 'failed' %}badge-error{% else %}chip-muted{% endif %}">{{ row.connection.label }}</span></dd>
+        </div>
+        <div>
+          <dt>机器人</dt>
+          <dd>{{ row.bot_name }}</dd>
+        </div>
+        <div>
+          <dt>最近在线</dt>
+          <dd>{{ row.last_online_at|bj_time if row.last_online_at else '-' }}</dd>
+        </div>
+        <div>
+          <dt>额度</dt>
+          <dd>{{ '已占用' if row.binding and row.binding.status == 'active' else '未占用' }}</dd>
+        </div>
+      </dl>
+      <div class="record-actions">
+        <a class="record-action-trigger" href="/channels/{{ row.channel.id }}" aria-label="查看 {{ row.connection.display_name }}" title="查看详情">&#8250;</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state account-empty-state">
+    <strong>还没有接入账号</strong>
+    <a class="btn" href="/channels/connect">接入第一个账号</a>
+  </div>
+  {% endif %}
 </section>
-
-<dialog class="app-modal" id="create-channel-modal">
-  <div class="app-modal-card">
-    <div class="app-modal-head">
-      <div>
-        <p class="section-kicker">Provisioning</p>
-        <h2>新增渠道</h2>
-      </div>
-      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
-    </div>
-    <form method="post" action="/channels" class="form-grid" data-channel-form>
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
-      <label><span>渠道名称</span><input name="name" placeholder="例如：微信主通道" required /></label>
-      <label><span>渠道类型</span><select name="channel_type" data-channel-type-select required>{% for definition in channel_type_definitions %}<option value="{{ definition.code }}">{{ definition.label }}</option>{% endfor %}</select></label>
-      <label data-channel-field="provider_node_id"><span data-channel-field-label>执行端节点</span><select name="provider_node_id" data-provider-node-select><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select></label>
-      <label data-channel-field="provider_account_id"><span data-channel-field-label>执行端账号</span><select name="provider_account_id" data-provider-account-select><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' %}{% for account in node.accounts if account.status == 'online' %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>{% endfor %}{% endfor %}</select></label>
-      <label data-channel-field="api_base"><span data-channel-field-label>API Base</span><input name="api_base" /></label>
-      <label data-channel-field="bot_token"><span data-channel-field-label>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" /></label>
-      <label data-channel-field="webhook_path"><span data-channel-field-label>Webhook Path</span><input name="webhook_path" /></label>
-      <label data-channel-field="dm_policy"><span data-channel-field-label>私聊策略</span><select name="dm_policy"><option value="allowlist">allowlist</option><option value="allow">allow</option><option value="deny">deny</option></select></label>
-      <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
-      <label data-channel-field="proxy_host"><span data-channel-field-label>代理地址</span><input name="proxy_host" /></label>
-      <label data-channel-field="proxy_port"><span data-channel-field-label>代理端口</span><input name="proxy_port" inputmode="numeric" /></label>
-      <label data-channel-field="proxy_username"><span data-channel-field-label>代理用户名</span><input name="proxy_username" autocomplete="off" /></label>
-      <label data-channel-field="proxy_password"><span data-channel-field-label>代理密码</span><input name="proxy_password" type="password" autocomplete="new-password" /></label>
-      <label class="full-row" data-channel-field="allow_from"><span data-channel-field-label>允许名单</span><textarea name="allow_from" rows="2"></textarea></label>
-      <label class="full-row" data-channel-field="adapter_config_json"><span data-channel-field-label>适配配置 JSON</span><textarea name="adapter_config_json" rows="5"></textarea></label>
-      <div class="full-row form-actions-inline">
-        <button class="btn" type="submit">创建渠道</button>
-        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-      </div>
-    </form>
-  </div>
-</dialog>
-{% endblock %}
-{% block scripts %}
-<script>
-(() => {
-  const form = document.querySelector("[data-channel-form]");
-  const typeSelect = form ? form.querySelector("[data-channel-type-select]") : null;
-  const enabledSelect = form ? form.querySelector("[name='is_enabled']") : null;
-  const fieldRows = form ? Array.from(form.querySelectorAll("[data-channel-field]")) : [];
-  const definitions = {{ channel_type_definitions | tojson }};
-  const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
-
-  // 页面只消费渠道目录输出的字段元数据；新增渠道类型时不再需要复制一套表单显隐规则。
-  const refreshChannelFields = () => {
-    if (!typeSelect) return;
-    const definition = definitionByCode.get(typeSelect.value);
-    const configuredFields = new Map((definition?.config_fields || []).map((field) => [field.name, field]));
-    const enabling = enabledSelect?.value === "true";
-    fieldRows.forEach((row) => {
-      const fieldName = row.dataset.channelField || "";
-      const field = configuredFields.get(fieldName);
-      const control = row.querySelector("input, select, textarea");
-      const label = row.querySelector("[data-channel-field-label]");
-      const visible = Boolean(field);
-      row.hidden = !visible;
-      row.style.display = visible ? "" : "none";
-      if (!control) return;
-      control.disabled = !visible;
-      control.required = Boolean(visible && enabling && field.required_when_enabled);
-      if (label && field?.label) label.textContent = field.label;
-      if (visible && "placeholder" in control) control.placeholder = field.placeholder || "";
-      if (visible && control.tagName === "TEXTAREA" && field.rows) control.rows = field.rows;
-    });
-  };
-
-  const nodeSelect = document.querySelector("[data-provider-node-select]");
-  const accountSelect = document.querySelector("[data-provider-account-select]");
-  const options = accountSelect ? Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]")) : [];
-  const refreshAccounts = () => {
-    if (!nodeSelect || !accountSelect) return;
-    const nodeId = nodeSelect.value;
-    let firstVisible = null;
-    options.forEach((option) => {
-      const visible = option.dataset.providerNodeId === nodeId;
-      option.hidden = !visible;
-      option.disabled = !visible;
-      if (visible && !firstVisible) firstVisible = option;
-    });
-    if (!options.some((option) => !option.hidden && option.value === accountSelect.value)) {
-      accountSelect.value = firstVisible ? firstVisible.value : "0";
-    }
-  };
-  typeSelect?.addEventListener("change", () => {
-    refreshChannelFields();
-    refreshAccounts();
-  });
-  enabledSelect?.addEventListener("change", refreshChannelFields);
-  nodeSelect?.addEventListener("change", refreshAccounts);
-  refreshChannelFields();
-  refreshAccounts();
-})();
-</script>
 {% endblock %}
