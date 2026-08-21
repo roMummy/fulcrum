@@ -110,6 +110,7 @@ def test_home_uses_yaoshu_brand_generic_positioning_and_real_console_asset(marke
     assert response.status_code == 200
     assert '<h1>曜枢 AI</h1>' in response.text
     assert "一个后台，统一运营所有智能机器人" in response.text
+    assert "支持微信、企业微信、Telegram 等渠道" in response.text
     assert "免费试用 7 天" in response.text
     assert "/static/images/yaoshu-console.webp" in response.text
     assert "仅企业微信" not in response.text

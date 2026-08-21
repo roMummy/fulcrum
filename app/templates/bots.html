@@ -35,7 +35,7 @@
             <th class="col-id">选择</th>
             <th>名称</th>
             <th class="col-status">运行状态</th>
-            <th class="col-count">企业微信账号</th>
+            <th class="col-count">渠道</th>
             <th class="col-count">插件</th>
             <th class="col-bool">启用状态</th>
             <th class="col-action">操作</th>
@@ -61,7 +61,7 @@
     </div>
     {% else %}
     {# 空状态脱离固定宽度表格，在窄屏上始终使用当前工作表面的完整可见宽度。 #}
-    <div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加企业微信账号。</p></div>
+    <div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加渠道。</p></div>
     {% endif %}
   </form>
 
@@ -72,7 +72,7 @@
     action="/bots/{{ row.bot.id }}/delete"
     data-confirm-mode="match-text"
     data-confirm-title="删除机器人"
-    data-confirm-message="此操作会级联删除该机器人关联的企业微信账号、插件绑定和会话数据。"
+    data-confirm-message="此操作会级联删除该机器人关联的渠道、插件绑定和会话数据。"
     data-confirm-match-text="{{ row.bot.name }}"
     data-confirm-match-label="请输入机器人名称以确认删除："
   >

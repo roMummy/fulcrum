@@ -24,7 +24,7 @@
         action="/bots/{{ bot.id }}/delete"
         data-confirm-mode="match-text"
         data-confirm-title="删除机器人"
-        data-confirm-message="此操作会级联删除该机器人关联的企业微信账号、插件绑定和会话数据。"
+        data-confirm-message="此操作会级联删除该机器人关联的渠道、插件绑定和会话数据。"
         data-confirm-match-text="{{ bot.name }}"
         data-confirm-match-label="请输入机器人名称以确认删除："
       >
@@ -39,7 +39,7 @@
   <h2>运行摘要</h2>
   <div class="stats-grid compact-grid">
     <div class="metric-item"><span>运行状态</span><strong><span class="badge badge-{{ bot.status|lower }}">{{ bot.status }}</span></strong></div>
-    <div class="metric-item"><span>企业微信账号</span><strong>{{ channel_count }}</strong></div>
+    <div class="metric-item"><span>渠道</span><strong>{{ channel_count }}</strong></div>
     <div class="metric-item"><span>插件</span><strong>{{ binding_count }}</strong></div>
     <div class="metric-item"><span>会话</span><strong>{{ conversation_count }}</strong></div>
   </div>
@@ -47,8 +47,8 @@
 
 <section class="work-surface">
   <div class="section-head">
-    <div><p class="section-kicker">Work WeChat</p><h2>企业微信账号</h2></div>
-    <a class="btn btn-secondary btn-small" href="/channels">管理账号</a>
+    <div><p class="section-kicker">Channels</p><h2>渠道</h2></div>
+    <a class="btn btn-secondary btn-small" href="/channels">管理渠道</a>
   </div>
   <table class="table">
     <thead><tr><th>名称</th><th class="col-type">类型</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
@@ -61,7 +61,7 @@
         <td class="col-action"><a class="btn btn-small" href="/channels/{{ item.id }}">详情</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="4"><div class="empty-state"><strong>还没有企业微信账号</strong><p>前往接入页添加客户电脑上的企业微信账号。</p></div></td></tr>
+      <tr><td colspan="4"><div class="empty-state"><strong>还没有渠道</strong><p>前往接入页添加渠道。</p></div></td></tr>
       {% endfor %}
     </tbody>
   </table>

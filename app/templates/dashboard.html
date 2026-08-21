@@ -354,8 +354,8 @@
   </div>
   <div class="metric-band metric-band-compact">
     <div class="metric-item">
-      <span>在线企业微信账号</span>
-      <strong>{{ ops_snapshot.online_workwechat }}</strong>
+      <span>在线渠道</span>
+      <strong>{{ ops_snapshot.online_channels }}</strong>
     </div>
     <div class="metric-item">
       <span>异常渠道</span>
@@ -389,7 +389,7 @@
     <a class="chip chip-action" href="/bots">进入详情</a>
   </div>
   <table class="table">
-    <thead><tr><th>机器人</th><th class="col-status">状态</th><th class="col-count">企业微信账号</th><th class="col-count">插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th>机器人</th><th class="col-status">状态</th><th class="col-count">渠道</th><th class="col-count">插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for row in bot_rows %}
       <tr>

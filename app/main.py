@@ -1439,15 +1439,17 @@ async def dashboard(request: Request):
         ops_snapshot = {
             "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True))) or 0,
             "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True))) or 0,
-            "online_workwechat": db.scalar(
+            "online_channels": db.scalar(
                 select(func.count(Channel.id)).where(
-                    Channel.channel_type == "workwechat",
-                    Channel.login_state == "online",
+                    Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
+                    Channel.is_enabled.is_(True),
+                    Channel.status == "online",
                 )
             )
             or 0,
             "abnormal_channels": db.scalar(
                 select(func.count(Channel.id)).where(
+                    Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
                     Channel.is_enabled.is_(True),
                     Channel.status.in_(("degraded", "offline", "failed")),
                 )
@@ -1551,8 +1553,8 @@ async def dashboard(request: Request):
             risk_items.append(f"当前有 {ops_snapshot['abnormal_channels']} 个启用渠道状态异常，建议优先看渠道页和错误页。")
         if ops_snapshot["failed_jobs"]:
             risk_items.append(f"任务队列里有 {ops_snapshot['failed_jobs']} 个失败任务，可能影响插件或出站链路。")
-        if not ops_snapshot["online_workwechat"]:
-            risk_items.append("当前没有在线的企业微信账号，相关入站和心跳能力可能不可用。")
+        if not ops_snapshot["online_channels"]:
+            risk_items.append("当前没有在线渠道，相关入站、出站和状态同步能力可能不可用。")
         if alert_summary["total"]:
             risk_items.append(f"当前有 {alert_summary['total']} 条未恢复告警，请优先关注首页告警摘要和监控页。")
         if not risk_items:
@@ -1676,7 +1678,7 @@ async def create_bot_action(
                 status_code=303,
             )
         record_audit(db, "bot.create", "bot", bot.id, f"创建机器人 {bot.name}")
-        notice = quote("机器人已创建，请继续添加企业微信账号")
+        notice = quote("机器人已创建，请继续添加渠道")
         return RedirectResponse(url=f"/bots/{bot.id}?notice={notice}", status_code=303)
     finally:
         db.close()
