@@ -29,10 +29,10 @@
       {% endif %}
   {% else %}
   <div class="app-frame">
-    {# 复选框只服务移动端无脚本导航；桌面端侧栏始终可见，业务操作不依赖 JavaScript。 #}
+    {# 复选框只控制移动端主导航展开状态，桌面和移动端始终复用同一份服务端导航数据。 #}
     <input class="app-nav-toggle" id="app-nav-toggle" type="checkbox" aria-label="展开后台导航" />
-    <aside class="app-sidebar">
-      <div class="app-sidebar-head">
+    <header class="app-topbar">
+      <div class="app-topbar-inner">
         <a href="{{ backend_home_href }}" class="brand">
           <span class="brand-mark">曜</span>
           <span class="brand-copy">
@@ -40,50 +40,55 @@
             <small>{% if is_platform_area %}平台管理后台{% else %}企业工作台{% endif %}</small>
           </span>
         </a>
-      </div>
 
-      {% set visible_nav_items = primary_nav_items|default(nav_items) %}
-      {% set overflow_nav_items = secondary_nav_items|default([]) %}
-      <nav class="app-sidebar-nav" aria-label="主导航">
-        <p class="app-nav-label">{% if is_platform_area %}平台功能{% else %}企业功能{% endif %}</p>
-        {% for item in visible_nav_items %}
-        <a href="{{ item.href }}" class="nav-link{% if item.active %} active{% endif %}">{{ item.label }}</a>
-        {% endfor %}
-        {% if overflow_nav_items %}
-        <p class="app-nav-label app-nav-label-secondary">更多工具</p>
-        {% for item in overflow_nav_items %}
-        <a href="{{ item.href }}" class="nav-link{% if item.active %} active{% endif %}">{{ item.label }}</a>
-        {% endfor %}
+        {% set visible_nav_items = primary_nav_items|default(nav_items) %}
+        {% set overflow_nav_items = secondary_nav_items|default([]) %}
+        <nav class="app-primary-nav" aria-label="主导航">
+          {% for item in visible_nav_items %}
+          <a href="{{ item.href }}" class="nav-link{% if item.active %} active{% endif %}">{{ item.label }}</a>
+          {% endfor %}
+          {% if overflow_nav_items %}
+          <details class="nav-more">
+            <summary class="nav-more-trigger{% if secondary_nav_active %} active{% endif %}">更多</summary>
+            <div class="nav-popover nav-more-menu">
+              {% for item in overflow_nav_items %}
+              <a href="{{ item.href }}" class="nav-popover-link{% if item.active %} active{% endif %}">{{ item.label }}</a>
+              {% endfor %}
+            </div>
+          </details>
+          {% endif %}
+        </nav>
+
+        {% if current_user %}
+        <details class="account-menu nav-more">
+          <summary class="account-menu-trigger" aria-label="打开账号菜单">
+            <span class="account-avatar" aria-hidden="true">{{ current_user.display_name[:1] }}</span>
+            <span class="account-summary">
+              <strong>{{ current_user.display_name }}</strong>
+              <small>{% if is_platform_area %}平台员工{% else %}企业账号{% endif %}</small>
+            </span>
+          </summary>
+          <div class="nav-popover account-menu-panel">
+            <div class="account-menu-identity">
+              <strong>{{ current_user.display_name }}</strong>
+              <span>{{ current_user.role }}</span>
+            </div>
+            <a class="nav-popover-link" href="{{ password_action|default('/profile/password', true) }}">账号安全</a>
+            {# 注销会销毁数据库会话，必须提交当前会话配套的 CSRF 原始值，不能改成普通链接。 #}
+            <form method="post" action="{{ logout_action|default('/logout', true) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true) }}" />
+              <button class="nav-popover-link account-logout" type="submit">退出登录</button>
+            </form>
+          </div>
+        </details>
         {% endif %}
-      </nav>
 
-      {% if current_user %}
-      <div class="app-sidebar-footer">
-        <div class="identity-chip">
-          <span class="chip-label">{% if is_platform_area %}平台员工{% else %}企业账号{% endif %}</span>
-          <strong>{{ current_user.display_name }}</strong>
-          <span>{{ current_user.role }}</span>
-        </div>
-        <div class="sidebar-actions">
-          <a class="sidebar-action-link" href="{{ password_action|default('/profile/password', true) }}">账号安全</a>
-          {# 注销是状态变更操作，必须提交当前数据库会话配套的 CSRF 原始值。 #}
-          <form method="post" action="{{ logout_action|default('/logout', true) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('', true) }}" />
-            <button class="sidebar-action-link" type="submit">退出</button>
-          </form>
-        </div>
+        {# 移动端菜单按钮使用稳定三线图形，不在狭窄顶部栏重复显示文字标签。 #}
+        <label class="app-nav-trigger" for="app-nav-toggle" aria-label="展开或收起导航"><span></span><span></span><span></span></label>
       </div>
-      {% endif %}
-    </aside>
+    </header>
 
     <div class="app-main">
-      {# 移动端顶部栏只承担品牌、当前后台身份和导航开关，页面操作仍位于主内容区。 #}
-      <header class="mobile-topbar">
-        <a href="{{ backend_home_href }}" class="mobile-brand"><span class="brand-mark">曜</span><strong>曜枢 AI</strong></a>
-        <span class="mobile-scope">{% if is_platform_area %}平台后台{% else %}企业后台{% endif %}</span>
-        <label class="app-nav-trigger" for="app-nav-toggle" aria-label="展开或收起导航"><span></span><span></span><span></span></label>
-      </header>
-
       <main class="workspace" id="main-content" tabindex="-1">
       <section class="page-header">
         <div class="page-header-copy">
