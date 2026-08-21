@@ -137,6 +137,30 @@ def authenticate_tenant_user(
     return user if verify_password(password, user.password_hash) else None
 
 
+def authenticate_tenant_owner(db: Session, mobile: str, password: str) -> TenantUser | None:
+    """使用全局唯一手机号验证企业所有者，最终仍创建既有租户会话。"""
+
+    # 延迟导入避免 registration 在复用 hash_password 时形成模块初始化环；手机号规则只有一份实现。
+    from app.services.registration import RegistrationError, normalize_mobile
+
+    if not password:
+        return None
+    try:
+        normalized_mobile = normalize_mobile(mobile)
+    except RegistrationError:
+        return None
+    user = db.scalar(
+        select(TenantUser).where(
+            TenantUser.mobile == normalized_mobile,
+            TenantUser.is_owner.is_(True),
+            TenantUser.is_enabled.is_(True),
+        )
+    )
+    if user is None or user.role not in TENANT_ROLES:
+        return None
+    return user if verify_password(password, user.password_hash) else None
+
+
 def generate_initial_password() -> str:
     """生成一次性初始密码；调用方负责仅展示一次并立即丢弃原文。"""
 
