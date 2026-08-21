@@ -1,13 +1,16 @@
-# Multi Bot SaaS
+# 曜枢 AI
 
-`Multi Bot SaaS` 从 `multi-bot-admin` 独立复制而来，目标是提供共享云端、租户数据隔离和客户 Windows 企业微信 Provider 接入能力。当前仓库正在按 `docs/plans/2026-07-30-multi-bot-saas-implementation.md` 分阶段完成 SaaS 改造。
+`曜枢 AI` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `multi-bot-saas`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
 
-- 平台管理：套餐、租户、订阅、节点额度和平台审计
-- 租户管理：独立员工账号、角色权限、会话和 CSRF 防护
-- 企业微信接入：首期只开放 `workwechat`，其他历史适配器不作为 SaaS 产品入口
-- Provider 节点：一次性激活码、设备凭证、心跳、长轮询、任务租约和多企微账号绑定
+- 公开站点：曜枢 AI 营销首页、套餐页、企业自助注册和 7 天试用
+- 商业闭环：人工付款订单、私有付款凭证、平台审核和订阅自动履约
+- 通用额度：按 `bot_limit` 管理机器人数量，以 `adapter_type` 和 `bot_account_id` 标识外部账号
+- 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
+- 平台管理：套餐、租户、订阅、订单审核、受控解绑和平台审计
+- 执行接入：通过通用适配能力扩展渠道；当前随仓库交付的成熟 Windows 执行端是企业微信 Provider
+- Provider 节点：一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
 - 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
 - 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
 - 旧系统迁移：只读来源、dry-run、外键重映射、批次审计和重复导入防护
@@ -91,6 +94,17 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8280
 http://127.0.0.1:8280
 ```
 
+主要入口：
+
+| 路径 | 用途 |
+| --- | --- |
+| `/` | 曜枢 AI 营销首页 |
+| `/pricing` | 公开套餐价格 |
+| `/register` | 企业自助注册与 7 天试用 |
+| `/login` | 企业主手机号登录 |
+| `/employee/login` | 员工使用企业编码和用户名登录 |
+| `/platform/login` | 平台管理员登录 |
+
 ### 一键更新并重启
 
 Linux / macOS 可使用：
@@ -134,7 +148,8 @@ MBS_DB_BACKUP_COMMAND='/opt/backup/multi-bot-saas-db.sh' \
 - 页面只创建 `platform_users` 平台管理员；
 - 不切换数据库、不建表、不写 `.env`；
 - 也可以通过 `AUTH_BOOTSTRAP_ADMIN_*` 受限环境变量自动创建首个平台管理员；
-- 平台管理员登录后再创建套餐、租户和租户初始管理员。
+- 迁移会初始化试用和三档公开套餐；平台管理员可继续调整价格、额度和公开状态；
+- 企业客户可从 `/register` 自助创建租户、企业所有者和试用订阅，平台管理员仍可在后台管理租户。
 
 ### 4. 配置环境变量
 
@@ -158,6 +173,8 @@ SECRET_KEY=change-this-secret-key
 AUTH_SEED_DEMO_USERS=false
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
+BILLING_PAYMENT_TITLE=曜枢 AI 人工付款
+BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 ```
 
 ## 配置说明
@@ -173,14 +190,35 @@ AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 | 配置项 | 说明 |
 | --- | --- |
 | `APP_ENV` | 运行环境，常用 `dev` / `prod` |
-| `SECRET_KEY` | 用于敏感信息加解密与认证 |
+| `SECRET_KEY` | 用于认证、敏感摘要和设备指纹 HMAC；部署后必须保持稳定 |
 | `DATABASE_URL` | 数据库连接串 |
 | `LOG_LEVEL` | 日志级别 |
 | `AUTH_SEED_DEMO_USERS` | 是否自动创建演示账号 |
 | `AUTH_BOOTSTRAP_ADMIN_USERNAME` | 初始化管理员用户名 |
 | `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | 初始化管理员密码 |
+| `BILLING_PAYMENT_TITLE` | 租户订单页展示的人工付款标题 |
+| `BILLING_PAYMENT_INSTRUCTIONS` | 人工付款说明，不应包含一次性敏感凭据 |
+| `BILLING_PAYMENT_QR_IMAGE` | 可选收款二维码静态地址 |
+| `BILLING_PAYMENT_BANK_DETAILS` | 可选银行转账说明 |
+| `BILLING_PAYMENT_PROOF_MAX_BYTES` | 单个付款凭证最大字节数，默认 5 MiB |
 
 示例见 [`.env.example`](/data/multi-bot-saas/.env.example)。
+
+## 套餐、试用与付款
+
+迁移默认创建以下公开套餐，真实页面和订单金额始终读取数据库，平台管理员可以调整：
+
+| 套餐 | 机器人额度 | 月付 | 年付 |
+| --- | ---: | ---: | ---: |
+| 入门版 | 1 | ¥99 | ¥990 |
+| 标准版 | 3 | ¥259 | ¥2590 |
+| 专业版 | 10 | ¥699 | ¥6990 |
+
+注册后自动开通 7 天、1 个机器人额度的试用。首版付款采用人工审核：企业主创建订单并上传流水号和凭证，平台管理员在 `/platform/billing/orders` 审核；审核通过后系统在同一事务内结束旧订阅、创建新订阅并固化订单额度。
+
+付款凭证不会进入公开静态目录，文件保存于 `DATA_DIR/tenant_billing/<tenant_id>/<order_no>/`，文件名由服务端随机生成，只能通过租户或平台鉴权路由下载。备份数据库时必须同时备份该目录，否则订单记录与付款凭证会失去对应关系。
+
+设备原始指纹不会落库，只保存基于 `SECRET_KEY` 的 HMAC-SHA256 摘要。同一设备只能领取一次试用，一个机器人账号只能归属一个企业；试用绑定不能由租户自行更换，付费绑定也只能由平台管理员带原因释放。
 
 ## 数据库
 
@@ -266,11 +304,11 @@ DATABASE_URL=sqlite:////app/data/app.db
 
 插件由后台启动时自动扫描并同步到数据库。
 
-## 渠道说明
+## 渠道与适配边界
 
-SaaS 首期页面、表单、服务层和开放接口只允许 `workwechat`。仓库中保留的其他历史适配器用于来源项目兼容和后续评估，不能通过 SaaS 管理入口新建渠道，也不应在生产 Worker 中启用。
+套餐、订单、试用和机器人额度只依赖通用 `adapter_type`、`bot_account_id` 与执行能力接口，不依赖 Provider 数据模型。新增渠道时应实现适配接口并复用通用额度校验，不能把具体 Provider 客户端导入商业服务。
 
-企业微信客户侧使用独立 Windows Provider。节点通过一次性激活码换取设备凭证，随后主动上报心跳、发现企微账号并长轮询领取绑定渠道的任务。
+当前仓库已完成并可实际运行的 Windows 执行端仍是企业微信 Provider。节点通过一次性激活码换取设备凭证，随后主动上报心跳、发现账号并长轮询领取绑定渠道的任务；其他渠道应沿相同抽象边界扩展，而不是复制计费和租户逻辑。
 
 ### 跨机器发送图片和文件
 
@@ -401,9 +439,9 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 ## 生产建议
 
 - 生产环境关闭 `AUTH_SEED_DEMO_USERS`
-- 使用高强度 `SECRET_KEY`
+- 使用高强度且长期稳定的 `SECRET_KEY`，轮换前必须设计设备摘要迁移方案
 - 数据量大时切换到 MariaDB
-- 为 `logs/` 和数据库文件做好持久化
+- 为 `logs/`、数据库和 `data/tenant_billing/` 做好持久化与一致性备份
 - 反向代理后再对外暴露服务
 - 对 Telegram 等外部渠道单独准备稳定网络出口或代理
 

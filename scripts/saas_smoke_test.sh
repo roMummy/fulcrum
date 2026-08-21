@@ -32,27 +32,44 @@ expect_status() {
   fi
 }
 
-echo "[1/7] checking liveness"
+echo "[1/8] checking liveness"
 health_status="$(request_status GET /healthz "${SMOKE_TMP_DIR}/health.json")"
 expect_status "${health_status}" "200" "healthz"
 grep -q '"service":"multi-bot-saas"' "${SMOKE_TMP_DIR}/health.json"
 
-echo "[2/7] checking readiness"
+echo "[2/8] checking readiness"
 ready_status="$(request_status GET /readyz "${SMOKE_TMP_DIR}/ready.json")"
 expect_status "${ready_status}" "200" "readyz"
 grep -q '"ready":true' "${SMOKE_TMP_DIR}/ready.json"
 
-echo "[3/7] checking platform login entry"
+echo "[3/8] checking public commercial entries"
+home_status="$(request_status GET / "${SMOKE_TMP_DIR}/home.html")"
+expect_status "${home_status}" "200" "marketing home"
+grep -q '曜枢 AI' "${SMOKE_TMP_DIR}/home.html"
+grep -q '一个后台，统一运营所有智能机器人' "${SMOKE_TMP_DIR}/home.html"
+
+pricing_status="$(request_status GET /pricing "${SMOKE_TMP_DIR}/pricing.html")"
+expect_status "${pricing_status}" "200" "public pricing"
+grep -q '套餐价格' "${SMOKE_TMP_DIR}/pricing.html"
+
+register_status="$(request_status GET /register "${SMOKE_TMP_DIR}/register.html")"
+expect_status "${register_status}" "200" "public registration"
+grep -q 'action="/register"' "${SMOKE_TMP_DIR}/register.html"
+
+echo "[4/8] checking browser login entries"
 platform_status="$(request_status GET /platform/login "${SMOKE_TMP_DIR}/platform-login.html")"
 expect_status "${platform_status}" "200" "platform login"
 grep -q 'action="/platform/login"' "${SMOKE_TMP_DIR}/platform-login.html"
 
-echo "[4/7] checking tenant login entry"
-tenant_status="$(request_status GET /login "${SMOKE_TMP_DIR}/tenant-login.html")"
-expect_status "${tenant_status}" "200" "tenant login"
-grep -q 'action="/login"' "${SMOKE_TMP_DIR}/tenant-login.html"
+owner_status="$(request_status GET /login "${SMOKE_TMP_DIR}/owner-login.html")"
+expect_status "${owner_status}" "200" "owner login"
+grep -q 'action="/login"' "${SMOKE_TMP_DIR}/owner-login.html"
 
-echo "[5/7] checking provider authentication boundary"
+employee_status="$(request_status GET /employee/login "${SMOKE_TMP_DIR}/employee-login.html")"
+expect_status "${employee_status}" "200" "employee login"
+grep -q 'action="/employee/login"' "${SMOKE_TMP_DIR}/employee-login.html"
+
+echo "[5/8] checking provider authentication boundary"
 activate_status="$(request_status POST /api/provider/activate "${SMOKE_TMP_DIR}/activate.json" -H 'Content-Type: application/json' --data '{"activation_code":"invalid-smoke-code","fingerprint":"smoke-device"}')"
 expect_status "${activate_status}" "401" "provider invalid activation"
 heartbeat_status="$(request_status POST /api/provider/heartbeat "${SMOKE_TMP_DIR}/heartbeat.json" -H 'Content-Type: application/json' --data '{"accounts":[]}')"
@@ -62,7 +79,7 @@ if grep -Eq '"device_token"|pdev_[A-Za-z0-9_-]+|pact_[A-Za-z0-9_-]+' "${SMOKE_TM
   exit 1
 fi
 
-echo "[6/7] checking isolated provider business flow"
+echo "[6/8] checking isolated provider business flow"
 # 业务冒烟只使用临时 SQLite 数据库，但调用与生产相同的租户会话、Provider
 # 路由和租约服务。优先使用项目虚拟环境，容器内则回退到镜像自带 Python。
 if [ -x ".venv/bin/python" ]; then
@@ -71,7 +88,15 @@ else
   python "${BUSINESS_SMOKE_SCRIPT}"
 fi
 
-echo "[7/7] checking optional log credential scan"
+echo "[7/8] checking commercial test availability"
+# 部署镜像可能只安装运行依赖，因此这里只确认测试文件随代码发布；完整商业闭环测试
+# 在本地发布门禁中执行，避免在线冒烟把测试依赖或写操作带入生产数据库。
+if [ ! -f "tests/test_public_commercial_flow.py" ]; then
+  echo "commercial flow test is missing"
+  exit 1
+fi
+
+echo "[8/8] checking optional log credential scan"
 if [ -n "${LOG_FILE}" ] && [ -f "${LOG_FILE}" ]; then
   if grep -Eq 'pdev_[A-Za-z0-9_-]{16,}|pact_[A-Za-z0-9_-]{16,}' "${LOG_FILE}"; then
     echo "credential-like provider token found in log"
