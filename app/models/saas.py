@@ -14,6 +14,11 @@ TENANT_ROLES = frozenset({"tenant_admin", "operator", "readonly"})
 TENANT_STATUSES = frozenset({"active", "disabled"})
 PLAN_STATUSES = frozenset({"active", "disabled"})
 SUBSCRIPTION_STATUSES = frozenset({"active", "expired", "suspended"})
+BILLING_CYCLES = frozenset({"monthly", "yearly"})
+BILLING_ORDER_STATUSES = frozenset(
+    {"pending_payment", "payment_submitted", "approved", "rejected", "cancelled"}
+)
+BOT_BINDING_STATUSES = frozenset({"active", "disabled", "released"})
 
 
 class PlatformUser(Base, TimestampMixin):
@@ -34,6 +39,8 @@ class PlatformUser(Base, TimestampMixin):
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     sessions = relationship("PlatformSession", back_populates="user", cascade="all, delete-orphan")
+    reviewed_billing_orders = relationship("BillingOrder", back_populates="reviewed_by_user")
+    released_bot_bindings = relationship("BotBinding", back_populates="released_by_user")
 
 
 class PlatformSession(Base, TimestampMixin):
@@ -76,27 +83,49 @@ class Tenant(Base, TimestampMixin):
     users = relationship("TenantUser", back_populates="tenant", cascade="all, delete-orphan")
     sessions = relationship("TenantSession", back_populates="tenant", cascade="all, delete-orphan")
     subscriptions = relationship("TenantSubscription", back_populates="tenant", cascade="all, delete-orphan")
+    billing_orders = relationship("BillingOrder", back_populates="tenant", cascade="all, delete-orphan")
+    bot_bindings = relationship("BotBinding", back_populates="tenant", cascade="all, delete-orphan")
+    device_trial_claims = relationship(
+        "DeviceTrialClaim",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
+    )
     provider_nodes = relationship("ProviderNode", back_populates="tenant", cascade="all, delete-orphan")
     legacy_import_batches = relationship("LegacyImportBatch", back_populates="tenant", cascade="all, delete-orphan")
 
 
 class SaasPlan(Base, TimestampMixin):
-    """平台套餐；首期仅把 Provider 节点数作为可计费额度。"""
+    """平台套餐；新商业流程使用通用机器人额度，旧节点额度仅保留兼容。"""
 
     __tablename__ = "saas_plans"
     __table_args__ = (
         CheckConstraint("provider_node_limit >= 0", name="ck_saas_plans_provider_node_limit"),
+        CheckConstraint("bot_limit >= 0", name="ck_saas_plans_bot_limit"),
+        CheckConstraint("monthly_price_cents >= 0", name="ck_saas_plans_monthly_price"),
+        CheckConstraint("yearly_price_cents >= 0", name="ck_saas_plans_yearly_price"),
+        CheckConstraint("trial_days >= 0", name="ck_saas_plans_trial_days"),
+        CheckConstraint("display_order >= 0", name="ck_saas_plans_display_order"),
         CheckConstraint("status IN ('active', 'disabled')", name="ck_saas_plans_status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # provider_node_limit 仍由旧 Provider 管理页面使用；订单、注册和机器人绑定服务不得读取它。
     provider_node_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    bot_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 金额统一保存为人民币分，禁止业务层用浮点数直接换算或接受客户端提交的订单金额。
+    monthly_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    yearly_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trial_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     subscriptions = relationship("TenantSubscription", back_populates="plan")
+    billing_orders = relationship("BillingOrder", back_populates="plan")
 
 
 class TenantSubscription(Base, TimestampMixin):
@@ -122,6 +151,103 @@ class TenantSubscription(Base, TimestampMixin):
 
     tenant = relationship("Tenant", back_populates="subscriptions")
     plan = relationship("SaasPlan", back_populates="subscriptions")
+    fulfilled_order = relationship("BillingOrder", back_populates="fulfilled_subscription", uselist=False)
+
+
+class BillingOrder(Base, TimestampMixin):
+    """租户套餐订单；金额和额度均为下单时由服务端固化的不可变快照。"""
+
+    __tablename__ = "billing_orders"
+    __table_args__ = (
+        CheckConstraint("billing_cycle IN ('monthly', 'yearly')", name="ck_billing_orders_cycle"),
+        CheckConstraint("bot_limit_snapshot >= 0", name="ck_billing_orders_bot_limit"),
+        CheckConstraint("amount_cents >= 0", name="ck_billing_orders_amount"),
+        CheckConstraint(
+            "status IN ('pending_payment', 'payment_submitted', 'approved', 'rejected', 'cancelled')",
+            name="ck_billing_orders_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 订单号用于租户与平台共同定位订单，必须高熵生成并在全平台保持唯一。
+    order_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("saas_plans.id"), nullable=False, index=True)
+    billing_cycle: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    bot_limit_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_payment", index=True)
+    payment_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 这里只保存私有存储中的相对路径。页面、日志和审计记录不得暴露真实服务器路径或凭证正文。
+    payment_proof_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_submitted_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platform_users.id"),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 一张订单最多履约一次；唯一外键同时作为重复审核的数据库兜底。
+    fulfilled_subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenant_subscriptions.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    tenant = relationship("Tenant", back_populates="billing_orders")
+    plan = relationship("SaasPlan", back_populates="billing_orders")
+    reviewed_by_user = relationship("PlatformUser", back_populates="reviewed_billing_orders")
+    fulfilled_subscription = relationship("TenantSubscription", back_populates="fulfilled_order")
+
+
+class BotBinding(Base, TimestampMixin):
+    """通用机器人账号绑定，不依赖 Provider 节点或具体渠道模型。"""
+
+    __tablename__ = "bot_bindings"
+    __table_args__ = (
+        # 首版以数据库唯一约束阻止跨租户重复占用；受控释放通过更新原记录保留审计字段。
+        UniqueConstraint("adapter_type", "bot_account_id", name="uq_bot_binding_adapter_account"),
+        CheckConstraint(
+            "status IN ('active', 'disabled', 'released')",
+            name="ck_bot_bindings_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    adapter_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    bot_account_id: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    # 原始设备指纹只在请求内参与哈希，数据库、日志、异常和返回值都只能出现此摘要。
+    device_fingerprint_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
+    bound_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_shanghai)
+    released_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platform_users.id"),
+        nullable=True,
+        index=True,
+    )
+    release_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    tenant = relationship("Tenant", back_populates="bot_bindings")
+    released_by_user = relationship("PlatformUser", back_populates="released_bot_bindings")
+
+
+class DeviceTrialClaim(Base, TimestampMixin):
+    """设备免费试用领取记录；摘要永久保留，解绑和到期均不得删除。"""
+
+    __tablename__ = "device_trial_claims"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 全局唯一摘要是防止批量注册重复领取试用的最终数据库约束。
+    device_fingerprint_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    claimed_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_shanghai)
+
+    tenant = relationship("Tenant", back_populates="device_trial_claims")
 
 
 class TenantUser(Base, TimestampMixin):
@@ -139,12 +265,15 @@ class TenantUser(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 只有公开注册的企业所有者必须填写手机号；全局唯一约束实现一个手机号对应一个企业。
+    mobile: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(30), nullable=False, default="readonly", index=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_owner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     tenant = relationship("Tenant", back_populates="users")
     sessions = relationship("TenantSession", back_populates="user", cascade="all, delete-orphan")

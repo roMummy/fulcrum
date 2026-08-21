@@ -1,5 +1,8 @@
 from app.models.entities import Bot, BotPlugin, Channel, Conversation, ErrorLog, Message, Plugin, TaskJob
 from app.models.saas import (
+    BillingOrder,
+    BotBinding,
+    DeviceTrialClaim,
     PlatformAuditLog,
     PlatformSession,
     PlatformUser,
@@ -29,6 +32,9 @@ __all__ = [
     "Tenant",
     "SaasPlan",
     "TenantSubscription",
+    "BillingOrder",
+    "BotBinding",
+    "DeviceTrialClaim",
     "TenantUser",
     "TenantSession",
     "PlatformAuditLog",
