@@ -7,7 +7,7 @@
 
 {% if can_manage_users %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Create employee</p><h2>新增员工</h2></div></div>
+  <div class="section-head"><div><h2>新增员工</h2></div></div>
   <form method="post" action="/tenant/users" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label><span>用户名</span><input name="username" required /></label>

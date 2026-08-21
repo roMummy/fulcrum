@@ -6,7 +6,7 @@
 {% endif %}
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Platform staff</p><h2>新增平台员工</h2></div></div>
+  <div class="section-head"><div><h2>新增平台员工</h2></div></div>
   {# 平台员工与企业身份彻底分离，表单不接收租户编码或企业主键。 #}
   <form method="post" action="/platform/users" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
