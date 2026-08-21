@@ -42,20 +42,27 @@ def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
         assert forbidden_pattern not in stylesheet
 
 
-def test_backend_shell_uses_sidebar_and_keeps_platform_identity_separate() -> None:
-    """双后台必须共享安静的侧边壳层，同时保留平台与企业身份的清晰边界。"""
+def test_backend_shell_uses_top_navigation_and_keeps_platform_identity_separate() -> None:
+    """双后台必须共享顶部导航，同时保留平台与企业身份的清晰边界。
+
+    桌面侧栏会长期占用业务工作区，且和移动顶部栏形成两套结构。本轮统一为顶部
+    导航后，只允许保留一套导航数据和一个响应式壳层，避免后续入口在两处产生差异。
+    """
 
     base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
     platform_template = _read_project_file(TEMPLATE_ROOT / "platform_base.html")
 
     for required_class in (
-        'class="app-sidebar"',
-        'class="app-sidebar-nav"',
+        'class="app-topbar"',
+        'class="app-primary-nav"',
         'class="app-main"',
         'class="page-header"',
     ):
         assert required_class in base_template
 
+    assert 'class="nav-more"' in base_template
+    assert 'class="account-menu nav-more"' in base_template
+    assert 'class="app-sidebar"' not in base_template
     assert "企业工作台" in base_template
     assert "平台管理后台" in platform_template
     assert "request.url.path.startswith('/platform')" in base_template
@@ -100,6 +107,45 @@ def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> No
     assert ".metric-band" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".app-nav-toggle" in stylesheet
+
+
+def test_section_navigation_wraps_without_horizontal_scrollbar() -> None:
+    """二级导航必须自然换行，不能再通过横向滚动隐藏入口。
+
+    只检查 `.section-tabs` 的基础规则，因为移动端应继承相同的换行语义；若在媒体
+    查询中重新加入横向滚动，后面的全局断言仍会捕获该回归。
+    """
+
+    stylesheet = _read_project_file(STYLE_PATH)
+    section_tabs_rule = stylesheet.split(".section-tabs {", 1)[1].split("}", 1)[0]
+
+    assert "flex-wrap: wrap;" in section_tabs_rule
+    assert "overflow-x" not in section_tabs_rule
+    assert ".section-tabs {\n    overflow-x: auto;" not in stylesheet
+
+
+def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> None:
+    """账号和套餐管理不能把大编辑表单塞入表格行。
+
+    三个页面共享记录列表语义，但继续使用各自原有的服务端提交地址。这里约束结构
+    而不复制业务字段断言，使后续增加字段时只需维护对应弹窗，不会重新引入行内表单。
+    """
+
+    tenant_users = _read_project_file(TEMPLATE_ROOT / "tenant_users.html")
+    platform_users = _read_project_file(TEMPLATE_ROOT / "platform_users.html")
+    platform_plans = _read_project_file(TEMPLATE_ROOT / "platform_plans.html")
+
+    for template_source in (tenant_users, platform_users, platform_plans):
+        assert 'class="record-list"' in template_source
+        assert 'class="record-row"' in template_source
+        assert 'class="record-actions"' in template_source
+
+    assert 'data-modal-open="edit-tenant-user-' in tenant_users
+    assert 'data-modal-open="edit-platform-user-' in platform_users
+    assert 'data-modal-open="edit-plan-' in platform_plans
+    assert '<td colspan="5">' not in tenant_users
+    assert '<td colspan="4">' not in platform_users
+    assert '<td colspan="9">' not in platform_plans
 
 
 def test_mobile_data_table_and_platform_login_keep_page_boundaries() -> None:
