@@ -18,7 +18,10 @@
     <span class="chip chip-outline">支持批量启停</span>
   </div>
 
-  {# 批量启停只提交机器人主键；删除动作使用表格外的独立表单，避免 HTML 嵌套表单。 #}
+  {#
+    批量启停只提交机器人主键；删除动作使用表格外的独立表单，避免 HTML 嵌套表单。
+    表格必须放在通用滚动容器内，移动端只滚动数据区域，不能让固定最小宽度把整个页面撑宽。
+  #}
   <form method="post" action="/bots/batch-toggle" id="batch-toggle-bots-form">
     <div class="toolbar">
       <div class="actions">
@@ -27,37 +30,42 @@
       </div>
       <p class="muted-text">勾选机器人后执行批量操作。</p>
     </div>
-    <table class="table">
-      <thead>
-        <tr>
-          <th class="col-id">选择</th>
-          <th>名称</th>
-          <th class="col-status">运行状态</th>
-          <th class="col-count">企业微信账号</th>
-          <th class="col-count">插件</th>
-          <th class="col-bool">启用状态</th>
-          <th class="col-action">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in bot_rows %}
-        <tr>
-          <td class="col-id"><input type="checkbox" name="bot_ids" value="{{ row.bot.id }}" aria-label="选择 {{ row.bot.name }}" /></td>
-          <td><a href="/bots/{{ row.bot.id }}"><strong>{{ row.bot.name }}</strong></a></td>
-          <td class="col-status"><span class="badge badge-{{ row.bot.status|lower }}">{{ row.bot.status }}</span></td>
-          <td class="col-count">{{ row.channel_count }}</td>
-          <td class="col-count">{{ row.binding_count }}</td>
-          <td class="col-bool"><span class="chip {% if row.bot.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if row.bot.is_enabled else '已停用' }}</span></td>
-          <td class="actions table-actions">
-            <a class="btn btn-small" href="/bots/{{ row.bot.id }}">详情</a>
-            <button class="btn btn-small btn-danger" type="submit" form="delete-bot-{{ row.bot.id }}">删除</button>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7"><div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加企业微信账号。</p></div></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% if bot_rows %}
+    <div class="table-scroll">
+      <table class="table">
+        <thead>
+          <tr>
+            <th class="col-id">选择</th>
+            <th>名称</th>
+            <th class="col-status">运行状态</th>
+            <th class="col-count">企业微信账号</th>
+            <th class="col-count">插件</th>
+            <th class="col-bool">启用状态</th>
+            <th class="col-action">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in bot_rows %}
+          <tr>
+            <td class="col-id"><input type="checkbox" name="bot_ids" value="{{ row.bot.id }}" aria-label="选择 {{ row.bot.name }}" /></td>
+            <td><a href="/bots/{{ row.bot.id }}"><strong>{{ row.bot.name }}</strong></a></td>
+            <td class="col-status"><span class="badge badge-{{ row.bot.status|lower }}">{{ row.bot.status }}</span></td>
+            <td class="col-count">{{ row.channel_count }}</td>
+            <td class="col-count">{{ row.binding_count }}</td>
+            <td class="col-bool"><span class="chip {% if row.bot.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if row.bot.is_enabled else '已停用' }}</span></td>
+            <td class="actions table-actions">
+              <a class="btn btn-small" href="/bots/{{ row.bot.id }}">详情</a>
+              <button class="btn btn-small btn-danger" type="submit" form="delete-bot-{{ row.bot.id }}">删除</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {# 空状态脱离固定宽度表格，在窄屏上始终使用当前工作表面的完整可见宽度。 #}
+    <div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加企业微信账号。</p></div>
+    {% endif %}
   </form>
 
   {% for row in bot_rows %}

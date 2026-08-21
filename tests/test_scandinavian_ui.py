@@ -102,6 +102,21 @@ def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> No
     assert ".app-nav-toggle" in stylesheet
 
 
+def test_mobile_data_table_and_platform_login_keep_page_boundaries() -> None:
+    """移动表格只能在自身容器滚动，平台登录页必须保留唯一页面级标题。
+
+    机器人表格有稳定的桌面最小宽度，如果遗漏滚动容器会直接把 390 像素移动视口
+    撑到 720 像素以上。平台登录又使用独立认证壳层，因此需要显式主标题承接页面语义。
+    """
+
+    bots_template = _read_project_file(TEMPLATE_ROOT / "bots.html")
+    platform_login = _read_project_file(TEMPLATE_ROOT / "platform_login.html")
+
+    assert '<div class="table-scroll">' in bots_template
+    assert '<tr><td colspan="7"><div class="empty-state">' not in bots_template
+    assert '<h1 id="platform-login-title">平台管理后台</h1>' in platform_login
+
+
 def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
     """全站模板不得继续引用旧卡片语义或通过内联样式恢复大圆角。
 
