@@ -18,6 +18,7 @@ from app.models.entities import BotPlugin, Channel, Conversation, ErrorLog, Mess
 from app.models.saas import Tenant
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
+from app.services.channel_runtime import run_due_channel_tasks
 from app.services.inbound_media import download_wechat_media_attachment, mark_attachment_failed
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
@@ -33,23 +34,14 @@ from app.services.task_queue import (
     parse_job_payload,
     recover_running_jobs,
 )
-from app.services.telegram_polling import poll_telegram_channel
-from app.services.wechat_ipad import (
-    auto_recover_wechat_ipad_login,
-    heartbeat_wechat_ipad_channel,
-    pull_wechat_ipad_messages,
-)
 
 
 logger = get_logger(__name__)
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
-_last_telegram_poll_at = 0.0
-_last_wechat_ipad_message_sync_at: dict[int, float] = {}
 _last_douyu_poll_at: dict[int, float] = {}
 _last_daily_news_poll_at: dict[int, float] = {}
 _last_operational_alert_eval_at = 0.0
-WECHAT_IPAD_MESSAGE_SYNC_INTERVAL_SECONDS = 2.0
 OUTBOUND_JOB_MAX_AGE = timedelta(hours=2)
 
 
@@ -75,15 +67,15 @@ def _worker_loop() -> None:
     while not _stop_event.is_set():
         try:
             worked = _run_single_job()
+            channel_result = run_due_channel_tasks()
             alerted = _run_due_operational_alerts()
         except Exception:
             logger.exception("background worker loop crashed")
             worked = False
+            channel_result = None
             alerted = False
-        # SaaS 首期只开放企业微信，云端 Provider 通过独立长轮询接口领取任务。
-        # 旧 Telegram、微信 iPad 和插件定时轮询函数暂时保留供代码迁移参考，
-        # 但不再从生产 Worker 主循环触发，避免平台会话跨租户扫描旧渠道。
-        if not worked and not alerted:
+        # 渠道协调器内部已经逐租户、逐任务隔离事务；这里不再持有渠道会话或识别协议类型。
+        if not worked and not alerted and not (channel_result and channel_result.worked):
             _stop_event.wait(0.5)
 
 
@@ -164,30 +156,6 @@ def _run_single_job() -> bool:
             return True
 
 
-def _run_due_channel_pollers() -> bool:
-    global _last_telegram_poll_at
-    now = time.time()
-    if now - _last_telegram_poll_at < 3:
-        return False
-    _last_telegram_poll_at = now
-
-    db = SessionLocal()
-    try:
-        channels = (
-            db.query(Channel)
-            .filter(Channel.channel_type == "telegram", Channel.is_enabled.is_(True))
-            .order_by(Channel.id.asc())
-            .all()
-        )
-        worked = False
-        for channel in channels:
-            result = poll_telegram_channel(db, channel)
-            worked = worked or bool(result.get("processed")) or bool(result.get("error"))
-        return worked
-    finally:
-        db.close()
-
-
 def _run_due_douyu_pollers() -> bool:
     from plugins.douyu.plugin import poll_douyu_binding
 
@@ -240,106 +208,6 @@ def _run_due_daily_news_pollers() -> bool:
             _last_daily_news_poll_at[binding.id] = now
             result = run_daily_news_push(binding.id)
             worked = worked or bool(result.get("outbound_job_ids")) or not bool(result.get("skipped"))
-        return worked
-    finally:
-        db.close()
-
-
-def _run_due_wechat_ipad_heartbeats() -> bool:
-    db = SessionLocal()
-    try:
-        channels = (
-            db.query(Channel)
-            .filter(
-                Channel.channel_type == "wechat_ipad",
-                Channel.is_enabled.is_(True),
-                Channel.login_state == "online",
-            )
-            .order_by(Channel.id.asc())
-            .all()
-        )
-        worked = False
-        for channel in channels:
-            result = heartbeat_wechat_ipad_channel(db, channel)
-            worked = worked or (not bool(result.get("skipped")))
-        return worked
-    finally:
-        db.close()
-
-
-def _run_due_wechat_ipad_message_sync() -> bool:
-    now = time.time()
-    db = SessionLocal()
-    try:
-        channels = (
-            db.query(Channel)
-            .filter(
-                Channel.channel_type == "wechat_ipad",
-                Channel.is_enabled.is_(True),
-                Channel.login_state == "online",
-            )
-            .order_by(Channel.id.asc())
-            .all()
-        )
-        if not channels:
-            return False
-        worked = False
-        for channel in channels:
-            last_sync_at = _last_wechat_ipad_message_sync_at.get(channel.id, 0.0)
-            elapsed = now - last_sync_at
-            if elapsed < WECHAT_IPAD_MESSAGE_SYNC_INTERVAL_SECONDS:
-                logger.debug(
-                    "wechat ipad message sync skipped",
-                    extra={
-                        "channel_id": channel.id,
-                        "reason": "interval_not_elapsed",
-                        "elapsed_seconds": round(elapsed, 3),
-                        "interval_seconds": WECHAT_IPAD_MESSAGE_SYNC_INTERVAL_SECONDS,
-                    },
-                )
-                continue
-            _last_wechat_ipad_message_sync_at[channel.id] = now
-            logger.debug(
-                "wechat ipad message sync scheduled",
-                extra={
-                    "channel_id": channel.id,
-                    "interval_seconds": WECHAT_IPAD_MESSAGE_SYNC_INTERVAL_SECONDS,
-                },
-            )
-            result = pull_wechat_ipad_messages(db, channel)
-            logger.info(
-                "wechat ipad message sync completed",
-                extra={
-                    "channel_id": channel.id,
-                    "message_count": result.get("last_message_sync_count"),
-                    "ingested": result.get("last_message_sync_ingested"),
-                    "deduplicated": result.get("last_message_sync_deduplicated"),
-                    "error": result.get("last_error"),
-                },
-            )
-            worked = worked or (not bool(result.get("skipped")))
-        return worked
-    finally:
-        db.close()
-
-
-def _run_due_wechat_ipad_auto_recover() -> bool:
-    db = SessionLocal()
-    try:
-        channels = (
-            db.query(Channel)
-            .filter(
-                Channel.channel_type == "wechat_ipad",
-                Channel.is_enabled.is_(True),
-                Channel.login_state.in_(("offline", "reconnect_failed", "reconnect_blocked", "idle", "error")),
-            )
-            .order_by(Channel.id.asc())
-            .all()
-        )
-        worked = False
-        for channel in channels:
-            result = auto_recover_wechat_ipad_login(db, channel)
-            worked = worked or (not bool(result.get("skipped")))
         return worked
     finally:
         db.close()
