@@ -1,27 +1,35 @@
 {% extends 'marketing_base.html' %}
 {% block content %}
 <section class="marketing-page-head">
-  <p class="section-kicker">Pricing</p>
-  <h1>套餐价格</h1>
-  <p>所有套餐均按通用机器人额度计费，不绑定具体渠道或 Provider。</p>
+  <div class="marketing-page-head-inner">
+    <p class="section-kicker">套餐价格</p>
+    <h1>按机器人数量，选择清晰的固定套餐</h1>
+    <p>所有套餐均按通用机器人额度计费，不绑定具体渠道实现。</p>
+  </div>
 </section>
 <section class="marketing-section">
   <div class="marketing-section-inner marketing-plan-grid">
     {% for plan in plans %}
     <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
-      {% if plan.is_featured %}<span class="chip chip-success">推荐</span>{% endif %}
+      {% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}
       <h2>{{ plan.name }}</h2>
-      <p><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
-      <dl>
+      <p class="marketing-plan-quota"><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
+      <dl class="marketing-price-list">
         <div><dt>月付</dt><dd>¥{{ format_yuan(plan.monthly_price_cents) }}</dd></div>
         <div><dt>年付</dt><dd>¥{{ format_yuan(plan.yearly_price_cents) }}</dd></div>
       </dl>
-      <p>{{ plan.description or '适用于持续运营智能机器人的团队。' }}</p>
+      <p class="marketing-plan-description">{{ plan.description or '适用于持续运营智能机器人的团队。' }}</p>
       <a class="btn" href="/register">免费试用 7 天</a>
     </article>
     {% else %}
-    <p>公开套餐正在配置中。</p>
+    <p class="marketing-empty-state">公开套餐正在配置中。</p>
     {% endfor %}
+  </div>
+</section>
+<section class="marketing-pricing-note">
+  <div class="marketing-section-inner">
+    <strong>试用包含 1 个机器人额度</strong>
+    <p>注册后立即开通 7 天试用。需要更多额度时，可在企业控制台创建订单并提交付款凭证。</p>
   </div>
 </section>
 {% endblock %}

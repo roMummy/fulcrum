@@ -1,23 +1,34 @@
 {% extends 'marketing_base.html' %}
 {% block content %}
-<section class="marketing-auth-shell" aria-labelledby="register-title">
-  <div class="marketing-auth-panel">
-    <p class="section-kicker">Start</p>
-    <h1 id="register-title">免费试用 7 天</h1>
+<section class="marketing-auth-shell marketing-auth-shell-register" aria-labelledby="register-title">
+  <div class="marketing-auth-layout">
+    <div class="marketing-auth-context">
+      <p class="section-kicker">创建企业</p>
+      <h1 id="register-title">免费试用 7 天</h1>
+      <p>注册后自动创建企业工作台，包含 1 个机器人额度。</p>
+      <ul>
+        <li>企业数据独立隔离</li>
+        <li>支持企业主与员工分开登录</li>
+        <li>后续按机器人额度选择套餐</li>
+      </ul>
+    </div>
+    <div class="marketing-auth-panel">
+      <h2>填写企业信息</h2>
+      <p class="marketing-auth-panel-intro">手机号将作为企业所有者账号，请填写长期使用的号码。</p>
+      {# 注册表单使用显式 label 关联，浏览器自动填充和辅助技术都能稳定识别字段。 #}
     <form method="post" action="/register" class="form-grid auth-form-grid">
-      <label class="full-row"><span>企业名称</span><input name="enterprise_name" autocomplete="organization" value="{{ form_values.enterprise_name or '' }}" maxlength="150" required /></label>
-      <label class="full-row"><span>联系人</span><input name="contact_name" autocomplete="name" value="{{ form_values.contact_name or '' }}" maxlength="100" required /></label>
-      <label class="full-row"><span>手机号</span><input name="mobile" type="tel" autocomplete="tel" inputmode="tel" value="{{ form_values.mobile or '' }}" required /></label>
-      <label class="full-row"><span>密码</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label>
-      <label class="full-row"><span>确认密码</span><input name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label>
+      <label class="full-row" for="register-enterprise-name"><span>企业名称</span></label><input class="full-row" id="register-enterprise-name" name="enterprise_name" autocomplete="organization" value="{{ form_values.enterprise_name or '' }}" maxlength="150" required />
+      <label class="full-row" for="register-contact-name"><span>联系人</span></label><input class="full-row" id="register-contact-name" name="contact_name" autocomplete="name" value="{{ form_values.contact_name or '' }}" maxlength="100" required />
+      <label class="full-row" for="register-mobile"><span>手机号</span></label><input class="full-row" id="register-mobile" name="mobile" type="tel" autocomplete="tel" inputmode="tel" value="{{ form_values.mobile or '' }}" required />
+      <label class="full-row" for="register-password"><span>密码</span></label><input class="full-row" id="register-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required />
+      <label class="full-row" for="register-confirm-password"><span>确认密码</span></label><input class="full-row" id="register-confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required />
       <input type="hidden" name="captcha_token" value="{{ captcha_token }}" />
-      <label class="full-row">
-        <span>图形验证码</span>
-        <span class="marketing-captcha-row"><img src="{{ captcha_image }}" width="166" height="54" alt="图形验证码" /><input name="captcha_answer" inputmode="numeric" autocomplete="off" maxlength="5" required /></span>
-      </label>
+      <label class="full-row" for="register-captcha"><span>图形验证码</span></label>
+      <span class="marketing-captcha-row full-row"><img src="{{ captcha_image }}" width="166" height="54" alt="图形验证码" /><input id="register-captcha" name="captcha_answer" inputmode="numeric" autocomplete="off" maxlength="5" required /></span>
       <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">创建企业并开始试用</button></div>
     </form>
-    <p class="muted-text">已有企业主账号？<a href="/login">手机号登录</a></p>
+      <p class="marketing-auth-footnote">已有企业主账号？<a href="/login">手机号登录</a></p>
+    </div>
   </div>
 </section>
 {% endblock %}

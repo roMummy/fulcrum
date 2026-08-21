@@ -4,31 +4,49 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ page_title }}{% if page_title != brand_name %} · {{ brand_name }}{% endif %}</title>
+  <meta name="description" content="曜枢 AI 是面向企业的全渠道智能机器人运营平台。" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body class="marketing-body">
+  <a class="skip-link" href="#marketing-main">跳到主内容</a>
   <header class="marketing-header">
-    <a class="marketing-brand" href="/" aria-label="曜枢 AI 首页">曜枢 AI</a>
-    <nav class="marketing-nav" aria-label="公开站点导航">
-      <a href="/#capabilities">产品能力</a>
-      <a href="/#workflow">使用流程</a>
-      <a href="/pricing">套餐价格</a>
-    </nav>
-    <div class="marketing-actions">
-      {% if current_user %}
-      <a class="btn" href="/dashboard">进入控制台</a>
-      {% else %}
-      <a class="btn btn-secondary" href="/login">登录</a>
-      <a class="btn" href="/register">免费试用</a>
-      {% endif %}
+    {# 公开导航保持单层结构，移动端允许自然换行，不依赖脚本或隐藏抽屉。 #}
+    <div class="marketing-header-inner">
+      <a class="marketing-brand" href="/" aria-label="曜枢 AI 首页">
+        <span class="marketing-brand-mark" aria-hidden="true">曜</span>
+        <span>曜枢 AI</span>
+      </a>
+      <nav class="marketing-nav" aria-label="公开站点导航">
+        <a href="/#capabilities">产品能力</a>
+        <a href="/#workflow">使用流程</a>
+        <a href="/pricing"{% if request.url.path == '/pricing' %} aria-current="page"{% endif %}>套餐价格</a>
+      </nav>
+      <div class="marketing-actions">
+        {% if current_user %}
+        <a class="btn" href="/dashboard">进入控制台</a>
+        {% else %}
+        <a class="btn btn-secondary" href="/login">登录</a>
+        <a class="btn" href="/register">免费试用</a>
+        {% endif %}
+      </div>
     </div>
   </header>
-  {% if notice %}<div class="marketing-notice{% if notice_tone == 'danger' %} notice-danger{% endif %}" role="alert">{{ notice }}</div>{% endif %}
-  <main>{% block content %}{% endblock %}</main>
+  {# 错误区置于主内容之前，并使用礼貌播报，避免认证失败时打断用户当前输入。 #}
+  {% if notice %}<div class="marketing-notice{% if notice_tone == 'danger' %} notice-danger{% endif %}" role="alert" aria-live="polite">{{ notice }}</div>{% endif %}
+  <main id="marketing-main" tabindex="-1">{% block content %}{% endblock %}</main>
   <footer class="marketing-footer">
-    <strong>曜枢 AI</strong>
-    <span>全渠道智能机器人运营平台</span>
-    <a href="/employee/login">员工登录</a>
+    <div class="marketing-footer-inner">
+      <div>
+        <strong>曜枢 AI</strong>
+        <span>全渠道智能机器人运营平台</span>
+      </div>
+      <nav aria-label="页脚导航">
+        <a href="/pricing">套餐价格</a>
+        <a href="/login">企业主登录</a>
+        <a href="/employee/login">员工登录</a>
+      </nav>
+    </div>
   </footer>
 </body>
 </html>

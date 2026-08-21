@@ -8,13 +8,13 @@
 {% block content %}
 <section class="auth-showcase auth-showcase-single" aria-labelledby="tenant-login-title">
   <section class="card login-card auth-form-card">
-    {# 标题区直接说明这是租户员工入口，避免与平台管理后台的登录身份混淆。 #}
+    {# 标题区直接说明这是企业员工入口，避免与企业主和平台管理员身份混淆。 #}
     <div class="section-head auth-card-head">
       <div>
-        <p class="section-kicker">Tenant Access</p>
-        <h2 id="tenant-login-title">租户后台登录</h2>
+        <p class="section-kicker">企业工作台</p>
+        <h2 id="tenant-login-title">员工登录</h2>
       </div>
-      <span class="chip chip-outline">租户员工入口</span>
+      <span class="chip chip-outline">员工入口</span>
     </div>
     <p class="muted-text">请输入企业编码和员工账号信息。</p>
 
@@ -25,7 +25,7 @@
     <form method="post" action="/employee/login" class="form-grid auth-form-grid">
       <label class="full-row">
         <span>租户编码</span>
-        <input name="tenant_code" value="{{ prefill_tenant_code or '' }}" autocapitalize="none" spellcheck="false" required />
+        <input name="tenant_code" autocomplete="organization" value="{{ prefill_tenant_code or '' }}" autocapitalize="none" spellcheck="false" required />
       </label>
       <label class="full-row">
         <span>用户名</span>
@@ -54,11 +54,8 @@
 
     <p class="muted-text">企业所有者请使用<a href="/login">手机号登录</a>。</p>
 
-    {# 仅说明入口归属，不在登录页放置安装流程或旧管理员初始化提示。 #}
-    <div class="panel inset-panel auth-tip-panel">
-      <strong>身份说明</strong>
-      <p class="muted-text">此入口仅供租户员工使用，平台管理员请使用平台登录入口。</p>
-    </div>
+    {# 身份提示保持为普通文本，避免在单一登录卡片内继续嵌套说明卡片。 #}
+    <p class="auth-identity-note">此入口仅供企业员工使用，平台管理员请使用平台登录入口。</p>
   </section>
 </section>
 {% endblock %}

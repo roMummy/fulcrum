@@ -251,7 +251,9 @@ def _render_order_detail(
 
     context = _tenant_context(
         request,
-        page_title=f"订单 {order.order_no}",
+        # 高熵订单号可能包含无法自然断行的连续字符。页面标题保持稳定，完整订单号只在
+        # 详情字段内展示并由局部样式处理换行，避免移动端页头按内容宽度撑开工作区。
+        page_title="订单详情",
         active="orders",
         notice=notice,
         notice_tone="danger" if status_code >= 400 else "",

@@ -4,7 +4,8 @@
 {% block content %}
 <section class="card">
   <dl class="detail-grid">
-    <div><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
+    {# 订单号保留完整值但独占一行，窄屏由 code 的局部断行规则避免撑宽页面。 #}
+    <div class="detail-grid-wide"><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
     <div><dt>套餐</dt><dd>{{ order.plan.name }}</dd></div>
     <div><dt>计费周期</dt><dd>{{ '月付' if order.billing_cycle == 'monthly' else '年付' }}</dd></div>
     <div><dt>机器人额度</dt><dd>{{ order.bot_limit_snapshot }}</dd></div>
