@@ -12,6 +12,7 @@
     <label><span>套餐</span><select name="plan_id" required>{% for plan in plans %}<option value="{{ plan.id }}">{{ plan.name }} / {{ plan.provider_node_limit }} 个节点</option>{% endfor %}</select></label>
     <label><span>有效期至</span><input name="expires_on" type="date" /></label>
     <label><span>管理员用户名</span><input name="admin_username" value="admin" required /></label>
+    <label><span>管理员登录手机号</span><input name="admin_mobile" type="tel" inputmode="tel" autocomplete="tel" required /></label>
     <label><span>管理员显示名</span><input name="admin_display_name" value="企业管理员" required /></label>
     <label><span>联系人</span><input name="contact_name" /></label>
     <label><span>联系电话</span><input name="contact_phone" /></label>

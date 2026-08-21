@@ -1,4 +1,4 @@
-"""平台租户、套餐、订阅和初始管理员管理页面。"""
+"""平台员工、租户、套餐、订阅和初始管理员管理页面。"""
 
 from __future__ import annotations
 
@@ -24,6 +24,13 @@ from app.services.platform_admin import (
     reset_tenant_admin_password,
     save_plan,
     set_tenant_status,
+)
+from app.services.platform_staff import (
+    PlatformStaffError,
+    create_platform_user,
+    list_platform_users,
+    reset_platform_user_password,
+    update_platform_user,
 )
 from app.web.auth_common import (
     PLATFORM_CSRF_COOKIE,
@@ -64,6 +71,7 @@ def _platform_context(
         {"label": "租户管理", "href": "/platform/tenants", "active": active == "tenants"},
         {"label": "套餐管理", "href": "/platform/plans", "active": active == "plans"},
         {"label": "订单审核", "href": "/platform/billing/orders", "active": active == "billing"},
+        {"label": "平台员工", "href": "/platform/users", "active": active == "users"},
     ]
     context: dict[str, object] = {
         "request": request,
@@ -130,6 +138,19 @@ def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectRespon
     return RedirectResponse(url=path + suffix, status_code=303)
 
 
+def _platform_staff_error_message(error: PlatformStaffError) -> str:
+    """把平台员工内部错误码转换为可操作且不泄露敏感信息的页面提示。"""
+
+    messages = {
+        "platform_username_invalid": "请输入有效的平台用户名",
+        "platform_username_exists": "该平台用户名已存在",
+        "platform_display_name_invalid": "请输入有效的员工姓名",
+        "platform_user_not_found": "平台员工不存在",
+        "last_platform_admin_required": "必须保留至少一个启用的平台管理员",
+    }
+    return messages.get(str(error), "平台员工信息保存失败")
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def platform_dashboard_page(request: Request):
     """展示平台关键统计和最近租户。"""
@@ -145,6 +166,111 @@ async def platform_dashboard_page(request: Request):
             tenants=list_tenants(db)[:8],
         )
         return templates.TemplateResponse(request, "platform_dashboard.html", context)
+
+
+@router.get("/users", response_class=HTMLResponse)
+async def platform_users_page(request: Request):
+    """展示不属于任何租户的平台员工账号。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="平台员工",
+            active="users",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            users=list_platform_users(db),
+            initial_password="",
+        )
+        return templates.TemplateResponse(request, "platform_users.html", context)
+
+
+@router.post("/users", response_class=HTMLResponse)
+async def platform_user_create_action(
+    request: Request,
+    username: str = Form(""),
+    display_name: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """创建全权限平台员工，并只在当前成功响应展示初始密码。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            created = create_platform_user(
+                db,
+                username=username,
+                display_name=display_name,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformStaffError as exc:
+            return _redirect("/platform/users", _platform_staff_error_message(exc), danger=True)
+        context = _platform_context(
+            request,
+            page_title="平台员工",
+            active="users",
+            notice="平台员工创建成功。请立即安全交付初始密码，离开本页后无法再次查看。",
+            users=list_platform_users(db),
+            initial_password=created.initial_password,
+        )
+        return templates.TemplateResponse(request, "platform_users.html", context, status_code=201)
+
+
+@router.post("/users/{user_id}")
+async def platform_user_update_action(
+    user_id: int,
+    request: Request,
+    display_name: str = Form(""),
+    is_enabled: bool = Form(False),
+    csrf_token: str = Form(""),
+):
+    """更新平台员工姓名与启停状态，角色固定为全权限管理员。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            update_platform_user(
+                db,
+                user_id=user_id,
+                display_name=display_name,
+                is_enabled=is_enabled,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformStaffError as exc:
+            return _redirect("/platform/users", _platform_staff_error_message(exc), danger=True)
+    return _redirect("/platform/users", "平台员工信息已更新")
+
+
+@router.post("/users/{user_id}/reset-password", response_class=HTMLResponse)
+async def platform_user_reset_password_action(
+    user_id: int,
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    """重置平台员工密码，并只在当前成功响应展示一次。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            initial_password = reset_platform_user_password(
+                db,
+                user_id=user_id,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformStaffError as exc:
+            return _redirect("/platform/users", _platform_staff_error_message(exc), danger=True)
+        context = _platform_context(
+            request,
+            page_title="平台员工",
+            active="users",
+            notice="平台员工密码已重置。请立即安全交付，离开本页后无法再次查看。",
+            users=list_platform_users(db),
+            initial_password=initial_password,
+        )
+        return templates.TemplateResponse(request, "platform_users.html", context)
 
 
 @router.get("/tenants", response_class=HTMLResponse)
@@ -172,6 +298,7 @@ async def platform_tenant_create_action(
     plan_id: int = Form(0),
     expires_on: str = Form(""),
     admin_username: str = Form("admin"),
+    admin_mobile: str = Form(""),
     admin_display_name: str = Form("企业管理员"),
     contact_name: str = Form(""),
     contact_phone: str = Form(""),
@@ -191,6 +318,7 @@ async def platform_tenant_create_action(
                 plan_id=plan_id,
                 expires_at=_parse_expiry(expires_on),
                 admin_username=admin_username,
+                admin_mobile=admin_mobile,
                 admin_display_name=admin_display_name,
                 contact_name=contact_name,
                 contact_phone=contact_phone,

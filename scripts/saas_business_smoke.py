@@ -376,6 +376,7 @@ def run_business_smoke() -> dict[str, Any]:
                     plan_id=plan.id,
                     expires_at=now_shanghai() + timedelta(days=30),
                     admin_username="admin",
+                    admin_mobile="13100131001",
                     admin_display_name="同名员工",
                 )
                 beta_created = create_tenant_with_subscription(
@@ -385,6 +386,7 @@ def run_business_smoke() -> dict[str, Any]:
                     plan_id=plan.id,
                     expires_at=now_shanghai() + timedelta(days=30),
                     admin_username="admin",
+                    admin_mobile="13100131002",
                     admin_display_name="同名员工",
                 )
 

@@ -10,11 +10,13 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.services.platform_admin as platform_admin
+import app.services.platform_staff as platform_staff
 import app.web.platform_admin as platform_admin_web
 from app.core.db import Base
 from app.core.time import now_shanghai
 from app.models.saas import PlatformAuditLog, PlatformUser, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.platform_admin import PlatformAdminError
+from app.services.platform_staff import PlatformStaffError
 from app.services.saas_auth import create_platform_session, hash_password, load_platform_principal, verify_password
 from app.web.auth_common import PLATFORM_CSRF_COOKIE, PLATFORM_SESSION_COOKIE
 
@@ -46,6 +48,85 @@ def _create_plan(db: Session, *, status: str = "active") -> SaasPlan:
     return plan
 
 
+def test_platform_staff_accounts_have_no_tenant_and_revoke_sessions_on_status_change(db: Session) -> None:
+    """平台员工不属于租户，启停变化后旧平台会话必须立即失效。"""
+
+    root = PlatformUser(
+        username="root-platform",
+        display_name="平台主管",
+        password_hash=hash_password("Platform-root-123"),
+        role="platform_admin",
+        is_enabled=True,
+        auth_version=1,
+        must_change_password=False,
+    )
+    db.add(root)
+    db.commit()
+    db.refresh(root)
+
+    created = platform_staff.create_platform_user(
+        db,
+        username="staff-admin",
+        display_name="平台员工",
+        actor_user_id=root.id,
+    )
+    staff = db.get(PlatformUser, created.user_id)
+    session = create_platform_session(db, staff)
+
+    assert verify_password(created.initial_password, staff.password_hash)
+    assert not hasattr(staff, "tenant_id")
+    platform_staff.update_platform_user(
+        db,
+        user_id=staff.id,
+        display_name="平台员工",
+        is_enabled=False,
+        actor_user_id=root.id,
+    )
+    assert load_platform_principal(db, session.raw_token) is None
+
+    platform_staff.update_platform_user(
+        db,
+        user_id=staff.id,
+        display_name="平台员工",
+        is_enabled=True,
+        actor_user_id=root.id,
+    )
+    db.refresh(staff)
+    password_session = create_platform_session(db, staff)
+    reset_password = platform_staff.reset_platform_user_password(
+        db,
+        user_id=staff.id,
+        actor_user_id=root.id,
+    )
+    assert load_platform_principal(db, password_session.raw_token) is None
+    assert verify_password(reset_password, db.get(PlatformUser, staff.id).password_hash)
+
+
+def test_platform_staff_cannot_disable_last_enabled_admin(db: Session) -> None:
+    """平台必须始终保留至少一个启用的全权限管理员。"""
+
+    only_admin = PlatformUser(
+        username="only-admin",
+        display_name="唯一管理员",
+        password_hash=hash_password("Platform-only-123"),
+        role="platform_admin",
+        is_enabled=True,
+        auth_version=1,
+        must_change_password=False,
+    )
+    db.add(only_admin)
+    db.commit()
+
+    with pytest.raises(PlatformStaffError, match="last_platform_admin_required"):
+        platform_staff.update_platform_user(
+            db,
+            user_id=only_admin.id,
+            display_name="唯一管理员",
+            is_enabled=False,
+            actor_user_id=only_admin.id,
+        )
+
+
 def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically(db: Session) -> None:
     """租户、订阅、首个管理员和审计必须在一个成功事务中同时存在。"""
 
@@ -58,6 +139,7 @@ def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically
         plan_id=plan.id,
         expires_at=expires_at,
         admin_username="admin",
+        admin_mobile="13200132001",
         admin_display_name="企业管理员",
         actor_user_id=None,
     )
@@ -70,6 +152,8 @@ def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically
     assert tenant.code == "acme-corp"
     assert subscription.plan_id == plan.id
     assert admin.role == "tenant_admin"
+    assert admin.mobile == "13200132001"
+    assert admin.is_owner is True
     assert admin.must_change_password is True
     assert verify_password(created.initial_password, admin.password_hash)
     assert created.initial_password not in (audit.detail or "")
@@ -87,6 +171,7 @@ def test_platform_admin_rejects_disabled_plan_and_duplicate_tenant_code(db: Sess
             plan_id=disabled_plan.id,
             expires_at=now_shanghai() + timedelta(days=30),
             admin_username="admin",
+            admin_mobile="13200132002",
             admin_display_name="管理员",
         )
 
@@ -100,6 +185,7 @@ def test_platform_admin_rejects_disabled_plan_and_duplicate_tenant_code(db: Sess
         plan_id=active_plan.id,
         expires_at=None,
         admin_username="admin",
+        admin_mobile="13200132003",
         admin_display_name="管理员",
     )
     with pytest.raises(PlatformAdminError, match="tenant_code_exists"):
@@ -110,6 +196,7 @@ def test_platform_admin_rejects_disabled_plan_and_duplicate_tenant_code(db: Sess
             plan_id=active_plan.id,
             expires_at=None,
             admin_username="admin",
+            admin_mobile="13200132004",
             admin_display_name="管理员",
         )
 
@@ -131,6 +218,7 @@ def test_tenant_creation_rolls_back_all_rows_when_admin_password_hash_fails(db: 
             plan_id=plan.id,
             expires_at=None,
             admin_username="admin",
+            admin_mobile="13200132005",
             admin_display_name="管理员",
         )
 
@@ -218,6 +306,7 @@ def test_platform_admin_can_renew_disable_and_reset_admin_password(db: Session) 
         plan_id=first_plan.id,
         expires_at=now_shanghai() + timedelta(days=30),
         admin_username="root",
+        admin_mobile="13200132006",
         admin_display_name="租户管理员",
     )
 
@@ -286,6 +375,33 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
     with TestClient(test_app) as client:
         client.cookies.set(PLATFORM_SESSION_COOKIE, created_session.raw_token)
         client.cookies.set(PLATFORM_CSRF_COOKIE, created_session.raw_csrf_token)
+
+        users_page = client.get("/platform/users")
+        assert users_page.status_code == 200
+        assert "租户编码" not in users_page.text
+        assert 'name="tenant_code"' not in users_page.text
+
+        created_staff = client.post(
+            "/platform/users",
+            data={
+                "csrf_token": created_session.raw_csrf_token,
+                "username": "platform-operator",
+                "display_name": "平台员工",
+            },
+        )
+        assert created_staff.status_code == 201
+        staff_password_match = re.search(r"一次性初始密码.*?<code>([^<]+)</code>", created_staff.text, re.S)
+        assert staff_password_match is not None
+        staff_password = staff_password_match.group(1)
+
+        refreshed_staff = client.get("/platform/users")
+        assert refreshed_staff.status_code == 200
+        assert staff_password not in refreshed_staff.text
+        with factory() as db:
+            staff = db.scalar(select(PlatformUser).where(PlatformUser.username == "platform-operator"))
+            assert verify_password(staff_password, staff.password_hash)
+            assert not hasattr(staff, "tenant_id")
+
         response = client.post(
             "/platform/tenants",
             data={
@@ -295,6 +411,7 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
                 "plan_id": str(plan_id),
                 "expires_on": "2027-08-01",
                 "admin_username": "admin",
+                "admin_mobile": "13200132007",
                 "admin_display_name": "企业管理员",
             },
         )

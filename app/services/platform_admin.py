@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import PlatformAuditLog, SaasPlan, Tenant, TenantSession, TenantSubscription, TenantUser
+from app.services.registration import RegistrationError, normalize_mobile
 from app.services.saas_auth import generate_initial_password, hash_password
 
 
@@ -178,6 +180,7 @@ def create_tenant_with_subscription(
     plan_id: int,
     expires_at: datetime | None,
     admin_username: str,
+    admin_mobile: str,
     admin_display_name: str,
     contact_name: str = "",
     contact_phone: str = "",
@@ -189,6 +192,10 @@ def create_tenant_with_subscription(
     normalized_code = _normalize_code(code, kind="tenant")
     normalized_name = (name or "").strip()
     normalized_username = (admin_username or "").strip()
+    try:
+        normalized_admin_mobile = normalize_mobile(admin_mobile)
+    except RegistrationError as exc:
+        raise PlatformAdminError(str(exc)) from exc
     normalized_display_name = (admin_display_name or "").strip()
     if not normalized_name:
         raise PlatformAdminError("tenant_name_required")
@@ -198,6 +205,8 @@ def create_tenant_with_subscription(
         raise PlatformAdminError("admin_display_name_required")
     if db.scalar(select(Tenant.id).where(Tenant.code == normalized_code)) is not None:
         raise PlatformAdminError("tenant_code_exists")
+    if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_admin_mobile)) is not None:
+        raise PlatformAdminError("mobile_already_registered")
 
     plan = db.get(SaasPlan, int(plan_id or 0))
     if plan is None:
@@ -217,7 +226,7 @@ def create_tenant_with_subscription(
             name=normalized_name,
             status="active",
             contact_name=(contact_name or "").strip() or None,
-            contact_phone=(contact_phone or "").strip() or None,
+            contact_phone=(contact_phone or "").strip() or normalized_admin_mobile,
             notes=(notes or "").strip() or None,
         )
         db.add(tenant)
@@ -233,12 +242,14 @@ def create_tenant_with_subscription(
         admin = TenantUser(
             tenant_id=tenant.id,
             username=normalized_username,
+            mobile=normalized_admin_mobile,
             display_name=normalized_display_name,
             role="tenant_admin",
             password_hash=hash_password(initial_password),
             is_enabled=True,
             auth_version=1,
             must_change_password=True,
+            is_owner=True,
         )
         db.add_all([subscription, admin])
         db.flush()
@@ -258,6 +269,14 @@ def create_tenant_with_subscription(
             admin_user_id=int(admin.id),
             initial_password=initial_password,
         )
+    except IntegrityError as exc:
+        # 租户编码与手机号均有数据库唯一约束，并发开通冲突必须转换为稳定业务错误。
+        db.rollback()
+        if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_admin_mobile)) is not None:
+            raise PlatformAdminError("mobile_already_registered") from exc
+        if db.scalar(select(Tenant.id).where(Tenant.code == normalized_code)) is not None:
+            raise PlatformAdminError("tenant_code_exists") from exc
+        raise PlatformAdminError("tenant_create_conflict") from exc
     except BaseException:
         db.rollback()
         raise
