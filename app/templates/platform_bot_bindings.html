@@ -1,0 +1,23 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>查看全平台机器人账号归属和释放状态。</p>{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="table-scroll">
+    <table class="table">
+      <thead><tr><th>绑定</th><th>企业</th><th>适配类型</th><th>机器人账号</th><th>状态</th><th>绑定时间</th></tr></thead>
+      <tbody>
+        {% for binding in bindings %}
+        <tr>
+          <td><a href="/platform/bot-bindings/{{ binding.id }}">#{{ binding.id }}</a></td>
+          <td>{{ binding.tenant.name }}</td>
+          <td>{{ binding.adapter_type }}</td>
+          <td><code>{{ binding.bot_account_id }}</code></td>
+          <td>{{ binding.status }}</td>
+          <td>{{ format_time(binding.bound_at) }}</td>
+        </tr>
+        {% else %}<tr><td colspan="6"><div class="empty-state"><strong>暂无机器人绑定</strong></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

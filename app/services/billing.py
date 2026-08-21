@@ -172,7 +172,10 @@ def get_current_subscription(db: Session, *, tenant_id: int) -> TenantSubscripti
     return db.scalar(
         select(TenantSubscription)
         .where(TenantSubscription.tenant_id == int(tenant_id))
-        .options(selectinload(TenantSubscription.plan))
+        .options(
+            selectinload(TenantSubscription.plan),
+            selectinload(TenantSubscription.fulfilled_order),
+        )
         .order_by(TenantSubscription.starts_at.desc(), TenantSubscription.id.desc())
         .limit(1)
     )

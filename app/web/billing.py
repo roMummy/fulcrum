@@ -27,6 +27,12 @@ from app.services.billing import (
     list_tenant_orders,
     submit_payment_evidence,
 )
+from app.services.bot_entitlements import (
+    BotEntitlementError,
+    bind_bot_account,
+    get_bot_quota,
+    list_bot_bindings,
+)
 from app.services.payment_gateways.manual import ManualPaymentGateway
 from app.services.saas_auth import has_tenant_role
 from app.web.auth_common import (
@@ -129,6 +135,7 @@ def _tenant_context(
             {"label": "新手引导", "href": "/account/onboarding", "active": active == "onboarding"},
             {"label": "套餐与额度", "href": "/account/billing", "active": active == "billing"},
             {"label": "订单", "href": "/account/orders", "active": active == "orders"},
+            {"label": "机器人绑定", "href": "/account/bot-bindings", "active": active == "bindings"},
         ],
         "module_links": {},
         "notice": notice,
@@ -152,6 +159,15 @@ def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectRespon
     if danger:
         suffix += "&tone=danger"
     return RedirectResponse(url=path + suffix, status_code=303)
+
+
+def _mask_bot_account(value: str) -> str:
+    """租户清单只显示可识别的账号片段，减少页面截图泄露完整外部账号。"""
+
+    normalized = value or ""
+    if len(normalized) <= 6:
+        return "*" * max(len(normalized) - 2, 0) + normalized[-2:]
+    return f"{normalized[:2]}{'*' * min(len(normalized) - 6, 8)}{normalized[-4:]}"
 
 
 def _proof_signature_matches(suffix: str, content: bytes) -> bool:
@@ -462,3 +478,57 @@ async def account_order_proof_download(order_id: int, request: Request):
             filename=f"{order.order_no}-proof{proof_path.suffix.lower()}",
             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
         )
+
+
+@router.get("/bot-bindings", response_class=HTMLResponse)
+async def account_bot_bindings_page(request: Request):
+    """展示当前租户通用机器人额度和绑定历史，不提供租户解绑动作。"""
+
+    _require_principal(request)
+    with SessionLocal() as db:
+        bindings = list_bot_bindings(db)
+        try:
+            quota = get_bot_quota(db)
+            quota_error = ""
+        except BotEntitlementError as exc:
+            quota = None
+            quota_error = str(exc)
+        context = _tenant_context(
+            request,
+            page_title="机器人绑定",
+            active="bindings",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            bindings=bindings,
+            quota=quota,
+            quota_error=quota_error,
+            mask_bot_account=_mask_bot_account,
+        )
+        return templates.TemplateResponse(request, "account_bot_bindings.html", context)
+
+
+@router.post("/bot-bindings")
+async def account_bot_binding_create_action(
+    request: Request,
+    adapter_type: str = Form(""),
+    bot_account_id: str = Form(""),
+    display_name: str = Form(""),
+    device_fingerprint: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """使用可信租户上下文创建绑定，表单中的设备原始指纹不会写入日志或数据库。"""
+
+    _require_billing_manager(request)
+    with SessionLocal() as db:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            bind_bot_account(
+                db,
+                adapter_type=adapter_type,
+                bot_account_id=bot_account_id,
+                display_name=display_name,
+                device_fingerprint=device_fingerprint,
+            )
+        except BotEntitlementError as exc:
+            return _redirect("/account/bot-bindings", f"机器人绑定失败：{exc}", danger=True)
+    return _redirect("/account/bot-bindings", "机器人账号已绑定")

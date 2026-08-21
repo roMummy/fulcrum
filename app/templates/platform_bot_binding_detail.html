@@ -1,0 +1,29 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>{{ binding.status }}</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/platform/bot-bindings">返回绑定</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <dl class="detail-grid">
+    <div><dt>企业</dt><dd>{{ binding.tenant.name }}</dd></div>
+    <div><dt>适配类型</dt><dd>{{ binding.adapter_type }}</dd></div>
+    <div><dt>机器人账号 ID</dt><dd><code>{{ binding.bot_account_id }}</code></dd></div>
+    <div><dt>显示名称</dt><dd>{{ binding.display_name or '-' }}</dd></div>
+    <div><dt>设备摘要</dt><dd><code>{{ device_hash_preview }}</code></dd></div>
+    <div><dt>状态</dt><dd>{{ binding.status }}</dd></div>
+    <div><dt>绑定时间</dt><dd>{{ format_time(binding.bound_at) }}</dd></div>
+    <div><dt>释放时间</dt><dd>{{ format_time(binding.released_at) }}</dd></div>
+  </dl>
+  {% if binding.release_reason %}<section class="notice-card">释放原因：{{ binding.release_reason }}</section>{% endif %}
+</section>
+
+{% if binding.status != 'released' %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Release</p><h2>受控释放</h2></div></div>
+  <form method="post" action="/platform/bot-bindings/{{ binding.id }}/release" class="form-grid" data-confirm-mode="confirm" data-confirm-title="释放机器人绑定" data-confirm-message="释放后租户可以占用新的额度，但历史设备和试用领取记录仍会保留。">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>释放原因</span><textarea name="reason" rows="3" maxlength="1000" required></textarea></label>
+    <div class="full-row form-actions-inline"><button class="btn btn-secondary" type="submit">确认释放</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

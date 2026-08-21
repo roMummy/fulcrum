@@ -13,9 +13,11 @@ import app.core.db as db_module
 import app.main as main_module
 from app.core.db import Base
 from app.core.settings import settings
+from app.core.tenant_context import tenant_scope
 from app.core.time import now_shanghai
-from app.models.saas import BillingOrder, PlatformAuditLog, PlatformUser, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.models.saas import BillingOrder, BotBinding, PlatformAuditLog, PlatformUser, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.billing import create_billing_order, submit_payment_evidence
+from app.services.bot_entitlements import bind_bot_account
 from app.services.saas_auth import create_platform_session, create_tenant_session, hash_password
 from app.web.auth_common import (
     PLATFORM_CSRF_COOKIE,
@@ -248,5 +250,51 @@ def test_platform_reject_requires_reason_and_records_audit(platform_billing_env)
         assert db.scalar(
             select(func.count(PlatformAuditLog.id)).where(
                 PlatformAuditLog.action == "billing_order.reject"
+            )
+        ) == 1
+
+
+def test_platform_can_release_bot_binding_with_reason(platform_billing_env) -> None:
+    """平台可以查看完整绑定并带原因释放，租户设备摘要和审计历史仍保留。"""
+
+    with platform_billing_env["factory"]() as db, tenant_scope(platform_billing_env["tenant_id"]):
+        binding = bind_bot_account(
+            db,
+            adapter_type="generic-api",
+            bot_account_id="platform-release-bot",
+            device_fingerprint="platform-release-device",
+        )
+        binding_id = binding.id
+
+    with TestClient(main_module.app, follow_redirects=False) as client:
+        _set_platform_identity(client, platform_billing_env["platform_session"])
+        listing = client.get("/platform/bot-bindings")
+        detail = client.get(f"/platform/bot-bindings/{binding_id}")
+        forged = client.post(
+            f"/platform/bot-bindings/{binding_id}/release",
+            data={"csrf_token": "forged", "reason": "无效请求"},
+        )
+        released = client.post(
+            f"/platform/bot-bindings/{binding_id}/release",
+            data={
+                "csrf_token": platform_billing_env["platform_session"].raw_csrf_token,
+                "reason": "客户确认停用设备",
+            },
+        )
+
+        assert listing.status_code == 200
+        assert "platform-release-bot" in listing.text
+        assert detail.status_code == 200
+        assert "platform-release-device" not in detail.text
+        assert forged.status_code == 403
+        assert released.status_code == 303
+
+    with platform_billing_env["factory"]() as db:
+        stored = db.get(BotBinding, binding_id)
+        assert stored.status == "released"
+        assert stored.release_reason == "客户确认停用设备"
+        assert db.scalar(
+            select(func.count(PlatformAuditLog.id)).where(
+                PlatformAuditLog.action == "bot_binding.release"
             )
         ) == 1

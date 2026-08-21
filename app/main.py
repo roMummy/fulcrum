@@ -502,6 +502,7 @@ def render(request: Request, template: str, **context):
             nav_item("新手引导", "/account/onboarding", ("/account/onboarding",)),
             nav_item("套餐与额度", "/account/billing", ("/account/billing",)),
             nav_item("订单", "/account/orders", ("/account/orders",)),
+            nav_item("机器人绑定", "/account/bot-bindings", ("/account/bot-bindings",)),
         ]
     base_context = {
         "current_user": getattr(request.state, "current_user", None),

@@ -14,7 +14,7 @@ import app.main as main_module
 from app.core.db import Base
 from app.core.settings import settings
 from app.core.time import now_shanghai
-from app.models.saas import BillingOrder, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.models.saas import BillingOrder, BotBinding, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.billing import create_billing_order
 from app.services.saas_auth import create_tenant_session, hash_password
 from app.web.auth_common import TENANT_CSRF_COOKIE, TENANT_SESSION_COOKIE
@@ -301,3 +301,34 @@ def test_cancel_order_requires_matching_tenant_csrf(billing_env) -> None:
         _set_identity(client, billing_env["owner_session"])
         response = client.post(f"/account/orders/{order_id}/cancel", data={"csrf_token": ""})
         assert response.status_code == 403
+
+
+def test_owner_can_bind_bot_but_page_has_no_tenant_release_action(billing_env) -> None:
+    """租户管理员可在额度内绑定通用账号，但页面不提供解绑且不泄露设备原始指纹。"""
+
+    raw_fingerprint = "tenant-page-device-001"
+    with TestClient(main_module.app, follow_redirects=False) as client:
+        _set_identity(client, billing_env["owner_session"])
+        created = client.post(
+            "/account/bot-bindings",
+            data={
+                "csrf_token": billing_env["owner_session"].raw_csrf_token,
+                "adapter_type": "generic-api",
+                "bot_account_id": "tenant-page-bot-001",
+                "display_name": "页面机器人",
+                "device_fingerprint": raw_fingerprint,
+            },
+        )
+        page = client.get("/account/bot-bindings")
+
+        assert created.status_code == 303
+        assert page.status_code == 200
+        assert "页面机器人" in page.text
+        assert "tenant-page-bot-001" not in page.text
+        assert raw_fingerprint not in page.text
+        assert "解绑" not in page.text
+
+    with billing_env["factory"]() as db:
+        binding = db.scalar(select(BotBinding))
+        assert binding is not None
+        assert raw_fingerprint not in binding.device_fingerprint_hash

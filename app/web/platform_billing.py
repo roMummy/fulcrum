@@ -18,6 +18,12 @@ from app.services.billing import (
     list_billing_orders,
     reject_order,
 )
+from app.services.bot_entitlements import (
+    BotEntitlementError,
+    get_bot_binding_for_platform,
+    list_all_bot_bindings,
+    release_bot_binding_by_platform,
+)
 from app.web.auth_common import (
     PLATFORM_CSRF_COOKIE,
     PLATFORM_LOGOUT_PATH,
@@ -32,7 +38,7 @@ from app.web.billing import (
 )
 
 
-router = APIRouter(prefix="/platform/billing", tags=["platform-billing"])
+router = APIRouter(prefix="/platform", tags=["platform-billing"])
 templates = Jinja2Templates(directory="app/templates")
 
 
@@ -55,6 +61,7 @@ def _platform_context(
     request: Request,
     *,
     page_title: str,
+    active: str = "orders",
     notice: str = "",
     notice_tone: str = "",
     **extra,
@@ -74,7 +81,10 @@ def _platform_context(
         ],
         "secondary_nav_items": [],
         "secondary_nav_active": False,
-        "section_nav_items": [],
+        "section_nav_items": [
+            {"label": "订单审核", "href": "/platform/billing/orders", "active": active == "orders"},
+            {"label": "机器人绑定", "href": "/platform/bot-bindings", "active": active == "bindings"},
+        ],
         "module_links": {},
         "notice": notice,
         "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice else "info"),
@@ -98,7 +108,7 @@ def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectRespon
     return RedirectResponse(url=path + suffix, status_code=303)
 
 
-@router.get("/orders", response_class=HTMLResponse)
+@router.get("/billing/orders", response_class=HTMLResponse)
 async def platform_billing_orders_page(request: Request):
     """展示平台订单清单，并把待审核订单排在最前。"""
 
@@ -113,7 +123,7 @@ async def platform_billing_orders_page(request: Request):
         return templates.TemplateResponse(request, "platform_billing_orders.html", context)
 
 
-@router.get("/orders/{order_id}", response_class=HTMLResponse)
+@router.get("/billing/orders/{order_id}", response_class=HTMLResponse)
 async def platform_billing_order_detail_page(order_id: int, request: Request):
     """展示企业、套餐、付款流水和审核动作，不传递内部存储路径。"""
 
@@ -133,7 +143,7 @@ async def platform_billing_order_detail_page(order_id: int, request: Request):
         return templates.TemplateResponse(request, "platform_billing_order_detail.html", context)
 
 
-@router.post("/orders/{order_id}/approve")
+@router.post("/billing/orders/{order_id}/approve")
 async def platform_billing_order_approve_action(
     order_id: int,
     request: Request,
@@ -155,7 +165,7 @@ async def platform_billing_order_approve_action(
     return _redirect(f"/platform/billing/orders/{order_id}", "订单已审核并完成订阅开通")
 
 
-@router.post("/orders/{order_id}/reject")
+@router.post("/billing/orders/{order_id}/reject")
 async def platform_billing_order_reject_action(
     order_id: int,
     request: Request,
@@ -183,7 +193,7 @@ async def platform_billing_order_reject_action(
     return _redirect(f"/platform/billing/orders/{order_id}", "订单已驳回，租户可重新提交凭证")
 
 
-@router.get("/orders/{order_id}/proof")
+@router.get("/billing/orders/{order_id}/proof")
 async def platform_billing_order_proof_download(order_id: int, request: Request):
     """通过平台身份下载私有凭证，响应不暴露服务器路径。"""
 
@@ -201,3 +211,68 @@ async def platform_billing_order_proof_download(order_id: int, request: Request)
             filename=f"{order.order_no}-proof{proof_path.suffix.lower()}",
             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
         )
+
+
+@router.get("/bot-bindings", response_class=HTMLResponse)
+async def platform_bot_bindings_page(request: Request):
+    """展示全平台机器人绑定和释放状态。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="机器人绑定管理",
+            active="bindings",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            bindings=list_all_bot_bindings(db),
+        )
+        return templates.TemplateResponse(request, "platform_bot_bindings.html", context)
+
+
+@router.get("/bot-bindings/{binding_id}", response_class=HTMLResponse)
+async def platform_bot_binding_detail_page(binding_id: int, request: Request):
+    """展示单条绑定、租户归属和受控释放入口。"""
+
+    with SessionLocal() as db:
+        try:
+            binding = get_bot_binding_for_platform(db, binding_id=binding_id)
+        except BotEntitlementError:
+            raise HTTPException(status_code=404, detail="Bot binding not found")
+        context = _platform_context(
+            request,
+            page_title=f"机器人绑定 #{binding.id}",
+            active="bindings",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            binding=binding,
+            device_hash_preview=f"{binding.device_fingerprint_hash[:8]}...{binding.device_fingerprint_hash[-6:]}",
+        )
+        return templates.TemplateResponse(request, "platform_bot_binding_detail.html", context)
+
+
+@router.post("/bot-bindings/{binding_id}/release")
+async def platform_bot_binding_release_action(
+    binding_id: int,
+    request: Request,
+    reason: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """平台管理员带原因释放绑定，租户端没有对应动作。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            release_bot_binding_by_platform(
+                db,
+                binding_id=binding_id,
+                reviewer_user_id=principal.user_id,
+                reason=reason,
+            )
+        except BotEntitlementError as exc:
+            return _redirect(
+                f"/platform/bot-bindings/{binding_id}",
+                f"绑定释放失败：{exc}",
+                danger=True,
+            )
+    return _redirect(f"/platform/bot-bindings/{binding_id}", "机器人绑定已受控释放")
