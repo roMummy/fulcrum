@@ -8,10 +8,10 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models.saas import SaasPlan, TenantUser
+from app.services.billing import list_public_plans
 from app.services.image_captcha import create_captcha_challenge, verify_captcha
 from app.services.registration import RegistrationError, register_trial_tenant
 from app.services.saas_auth import authenticate_tenant_owner, create_tenant_session
@@ -31,11 +31,7 @@ templates = Jinja2Templates(directory="app/templates")
 def _public_plans(db) -> list[SaasPlan]:
     """只返回平台启用并明确公开的套餐，页面不能自行写死价格。"""
 
-    return db.scalars(
-        select(SaasPlan)
-        .where(SaasPlan.status == "active", SaasPlan.is_public.is_(True))
-        .order_by(SaasPlan.display_order.asc(), SaasPlan.id.asc())
-    ).all()
+    return list_public_plans(db)
 
 
 def _format_yuan(cents: int) -> str:
