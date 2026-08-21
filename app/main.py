@@ -27,7 +27,13 @@ from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, Channel
 from app.services.auth import validate_password_change
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.channel_adapters import get_channel_adapter
-from app.services.channel_catalog import list_supported_channel_types, require_supported_channel_type
+from app.services.channel_catalog import (
+    ChannelConfigurationError,
+    list_supported_channel_types,
+    require_supported_channel_type,
+    serialize_channel_type_definitions,
+    validate_enabled_channel_configuration,
+)
 from app.services.channel_events import ingest_inbound_event
 from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
@@ -65,7 +71,7 @@ from app.services.plugin_runtime import execute_binding_action, get_plugin_runti
 from app.services.provider_nodes import (
     ProviderNodeError,
     list_provider_nodes,
-    validate_workwechat_provider_binding,
+    validate_channel_executor_binding,
 )
 from app.services.init_db import database_readiness, init_db_with_seed
 from app.services.installer import (
@@ -184,6 +190,8 @@ app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = list_supported_channel_types()
+CHANNEL_TYPE_FORM_SCHEMA = serialize_channel_type_definitions()
+CHANNEL_TYPE_FORM_SCHEMA_BY_CODE = {item["code"]: item for item in CHANNEL_TYPE_FORM_SCHEMA}
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
 
@@ -1820,6 +1828,7 @@ async def channels_page(request: Request):
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
+            channel_type_definitions=CHANNEL_TYPE_FORM_SCHEMA,
             provider_nodes=provider_nodes,
             notice=request.query_params.get("notice", ""),
         )
@@ -1909,6 +1918,11 @@ async def channel_detail_page(request: Request, channel_id: int):
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
+            channel_definition=CHANNEL_TYPE_FORM_SCHEMA_BY_CODE[channel.channel_type],
+            channel_config_field_map={
+                item["name"]: item
+                for item in CHANNEL_TYPE_FORM_SCHEMA_BY_CODE[channel.channel_type]["config_fields"]
+            },
             provider_nodes=provider_nodes,
             recent_channel_messages=recent_channel_messages,
             message_pagination=message_pagination,
@@ -2195,7 +2209,7 @@ async def create_channel_action(
         if adapter_error:
             return RedirectResponse(url="/channels?notice=" + quote(adapter_error), status_code=303)
         try:
-            provider_node, provider_account = validate_workwechat_provider_binding(
+            provider_node, provider_account = validate_channel_executor_binding(
                 db,
                 channel_type=normalized_channel_type,
                 provider_node_id=provider_node_id,
@@ -2203,7 +2217,32 @@ async def create_channel_action(
             )
         except ProviderNodeError as exc:
             return RedirectResponse(
-                url="/channels?notice=" + quote(f"Provider 绑定失败：{exc}") + "&tone=danger",
+                url="/channels?notice=" + quote(f"执行端绑定失败：{exc}") + "&tone=danger",
+                status_code=303,
+            )
+        enabled = is_enabled == "true"
+        try:
+            validate_enabled_channel_configuration(
+                normalized_channel_type,
+                is_enabled=enabled,
+                field_values={
+                    "api_base": api_base,
+                    "bot_token": bot_token,
+                    "webhook_path": webhook_path,
+                    "dm_policy": dm_policy,
+                    "allow_from": allow_from,
+                    "adapter_config_json": merged_adapter_config_json,
+                    "proxy_host": proxy_host,
+                    "proxy_port": proxy_port,
+                    "proxy_username": proxy_username,
+                    "proxy_password": proxy_password,
+                    "provider_node_id": provider_node.id if provider_node else None,
+                    "provider_account_id": provider_account.id if provider_account else None,
+                },
+            )
+        except ChannelConfigurationError as exc:
+            return RedirectResponse(
+                url="/channels?notice=" + quote(str(exc)) + "&tone=danger",
                 status_code=303,
             )
         payload = ChannelCreate(
@@ -2218,7 +2257,7 @@ async def create_channel_action(
             adapter_config_json=merged_adapter_config_json,
             provider_node_id=provider_node.id if provider_node else None,
             provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=is_enabled == "true",
+            is_enabled=enabled,
         )
         channel = create_channel(db, payload)
         record_audit(db, "channel.create", "channel", channel.id, f"创建渠道 {channel.name}")
@@ -2262,8 +2301,13 @@ async def edit_channel_action(
         if not has_tenant_role(principal, "tenant_admin"):
             raise HTTPException(status_code=403, detail="Permission denied")
         require_tenant_csrf(db, request, csrf_token)
+        if normalized_channel_type != channel.channel_type:
+            return RedirectResponse(
+                url=f"/channels/{channel_id}?notice={quote('渠道类型不可修改，请新建渠道后停用旧渠道')}&tone=danger",
+                status_code=303,
+            )
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=normalized_channel_type,
+            channel_type=channel.channel_type,
             adapter_config_json=adapter_config_json,
             proxy_host=proxy_host,
             proxy_port=proxy_port,
@@ -2273,22 +2317,48 @@ async def edit_channel_action(
         if adapter_error:
             return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(adapter_error)}", status_code=303)
         try:
-            provider_node, provider_account = validate_workwechat_provider_binding(
+            provider_node, provider_account = validate_channel_executor_binding(
                 db,
-                channel_type=normalized_channel_type,
+                channel_type=channel.channel_type,
                 provider_node_id=provider_node_id,
                 provider_account_id=provider_account_id,
                 channel_id=channel.id,
             )
         except ProviderNodeError as exc:
             return RedirectResponse(
-                url=f"/channels/{channel_id}?notice={quote(f'Provider 绑定失败：{exc}')}&tone=danger",
+                url=f"/channels/{channel_id}?notice={quote(f'执行端绑定失败：{exc}')}&tone=danger",
+                status_code=303,
+            )
+        enabled = is_enabled == "true"
+        try:
+            validate_enabled_channel_configuration(
+                channel.channel_type,
+                is_enabled=enabled,
+                field_values={
+                    "api_base": api_base,
+                    "bot_token": bot_token,
+                    "webhook_path": webhook_path,
+                    "dm_policy": dm_policy,
+                    "allow_from": allow_from,
+                    "adapter_config_json": merged_adapter_config_json,
+                    "proxy_host": proxy_host,
+                    "proxy_port": proxy_port,
+                    "proxy_username": proxy_username,
+                    "proxy_password": proxy_password,
+                    "provider_node_id": provider_node.id if provider_node else None,
+                    "provider_account_id": provider_account.id if provider_account else None,
+                },
+                configured_secret_fields={"bot_token"} if channel.bot_token_encrypted else (),
+            )
+        except ChannelConfigurationError as exc:
+            return RedirectResponse(
+                url=f"/channels/{channel_id}?notice={quote(str(exc))}&tone=danger",
                 status_code=303,
             )
         payload = ChannelUpdate(
             bot_id=bot_id,
             name=name,
-            channel_type=normalized_channel_type,
+            channel_type=channel.channel_type,
             api_base=api_base,
             bot_token=bot_token,
             webhook_path=webhook_path,
@@ -2297,7 +2367,7 @@ async def edit_channel_action(
             adapter_config_json=merged_adapter_config_json,
             provider_node_id=provider_node.id if provider_node else None,
             provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=is_enabled == "true",
+            is_enabled=enabled,
         )
         update_channel(db, channel, payload)
         record_audit(db, "channel.update", "channel", channel.id, f"更新渠道 {channel.name}")
@@ -2314,6 +2384,36 @@ async def toggle_channel_action(request: Request, channel_id: int):
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
+        if not channel.is_enabled:
+            # 草稿启用必须重新执行服务端规则，不能通过独立开关绕过配置和执行器校验。
+            try:
+                validate_channel_executor_binding(
+                    db,
+                    channel_type=channel.channel_type,
+                    provider_node_id=channel.provider_node_id,
+                    provider_account_id=channel.provider_account_id,
+                    channel_id=channel.id,
+                )
+                validate_enabled_channel_configuration(
+                    channel.channel_type,
+                    is_enabled=True,
+                    field_values={
+                        "api_base": channel.api_base,
+                        "bot_token": None,
+                        "webhook_path": channel.webhook_path,
+                        "dm_policy": channel.dm_policy,
+                        "allow_from": channel.allow_from,
+                        "adapter_config_json": channel.adapter_config_json,
+                        "provider_node_id": channel.provider_node_id,
+                        "provider_account_id": channel.provider_account_id,
+                    },
+                    configured_secret_fields={"bot_token"} if channel.bot_token_encrypted else (),
+                )
+            except (ChannelConfigurationError, ProviderNodeError) as exc:
+                return RedirectResponse(
+                    url=f"/channels/{channel_id}?notice={quote(str(exc))}&tone=danger",
+                    status_code=303,
+                )
         toggle_channel(db, channel)
         record_audit(db, "channel.toggle", "channel", channel.id, f"enabled={channel.is_enabled}")
         return RedirectResponse(url=f"/channels/{channel_id}", status_code=303)

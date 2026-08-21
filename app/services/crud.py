@@ -70,9 +70,11 @@ def create_channel(db: Session, data: ChannelCreate) -> Channel:
 
 def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channel:
     token = (data.bot_token or "").strip()
+    if data.channel_type.strip() != channel.channel_type:
+        # 渠道类型决定密钥结构、运行方式和外部账号身份，禁止通过通用更新服务换型。
+        raise ValueError("channel_type_immutable")
     channel.bot_id = data.bot_id
     channel.name = data.name.strip()
-    channel.channel_type = data.channel_type.strip()
     channel.api_base = (data.api_base or "").strip() or None
     if token:
         channel.bot_token_encrypted = encrypt_secret(token)

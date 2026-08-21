@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -10,6 +11,15 @@ class ChannelTypeNotSupported(ValueError):
     def __init__(self, channel_type: str | None = None):
         self.channel_type = str(channel_type or "").strip()
         super().__init__("channel_type_not_supported")
+
+
+class ChannelConfigurationError(ValueError):
+    """表示启用渠道时缺少统一目录声明的必要配置。"""
+
+    def __init__(self, channel_type: str, field_name: str, message: str):
+        self.channel_type = channel_type
+        self.field_name = field_name
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -154,6 +164,34 @@ def list_supported_channel_types() -> tuple[str, ...]:
     return tuple(definition.code for definition in CHANNEL_TYPE_DEFINITIONS)
 
 
+def serialize_channel_type_definitions() -> tuple[dict[str, Any], ...]:
+    """输出不包含适配器工厂的页面元数据，避免模板复制渠道字段和必填规则。"""
+
+    return tuple(
+        {
+            "code": definition.code,
+            "label": definition.label,
+            "summary": definition.summary,
+            "runtime_mode": definition.runtime_mode,
+            "capabilities": sorted(definition.capabilities),
+            "requires_executor_binding": definition.requires_executor_binding,
+            "config_fields": [
+                {
+                    "name": field.name,
+                    "label": field.label,
+                    "input_type": field.input_type,
+                    "placeholder": field.placeholder,
+                    "required_when_enabled": field.required_when_enabled,
+                    "secret": field.secret,
+                    "rows": field.rows,
+                }
+                for field in definition.config_fields
+            ],
+        }
+        for definition in CHANNEL_TYPE_DEFINITIONS
+    )
+
+
 def get_channel_type_definition(value: str | None) -> ChannelTypeDefinition:
     """读取正式渠道定义；未知类型必须显式失败，禁止隐式降级。"""
 
@@ -176,3 +214,36 @@ def channel_supports(channel_type: str | None, capability: str) -> bool:
     definition = get_channel_type_definition(channel_type)
     return str(capability or "").strip() in definition.capabilities
 
+
+def validate_enabled_channel_configuration(
+    channel_type: str | None,
+    *,
+    is_enabled: bool,
+    field_values: Mapping[str, Any],
+    configured_secret_fields: Iterable[str] = (),
+) -> None:
+    """按渠道目录校验启用所需配置，停用记录可以保存为不完整草稿。"""
+
+    if not is_enabled:
+        return
+
+    definition = get_channel_type_definition(channel_type)
+    configured_secrets = {str(name).strip() for name in configured_secret_fields}
+    for field in definition.config_fields:
+        if not field.required_when_enabled:
+            continue
+        value = field_values.get(field.name)
+        # 敏感字段编辑时允许不回填明文；只要数据库已经保存密文，就视为仍然配置有效。
+        if field.secret and field.name in configured_secrets:
+            continue
+        if isinstance(value, str):
+            configured = bool(value.strip())
+        else:
+            configured = bool(value)
+        if configured:
+            continue
+        raise ChannelConfigurationError(
+            definition.code,
+            field.name,
+            f"启用{definition.label}前请填写{field.label}",
+        )

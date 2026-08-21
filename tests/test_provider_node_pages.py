@@ -18,7 +18,7 @@ from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
 from app.models.saas import ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
-from app.services.provider_nodes import ProviderNodeError, validate_workwechat_provider_binding
+from app.services.provider_nodes import ProviderNodeError, validate_channel_executor_binding
 from app.services.saas_auth import hash_password
 
 
@@ -226,7 +226,7 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
     assert client.get(f"/provider-nodes/{ids['beta_node']}").status_code == 404
 
     with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
-        node, account_a = validate_workwechat_provider_binding(
+        node, account_a = validate_channel_executor_binding(
             db,
             channel_type="workwechat",
             provider_node_id=ids["active_node"],
@@ -243,7 +243,7 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
         db.commit()
 
         # 同节点的另一个在线账号仍可绑定第二个企微渠道。
-        same_node, account_b = validate_workwechat_provider_binding(
+        same_node, account_b = validate_channel_executor_binding(
             db,
             channel_type="workwechat",
             provider_node_id=ids["active_node"],
@@ -253,21 +253,21 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
         assert account_b.id == ids["account_b"]
 
         with pytest.raises(ProviderNodeError, match="provider_account_already_bound"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["active_node"],
                 provider_account_id=ids["account_a"],
             )
         with pytest.raises(ProviderNodeError, match="provider_node_not_active"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["disabled_node"],
                 provider_account_id=ids["disabled_account"],
             )
         with pytest.raises(ProviderNodeError, match="provider_node_not_found"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["beta_node"],

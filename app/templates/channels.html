@@ -44,7 +44,7 @@
     <span class="chip chip-outline">当前清单</span>
   </div>
   <table class="table">
-    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>Provider 绑定</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">Adapter Config</th><th class="col-type">DM 策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th class="col-id">ID</th><th>名称</th><th class="col-type">类型</th><th>执行端绑定</th><th>API Base</th><th>Token</th><th>Webhook</th><th class="col-status">扩展配置</th><th class="col-type">私聊策略</th><th class="col-status">状态</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for channel in channels %}
       {% set workwechat_cloud_poll_config = workwechat_cloud_poll_config_map.get(channel.id, {}) if workwechat_cloud_poll_config_map else {} %}
@@ -79,22 +79,24 @@
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
-    <form method="post" action="/channels" class="form-grid">
+    <form method="post" action="/channels" class="form-grid" data-channel-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label><span>所属机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label><span>渠道名称</span><input name="name" placeholder="例如：微信主通道" required /></label>
-      <input type="hidden" name="channel_type" value="workwechat" />
-      <label><span>渠道类型</span><input value="企业微信 Hook" disabled /></label>
-      <label><span>Provider 节点</span><select name="provider_node_id" data-provider-node-select required><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select></label>
-      <label><span>企微账号</span><select name="provider_account_id" data-provider-account-select required><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' %}{% for account in node.accounts if account.status == 'online' %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>{% endfor %}{% endfor %}</select></label>
-      <label><span>API Base</span><input name="api_base" placeholder="企微云端 WS/拉取模式可留空；直连 HTTP 才需要" /></label>
-      <label><span>Bot Token</span><input name="bot_token" type="password" placeholder="仅首次录入或更新时填写" /></label>
-      <label><span>Webhook Path</span><input name="webhook_path" placeholder="/wechat/webhook" /></label>
-      <label><span>DM 策略</span><select name="dm_policy"><option value="allowlist">allowlist</option><option value="allow">allow</option><option value="deny">deny</option></select></label>
+      <label><span>渠道类型</span><select name="channel_type" data-channel-type-select required>{% for definition in channel_type_definitions %}<option value="{{ definition.code }}">{{ definition.label }}</option>{% endfor %}</select></label>
+      <label data-channel-field="provider_node_id"><span data-channel-field-label>执行端节点</span><select name="provider_node_id" data-provider-node-select><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select></label>
+      <label data-channel-field="provider_account_id"><span data-channel-field-label>执行端账号</span><select name="provider_account_id" data-provider-account-select><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' %}{% for account in node.accounts if account.status == 'online' %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}">{{ account.display_name or account.account_key }}</option>{% endfor %}{% endfor %}</select></label>
+      <label data-channel-field="api_base"><span data-channel-field-label>API Base</span><input name="api_base" /></label>
+      <label data-channel-field="bot_token"><span data-channel-field-label>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" /></label>
+      <label data-channel-field="webhook_path"><span data-channel-field-label>Webhook Path</span><input name="webhook_path" /></label>
+      <label data-channel-field="dm_policy"><span data-channel-field-label>私聊策略</span><select name="dm_policy"><option value="allowlist">allowlist</option><option value="allow">allow</option><option value="deny">deny</option></select></label>
       <label><span>是否启用</span><select name="is_enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
-      <label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="2" placeholder="多个 ID 用逗号分隔"></textarea></label>
-      <label class="full-row"><span>Adapter Config JSON</span><textarea name="adapter_config_json" rows="5" placeholder='{"wxid":"wxid_xxx","device_id":"..."}'></textarea></label>
-      <p class="muted-text full-row" style="margin:0;">企业微信渠道必须绑定已激活节点及其在线账号；节点激活码在 Provider 节点页面生成。</p>
+      <label data-channel-field="proxy_host"><span data-channel-field-label>代理地址</span><input name="proxy_host" /></label>
+      <label data-channel-field="proxy_port"><span data-channel-field-label>代理端口</span><input name="proxy_port" inputmode="numeric" /></label>
+      <label data-channel-field="proxy_username"><span data-channel-field-label>代理用户名</span><input name="proxy_username" autocomplete="off" /></label>
+      <label data-channel-field="proxy_password"><span data-channel-field-label>代理密码</span><input name="proxy_password" type="password" autocomplete="new-password" /></label>
+      <label class="full-row" data-channel-field="allow_from"><span data-channel-field-label>允许名单</span><textarea name="allow_from" rows="2"></textarea></label>
+      <label class="full-row" data-channel-field="adapter_config_json"><span data-channel-field-label>适配配置 JSON</span><textarea name="adapter_config_json" rows="5"></textarea></label>
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">创建渠道</button>
         <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
@@ -106,11 +108,41 @@
 {% block scripts %}
 <script>
 (() => {
+  const form = document.querySelector("[data-channel-form]");
+  const typeSelect = form ? form.querySelector("[data-channel-type-select]") : null;
+  const enabledSelect = form ? form.querySelector("[name='is_enabled']") : null;
+  const fieldRows = form ? Array.from(form.querySelectorAll("[data-channel-field]")) : [];
+  const definitions = {{ channel_type_definitions | tojson }};
+  const definitionByCode = new Map(definitions.map((definition) => [definition.code, definition]));
+
+  // 页面只消费渠道目录输出的字段元数据；新增渠道类型时不再需要复制一套表单显隐规则。
+  const refreshChannelFields = () => {
+    if (!typeSelect) return;
+    const definition = definitionByCode.get(typeSelect.value);
+    const configuredFields = new Map((definition?.config_fields || []).map((field) => [field.name, field]));
+    const enabling = enabledSelect?.value === "true";
+    fieldRows.forEach((row) => {
+      const fieldName = row.dataset.channelField || "";
+      const field = configuredFields.get(fieldName);
+      const control = row.querySelector("input, select, textarea");
+      const label = row.querySelector("[data-channel-field-label]");
+      const visible = Boolean(field);
+      row.hidden = !visible;
+      row.style.display = visible ? "" : "none";
+      if (!control) return;
+      control.disabled = !visible;
+      control.required = Boolean(visible && enabling && field.required_when_enabled);
+      if (label && field?.label) label.textContent = field.label;
+      if (visible && "placeholder" in control) control.placeholder = field.placeholder || "";
+      if (visible && control.tagName === "TEXTAREA" && field.rows) control.rows = field.rows;
+    });
+  };
+
   const nodeSelect = document.querySelector("[data-provider-node-select]");
   const accountSelect = document.querySelector("[data-provider-account-select]");
-  if (!nodeSelect || !accountSelect) return;
-  const options = Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]"));
+  const options = accountSelect ? Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]")) : [];
   const refreshAccounts = () => {
+    if (!nodeSelect || !accountSelect) return;
     const nodeId = nodeSelect.value;
     let firstVisible = null;
     options.forEach((option) => {
@@ -123,7 +155,13 @@
       accountSelect.value = firstVisible ? firstVisible.value : "0";
     }
   };
-  nodeSelect.addEventListener("change", refreshAccounts);
+  typeSelect?.addEventListener("change", () => {
+    refreshChannelFields();
+    refreshAccounts();
+  });
+  enabledSelect?.addEventListener("change", refreshChannelFields);
+  nodeSelect?.addEventListener("change", refreshAccounts);
+  refreshChannelFields();
   refreshAccounts();
 })();
 </script>
