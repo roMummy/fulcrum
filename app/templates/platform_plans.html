@@ -14,7 +14,7 @@
     <label><span>年付价格（元）</span><input name="yearly_price" type="number" min="0" step="0.01" value="990.00" required /></label>
     <label><span>试用天数</span><input name="trial_days" type="number" min="0" max="365" value="0" required /></label>
     <label><span>展示顺序</span><input name="display_order" type="number" min="0" value="10" required /></label>
-    <label><span>旧 Provider 节点额度</span><input name="provider_node_limit" type="number" min="0" value="1" required /></label>
+    <label><span>接入节点额度</span><input name="provider_node_limit" type="number" min="0" value="1" required /></label>
     <label><span>状态</span><select name="status"><option value="active">启用</option><option value="disabled">停用</option></select></label>
     <label><span>公开展示</span><select name="is_public"><option value="false">否</option><option value="true">是</option></select></label>
     <label><span>推荐套餐</span><select name="is_featured"><option value="false">否</option><option value="true">是</option></select></label>
@@ -24,47 +24,62 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>套餐清单</h2></div></div>
-  <div class="table-scroll">
-    <table class="table">
-      <thead><tr><th>套餐</th><th>机器人额度</th><th>月付</th><th>年付</th><th>公开</th><th>推荐</th><th>旧节点额度</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody>
-        {% for plan in plans %}
-        <tr>
-          <td><strong>{{ plan.name }}</strong><br /><code>{{ plan.code }}</code></td>
-          <td>{{ plan.bot_limit }}</td>
-          <td>¥{{ format_yuan(plan.monthly_price_cents) }}</td>
-          <td>¥{{ format_yuan(plan.yearly_price_cents) }}</td>
-          <td>{{ '是' if plan.is_public else '否' }}</td>
-          <td>{{ '是' if plan.is_featured else '否' }}</td>
-          <td>{{ plan.provider_node_limit }}</td>
-          <td><span class="chip {% if plan.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ plan.status }}</span></td>
-          <td><a href="#edit-plan-{{ plan.id }}">编辑</a></td>
-        </tr>
-        <tr id="edit-plan-{{ plan.id }}">
-          <td colspan="9">
-            <form method="post" action="/platform/plans" class="form-grid">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-              <input type="hidden" name="plan_id" value="{{ plan.id }}" />
-              <label><span>套餐编码</span><input name="code" value="{{ plan.code }}" required /></label>
-              <label><span>套餐名称</span><input name="name" value="{{ plan.name }}" required /></label>
-              <label><span>机器人额度</span><input name="bot_limit" type="number" min="0" value="{{ plan.bot_limit }}" required /></label>
-              <label><span>月付价格（元）</span><input name="monthly_price" type="number" min="0" step="0.01" value="{{ format_yuan(plan.monthly_price_cents) }}" required /></label>
-              <label><span>年付价格（元）</span><input name="yearly_price" type="number" min="0" step="0.01" value="{{ format_yuan(plan.yearly_price_cents) }}" required /></label>
-              <label><span>试用天数</span><input name="trial_days" type="number" min="0" max="365" value="{{ plan.trial_days }}" required /></label>
-              <label><span>展示顺序</span><input name="display_order" type="number" min="0" value="{{ plan.display_order }}" required /></label>
-              <label><span>旧 Provider 节点额度</span><input name="provider_node_limit" type="number" min="0" value="{{ plan.provider_node_limit }}" required /></label>
-              <label><span>状态</span><select name="status"><option value="active"{% if plan.status == 'active' %} selected{% endif %}>启用</option><option value="disabled"{% if plan.status == 'disabled' %} selected{% endif %}>停用</option></select></label>
-              <label><span>公开展示</span><select name="is_public"><option value="false"{% if not plan.is_public %} selected{% endif %}>否</option><option value="true"{% if plan.is_public %} selected{% endif %}>是</option></select></label>
-              <label><span>推荐套餐</span><select name="is_featured"><option value="false"{% if not plan.is_featured %} selected{% endif %}>否</option><option value="true"{% if plan.is_featured %} selected{% endif %}>是</option></select></label>
-              <label class="full-row"><span>说明</span><textarea name="description" rows="2">{{ plan.description or '' }}</textarea></label>
-              <div class="full-row form-actions-inline"><button class="btn" type="submit">保存套餐</button></div>
-            </form>
-          </td>
-        </tr>
-        {% else %}<tr><td colspan="9"><div class="empty-state"><strong>暂无套餐</strong></div></td></tr>{% endfor %}
-      </tbody>
-    </table>
+  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>套餐清单</h2></div><span class="chip chip-outline">{{ plans|length }} 个套餐</span></div>
+  <div class="record-list">
+    {% for plan in plans %}
+    <article class="record-row">
+      <div class="record-primary">
+        <strong>{{ plan.name }}</strong>
+        <span><code>{{ plan.code }}</code>{% if plan.is_featured %} · 推荐{% endif %}</span>
+      </div>
+      <dl class="record-meta record-meta-wide">
+        <div><dt>机器人额度</dt><dd>{{ plan.bot_limit }}</dd></div>
+        <div><dt>月付价格</dt><dd>¥{{ format_yuan(plan.monthly_price_cents) }}</dd></div>
+        <div><dt>年付价格</dt><dd>¥{{ format_yuan(plan.yearly_price_cents) }}</dd></div>
+        <div><dt>公开展示</dt><dd>{{ '是' if plan.is_public else '否' }}</dd></div>
+        <div><dt>状态</dt><dd><span class="chip {% if plan.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if plan.status == 'active' else '已停用' }}</span></dd></div>
+      </dl>
+      <div class="record-actions">
+        <details class="nav-more record-action-menu">
+          <summary class="record-action-trigger" aria-label="管理套餐 {{ plan.name }}" title="更多操作">&#8230;</summary>
+          <div class="nav-popover record-action-popover">
+            <button class="nav-popover-link" type="button" data-modal-open="edit-plan-{{ plan.id }}">编辑套餐</button>
+          </div>
+        </details>
+      </div>
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>暂无套餐</strong></div>
+    {% endfor %}
   </div>
 </section>
+
+{% for plan in plans %}
+<dialog class="app-modal" id="edit-plan-{{ plan.id }}">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>编辑套餐</h2><p class="muted-text"><code>{{ plan.code }}</code></p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    {# 套餐编辑继续提交统一保存接口，隐藏主键用于区分创建和更新，所有价格仍以页面元值提交。 #}
+    <form method="post" action="/platform/plans" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="plan_id" value="{{ plan.id }}" />
+      <label><span>套餐编码</span><input name="code" value="{{ plan.code }}" required /></label>
+      <label><span>套餐名称</span><input name="name" value="{{ plan.name }}" required /></label>
+      <label><span>机器人额度</span><input name="bot_limit" type="number" min="0" value="{{ plan.bot_limit }}" required /></label>
+      <label><span>月付价格（元）</span><input name="monthly_price" type="number" min="0" step="0.01" value="{{ format_yuan(plan.monthly_price_cents) }}" required /></label>
+      <label><span>年付价格（元）</span><input name="yearly_price" type="number" min="0" step="0.01" value="{{ format_yuan(plan.yearly_price_cents) }}" required /></label>
+      <label><span>试用天数</span><input name="trial_days" type="number" min="0" max="365" value="{{ plan.trial_days }}" required /></label>
+      <label><span>展示顺序</span><input name="display_order" type="number" min="0" value="{{ plan.display_order }}" required /></label>
+      <label><span>接入节点额度</span><input name="provider_node_limit" type="number" min="0" value="{{ plan.provider_node_limit }}" required /></label>
+      <label><span>状态</span><select name="status"><option value="active"{% if plan.status == 'active' %} selected{% endif %}>启用</option><option value="disabled"{% if plan.status == 'disabled' %} selected{% endif %}>停用</option></select></label>
+      <label><span>公开展示</span><select name="is_public"><option value="false"{% if not plan.is_public %} selected{% endif %}>否</option><option value="true"{% if plan.is_public %} selected{% endif %}>是</option></select></label>
+      <label><span>推荐套餐</span><select name="is_featured"><option value="false"{% if not plan.is_featured %} selected{% endif %}>否</option><option value="true"{% if plan.is_featured %} selected{% endif %}>是</option></select></label>
+      <label class="full-row"><span>说明</span><textarea name="description" rows="2">{{ plan.description or '' }}</textarea></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存套餐</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+{% endfor %}
 {% endblock %}

@@ -22,33 +22,58 @@
 
 <section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Employees</p><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
-  <table class="table">
-    <thead><tr><th>账号</th><th>手机号</th><th>显示名</th><th>角色</th><th>状态</th>{% if can_manage_users %}<th>管理</th>{% endif %}</tr></thead>
-    <tbody>
-      {% for user in users %}
-      <tr>
-        <td><code>{{ user.username }}</code><div class="muted-text">#{{ user.id }}</div></td>
-        {% if can_manage_users %}
-        <td colspan="5">
-          <form method="post" action="/tenant/users/{{ user.id }}" class="form-grid">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <label><span>登录手机号</span><input name="mobile" type="tel" inputmode="tel" autocomplete="tel" value="{{ user.mobile or '' }}" required /></label>
-            <label><span>显示名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
-            <label><span>角色</span><select name="role"><option value="readonly" {% if user.role == 'readonly' %}selected{% endif %}>只读</option><option value="operator" {% if user.role == 'operator' %}selected{% endif %}>运营</option><option value="tenant_admin" {% if user.role == 'tenant_admin' %}selected{% endif %}>租户管理员</option></select></label>
-            <label><span>启用</span><input name="is_enabled" type="checkbox" value="true" {% if user.is_enabled %}checked{% endif %} /></label>
-            <div class="full-row form-actions-inline"><button class="btn btn-small" type="submit">保存</button></div>
-          </form>
-          <form method="post" action="/tenant/users/{{ user.id }}/reset-password" class="form-actions-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <button class="btn btn-small btn-secondary" type="submit">重置密码</button>
-          </form>
-        </td>
-        {% else %}
-        <td>{{ user.mobile or '未设置' }}</td><td>{{ user.display_name }}</td><td>{{ user.role }}</td><td>{{ '启用' if user.is_enabled else '停用' }}</td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="record-list">
+    {% for user in users %}
+    <article class="record-row">
+      <div class="record-primary">
+        <strong>{{ user.display_name }}</strong>
+        <span><code>{{ user.username }}</code> · #{{ user.id }}</span>
+      </div>
+      <dl class="record-meta">
+        <div><dt>登录手机号</dt><dd>{{ user.mobile or '未设置' }}</dd></div>
+        <div><dt>角色</dt><dd>{% if user.role == 'tenant_admin' %}租户管理员{% elif user.role == 'operator' %}运营{% else %}只读{% endif %}</dd></div>
+        <div><dt>状态</dt><dd><span class="chip {% if user.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if user.is_enabled else '已停用' }}</span></dd></div>
+      </dl>
+      {% if can_manage_users %}
+      <div class="record-actions">
+        <details class="nav-more record-action-menu">
+          <summary class="record-action-trigger" aria-label="管理员工 {{ user.display_name }}" title="更多操作">&#8230;</summary>
+          <div class="nav-popover record-action-popover">
+            <button class="nav-popover-link" type="button" data-modal-open="edit-tenant-user-{{ user.id }}">编辑员工</button>
+            <form method="post" action="/tenant/users/{{ user.id }}/reset-password">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="nav-popover-link" type="submit">重置密码</button>
+            </form>
+          </div>
+        </details>
+      </div>
+      {% endif %}
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>暂无员工</strong></div>
+    {% endfor %}
+  </div>
 </section>
+
+{% if can_manage_users %}
+{% for user in users %}
+<dialog class="app-modal" id="edit-tenant-user-{{ user.id }}">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>编辑员工</h2><p class="muted-text"><code>{{ user.username }}</code></p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    {# 编辑弹窗继续提交原有租户员工接口，权限、手机号唯一性和最后管理员约束仍由服务端校验。 #}
+    <form method="post" action="/tenant/users/{{ user.id }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>登录手机号</span><input name="mobile" type="tel" inputmode="tel" autocomplete="tel" value="{{ user.mobile or '' }}" required /></label>
+      <label><span>显示名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
+      <label><span>角色</span><select name="role"><option value="readonly" {% if user.role == 'readonly' %}selected{% endif %}>只读</option><option value="operator" {% if user.role == 'operator' %}selected{% endif %}>运营</option><option value="tenant_admin" {% if user.role == 'tenant_admin' %}selected{% endif %}>租户管理员</option></select></label>
+      <label class="checkbox-field"><input name="is_enabled" type="checkbox" value="true" {% if user.is_enabled %}checked{% endif %} /><span>启用该账号</span></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存员工</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+{% endfor %}
+{% endif %}
 {% endblock %}

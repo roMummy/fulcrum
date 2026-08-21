@@ -271,6 +271,11 @@
           const targetId = button.getAttribute("data-modal-open");
           const dialog = targetId ? document.getElementById(targetId) : null;
           if (dialog && typeof dialog.showModal === "function") {
+            // 记录行的操作菜单只负责选择动作，打开弹窗后立即收起，关闭弹窗时不会残留遮挡层。
+            const actionMenu = button.closest("details.nav-more");
+            if (actionMenu) {
+              actionMenu.open = false;
+            }
             lastModalTrigger = button;
             dialog.showModal();
             // 弹窗打开后把焦点移入弹窗，键盘用户不需要重新 Tab 很多次才能操作表单。

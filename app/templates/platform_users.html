@@ -19,28 +19,52 @@
 
 <section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Accounts</p><h2>平台员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
-  <table class="table">
-    <thead><tr><th>账号</th><th>姓名</th><th>权限</th><th>状态</th><th>管理</th></tr></thead>
-    <tbody>
-      {% for user in users %}
-      <tr>
-        <td><code>{{ user.username }}</code><div class="muted-text">#{{ user.id }}</div></td>
-        <td colspan="4">
-          <form method="post" action="/platform/users/{{ user.id }}" class="form-grid">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <label><span>员工姓名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
-            <label><span>权限</span><input value="平台全权限管理员" disabled /></label>
-            <label><span>启用</span><input name="is_enabled" type="checkbox" value="true" {% if user.is_enabled %}checked{% endif %} /></label>
-            <div class="full-row form-actions-inline"><button class="btn btn-small" type="submit">保存</button></div>
-          </form>
-          <form method="post" action="/platform/users/{{ user.id }}/reset-password" class="form-actions-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <button class="btn btn-small btn-secondary" type="submit">重置密码</button>
-          </form>
-        </td>
-      </tr>
-      {% else %}<tr><td colspan="5"><div class="empty-state"><strong>暂无平台员工</strong></div></td></tr>{% endfor %}
-    </tbody>
-  </table>
+  <div class="record-list">
+    {% for user in users %}
+    <article class="record-row">
+      <div class="record-primary">
+        <strong>{{ user.display_name }}</strong>
+        <span><code>{{ user.username }}</code> · #{{ user.id }}</span>
+      </div>
+      <dl class="record-meta">
+        <div><dt>权限</dt><dd>平台全权限管理员</dd></div>
+        <div><dt>状态</dt><dd><span class="chip {% if user.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if user.is_enabled else '已停用' }}</span></dd></div>
+      </dl>
+      <div class="record-actions">
+        <details class="nav-more record-action-menu">
+          <summary class="record-action-trigger" aria-label="管理平台员工 {{ user.display_name }}" title="更多操作">&#8230;</summary>
+          <div class="nav-popover record-action-popover">
+            <button class="nav-popover-link" type="button" data-modal-open="edit-platform-user-{{ user.id }}">编辑员工</button>
+            <form method="post" action="/platform/users/{{ user.id }}/reset-password">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="nav-popover-link" type="submit">重置密码</button>
+            </form>
+          </div>
+        </details>
+      </div>
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>暂无平台员工</strong></div>
+    {% endfor %}
+  </div>
 </section>
+
+{% for user in users %}
+<dialog class="app-modal" id="edit-platform-user-{{ user.id }}">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>编辑平台员工</h2><p class="muted-text"><code>{{ user.username }}</code></p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    {# 平台员工角色固定为全权限管理员，编辑弹窗只提交服务端允许修改的姓名和启停状态。 #}
+    <form method="post" action="/platform/users/{{ user.id }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>员工姓名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
+      <label><span>权限</span><input value="平台全权限管理员" disabled /></label>
+      <label class="checkbox-field"><input name="is_enabled" type="checkbox" value="true" {% if user.is_enabled %}checked{% endif %} /><span>启用该账号</span></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存员工</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+{% endfor %}
 {% endblock %}
