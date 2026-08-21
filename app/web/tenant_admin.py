@@ -106,6 +106,22 @@ def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectRespon
     return RedirectResponse(url=path + suffix, status_code=303)
 
 
+def _tenant_admin_error_message(error: TenantAdminError) -> str:
+    """把内部错误码转换为稳定中文提示，手机号冲突不泄露其他企业信息。"""
+
+    messages = {
+        "mobile_invalid": "请输入有效的手机号",
+        "mobile_already_registered": "该手机号已被其他企业账号使用",
+        "username_required": "请输入员工账号标识",
+        "username_exists": "当前企业已存在相同账号标识",
+        "display_name_required": "请输入员工姓名",
+        "tenant_role_invalid": "请选择有效的员工角色",
+        "last_tenant_admin_required": "必须保留至少一个启用的企业管理员",
+        "tenant_user_not_found": "员工账号不存在",
+    }
+    return messages.get(str(error), "员工信息保存失败")
+
+
 @router.get("/users", response_class=HTMLResponse)
 async def tenant_users_page(request: Request):
     """租户管理员查看员工并执行管理，其他角色只能查看清单。"""
@@ -130,6 +146,7 @@ async def tenant_users_page(request: Request):
 async def tenant_user_create_action(
     request: Request,
     username: str = Form(""),
+    mobile: str = Form(""),
     display_name: str = Form(""),
     role: str = Form("readonly"),
     csrf_token: str = Form(""),
@@ -141,9 +158,15 @@ async def tenant_user_create_action(
     try:
         require_tenant_csrf(db, request, csrf_token)
         try:
-            created = create_tenant_user(db, username=username, display_name=display_name, role=role)
+            created = create_tenant_user(
+                db,
+                username=username,
+                mobile=mobile,
+                display_name=display_name,
+                role=role,
+            )
         except TenantAdminError as exc:
-            return _redirect("/tenant/users", f"员工创建失败：{exc}", danger=True)
+            return _redirect("/tenant/users", _tenant_admin_error_message(exc), danger=True)
         context = _tenant_context(
             request,
             page_title="员工管理",
@@ -161,6 +184,7 @@ async def tenant_user_create_action(
 async def tenant_user_update_action(
     user_id: int,
     request: Request,
+    mobile: str = Form(""),
     display_name: str = Form(""),
     role: str = Form("readonly"),
     is_enabled: bool = Form(False),
@@ -176,12 +200,13 @@ async def tenant_user_update_action(
             update_tenant_user(
                 db,
                 user_id=user_id,
+                mobile=mobile,
                 display_name=display_name,
                 role=role,
                 is_enabled=is_enabled,
             )
         except TenantAdminError as exc:
-            return _redirect("/tenant/users", f"员工更新失败：{exc}", danger=True)
+            return _redirect("/tenant/users", _tenant_admin_error_message(exc), danger=True)
     finally:
         db.close()
     return _redirect("/tenant/users", "员工信息已更新")

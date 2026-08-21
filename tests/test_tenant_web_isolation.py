@@ -51,6 +51,7 @@ def tenant_web_context(tmp_path, monkeypatch):
 
     for module_name in (
         "app.web.billing",
+        "app.web.public_site",
         "app.web.tenant_auth",
         "app.web.platform_auth",
         "app.web.tenant_admin",
@@ -82,6 +83,7 @@ def tenant_web_context(tmp_path, monkeypatch):
             TenantUser(
                 tenant_id=alpha.id,
                 username="admin",
+                mobile="13500135001",
                 display_name="甲管理员",
                 role="tenant_admin",
                 password_hash=hash_password(TENANT_PASSWORD),
@@ -100,8 +102,8 @@ def tenant_web_context(tmp_path, monkeypatch):
 
     with TestClient(main_module.app, follow_redirects=False) as client:
         login = client.post(
-            "/employee/login",
-            data={"tenant_code": "alpha", "username": "admin", "password": TENANT_PASSWORD},
+            "/login",
+            data={"mobile": "13500135001", "password": TENANT_PASSWORD},
         )
         assert login.status_code == 303
         yield client, ids
@@ -166,6 +168,7 @@ def test_tenant_admin_page_creates_employee_and_only_shows_initial_password_once
         data={
             "csrf_token": csrf_token,
             "username": "operator-a",
+            "mobile": "13500135002",
             "display_name": "运营甲",
             "role": "operator",
         },

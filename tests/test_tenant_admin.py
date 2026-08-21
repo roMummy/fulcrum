@@ -44,6 +44,7 @@ def tenant_factory(tmp_path):
         alpha_admin = TenantUser(
             tenant_id=alpha.id,
             username="admin",
+            mobile="13400134001",
             display_name="甲管理员",
             role="tenant_admin",
             password_hash=hash_password("Tenant-admin-123"),
@@ -53,6 +54,7 @@ def tenant_factory(tmp_path):
         beta_admin = TenantUser(
             tenant_id=beta.id,
             username="admin",
+            mobile="13400134002",
             display_name="乙管理员",
             role="tenant_admin",
             password_hash=hash_password("Tenant-admin-123"),
@@ -93,12 +95,18 @@ def _principal(**overrides) -> TenantPrincipal:
     return TenantPrincipal(**values)
 
 
-def test_tenant_admin_creates_employee_and_role_change_revokes_old_session(tenant_factory) -> None:
-    """员工角色变化后旧会话必须立即失效，初始密码只以哈希形式持久化。"""
+def test_tenant_admin_creates_employee_and_auth_changes_revoke_old_sessions(tenant_factory) -> None:
+    """员工角色或手机号变化后旧会话必须立即失效，初始密码只以哈希形式持久化。"""
 
     factory, ids = tenant_factory
     with tenant_scope(ids["alpha"]), tenant_session(factory) as db:
-        created = create_tenant_user(db, username="ops", display_name="运营人员", role="operator")
+        created = create_tenant_user(
+            db,
+            username="ops",
+            mobile="13400134003",
+            display_name="运营人员",
+            role="operator",
+        )
         user = db.get(TenantUser, created.user_id)
         session = create_tenant_session(db, user)
         assert load_tenant_principal(db, session.raw_token) is not None
@@ -106,11 +114,26 @@ def test_tenant_admin_creates_employee_and_role_change_revokes_old_session(tenan
         update_tenant_user(
             db,
             user_id=user.id,
+            mobile="13400134003",
             display_name="只读人员",
             role="readonly",
             is_enabled=True,
         )
         assert load_tenant_principal(db, session.raw_token) is None
+
+        # 角色更新后重新登录，再仅修改手机号，验证手机号同样属于即时生效的认证属性。
+        db.refresh(user)
+        mobile_session = create_tenant_session(db, user)
+        update_tenant_user(
+            db,
+            user_id=user.id,
+            mobile="13400134004",
+            display_name="只读人员",
+            role="readonly",
+            is_enabled=True,
+        )
+        assert load_tenant_principal(db, mobile_session.raw_token) is None
+        assert db.get(TenantUser, user.id).mobile == "13400134004"
 
 
 def test_tenant_admin_cannot_remove_last_admin_or_operate_other_tenant_user(tenant_factory) -> None:
@@ -122,6 +145,7 @@ def test_tenant_admin_cannot_remove_last_admin_or_operate_other_tenant_user(tena
             update_tenant_user(
                 db,
                 user_id=ids["alpha_admin"],
+                mobile="13400134001",
                 display_name="甲管理员",
                 role="readonly",
                 is_enabled=True,
@@ -129,6 +153,23 @@ def test_tenant_admin_cannot_remove_last_admin_or_operate_other_tenant_user(tena
         with pytest.raises(TenantAdminError, match="tenant_user_not_found"):
             reset_tenant_user_password(db, user_id=ids["beta_admin"])
         assert [user.username for user in list_tenant_users(db)] == ["admin"]
+
+
+def test_tenant_employee_mobile_is_required_and_globally_unique(tenant_factory) -> None:
+    """企业员工手机号用于直接恢复租户身份，因此不允许缺失或跨租户复用。"""
+
+    factory, ids = tenant_factory
+    with tenant_scope(ids["alpha"]), tenant_session(factory) as db:
+        with pytest.raises(TenantAdminError, match="mobile_invalid"):
+            create_tenant_user(db, username="missing", mobile="", display_name="缺手机号", role="readonly")
+        with pytest.raises(TenantAdminError, match="mobile_already_registered"):
+            create_tenant_user(
+                db,
+                username="duplicate",
+                mobile="13400134002",
+                display_name="重复手机号",
+                role="readonly",
+            )
 
 
 def test_subscription_policy_keeps_reads_but_rejects_disabled_suspended_and_expired_mutations() -> None:

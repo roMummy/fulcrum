@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import TENANT_ROLES, TenantSession, TenantUser
+from app.services.registration import RegistrationError, normalize_mobile
 from app.services.saas_auth import TenantPrincipal, generate_initial_password, hash_password
 
 
@@ -72,6 +74,25 @@ def _normalize_role(role: str) -> str:
     return normalized
 
 
+def _normalize_employee_mobile(mobile: str) -> str:
+    """复用企业注册的手机号规则，并转换成员工管理稳定错误码。"""
+
+    try:
+        return normalize_mobile(mobile)
+    except RegistrationError as exc:
+        raise TenantAdminError(str(exc)) from exc
+
+
+def _ensure_mobile_available(db: Session, mobile: str, *, exclude_user_id: int | None = None) -> None:
+    """在全部企业账号范围检查手机号占用，不向调用方暴露占用账号归属。"""
+
+    statement = select(TenantUser.id).where(TenantUser.mobile == mobile)
+    if exclude_user_id is not None:
+        statement = statement.where(TenantUser.id != int(exclude_user_id))
+    if db.scalar(statement) is not None:
+        raise TenantAdminError("mobile_already_registered")
+
+
 def _revoke_user_sessions(db: Session, user: TenantUser, reason: str) -> None:
     """在调用方事务内吊销员工全部有效会话。"""
 
@@ -105,6 +126,7 @@ def create_tenant_user(
     db: Session,
     *,
     username: str,
+    mobile: str,
     display_name: str,
     role: str,
 ) -> CreatedTenantUser:
@@ -112,6 +134,7 @@ def create_tenant_user(
 
     tenant_id = require_tenant_id()
     normalized_username = (username or "").strip()
+    normalized_mobile = _normalize_employee_mobile(mobile)
     normalized_display_name = (display_name or "").strip()
     normalized_role = _normalize_role(role)
     if not normalized_username:
@@ -125,11 +148,13 @@ def create_tenant_user(
         )
     ) is not None:
         raise TenantAdminError("username_exists")
+    _ensure_mobile_available(db, normalized_mobile)
 
     initial_password = generate_initial_password()
     user = TenantUser(
         tenant_id=tenant_id,
         username=normalized_username,
+        mobile=normalized_mobile,
         display_name=normalized_display_name,
         role=normalized_role,
         password_hash=hash_password(initial_password),
@@ -138,7 +163,21 @@ def create_tenant_user(
         must_change_password=True,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # 预检查提升可用性，数据库唯一索引负责拦截并发创建；回滚后再映射稳定业务错误。
+        db.rollback()
+        if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_mobile)) is not None:
+            raise TenantAdminError("mobile_already_registered") from exc
+        if db.scalar(
+            select(TenantUser.id).where(
+                TenantUser.tenant_id == tenant_id,
+                TenantUser.username == normalized_username,
+            )
+        ) is not None:
+            raise TenantAdminError("username_exists") from exc
+        raise TenantAdminError("tenant_user_conflict") from exc
     db.refresh(user)
     return CreatedTenantUser(user_id=int(user.id), initial_password=initial_password)
 
@@ -147,6 +186,7 @@ def update_tenant_user(
     db: Session,
     *,
     user_id: int,
+    mobile: str,
     display_name: str,
     role: str,
     is_enabled: bool,
@@ -154,10 +194,12 @@ def update_tenant_user(
     """更新员工资料；权限和状态变化立即使所有旧会话失效。"""
 
     user = _load_tenant_user(db, user_id)
+    normalized_mobile = _normalize_employee_mobile(mobile)
     normalized_display_name = (display_name or "").strip()
     normalized_role = _normalize_role(role)
     if not normalized_display_name:
         raise TenantAdminError("display_name_required")
+    _ensure_mobile_available(db, normalized_mobile, exclude_user_id=user.id)
 
     removes_admin = user.role == "tenant_admin" and user.is_enabled and (
         normalized_role != "tenant_admin" or not bool(is_enabled)
@@ -165,14 +207,31 @@ def update_tenant_user(
     if removes_admin:
         _ensure_another_enabled_admin(db, user)
 
-    auth_changed = user.role != normalized_role or user.is_enabled != bool(is_enabled)
+    auth_changed = (
+        user.mobile != normalized_mobile
+        or user.role != normalized_role
+        or user.is_enabled != bool(is_enabled)
+    )
+    user.mobile = normalized_mobile
     user.display_name = normalized_display_name
     user.role = normalized_role
     user.is_enabled = bool(is_enabled)
     if auth_changed:
         user.auth_version += 1
         _revoke_user_sessions(db, user, "tenant_user_permissions_changed")
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # 更新并发撞上全局唯一索引时，恢复事务后返回与预检查一致的业务错误。
+        db.rollback()
+        if db.scalar(
+            select(TenantUser.id).where(
+                TenantUser.mobile == normalized_mobile,
+                TenantUser.id != int(user_id),
+            )
+        ) is not None:
+            raise TenantAdminError("mobile_already_registered") from exc
+        raise TenantAdminError("tenant_user_conflict") from exc
     db.refresh(user)
     return user
 
