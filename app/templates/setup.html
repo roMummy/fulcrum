@@ -21,7 +21,7 @@
     </div>
   </div>
 
-  <section class="card login-card auth-form-card">
+  <section class="login-card auth-form-card">
     <div class="section-head auth-card-head">
       <div>
         <p class="section-kicker">Administrator</p>
@@ -35,7 +35,7 @@
       <label><span>管理员显示名</span><input name="admin_display_name" required maxlength="100" value="{{ form_data.admin_display_name or '平台管理员' }}" /></label>
       <label><span>管理员密码</span><input name="admin_password" type="password" required autocomplete="new-password" /></label>
       <label><span>确认密码</span><input name="admin_password_confirm" type="password" required autocomplete="new-password" /></label>
-      <div class="panel inset-panel full-row auth-tip-panel">
+      <div class="full-row auth-tip-panel">
         <strong>安全边界</strong>
         <p class="muted-text">此操作只向当前已迁移数据库的 platform_users 表写入一条账号记录，不读取或修改 DATABASE_URL。</p>
       </div>

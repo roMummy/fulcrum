@@ -1473,9 +1473,7 @@ code {
 
 .auth-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 0.78fr) minmax(360px, 1.22fr);
-  gap: 70px;
-  align-items: center;
+  gap: 42px;
 }
 
 .auth-brand {
@@ -1496,7 +1494,14 @@ code {
 
 .auth-showcase {
   display: grid;
-  gap: 22px;
+  grid-template-columns: minmax(260px, 0.82fr) minmax(380px, 1.18fr);
+  gap: 64px;
+  align-items: center;
+}
+
+.auth-showcase-single {
+  grid-template-columns: minmax(0, 560px);
+  justify-content: center;
 }
 
 .auth-showcase-copy h1,
@@ -1658,9 +1663,13 @@ code {
   object-position: center top;
 }
 
-.marketing-hero-image {
+.marketing-product-visual {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+}
+
+.marketing-product-visual img {
   opacity: 0.22;
   filter: saturate(0.65) contrast(0.92);
 }
@@ -1851,6 +1860,21 @@ code {
 .marketing-plan-card .btn {
   align-self: end;
   margin-top: auto;
+}
+
+.marketing-pricing-note {
+  padding: 0 0 88px;
+  background: #fafaf8;
+}
+
+.marketing-pricing-note .marketing-section-inner {
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+}
+
+.marketing-pricing-note p {
+  margin: 5px 0 0;
+  color: var(--muted);
 }
 
 .marketing-section-action {
@@ -2172,6 +2196,10 @@ code {
   }
 
   .auth-panel {
+    gap: 34px;
+  }
+
+  .auth-showcase {
     grid-template-columns: 1fr;
     gap: 34px;
   }

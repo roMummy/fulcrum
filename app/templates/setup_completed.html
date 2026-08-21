@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <section class="auth-showcase auth-showcase-single">
-  <section class="card login-card auth-form-card auth-complete-card">
+  <section class="login-card auth-form-card auth-complete-card">
     <div class="auth-complete-mark">OK</div>
     <p class="auth-eyebrow">Setup Finished</p>
     <h1>安装已经完成</h1>
@@ -22,7 +22,7 @@
       </div>
     </div>
 
-    <div class="panel inset-panel auth-tip-panel">
+    <div class="auth-tip-panel">
       <strong>怎么重启？</strong>
       <p class="muted-text">如果你是在 Windows PowerShell 里手动启动的，先回到启动窗口按 `Ctrl + C` 停掉服务，再重新执行启动命令。</p>
       <p class="muted-text">常用启动命令：`.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8180`</p>
@@ -31,7 +31,8 @@
     </div>
 
     <div class="auth-form-actions">
-      <a class="btn auth-submit" href="/login">我已重启，去登录</a>
+      {# 首次安装创建的是平台管理员，完成后的唯一正确入口是独立的平台登录页。 #}
+      <a class="btn auth-submit" href="/platform/login">我已重启，去登录</a>
     </div>
   </section>
 </section>

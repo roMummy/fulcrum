@@ -1,8 +1,10 @@
 {% extends 'marketing_base.html' %}
 {% block content %}
 <section class="marketing-hero">
-  {# 首屏使用隔离演示租户生成的真实控制台截图，图片本身不包含真实客户信息。 #}
-  <img class="marketing-hero-image" src="/static/images/yaoshu-console.webp" alt="曜枢 AI 机器人运营控制台界面" />
+  {# 真实控制台画面作为完整产品视觉铺在首屏背景中，不再使用深色遮罩或装饰性插画替代产品本身。 #}
+  <div class="marketing-product-visual">
+    <img src="/static/images/yaoshu-console.webp" alt="曜枢 AI 机器人运营控制台界面" />
+  </div>
   <div class="marketing-hero-content">
     <p class="marketing-hero-eyebrow">全渠道智能机器人运营平台</p>
     <h1>曜枢 AI</h1>
