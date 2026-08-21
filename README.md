@@ -9,8 +9,8 @@
 - 通用额度：按 `bot_limit` 管理机器人数量，以 `adapter_type` 和 `bot_account_id` 标识外部账号
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
 - 平台管理：套餐、租户、订阅、订单审核、受控解绑和平台审计
-- 执行接入：通过通用适配能力扩展渠道；当前随仓库交付的成熟 Windows 执行端是企业微信 Provider
-- Provider 节点：一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
+- 渠道接入：统一管理企业微信、微信 iPad 协议、Windows 微信和 Telegram
+- 远端执行：企业微信执行端支持一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
 - 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
 - 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
 - 旧系统迁移：只读来源、dry-run、外键重映射、批次审计和重复导入防护
@@ -308,7 +308,18 @@ DATABASE_URL=sqlite:////app/data/app.db
 
 套餐、订单、试用和机器人额度只依赖通用 `adapter_type`、`bot_account_id` 与执行能力接口，不依赖 Provider 数据模型。新增渠道时应实现适配接口并复用通用额度校验，不能把具体 Provider 客户端导入商业服务。
 
-当前仓库已完成并可实际运行的 Windows 执行端仍是企业微信 Provider。节点通过一次性激活码换取设备凭证，随后主动上报心跳、发现账号并长轮询领取绑定渠道的任务；其他渠道应沿相同抽象边界扩展，而不是复制计费和租户逻辑。
+正式渠道由 `app/services/channel_catalog.py` 统一声明。页面、启用校验、适配器解析和后台调度都读取同一份目录；未知渠道类型直接拒绝，不降级到通用 HTTP 适配器。
+
+| 渠道类型 | 展示名称 | 运行方式 | 启用前必要配置 |
+| --- | --- | --- | --- |
+| `workwechat` | 企业微信 Hook | 客户端远端执行并主动领取任务 | 已激活执行端节点及在线账号 |
+| `wechat_ipad` | 微信 iPad 协议 | 平台按租户执行消息同步、心跳和登录恢复 | API Base |
+| `wechat_winauto` | 微信 Windows | HTTP 执行端与 Webhook | API Base |
+| `telegram` | Telegram | 平台按租户调用 Bot API 拉取更新 | Bot Token |
+
+停用渠道可以先保存不完整草稿，启用时服务端会重新检查目录必填项。渠道类型创建后不可修改；需要切换协议时应新建渠道并停用旧渠道。只有声明需要远端执行器的渠道会保存执行端节点和账号主键，其他渠道提交这些字段也会被服务端清空。
+
+后台协调器使用平台会话枚举有效租户主键，再为每个租户建立独立 `tenant_scope` 和租户数据库会话。Telegram 拉取、微信 iPad 消息同步、心跳和自动恢复均在对应租户上下文中执行；单个渠道失败不会中断其他渠道或租户。企业微信远端执行和 Windows 微信 Webhook 不进入平台主动轮询。
 
 ### 跨机器发送图片和文件
 
@@ -401,7 +412,9 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 推荐使用方式：
 
 - 启动 `workwechat_provider`，它会自动拉起内置 Hook runtime
-- 在后台新增 `channel_type=workwechat` 的渠道，并把 `API Base` 指向 `workwechat_provider`
+- 在企业后台创建 Provider 节点并生成一次性激活码
+- 客户端激活后上报账号，企业管理员把 `workwechat` 渠道绑定到该节点的在线账号
+- 客户端通过长轮询领取绑定渠道的任务，不需要平台主动连接客户电脑
 
 ## 测试
 
@@ -421,9 +434,9 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 - 后台 worker 会处理：
   - 插件派发
   - 出站消息发送
-  - Telegram 轮询
-  - 微信心跳与消息同步
-  - 定时新闻、天气、订阅类任务
+  - 租户隔离的 Telegram 拉取
+  - 租户隔离的微信 iPad 消息同步、心跳和登录恢复
+  - 企业微信远端执行端任务队列
 - 插件配置与运行态信息会存入数据库
 - 敏感信息如 bot token 会基于 `SECRET_KEY` 做简单加密存储
 
@@ -435,6 +448,8 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 - [entities.py](/data/multi-bot-saas/app/models/entities.py): 数据模型
 - [plugin_directory.py](/data/multi-bot-saas/app/services/plugin_directory.py): 目录插件扫描与调度
 - [async_workers.py](/data/multi-bot-saas/app/services/async_workers.py): 后台任务与轮询
+- [channel_catalog.py](/data/multi-bot-saas/app/services/channel_catalog.py): 正式渠道、能力和表单字段目录
+- [channel_runtime.py](/data/multi-bot-saas/app/services/channel_runtime.py): 租户隔离渠道任务协调器
 
 ## 生产建议
 
