@@ -1,22 +1,40 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.tenant_context import require_tenant_id
 from app.models.entities import Bot, BotPlugin, Channel, Plugin
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.runtime import compute_binding_runtime
 from app.services.security import encrypt_secret, mask_secret
 
 
-def create_bot(db: Session, data: BotCreate) -> Bot:
+def add_bot(
+    db: Session,
+    data: BotCreate,
+    *,
+    is_enabled: bool = True,
+    status: str | None = None,
+) -> Bot:
+    """把机器人加入当前租户事务，不在内部提交。"""
+
     # 创建入口只收集业务名称，其余运行状态由系统统一初始化，避免租户在首次
     # 接入企业微信前就面对环境、模板、前缀等没有实际价值的技术选项。
     bot = Bot(
+        tenant_id=require_tenant_id(),
         name=data.name.strip(),
         description=None,
-        is_enabled=True,
-        status="running",
+        is_enabled=is_enabled,
+        status=(status or ("running" if is_enabled else "stopped")).strip(),
     )
     db.add(bot)
+    db.flush()
+    return bot
+
+
+def create_bot(db: Session, data: BotCreate) -> Bot:
+    """创建并独立提交机器人，供非组合型后台动作使用。"""
+
+    bot = add_bot(db, data)
     db.commit()
     db.refresh(bot)
     return bot
@@ -43,10 +61,18 @@ def get_bot(db: Session, bot_id: int) -> Bot | None:
     return db.get(Bot, bot_id)
 
 
-def create_channel(db: Session, data: ChannelCreate) -> Channel:
+def add_channel(
+    db: Session,
+    data: ChannelCreate,
+    *,
+    status: str | None = None,
+) -> Channel:
+    """把渠道加入当前租户事务，并统一处理敏感字段。"""
+
     token = (data.bot_token or "").strip() or None
     adapter_config = (data.adapter_config_json or "").strip() or None
     channel = Channel(
+        tenant_id=require_tenant_id(),
         bot_id=data.bot_id,
         name=data.name.strip(),
         channel_type=data.channel_type.strip(),
@@ -60,9 +86,17 @@ def create_channel(db: Session, data: ChannelCreate) -> Channel:
         provider_account_id=data.provider_account_id,
         bot_token_masked=mask_secret(token),
         is_enabled=data.is_enabled,
-        status="online" if data.is_enabled else "offline",
+        status=(status or ("online" if data.is_enabled else "offline")).strip(),
     )
     db.add(channel)
+    db.flush()
+    return channel
+
+
+def create_channel(db: Session, data: ChannelCreate) -> Channel:
+    """创建并独立提交渠道，供传统后台动作使用。"""
+
+    channel = add_channel(db, data)
     db.commit()
     db.refresh(channel)
     return channel
