@@ -47,7 +47,7 @@ from app.core.db import Base, engine
 from app.main import app, templates
 from app.core.db import SessionLocal
 from app.core.settings import settings
-from app.models.entities import AdminUser, AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, HealthCheckRecord, Message, Plugin, PointsAccount, PointsPrisonRecord, PointsTransaction, RawWebhookEvent, SignInHistory, SignInRecord, TaskJob
+from app.models.entities import AdminUser, Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, HealthCheckRecord, Message, Plugin, PointsAccount, PointsPrisonRecord, PointsTransaction, RawWebhookEvent, SignInHistory, SignInRecord, TaskJob
 from app.services import async_workers
 import app.services.init_db as init_db_service
 from app.services.auth import AUTH_COOKIE_NAME, build_auth_cookie, hash_password
@@ -342,23 +342,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertIn("售后专用机器人", detail.text)
 
-    def test_error_filters_and_monitoring_without_clone(self):
-        self.login()
-        errors_page = self.client.get(
-            "/errors",
-            params={"tab": "error", "source_file": "error.log", "keyword": "webhook"},
-        )
-        self.assertEqual(errors_page.status_code, 200)
-        self.assertIn("日志文件概览", errors_page.text)
-        self.assertIn("Error 日志", errors_page.text)
-        self.assertIn("error.log", errors_page.text)
-        self.assertIn("webhook signature failed", errors_page.text)
-
-        monitoring_page = self.client.get("/monitoring")
-        self.assertEqual(monitoring_page.status_code, 200)
-        self.assertIn("健康检查中心", monitoring_page.text)
-
-    def test_webhook_signature_outbound_and_monitoring_flow(self):
+    def test_webhook_signature_and_outbound_flow(self):
         self.login("ops", "ops123")
         # 历史夹具保留了旧渠道地址，但回归测试必须完全阻断真实局域网探测。
         with patch(
@@ -459,53 +443,6 @@ class MultiBotAdminTestCase(unittest.TestCase):
             self.assertIn("last_receive_summary", channel.runtime_info_json or "")
             self.assertIn("\"receive_total\": 1", channel.runtime_info_json or "")
             self.assertIn("last_send_summary", channel.runtime_info_json or "")
-
-        monitoring_page = self.client.get("/monitoring")
-        self.assertEqual(monitoring_page.status_code, 200)
-        self.assertIn("健康检查中心", monitoring_page.text)
-        self.assertIn("Webhook", monitoring_page.text)
-        self.assertIn("channel.health-check", monitoring_page.text)
-        self.assertIn("message.outbound-queued", monitoring_page.text)
-
-    def test_monitoring_alert_resolve_marks_alert_closed(self):
-        self.login("ops", "ops123")
-
-        with SessionLocal() as db:
-            # 告警处理不依赖机器人或渠道种子数据，测试直接创建最小未关闭告警来验证闭环。
-            alert = AlertRecord(
-                source="webhook",
-                level="warning",
-                title="测试告警待处理",
-                message="用于验证监控页已处理入口",
-                status="open",
-            )
-            db.add(alert)
-            db.commit()
-            db.refresh(alert)
-            alert_id = alert.id
-
-        monitoring_page = self.client.get("/monitoring")
-        self.assertEqual(monitoring_page.status_code, 200)
-        self.assertIn("测试告警待处理", monitoring_page.text)
-        self.assertIn("已处理", monitoring_page.text)
-        self.assertIn(f"/monitoring/alerts/{alert_id}/resolve", monitoring_page.text)
-
-        resolve_response = self.client.post(f"/monitoring/alerts/{alert_id}/resolve", follow_redirects=False)
-        self.assertEqual(resolve_response.status_code, 303)
-        self.assertIn("%E5%B7%B2%E6%A0%87%E8%AE%B0%E4%B8%BA%E5%B7%B2%E5%A4%84%E7%90%86", resolve_response.headers["location"])
-
-        with SessionLocal() as db:
-            resolved_alert = db.get(AlertRecord, alert_id)
-            self.assertIsNotNone(resolved_alert)
-            self.assertEqual(resolved_alert.status, "resolved")
-            self.assertIsNotNone(resolved_alert.resolved_at)
-            audit = db.scalar(select(AuditLog).where(AuditLog.action == "alert.resolve", AuditLog.target_id == alert_id))
-            self.assertIsNotNone(audit)
-            self.assertEqual(audit.actor, "ops")
-
-        monitoring_after_resolve = self.client.get("/monitoring")
-        self.assertEqual(monitoring_after_resolve.status_code, 200)
-        self.assertNotIn(f"/monitoring/alerts/{alert_id}/resolve", monitoring_after_resolve.text)
 
     def test_generic_channel_outbound_uses_real_http_adapter(self):
         self.login("ops", "ops123")
@@ -729,60 +666,6 @@ class MultiBotAdminTestCase(unittest.TestCase):
             self.assertEqual(inbound_message.content, "/start")
             self.assertEqual(inbound_message.sender_id, "123456789")
             self.assertEqual(inbound_message.message_type, "text")
-
-    def test_message_lab_simulator_channel_round_trips_plugin_reply(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "weather"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "api_base": "https://api.openweathermap.org/data/2.5",
-                    "api_key": "weather-secret-001",
-                    "default_city": "Hong Kong",
-                    "units": "metric",
-                }
-            )
-            db.commit()
-
-        with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
-            response = self.client.post(
-                "/lab/inbound",
-                data={
-                    "channel_id": "3",
-                    "conversation_external_id": "lab-room-weather-001",
-                    "conversation_title": "Lab Weather",
-                    "chat_type": "group",
-                    "sender_id": "lab-user-001",
-                    "sender_name": "Lab User",
-                    "message_type": "text",
-                    "content": "/weather Shanghai",
-                    "event_type": "lab.message",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("进站实验已执行", response.text)
-        self.assertIn('"plugin_code": "weather"', response.text)
-        self.assertIn('"status": "completed"', response.text)
-        self.assertIn("Shanghai天气", response.text)
-
-        with SessionLocal() as db:
-            conversation = db.scalar(
-                select(Conversation).where(
-                    Conversation.channel_id == 3,
-                    Conversation.external_id == "lab-room-weather-001",
-                )
-            )
-            self.assertIsNotNone(conversation)
-            messages = db.scalars(select(Message).where(Message.conversation_id == conversation.id).order_by(Message.id.asc())).all()
-            self.assertEqual(len(messages), 2)
-            self.assertEqual(messages[0].direction, "in")
-            self.assertEqual(messages[1].direction, "out")
-            self.assertIn("Shanghai天气", messages[1].content)
 
     def test_wechat_outbound_media_mapping_and_health_check(self):
         self.login("ops", "ops123")
@@ -7509,7 +7392,7 @@ consume_policy = "shared"
         self.assertIn("Max-Age=43200", cookie_header)
         self.assertIn("SameSite=lax", cookie_header)
 
-        readonly_page = self.client.get("/monitoring")
+        readonly_page = self.client.get("/dashboard")
         self.assertEqual(readonly_page.status_code, 200)
 
         users_page = self.client.get("/users")
@@ -7800,7 +7683,7 @@ consume_policy = "shared"
 
         self.client.cookies.clear()
         self.client.cookies.set(AUTH_COOKIE_NAME, old_cookie)
-        denied = self.client.get("/monitoring", follow_redirects=False)
+        denied = self.client.get("/dashboard", follow_redirects=False)
         self.assertEqual(denied.status_code, 303)
         self.assertIn("/login", denied.headers["location"])
 

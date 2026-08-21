@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.routing import Match
 
-from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
+from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal, TenantSessionLocal
@@ -27,7 +27,7 @@ from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, Channel
 from app.services.auth import validate_password_change
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.channel_adapters import get_channel_adapter
-from app.services.channel_events import ingest_inbound_event, ingest_normalized_event
+from app.services.channel_events import ingest_inbound_event
 from app.services.channel_labels import (
     SAAS_ENABLED_CHANNEL_TYPES,
     get_channel_type_label,
@@ -50,7 +50,6 @@ from app.services.crud import (
     update_channel,
 )
 from app.services.ops import (
-    build_monitoring_snapshot,
     create_alert,
     record_audit,
     record_health_check,
@@ -147,7 +146,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import billing_router, platform_admin_router, platform_auth_router, platform_billing_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
+from app.web import billing_router, platform_admin_router, platform_auth_router, platform_billing_router, platform_operations_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -174,7 +173,6 @@ app.include_router(channel_outbound_router)
 app.include_router(channel_inbound_router)
 app.include_router(customer_operations_router)
 app.include_router(open_api_router)
-app.include_router(open_api_admin_router)
 app.include_router(workwechat_provider_cloud_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
@@ -184,6 +182,7 @@ app.include_router(platform_auth_router)
 app.include_router(billing_router)
 app.include_router(platform_admin_router)
 app.include_router(platform_billing_router)
+app.include_router(platform_operations_router)
 app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
@@ -346,9 +345,6 @@ def build_module_links() -> dict[str, str]:
         "plugin_runtime": "/plugins/runtime",
         "conversations": "/conversations",
         "messages": "/messages",
-        "lab": "/lab",
-        "monitoring": "/monitoring",
-        "errors": "/errors",
     }
 
 
@@ -440,16 +436,14 @@ def render(request: Request, template: str, **context):
             "active": is_path_active(prefixes, exact_root=exact_root),
         }
 
-    # 顶部菜单按真实使用路线重排：总览、接入、机器人、插件、消息、排障。
+    # 企业顶部菜单只保留租户业务能力，平台运维和全局日志使用独立平台后台。
     primary_nav_items = [
         nav_item("总览", "/dashboard", ("/dashboard",)),
         nav_item("接入", "/channels", ("/channels", "/provider-nodes")),
         nav_item("机器人", "/bots", ("/bots",)),
         nav_item("插件", "/plugins", ("/plugins",)),
-        nav_item("消息", "/conversations", ("/conversations", "/messages", "/lab")),
+        nav_item("消息", "/conversations", ("/conversations", "/messages")),
         nav_item("套餐与额度", "/account/billing", ("/account",)),
-        nav_item("开放接口", "/open-api/apps", ("/open-api",)),
-        nav_item("排障", "/monitoring", ("/monitoring", "/errors")),
     ]
     secondary_nav_items: list[dict[str, str | bool]] = [
         nav_item("租户设置", "/tenant/users", ("/tenant",)),
@@ -477,20 +471,10 @@ def render(request: Request, template: str, **context):
             },
             nav_item("运行状态", "/plugins/runtime", ("/plugins/runtime",)),
         ]
-    elif is_path_active(("/conversations", "/messages", "/lab")):
+    elif is_path_active(("/conversations", "/messages")):
         section_nav_items = [
             nav_item("会话", "/conversations", ("/conversations",)),
             nav_item("消息", "/messages", ("/messages",)),
-            nav_item("实验台", "/lab", ("/lab",)),
-        ]
-    elif is_path_active(("/open-api",)):
-        section_nav_items = [
-            nav_item("应用配置", "/open-api/apps", ("/open-api/apps",)),
-        ]
-    elif is_path_active(("/monitoring", "/errors")):
-        section_nav_items = [
-            nav_item("监控审计", "/monitoring", ("/monitoring",)),
-            nav_item("日志", "/errors", ("/errors",)),
         ]
     elif is_path_active(("/tenant",)):
         section_nav_items = [
@@ -916,115 +900,6 @@ def build_dashboard_alert_summary(db: Session) -> dict[str, object]:
         "level_counts": level_counts,
         "recent_items": recent_items,
     }
-
-def ensure_conversation(
-    db: Session,
-    *,
-    channel: Channel,
-    external_id: str,
-    title: str,
-    chat_type: str,
-) -> Conversation:
-    conversation = db.scalar(
-        select(Conversation).where(
-            Conversation.bot_id == channel.bot_id,
-            Conversation.channel_id == channel.id,
-            Conversation.external_id == external_id,
-        )
-    )
-    if conversation:
-        if title and not conversation.title:
-            conversation.title = title
-        if chat_type and not conversation.chat_type:
-            conversation.chat_type = chat_type
-        return conversation
-    conversation = Conversation(
-        bot_id=channel.bot_id,
-        channel_id=channel.id,
-        channel_type=channel.channel_type,
-        external_id=external_id,
-        title=title or external_id,
-        chat_type=chat_type or "direct",
-    )
-    db.add(conversation)
-    db.flush()
-    return conversation
-
-
-def build_lab_page_context(
-    db: Session,
-    *,
-    notice: str = "",
-    inbound_form: dict[str, object] | None = None,
-    outbound_form: dict[str, object] | None = None,
-    inbound_result: dict[str, object] | None = None,
-    outbound_result: dict[str, object] | None = None,
-    active_conversation: Conversation | None = None,
-    active_messages: list[Message] | None = None,
-):
-    channels = filtered_channels_query(db)
-    preferred_channel = next((item for item in channels if item.channel_type == "simulator"), channels[0] if channels else None)
-    recent_conversations = db.scalars(select(Conversation).order_by(Conversation.id.desc()).limit(12)).all()
-    return {
-        "page_title": "消息实验台",
-        "notice": notice,
-        "channels": channels,
-        "recent_conversations": recent_conversations,
-        "active_conversation": active_conversation,
-        "active_messages": active_messages or [],
-        "inbound_form": inbound_form
-        or {
-            "channel_id": preferred_channel.id if preferred_channel else 0,
-            "conversation_external_id": "lab-room-001",
-            "conversation_title": "实验台会话",
-            "chat_type": "group",
-            "sender_id": "lab-user-001",
-            "sender_name": "实验用户",
-            "message_type": "text",
-            "content": "/weather Shanghai",
-            "event_type": "lab.message",
-            "event_key": "",
-            "mentioned_self": False,
-            "dry_run_outbound": False if preferred_channel and preferred_channel.channel_type == "simulator" else True,
-            "recent_messages_text": "",
-        },
-        "outbound_form": outbound_form
-        or {
-            "channel_id": preferred_channel.id if preferred_channel else 0,
-            "conversation_external_id": "lab-room-001",
-            "conversation_title": "实验台会话",
-            "chat_type": "group",
-            "message_type": "text",
-            "content": "实验台手工出站消息",
-            "extra_payload_json": "",
-            "submit_mode": "preview",
-        },
-        "inbound_result": inbound_result or {},
-        "outbound_result": outbound_result or {},
-    }
-
-
-def load_lab_conversation(
-    db: Session,
-    *,
-    channel_id: int | None,
-    external_id: str | None,
-) -> tuple[Conversation | None, list[Message]]:
-    if not channel_id or not external_id:
-        return None, []
-    conversation = db.scalar(
-        select(Conversation).where(
-            Conversation.channel_id == channel_id,
-            Conversation.external_id == external_id,
-        )
-    )
-    if not conversation:
-        return None, []
-    messages = db.scalars(
-        select(Message).where(Message.conversation_id == conversation.id).order_by(Message.id.desc()).limit(50)
-    ).all()
-    return conversation, messages
-
 
 def to_jsonable(value):
     if isinstance(value, dict):
@@ -1470,7 +1345,6 @@ async def auth_middleware(request: Request, call_next):
         request.state.setup_required = is_setup_required(db)
     finally:
         db.close()
-
     if request.state.setup_required and path not in {"/setup", "/healthz", "/readyz"}:
         return RedirectResponse(url="/setup", status_code=303)
 
@@ -4116,373 +3990,6 @@ async def messages_page(
         db.close()
 
 
-@app.get("/lab", response_class=HTMLResponse)
-async def message_lab_page(request: Request):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        active_conversation = None
-        active_messages: list[Message] = []
-        return render(
-            request,
-            "lab.html",
-            **build_lab_page_context(
-                db,
-                notice=request.query_params.get("notice", ""),
-                active_conversation=active_conversation,
-                active_messages=active_messages,
-            ),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/lab/inbound", response_class=HTMLResponse)
-async def message_lab_inbound_action(
-    request: Request,
-    channel_id: int = Form(...),
-    conversation_external_id: str = Form(...),
-    conversation_title: str = Form(""),
-    chat_type: str = Form("group"),
-    sender_id: str = Form(""),
-    sender_name: str = Form(""),
-    message_type: str = Form("text"),
-    content: str = Form(""),
-    event_type: str = Form("lab.message"),
-    event_key: str = Form(""),
-    mentioned_self: bool = Form(False),
-    dry_run_outbound: bool = Form(False),
-    recent_messages_text: str = Form(""),
-):
-    enforce_role(request, "ops")
-    db = get_session()
-    inbound_form = {
-        "channel_id": channel_id,
-        "conversation_external_id": conversation_external_id,
-        "conversation_title": conversation_title,
-        "chat_type": chat_type,
-        "sender_id": sender_id,
-        "sender_name": sender_name,
-        "message_type": message_type,
-        "content": content,
-        "event_type": event_type,
-        "event_key": event_key,
-        "mentioned_self": mentioned_self,
-        "dry_run_outbound": dry_run_outbound,
-        "recent_messages_text": recent_messages_text,
-    }
-    try:
-        channel = db.get(Channel, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-
-        recent_messages = parse_message_lines(recent_messages_text)
-        normalized_event = {
-            "provider": "lab_ui",
-            "event_key": event_key.strip() or None,
-            "event_type": event_type.strip() or "lab.message",
-            "should_persist_message": bool(content.strip()),
-            "conversation": {
-                "external_id": conversation_external_id.strip() or f"lab-{channel.id}",
-                "title": conversation_title.strip() or None,
-                "chat_type": chat_type.strip().lower() or "group",
-            },
-            "message": {
-                "content": content.strip(),
-                "sender_id": sender_id.strip() or None,
-                "sender_name": sender_name.strip() or None,
-                "message_type": message_type.strip().lower() or "text",
-                "external_message_id": event_key.strip() or None,
-            },
-            "details": {
-                "headers_used": [],
-                "mentioned_self": bool(mentioned_self),
-                "dry_run_outbound": bool(dry_run_outbound),
-                "source": "lab_ui",
-            },
-        }
-        if recent_messages:
-            normalized_event["details"]["recent_messages"] = recent_messages
-
-        result = ingest_normalized_event(
-            db,
-            channel,
-            normalized_event,
-            source="lab_ui",
-            raw_payload={"lab": normalized_event},
-        )
-        record_audit(
-            db,
-            "lab.inbound-simulated",
-            "channel",
-            channel.id,
-            f"channel={channel.id}, raw_event={result['raw_event_id']}",
-        )
-        active_conversation, active_messages = load_lab_conversation(
-            db,
-            channel_id=channel.id,
-            external_id=str(normalized_event["conversation"]["external_id"]),
-        )
-        inbound_result = {
-            "ok": True,
-            "raw_event_id": result["raw_event_id"],
-            "mapped": result["mapped"],
-            "normalized_json": json.dumps(result["normalized"], ensure_ascii=False, indent=2),
-            "dispatch_json": json.dumps(result["dispatch"], ensure_ascii=False, indent=2),
-        }
-        return render(
-            request,
-            "lab.html",
-            **build_lab_page_context(
-                db,
-                notice="进站实验已执行。",
-                inbound_form=inbound_form,
-                inbound_result=inbound_result,
-                active_conversation=active_conversation,
-                active_messages=active_messages,
-            ),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/lab/outbound", response_class=HTMLResponse)
-async def message_lab_outbound_action(
-    request: Request,
-    channel_id: int = Form(...),
-    conversation_external_id: str = Form(...),
-    conversation_title: str = Form(""),
-    chat_type: str = Form("group"),
-    message_type: str = Form("text"),
-    content: str = Form(""),
-    extra_payload_json: str = Form(""),
-    submit_mode: str = Form("preview"),
-):
-    enforce_role(request, "ops")
-    db = get_session()
-    outbound_form = {
-        "channel_id": channel_id,
-        "conversation_external_id": conversation_external_id,
-        "conversation_title": conversation_title,
-        "chat_type": chat_type,
-        "message_type": message_type,
-        "content": content,
-        "extra_payload_json": extra_payload_json,
-        "submit_mode": submit_mode,
-    }
-    try:
-        channel = db.get(Channel, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-
-        extra_payload, json_error = parse_json_object(extra_payload_json)
-        if json_error:
-            return render(
-                request,
-                "lab.html",
-                **build_lab_page_context(
-                    db,
-                    notice=json_error,
-                    outbound_form=outbound_form,
-                    outbound_result={"ok": False},
-                ),
-            )
-
-        payload = {
-            "external_id": conversation_external_id.strip() or f"lab-{channel.id}",
-            "receiver_id": conversation_external_id.strip() or f"lab-{channel.id}",
-            "title": conversation_title.strip() or None,
-            "chat_type": chat_type.strip().lower() or "group",
-            "message_type": message_type.strip().lower() or "text",
-            "content": content,
-            **extra_payload,
-        }
-        if submit_mode == "preview":
-            adapter = get_channel_adapter(channel)
-            active_conversation, active_messages = load_lab_conversation(
-                db,
-                channel_id=channel.id,
-                external_id=str(payload.get("external_id") or ""),
-            )
-            outbound_result = {
-                "ok": True,
-                "mode": "preview",
-                "adapter_provider": adapter.provider,
-                "payload_json": json.dumps(payload, ensure_ascii=False, indent=2),
-            }
-            return render(
-                request,
-                "lab.html",
-                **build_lab_page_context(
-                    db,
-                    notice="出站预览已生成，未真实发送。",
-                    outbound_form=outbound_form,
-                    outbound_result=outbound_result,
-                    active_conversation=active_conversation,
-                    active_messages=active_messages,
-                ),
-            )
-
-        conversation = ensure_conversation(
-            db,
-            channel=channel,
-            external_id=str(payload.get("external_id") or f"lab-{channel.id}"),
-            title=str(payload.get("title") or conversation_title or conversation_external_id or ""),
-            chat_type=str(payload.get("chat_type") or chat_type or "group"),
-        )
-        job = enqueue_job(
-            db,
-            job_type=resolve_outbound_job_type(channel),
-            payload={
-                "channel_id": channel.id,
-                "conversation_id": conversation.id,
-                "payload": payload,
-            },
-            priority=90,
-            related_type="conversation",
-            related_id=conversation.id,
-        )
-        notify_cloud_job_enqueued(channel, job)
-        db.commit()
-        record_audit(
-            db,
-            "lab.outbound-queued",
-            "task_job",
-            job.id,
-            f"channel={channel.id}, conversation={conversation.id}",
-        )
-        outbound_result = {
-            "ok": True,
-            "mode": "send",
-            "job_id": job.id,
-            "adapter_provider": "queued",
-            "adapter_json": json.dumps(
-                {"ok": True, "provider": "queued", "transport_status": "queued", "status": "pending"},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "payload_json": json.dumps(payload, ensure_ascii=False, indent=2),
-        }
-        active_conversation, active_messages = load_lab_conversation(
-            db,
-            channel_id=channel.id,
-            external_id=str(payload.get("external_id") or ""),
-        )
-        return render(
-            request,
-            "lab.html",
-            **build_lab_page_context(
-                db,
-                notice="出站实验已执行。",
-                outbound_form=outbound_form,
-                outbound_result=outbound_result,
-                active_conversation=active_conversation,
-                active_messages=active_messages,
-            ),
-        )
-    finally:
-        db.close()
-
-
-@app.get("/errors", response_class=HTMLResponse)
-async def errors_page(
-    request: Request,
-    tab: str = "error",
-    source_file: str = "",
-    keyword: str = "",
-    page: int = 1,
-):
-    active_tab = "info" if str(tab or "").strip().lower() == "info" else "error"
-    normalized_keyword = str(keyword or "").strip().lower()
-    available_log_files = resolve_tab_log_paths(active_tab)
-    selected_file_name = str(source_file or "").strip()
-    selected_path = resolve_selected_log_path(active_tab, selected_file_name=selected_file_name)
-
-    try:
-        raw_lines = selected_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        raw_lines = []
-
-    if normalized_keyword:
-        filtered_lines = [line for line in raw_lines if normalized_keyword in line.lower()]
-    else:
-        filtered_lines = list(raw_lines)
-
-    # 日志中心默认按“最新在前”输出：第 1 页就是最新批次，继续翻页才进入更早日志。
-    page_size = 1200
-    current_page = max(int(page or 1), 1)
-    total = len(filtered_lines)
-    total_pages = max((total + page_size - 1) // page_size, 1)
-    current_page = min(current_page, total_pages)
-    start_index = (current_page - 1) * page_size
-    end_index = min(start_index + page_size, total)
-    paged_lines = list(reversed(filtered_lines))[start_index:end_index]
-
-    overview = {
-        "total_lines": total,
-        "displayed_lines": len(paged_lines),
-        "active_file": selected_path.name,
-        "active_file_path": str(selected_path),
-        "order_label": "最新在前",
-    }
-    filter_query = urlencode(
-        {
-            key: value
-            for key, value in {
-                "tab": active_tab,
-                "source_file": selected_path.name,
-                "keyword": keyword.strip(),
-            }.items()
-            if value
-        }
-    )
-    pagination = {
-        "page": current_page,
-        "total": total,
-        "total_pages": total_pages,
-        "has_prev": current_page > 1,
-        "has_next": current_page < total_pages,
-        "prev_page": current_page - 1 if current_page > 1 else 1,
-        "next_page": current_page + 1 if current_page < total_pages else total_pages,
-        "from_index": start_index + 1 if total else 0,
-        "to_index": end_index,
-        "query": filter_query,
-    }
-    return render(
-        request,
-        "errors.html",
-        page_title="日志中心",
-        log_lines=paged_lines,
-        pagination=pagination,
-        overview=overview,
-        active_tab=active_tab,
-        source_file=selected_path.name,
-        keyword=keyword,
-        available_log_files=[str(path.name) for path in available_log_files],
-    )
-
-
-def resolve_tab_log_paths(tab: str) -> list[Path]:
-    active_tab = "info" if str(tab or "").strip().lower() == "info" else "error"
-    log_dir = Path(settings.log_dir)
-    base_name = "app.log" if active_tab == "info" else "error.log"
-    base_path = log_dir / base_name
-    rotated_paths = sorted(log_dir.glob(f"{base_name}.*"), key=lambda path: path.name)
-    return [path for path in [base_path, *rotated_paths] if path.exists()]
-
-
-def resolve_selected_log_path(tab: str, *, selected_file_name: str) -> Path:
-    available_paths = resolve_tab_log_paths(tab)
-    if not available_paths:
-        base_name = "app.log" if str(tab or "").strip().lower() == "info" else "error.log"
-        return Path(settings.log_dir) / base_name
-    if selected_file_name:
-        for path in available_paths:
-            if path.name == selected_file_name:
-                return path
-    return available_paths[0]
-
-
 @app.post("/webhooks/{channel_id}/inbound")
 async def inbound_webhook(channel_id: int, request: Request):
     body = await request.body()
@@ -4653,117 +4160,3 @@ async def outbound_message_action(channel_id: int, request: Request):
         }
     finally:
         db.close()
-
-
-@app.get("/monitoring", response_class=HTMLResponse)
-async def monitoring_page(request: Request):
-    db = get_session()
-    try:
-        snapshot = build_monitoring_snapshot(db)
-        return render(
-            request,
-            "monitoring.html",
-            page_title="监控与审计",
-            **snapshot,
-        )
-    finally:
-        db.close()
-
-
-@app.post("/monitoring/alerts/{alert_id}/resolve")
-async def resolve_alert_action(request: Request, alert_id: int):
-    # 告警处理入口保持极轻：只改状态、写处理时间和审计，不引入备注或二次流转。
-    enforce_role(request, "ops")
-    user = require_user(request)
-    db = get_session()
-    try:
-        alert = db.get(AlertRecord, alert_id)
-        if not alert:
-            return RedirectResponse(url="/monitoring?notice=" + quote("告警不存在"), status_code=303)
-
-        if str(alert.status or "").strip().lower() != "open":
-            return RedirectResponse(url="/monitoring?notice=" + quote("该告警已处理"), status_code=303)
-
-        alert.status = "resolved"
-        alert.resolved_at = now_shanghai()
-        db.commit()
-        db.refresh(alert)
-        record_audit(
-            db,
-            "alert.resolve",
-            "alert",
-            alert.id,
-            f"source={alert.source}, title={alert.title}",
-            actor=user.username,
-        )
-        return RedirectResponse(url="/monitoring?notice=" + quote("已标记为已处理"), status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/monitoring/restart-app")
-async def restart_app_action(request: Request):
-    enforce_role(request, "admin")
-    script_path = APP_ROOT / "scripts" / "deploy_restart_mba.sh"
-    if not script_path.exists():
-        return RedirectResponse(
-            url="/monitoring?notice=" + quote("重启脚本不存在") + "&tone=danger",
-            status_code=303,
-        )
-
-    run_dir = APP_ROOT / ".run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    restart_log = run_dir / "deploy-restart-trigger.log"
-
-    user = require_user(request)
-    try:
-        with restart_log.open("a", encoding="utf-8") as log_handle:
-            log_handle.write(
-                f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] trigger restart by {user.username}; "
-                f"cwd={APP_ROOT}; script={script_path}\n"
-            )
-            log_handle.flush()
-            process = subprocess.Popen(
-                ["bash", str(script_path)],
-                cwd=APP_ROOT,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            # Give the script a short window. If it exits immediately, surface the error instead of pretending success.
-            time_module.sleep(0.6)
-            quick_exit_code = process.poll()
-        if quick_exit_code not in (None, 0):
-            tail_lines = restart_log.read_text(encoding="utf-8", errors="ignore").splitlines()[-20:]
-            tail_preview = " | ".join(line.strip() for line in tail_lines if line.strip())
-            reason = f"脚本快速退出（exit={quick_exit_code}）"
-            if tail_preview:
-                reason = f"{reason}：{tail_preview[-320:]}"
-            return RedirectResponse(
-                url="/monitoring?notice=" + quote(f"触发重启失败：{reason}") + "&tone=danger",
-                status_code=303,
-            )
-    except Exception as exc:
-        return RedirectResponse(
-            url="/monitoring?notice=" + quote(f"触发重启失败：{exc}") + "&tone=danger",
-            status_code=303,
-        )
-
-    db = get_session()
-    try:
-        record_audit(
-            db,
-            "ops.restart-app",
-            "system",
-            None,
-            f"triggered by {user.username}, script={script_path.name}",
-            actor=user.username,
-        )
-    finally:
-        db.close()
-
-    return RedirectResponse(
-        url="/monitoring?notice=" + quote("已触发重启脚本，页面可能短暂中断"),
-        status_code=303,
-    )

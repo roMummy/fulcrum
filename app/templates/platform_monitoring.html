@@ -1,0 +1,74 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>集中查看全平台健康检查、未关闭告警和操作审计，并执行受控服务重启。</p>{% endblock %}
+{% block hero_actions %}
+<form method="post" action="/platform/operations/restart-app" data-confirm-mode="confirm" data-confirm-title="重启曜枢 AI 服务" data-confirm-message="服务会短暂中断，确认继续吗？">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <button class="btn" type="submit">重启服务</button>
+</form>
+{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Platform health</p><h2>全局运行概览</h2></div><a class="btn btn-secondary" href="/platform/logs">查看全局日志</a></div>
+  <div class="stats-grid compact-grid">
+    <div class="stat-card accent-card"><span>健康检查总数</span><strong>{{ stats.health_checks }}</strong></div>
+    <div class="stat-card danger-soft"><span>未关闭告警</span><strong>{{ stats.open_alerts }}</strong></div>
+    <div class="stat-card"><span>租户审计日志</span><strong>{{ stats.audit_logs }}</strong></div>
+    <div class="stat-card"><span>最近 24h 消息</span><strong>{{ stats.messages_24h }}</strong></div>
+    <div class="stat-card"><span>最近 24h Webhook 异常</span><strong>{{ stats.webhook_failures_24h }}</strong></div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Alerts</p><h2>未关闭告警</h2></div></div>
+  <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight ops-record-table">
+      <thead><tr><th>ID</th><th>租户</th><th>来源</th><th>级别</th><th>标题</th><th>时间</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for item in open_alerts %}
+        <tr>
+          <td>#{{ item.id }}</td><td>#{{ item.tenant_id }}</td><td>{{ item.source }}</td>
+          <td><span class="badge badge-{{ item.level|lower }}">{{ item.level }}</span></td>
+          <td><strong>{{ item.title }}</strong><div class="muted-text">{{ item.message }}</div></td>
+          <td>{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+          <td>
+            {# 告警处理是平台写操作，必须提交当前平台会话配套的 CSRF 原文。 #}
+            <form method="post" action="/platform/operations/alerts/{{ item.id }}/resolve">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="btn btn-small" type="submit">标记已处理</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}<tr><td colspan="7"><div class="empty-state"><strong>暂无未关闭告警</strong></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Checks</p><h2>最近健康检查</h2></div></div>
+  <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight ops-record-table">
+      <thead><tr><th>ID</th><th>租户</th><th>范围</th><th>目标</th><th>状态</th><th>摘要</th><th>时间</th></tr></thead>
+      <tbody>
+        {% for item in recent_health_checks %}
+        <tr><td>#{{ item.id }}</td><td>#{{ item.tenant_id }}</td><td>{{ item.scope }}</td><td>{{ item.target_type }}{% if item.target_id %} #{{ item.target_id }}{% endif %}</td><td><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td><td>{{ item.summary }}</td><td>{{ item.created_at|bj_time if item.created_at else '-' }}</td></tr>
+        {% else %}<tr><td colspan="7"><div class="empty-state"><strong>暂无健康检查记录</strong></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Audit trail</p><h2>最近租户操作审计</h2></div></div>
+  <div class="record-scroll-panel record-scroll-panel-lg">
+    <table class="table table-tight ops-record-table">
+      <thead><tr><th>ID</th><th>租户</th><th>操作者</th><th>动作</th><th>对象</th><th>明细</th><th>时间</th></tr></thead>
+      <tbody>
+        {% for item in recent_audits %}
+        <tr><td>#{{ item.id }}</td><td>#{{ item.tenant_id }}</td><td>{{ item.actor }}</td><td><code>{{ item.action }}</code></td><td>{{ item.target_type }}{% if item.target_id %} #{{ item.target_id }}{% endif %}</td><td>{{ item.detail or '-' }}</td><td>{{ item.created_at|bj_time if item.created_at else '-' }}</td></tr>
+        {% else %}<tr><td colspan="7"><div class="empty-state"><strong>暂无审计日志</strong></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

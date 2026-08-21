@@ -78,6 +78,8 @@ def _platform_context(
             {"label": "租户管理", "href": "/platform/tenants", "active": False},
             {"label": "套餐管理", "href": "/platform/plans", "active": False},
             {"label": "订单审核", "href": "/platform/billing/orders", "active": True},
+            {"label": "平台员工", "href": "/platform/users", "active": False},
+            {"label": "系统运维", "href": "/platform/operations", "active": False},
         ],
         "secondary_nav_items": [],
         "secondary_nav_active": False,

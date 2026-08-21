@@ -82,8 +82,6 @@ def _page_context(
             {"label": "机器人", "href": "/bots", "active": False},
             {"label": "插件", "href": "/plugins", "active": False},
             {"label": "消息", "href": "/conversations", "active": False},
-            {"label": "开放接口", "href": "/open-api/apps", "active": False},
-            {"label": "排障", "href": "/monitoring", "active": False},
         ],
         "secondary_nav_items": [
             {"label": "租户设置", "href": "/tenant/users", "active": False},

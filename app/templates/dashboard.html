@@ -1,13 +1,6 @@
 {% extends 'base.html' %}
 {% block page_intro %}
-<p>查看消息量、活跃度、插件使用和异常告警，快速掌握系统当前运行情况。</p>
-<p class="system-started-at">系统启动时间：{{ app_started_at | bj_time }} · 已运行 {{ app_started_at | uptime }}</p>
-{% endblock %}
-{% block hero_actions %}
-<div class="hero-action-cluster">
-  <a class="btn" href="/monitoring">进入监控中心</a>
-  <a class="btn btn-secondary" href="/errors">查看日志中心</a>
-</div>
+<p>查看当前企业的消息量、活跃度、插件使用和渠道状态。</p>
 {% endblock %}
 {% block content %}
 <section class="card dashboard-hero-card">
@@ -245,7 +238,6 @@
         <p class="section-kicker">Alerts</p>
         <h2>告警摘要</h2>
       </div>
-      <a class="chip chip-action" href="/monitoring">进入监控</a>
     </div>
     <div class="stats-grid compact-grid">
       <div class="stat-card nested-card">
@@ -288,7 +280,6 @@
         <p class="section-kicker">Risk Queue</p>
         <h2>待处理风险</h2>
       </div>
-      <a class="chip chip-action" href="/errors">日志中心</a>
     </div>
     <ul class="list">
       {% for item in risk_items %}
@@ -305,7 +296,6 @@
         <p class="section-kicker">Signals</p>
         <h2>最近日志异常</h2>
       </div>
-      <a class="chip chip-action" href="/errors">查看全部</a>
     </div>
     <ul class="event-list">
       {% for item in recent_errors %}

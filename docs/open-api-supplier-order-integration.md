@@ -4,15 +4,11 @@
 
 MBA 作为消息网关，负责渠道、企业微信 Provider、任务队列和消息事件；`supplier-order-admin` 作为独立业务系统，负责供应商、批次、发单、回传解析和业务系统导入。
 
-## MBA 侧配置
+## 曜枢 AI 侧配置
 
-登录 MBA 后进入：
-
-```text
-/open-api/apps
-```
-
-创建开放应用：
+开放应用属于平台方管理的机器凭据，不在企业租户后台提供创建、查看或修改入口。
+平台运维人员需要在目标租户范围内通过受控初始化流程调用
+`app.services.open_api_apps.upsert_open_api_app()` 创建开放应用，并向对接系统单独交付密钥：
 
 - 应用名称：例如 `收发单系统`
 - `app_key`：例如 `supplier-order`
@@ -46,8 +42,8 @@ MBA 的 `plugins/supplier_order_flow` 现在只作为轻量桥接插件存在：
 ```env
 MBA_BASE_URL=http://<mba-host>:8180
 MBA_APP_KEY=supplier-order
-MBA_APP_SECRET=<MBA页面中配置的app_secret>
-MBA_WEBHOOK_SECRET=<MBA页面中配置的Webhook Secret>
+MBA_APP_SECRET=<平台方单独交付的app_secret>
+MBA_WEBHOOK_SECRET=<平台方单独交付的Webhook Secret>
 ```
 
 ## 调用 MBA 发送文件
@@ -186,7 +182,7 @@ X-MBA-Signature: HMAC_SHA256(webhook_secret, timestamp + "\n" + raw_body)
 
 1. 启动 MBA，并确认企业微信渠道可用。
 2. 在 MBA 为企业微信渠道生成 Provider 授权码，完成客户端注册。
-3. 在 MBA `/open-api/apps` 创建收发单系统开放应用。
+3. 由平台运维人员在目标租户范围内创建收发单系统开放应用，并单独交付机器凭据。
 4. 启动 `supplier-order-admin`，配置 `MBA_BASE_URL`、`MBA_APP_KEY`、`MBA_APP_SECRET`、`MBA_WEBHOOK_SECRET`。
 5. 在收发单系统后台 `/admin/supplier-order/settings` 配置业务系统接口。
 6. 同步供应商，维护 MBA 会话绑定。

@@ -69,7 +69,6 @@ def _tenant_context(
         {"label": "机器人", "href": "/bots", "active": False},
         {"label": "插件", "href": "/plugins", "active": False},
         {"label": "消息", "href": "/conversations", "active": False},
-        {"label": "开放接口", "href": "/open-api/apps", "active": False},
         {"label": "套餐与额度", "href": "/account/billing", "active": False},
         {"label": "租户设置", "href": "/tenant/users", "active": True},
     ]

@@ -184,6 +184,46 @@ def test_owner_and_employee_share_mobile_login_and_tenant_session_cookie(
         assert len(db.scalars(select(TenantSession)).all()) == 2
 
 
+def test_tenant_console_hides_platform_tools_and_old_internal_pages_return_404(
+    client: TestClient,
+) -> None:
+    """企业用户只能看到租户业务能力，旧内部工具路径不保留跳转或兼容页面。"""
+
+    login = client.post(
+        "/login",
+        data={"mobile": "13800138000", "password": OWNER_PASSWORD},
+    )
+    assert login.status_code == 303
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    for forbidden_text in ("重启服务", "开放接口", "实验台"):
+        assert forbidden_text not in dashboard.text
+
+    # 路由从应用注册表中彻底删除，企业会话通过收藏地址访问时也只能得到原生 404。
+    for path in ("/monitoring", "/errors", "/lab", "/open-api/apps"):
+        response = client.get(path)
+        assert response.status_code == 404, path
+
+
+def test_open_api_machine_route_remains_outside_tenant_page_authentication(client: TestClient) -> None:
+    """机器签名接口继续进入 Open API 鉴权，不被企业页面收口误删或重定向。"""
+
+    response = client.get("/api/open/jobs/not-found")
+
+    assert response.status_code == 401
+    assert response.headers.get("location") is None
+
+
+def test_platform_operations_require_platform_login(client: TestClient) -> None:
+    """未登录请求访问平台运维与日志时固定回到独立平台登录入口。"""
+
+    for path in ("/platform/operations", "/platform/logs"):
+        response = client.get(path)
+        assert response.status_code == 303, path
+        assert response.headers["location"] == "/platform/login"
+
+
 def test_owner_login_does_not_accept_the_old_employee_form_contract(client: TestClient) -> None:
     """企业登录只接收手机号，租户编码和用户名不能恢复任何身份。"""
 
