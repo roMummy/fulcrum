@@ -1,5 +1,4 @@
 {% extends 'platform_base.html' %}
-{% block page_intro %}<p>集中查看全平台健康检查、未关闭告警和操作审计，并执行受控服务重启。</p>{% endblock %}
 {% block hero_actions %}
 <form method="post" action="/platform/operations/restart-app" data-confirm-mode="confirm" data-confirm-title="重启曜枢 AI 服务" data-confirm-message="服务会短暂中断，确认继续吗？">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

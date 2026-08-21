@@ -1,5 +1,5 @@
 {% extends 'platform_base.html' %}
-{% block page_intro %}<p>维护 SaaS 平台方员工账号；所有账号均为平台全权限角色，不属于任何企业。</p>{% endblock %}
+{% block page_intro %}<p>平台员工均为全权限管理员，不属于任何企业。</p>{% endblock %}
 {% block content %}
 {% if initial_password %}
 <section class="notice-card"><strong>一次性初始密码</strong><p><code>{{ initial_password }}</code></p><p class="muted-text">该密码未保存明文，离开或刷新本页后无法再次查看。</p></section>
@@ -18,7 +18,7 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Accounts</p><h2>平台员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
+  <div class="section-head"><div><h2>平台员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
   <div class="record-list">
     {% for user in users %}
     <article class="record-row">

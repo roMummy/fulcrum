@@ -2,42 +2,25 @@
 {% block content %}
 <section class="auth-showcase">
   <div class="auth-showcase-copy">
-    <p class="auth-eyebrow">Platform bootstrap</p>
+    <p class="auth-eyebrow">平台初始化</p>
     <h1>创建首个平台管理员</h1>
-    <p class="auth-lead">数据库连接和结构迁移由部署环境负责。当前页面只创建平台身份，不会建表、切换数据库或写入环境文件。</p>
-    <div class="auth-feature-list auth-step-grid">
-      <div class="auth-feature-item">
-        <strong>01 配置环境</strong>
-        <span>先在受限环境文件中配置 DATABASE_URL、SECRET_KEY 和 Cookie 安全参数。</span>
-      </div>
-      <div class="auth-feature-item">
-        <strong>02 执行迁移</strong>
-        <span>服务启动前运行 alembic upgrade head；readyz 通过后才允许业务流量进入。</span>
-      </div>
-      <div class="auth-feature-item">
-        <strong>03 创建租户</strong>
-        <span>平台管理员登录后创建套餐、租户和租户初始管理员。</span>
-      </div>
-    </div>
+    <p class="auth-lead">设置平台后台的首个管理员账号。</p>
   </div>
 
   <section class="login-card auth-form-card">
     <div class="section-head auth-card-head">
       <div>
-        <p class="section-kicker">Administrator</p>
         <h2>平台管理员</h2>
       </div>
-      <span class="chip chip-outline">数据库已迁移</span>
     </div>
-    <p class="muted-text">也可以通过受限环境变量 AUTH_BOOTSTRAP_ADMIN_* 自动创建；系统不会在日志中输出密码。</p>
     <form method="post" action="/setup" class="form-grid" id="setup-form">
       <label><span>管理员用户名</span><input name="admin_username" required maxlength="100" value="{{ form_data.admin_username or 'admin' }}" /></label>
       <label><span>管理员显示名</span><input name="admin_display_name" required maxlength="100" value="{{ form_data.admin_display_name or '平台管理员' }}" /></label>
       <label><span>管理员密码</span><input name="admin_password" type="password" required autocomplete="new-password" /></label>
       <label><span>确认密码</span><input name="admin_password_confirm" type="password" required autocomplete="new-password" /></label>
       <div class="full-row auth-tip-panel">
-        <strong>安全边界</strong>
-        <p class="muted-text">此操作只向当前已迁移数据库的 platform_users 表写入一条账号记录，不读取或修改 DATABASE_URL。</p>
+        <strong>安全提示</strong>
+        <p class="muted-text">密码只用于创建当前账号，不会在页面或日志中再次显示。</p>
       </div>
       <div class="full-row auth-form-actions">
         <button class="btn auth-submit" type="submit">创建平台管理员</button>

@@ -1665,7 +1665,7 @@ consume_policy = "continue"
         self.assertIn("刷新插件目录", response.text)
         self.assertIn("运行状态页", response.text)
         self.assertIn("绑定插件到机器人", response.text)
-        self.assertIn("当前页面只保留目录扫描结果、目录元信息和快速绑定入口。", response.text)
+        self.assertNotIn("当前页面只保留目录扫描结果、目录元信息和快速绑定入口。", response.text)
         self.assertIn("/plugins/runtime", response.text)
         self.assertNotIn("最近执行", response.text)
         self.assertNotIn("执行摘要</span>", response.text)
@@ -3607,14 +3607,14 @@ consume_policy = "shared"
             self.assertEqual(binding.runtime_status, "running")
             self.assertIsNotNone(binding.last_reload_at)
 
-    def test_plugin_runtime_page_shows_new_architecture_status(self):
+    def test_plugin_runtime_page_shows_operational_capabilities_without_migration_copy(self):
         self.login("ops", "ops123")
         response = self.client.get("/plugins/runtime")
         self.assertEqual(response.status_code, 200)
         self.assertIn("运行时注册表", response.text)
         self.assertIn("functional", response.text)
-        self.assertIn("discovered", response.text)
         self.assertIn("reload, execute", response.text)
+        self.assertNotIn("迁移状态", response.text)
 
     def test_wechat_ipad_routes_persist_login_and_message_sync_state(self):
         self.login("ops", "ops123")

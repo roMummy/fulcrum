@@ -70,10 +70,10 @@
   <div class="toolbar">
     <div>
       <h2>当前绑定</h2>
-      <p class="muted-text">这里可以查看绑定状态、最近执行结果和配置入口。更多运行信息请到运行状态页查看。</p>
     </div>
   </div>
-  {% for work-surface in binding_cards %}
+  {# 绑定卡片必须直接使用运行视图对象，避免视觉类名替换影响模板循环变量。 #}
+  {% for card in binding_cards %}
   {% set item = card.binding %}
   {% set dispatch_view = card.dispatch_view or {} %}
   <article class="plugin-binding-card">
@@ -141,7 +141,6 @@
     <div class="app-modal-head">
       <div>
         <h2>绑定到机器人</h2>
-        <p class="muted-text">这里给插件新建一个机器人绑定。日常只需要选择机器人和开关状态，详细配置可以后面再补。</p>
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
@@ -166,10 +165,8 @@
     <div class="plugin-detail-tech">
       <div class="plugin-detail-meta-grid">
         <div class="subsection">
-          <strong>目录与架构</strong>
+          <strong>插件信息</strong>
           <p class="muted-text">插件分类：{{ plugin_runtime_info.plugin_category or '-' }}</p>
-          <p class="muted-text">迁移状态：{{ plugin_runtime_info.migration_state or '-' }}</p>
-          <p class="muted-text">架构来源：{{ plugin_runtime_info.architecture_source or '-' }}</p>
           <p class="muted-text">配置来源：{% if plugin_config_view.mode == 'schema' %}{{ plugin_config_view.title }} / {{ plugin_config_view.schema_version }}{% else %}仅 JSON 配置{% endif %}</p>
         </div>
         <div class="subsection">

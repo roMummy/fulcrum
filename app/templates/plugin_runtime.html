@@ -1,7 +1,4 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>查看插件 Manifest、绑定运行态、最近执行和调度结果，优先定位插件是否可加载、可执行、可调度。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/plugins">返回插件管理</a>
@@ -14,17 +11,12 @@
     <div>
       <p class="section-kicker">Plugin Registry</p>
       <h2>运行时注册表</h2>
-      <p class="muted-text">这里汇总每个插件的加载状态、能力标签和执行入口。</p>
     </div>
   </div>
   <div class="stats-grid compact-grid">
     <div class="metric-item ">
       <span>功能型插件</span>
       <strong>{{ runtime_summary.functional_total }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>已迁移功能型</span>
-      <strong>{{ runtime_summary.functional_migrated }}</strong>
     </div>
     <div class="metric-item ">
       <span>可执行功能型</span>
@@ -36,7 +28,7 @@
     </div>
   </div>
   <table class="table">
-    <thead><tr><th>插件</th><th class="col-status">Manifest</th><th class="col-type">分类</th><th class="col-status">状态</th><th class="col-type">来源</th><th>能力清单</th><th>后台页面</th><th class="col-compact">Schema</th><th class="col-bool">执行入口</th></tr></thead>
+    <thead><tr><th>插件</th><th class="col-status">Manifest</th><th class="col-type">分类</th><th>能力清单</th><th>后台页面</th><th class="col-compact">Schema</th><th class="col-bool">执行入口</th></tr></thead>
     <tbody>
       {% for plugin in plugins %}
       {% set runtime_info = plugin_runtime_map.get(plugin.code, {}) %}
@@ -49,8 +41,6 @@
           {% endif %}
         </td>
         <td class="col-type">{{ runtime_info.plugin_category or '-' }}</td>
-        <td class="col-status">{{ runtime_info.migration_state or '-' }}</td>
-        <td class="col-type">{{ runtime_info.architecture_source or '-' }}</td>
         <td>{{ runtime_info.capabilities|join(', ') if runtime_info.capabilities else '-' }}</td>
         <td>
           {% if runtime_info.admin_extension and runtime_info.admin_extension.enabled %}
@@ -69,9 +59,10 @@
 
 <section class="work-surface">
   <table class="table">
-    <thead><tr><th class="col-id">绑定ID</th><th>插件</th><th>Bot</th><th class="col-status">配置状态</th><th class="col-status">运行态</th><th class="col-type">分类</th><th class="col-status">迁移状态</th><th>能力清单</th><th class="col-time">最近重载</th><th class="col-time">最近执行</th><th>执行摘要</th><th>最近调度</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th class="col-id">绑定ID</th><th>插件</th><th>Bot</th><th class="col-status">配置状态</th><th class="col-status">运行态</th><th class="col-type">分类</th><th>能力清单</th><th class="col-time">最近重载</th><th class="col-time">最近执行</th><th>执行摘要</th><th>最近调度</th><th class="col-action">操作</th></tr></thead>
     <tbody>
-      {% for work-surface in binding_cards %}
+      {# 每个绑定行使用完整运行视图，循环变量必须与下方字段读取保持一致。 #}
+      {% for card in binding_cards %}
       {% set item = card.binding %}
       {% set runtime_info = card.runtime_info %}
       {% set dispatch_view = card.dispatch_view or {} %}
@@ -82,7 +73,6 @@
         <td class="col-status"><span class="badge {% if item.status == 'enabled' %}badge-enabled{% else %}badge-disabled{% endif %}">{{ item.status }}</span></td>
         <td class="col-status"><span class="badge {% if card.runtime_view.display_status in ['ready', 'running', 'enabled'] %}badge-enabled{% elif card.runtime_view.display_status in ['error', 'failed'] %}badge-error{% else %}badge-info{% endif %}">{{ card.runtime_view.display_status }}</span></td>
         <td class="col-type">{{ runtime_info.plugin_category or '-' }}</td>
-        <td class="col-status">{{ runtime_info.migration_state or '-' }}</td>
         <td>{{ runtime_info.capabilities|join(', ') if runtime_info.capabilities else '-' }}</td>
         <td class="col-time">{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}</td>
         <td class="col-time">{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}</td>
@@ -116,7 +106,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13"><div class="empty-state"><strong>暂无插件绑定</strong><p>先在插件管理页把插件绑定到机器人。</p></div></td></tr>
+      <tr><td colspan="12"><div class="empty-state"><strong>暂无插件绑定</strong><p>先在插件管理页把插件绑定到机器人。</p></div></td></tr>
       {% endfor %}
     </tbody>
   </table>

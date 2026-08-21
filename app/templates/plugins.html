@@ -7,10 +7,6 @@
       <strong>{{ runtime_summary.functional_total }}</strong>
     </div>
     <div class="metric-item ">
-      <span>已迁移功能型</span>
-      <strong>{{ runtime_summary.functional_migrated }}</strong>
-    </div>
-    <div class="metric-item ">
       <span>可执行功能型</span>
       <strong>{{ runtime_summary.functional_executable }}</strong>
     </div>
@@ -169,7 +165,6 @@
   <div class="toolbar">
     <div>
       <h2>插件清单</h2>
-      <p class="muted-text">改成卡片视图后，每个插件的状态、能力和异常会更容易横向比较。</p>
     </div>
     <div class="actions">
       <form method="post" action="/plugins/refresh">
@@ -182,7 +177,6 @@
     <label><span>搜索</span><input type="text" name="q" value="{{ plugin_filters.q }}" placeholder="名称 / 编码 / 描述 / 作者" /></label>
     <label><span>插件类型</span><select name="plugin_type">{% for value, label in plugin_filter_options.plugin_types %}<option value="{{ value }}" {% if plugin_filters.plugin_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label><span>分类</span><select name="category">{% for value, label in plugin_filter_options.categories %}<option value="{{ value }}" {% if plugin_filters.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label><span>迁移状态</span><select name="migration_state">{% for value, label in plugin_filter_options.migration_states %}<option value="{{ value }}" {% if plugin_filters.migration_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label><span>执行能力</span><select name="execution_state">{% for value, label in plugin_filter_options.execution_states %}<option value="{{ value }}" {% if plugin_filters.execution_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label><span>Manifest</span><select name="manifest_state">{% for value, label in plugin_filter_options.manifest_states %}<option value="{{ value }}" {% if plugin_filters.manifest_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <div class="full-row actions">
@@ -221,9 +215,7 @@
       <div class="plugin-overview-meta">
         <div><span>类型</span><strong>{{ plugin.plugin_type or '-' }}</strong></div>
         <div><span>分类</span><strong>{{ runtime_info.plugin_category or '-' }}</strong></div>
-        <div><span>迁移状态</span><strong>{{ runtime_info.migration_state or '-' }}</strong></div>
         <div><span>版本</span><strong>{{ plugin.version or '-' }}</strong></div>
-        <div><span>架构</span><strong>{{ runtime_info.architecture_source or 'legacy-json' }}</strong></div>
         <div><span>作者</span><strong>{{ plugin.author or '-' }}</strong></div>
       </div>
 
@@ -236,10 +228,6 @@
         <span class="chip chip-muted">暂无能力标签</span>
         {% endif %}
       </div>
-
-      {% if runtime_info.entrypoint_path %}
-      <p class="muted-text plugin-overview-path">入口：{{ runtime_info.entrypoint_path }}</p>
-      {% endif %}
 
       {% if has_manifest_errors %}
       <div class="plugin-overview-alert plugin-overview-alert-danger">
@@ -265,16 +253,5 @@
     <p>可以先清空筛选条件，或者刷新插件目录重新扫描。</p>
   </div>
   {% endif %}
-</section>
-
-<section class="work-surface">
-  <div class="toolbar">
-    <h2>后续操作</h2>
-    <div class="actions">
-      <a class="btn btn-secondary" href="/plugins/runtime">查看绑定运行态</a>
-    </div>
-  </div>
-  <p>当前页面只保留目录扫描结果、目录元信息和快速绑定入口。</p>
-  <p>机器人-插件绑定的启停、重载、运行摘要请前往 <a href="/plugins/runtime">/plugins/runtime</a>；已自动发现 schema 的结构化配置请前往单插件详情页。</p>
 </section>
 {% endblock %}

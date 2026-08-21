@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -148,6 +149,39 @@ def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> Non
     assert '<td colspan="9">' not in platform_plans
 
 
+def test_visible_copy_omits_development_process_and_keeps_required_warnings() -> None:
+    """后台可见文案只表达业务任务，不展示重构、迁移和接口调试过程。
+
+    安全、身份和不可逆操作提示不能随文案精简一起删除，因此同时检查一次性密码、
+    平台入口边界和服务重启中断提示仍然存在。
+    """
+
+    template_source = "\n".join(
+        _read_project_file(path)
+        for path in sorted(TEMPLATE_ROOT.glob("*.html"))
+    )
+
+    for development_copy in (
+        "新增入口改成弹窗后",
+        "新增动作收进弹窗后",
+        "改成卡片视图后",
+        "当前页面只保留目录扫描结果",
+        "数据库连接和结构迁移由部署环境负责",
+        "旧节点兼容额度",
+        "已迁移功能型",
+        ">迁移状态<",
+        "统一出站接口：",
+        "这里可以直接调用当前系统接入的 Wechat iPad 接口",
+        "`wechat_ipad` 需要先部署独立 provider",
+        "把 bootstrap 管理员和演示账号继续收敛",
+    ):
+        assert development_copy not in template_source
+
+    assert "一次性初始密码" in _read_project_file(TEMPLATE_ROOT / "tenant_users.html")
+    assert "此入口仅供平台管理员使用" in _read_project_file(TEMPLATE_ROOT / "platform_login.html")
+    assert "服务会短暂中断" in _read_project_file(TEMPLATE_ROOT / "platform_monitoring.html")
+
+
 def test_mobile_data_table_and_platform_login_keep_page_boundaries() -> None:
     """移动表格只能在自身容器滚动，平台登录页必须保留唯一页面级标题。
 
@@ -175,14 +209,19 @@ def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
         for path in sorted(TEMPLATE_ROOT.glob("*.html"))
     )
     stylesheet = _read_project_file(STYLE_PATH)
+    # 只解析真实 class 属性，避免把 Jinja 循环变量或普通业务文字误判成旧视觉类名。
+    template_classes = {
+        token
+        for class_value in re.findall(r'class="([^"]*)"', template_source)
+        for token in class_value.split()
+    }
 
     for legacy_token in ("card", "stat-card", "nested-card", "subcard", "inset-panel"):
-        assert f'class="{legacy_token}' not in template_source
-        assert f" {legacy_token} " not in template_source
-        assert f' {legacy_token}"' not in template_source
+        assert legacy_token not in template_classes
 
     for legacy_selector in (".card", ".stat-card", ".subcard", ".inset-panel"):
         assert legacy_selector not in stylesheet
 
     assert "border-radius:999px" not in template_source
     assert "border-radius: 999px" not in template_source
+    assert "{% for work-surface" not in template_source

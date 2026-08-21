@@ -2,9 +2,6 @@
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
-{% block page_intro %}
-<p>查看这个渠道的配置、登录状态、群信息和最近交互，方便判断当前是否运行正常。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <button class="btn" type="button" data-modal-open="edit-channel-modal">修改配置</button>
@@ -37,7 +34,6 @@
     <summary>
       <div class="action-disclosure-copy">
         <h3>Provider 专项操作</h3>
-        <p class="muted-text">登录、同步、拉取和群资料维护等动作集中在这里。</p>
       </div>
       <span class="action-disclosure-hint"></span>
     </summary>
@@ -143,7 +139,6 @@
     <div>
       <p class="section-kicker">Wechat iPad</p>
       <h2>登录与二维码</h2>
-      <p class="muted-text">这里显示当前登录状态、二维码可用情况，以及最近的心跳、拉取、收发时间。</p>
     </div>
     <div class="chip-row">
       <span class="chip chip-outline" id="wechat-ipad-qrcode-phase">{{ wechat_ipad_overview.qrcode_status_display or '-' }}</span>
@@ -269,7 +264,6 @@
     <div>
       <p class="section-kicker">Chatrooms</p>
       <h2>群总览</h2>
-      <p class="muted-text">这里显示群数量、成员同步情况和群内插件配置概况。</p>
     </div>
     <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">进入群管理</a>
   </div>
@@ -518,9 +512,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Action Console</p>
-      <h2>Wechat iPad 运维动作台</h2>
-      <p class="muted-text">这里可以直接调用当前系统接入的 Wechat iPad 接口，方便排查和验证。</p>
+      <h2>Wechat iPad 渠道操作</h2>
     </div>
     <span class="chip {% if wechat_ipad_overview.action_console.last_action_ok %}chip-success{% else %}chip-muted{% endif %}" id="wechat-ipad-action-last-status">
       {% if wechat_ipad_overview.action_console.last_action_name %}
@@ -563,8 +555,7 @@
     </div>
     <div class="wechat-action-result subsection">
       <div class="wechat-action-result-head">
-        <p class="section-kicker">Latest Result</p>
-        <p class="muted-text">最近一次动作的摘要、参数和返回预览会集中展示在这里。</p>
+        <h3>最近结果</h3>
       </div>
       <div class="wechat-action-facts">
         <div class="metric-item ">
@@ -599,7 +590,6 @@
     <div>
       <p class="section-kicker">Recent Messages</p>
       <h2>最近进出站消息</h2>
-      <p class="muted-text">登录成功后优先看这里，用来核对这个渠道最近是否还有正常交互。</p>
     </div>
     <div class="actions">
       {% if message_pagination %}
@@ -1244,9 +1234,7 @@
       </div>
       {% endif %}
       <label class="full-row"><span>Adapter Config JSON</span><textarea name="adapter_config_json" rows="8">{{ channel.adapter_config_json or '' }}</textarea></label>
-      {% if channel.channel_type == 'wechat_ipad' %}
-      <p class="muted-text full-row" style="margin:0;">`wechat_ipad` 需要先部署独立 provider，再在这里填写 `API Base`。</p>
-      {% elif channel.channel_type == 'workwechat' %}
+      {% if channel.channel_type == 'workwechat' %}
       <p class="muted-text full-row" style="margin:0;">企业微信渠道必须绑定已激活节点及其在线账号；保留当前离线账号时允许直接保存，改绑必须选择在线账号。</p>
       {% endif %}
       <div class="full-row form-actions-inline">

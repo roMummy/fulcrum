@@ -1,5 +1,4 @@
 {% extends 'base.html' %}
-{% block page_intro %}<p>维护当前租户员工、固定角色和登录状态。</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/tenant/subscription">查看订阅</a>{% endblock %}
 {% block content %}
 {% if initial_password %}
@@ -21,7 +20,7 @@
 {% endif %}
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Employees</p><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
+  <div class="section-head"><div><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
   <div class="record-list">
     {% for user in users %}
     <article class="record-row">

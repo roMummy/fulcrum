@@ -1,7 +1,4 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>在这里管理机器人的各个接入渠道，查看配置状态并执行常用操作。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <button class="btn" type="button" data-modal-open="create-channel-modal">新增渠道</button>
@@ -79,7 +76,6 @@
       <div>
         <p class="section-kicker">Provisioning</p>
         <h2>新增渠道</h2>
-        <p class="muted-text">新增入口改成弹窗后，主页面会更专注在渠道状态和清单上。</p>
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
