@@ -32,6 +32,7 @@ APP_ENV=prod
 SECRET_KEY=change-this-secret-key
 LOG_LEVEL=INFO
 AUTH_SEED_DEMO_USERS=false
+AUTH_COOKIE_SECURE=true
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 BILLING_PAYMENT_TITLE=曜枢 AI 人工付款
@@ -40,6 +41,8 @@ BILLING_PAYMENT_PROOF_MAX_BYTES=5242880
 ```
 
 `SECRET_KEY` 同时参与会话安全和设备指纹 HMAC。已经产生机器人绑定后不得直接更换该值，否则同一设备会计算出不同摘要，破坏设备归属和试用防重复判断。若必须轮换，应先实现双密钥过渡或摘要迁移。
+
+`AUTH_COOKIE_SECURE` 必须与实际访问协议一致。通过正式 HTTPS 域名访问时保持 `true`；当前仅通过受控内网 `http://IP:8280` 验收时必须显式设为 `false`，否则浏览器收到登录 Cookie 后不会在后续 HTTP 请求中回传。切换到 HTTPS 后应立即恢复为 `true`。
 
 人工付款可选配置：
 

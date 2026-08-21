@@ -194,6 +194,7 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | `DATABASE_URL` | 数据库连接串 |
 | `LOG_LEVEL` | 日志级别 |
 | `AUTH_SEED_DEMO_USERS` | 是否自动创建演示账号 |
+| `AUTH_COOKIE_SECURE` | 会话 Cookie 是否仅允许 HTTPS；使用 `http://IP:8280` 时必须显式设为 `false` |
 | `AUTH_BOOTSTRAP_ADMIN_USERNAME` | 初始化管理员用户名 |
 | `AUTH_BOOTSTRAP_ADMIN_PASSWORD` | 初始化管理员密码 |
 | `BILLING_PAYMENT_TITLE` | 租户订单页展示的人工付款标题 |
@@ -439,6 +440,7 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 ## 生产建议
 
 - 生产环境关闭 `AUTH_SEED_DEMO_USERS`
+- HTTPS 部署保持 `AUTH_COOKIE_SECURE=true`；仅限受控内网 HTTP 验收时显式设为 `false`
 - 使用高强度且长期稳定的 `SECRET_KEY`，轮换前必须设计设备摘要迁移方案
 - 数据量大时切换到 MariaDB
 - 为 `logs/`、数据库和 `data/tenant_billing/` 做好持久化与一致性备份
