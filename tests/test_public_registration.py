@@ -10,7 +10,7 @@ import app.services.registration as registration
 from app.core.db import Base
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import PlatformAuditLog, SaasPlan, Tenant, TenantSubscription, TenantUser
-from app.services.saas_auth import authenticate_tenant_owner, authenticate_tenant_user
+from app.services.saas_auth import authenticate_tenant_account
 
 
 @pytest.fixture()
@@ -78,8 +78,7 @@ def test_register_trial_tenant_creates_owner_and_subscription_atomically(db: Ses
     assert ensure_shanghai_datetime(subscription.starts_at) >= before
     assert "13800138000" not in (audit.detail or "")
 
-    assert authenticate_tenant_owner(db, "13800138000", "Owner-secret-123").id == owner.id
-    assert authenticate_tenant_user(db, tenant.code, owner.username, "Owner-secret-123").id == owner.id
+    assert authenticate_tenant_account(db, "13800138000", "Owner-secret-123").id == owner.id
 
 
 def test_normalized_mobile_is_globally_unique(db: Session) -> None:

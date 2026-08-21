@@ -12,7 +12,7 @@ from app.models.saas import PlatformUser, Tenant, TenantUser
 from app.services.csrf import verify_csrf_token
 from app.services.saas_auth import (
     authenticate_platform_user,
-    authenticate_tenant_user,
+    authenticate_tenant_account,
     create_platform_session,
     create_tenant_session,
     generate_initial_password,
@@ -49,6 +49,7 @@ def _create_tenant_user(db: Session, *, role: str = "operator") -> tuple[Tenant,
     user = TenantUser(
         tenant_id=tenant.id,
         username="ops",
+        mobile="13800138001",
         display_name="运营人员",
         role=role,
         password_hash=hash_password("SaaS-secret-123"),
@@ -142,7 +143,7 @@ def test_csrf_requires_cookie_form_and_database_hash_to_match(db: Session) -> No
 
 
 def test_platform_and_tenant_credentials_are_queried_in_separate_identity_tables(db: Session) -> None:
-    """同名账号必须由入口类型和租户编码共同限定，不能跨身份链认证。"""
+    """平台用户名和企业手机号只能查询各自身份表，不能跨身份链认证。"""
 
     _tenant, tenant_user = _create_tenant_user(db)
     platform_user = PlatformUser(
@@ -156,8 +157,8 @@ def test_platform_and_tenant_credentials_are_queried_in_separate_identity_tables
     db.add(platform_user)
     db.commit()
 
-    assert authenticate_tenant_user(db, "alpha", "ops", "SaaS-secret-123") == tenant_user
-    assert authenticate_tenant_user(db, "missing", "ops", "SaaS-secret-123") is None
+    assert authenticate_tenant_account(db, "13800138001", "SaaS-secret-123") == tenant_user
+    assert authenticate_tenant_account(db, "13900139000", "SaaS-secret-123") is None
     assert authenticate_platform_user(db, "ops", "Platform-secret-123") == platform_user
     assert authenticate_platform_user(db, "ops", "SaaS-secret-123") is None
 

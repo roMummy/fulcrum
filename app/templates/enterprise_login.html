@@ -1,0 +1,22 @@
+{% extends 'marketing_base.html' %}
+{% block content %}
+<section class="marketing-auth-shell" aria-labelledby="enterprise-login-title">
+  <div class="marketing-auth-layout marketing-auth-layout-login">
+    <div class="marketing-auth-context">
+      <p class="section-kicker">企业控制台</p>
+      <h1 id="enterprise-login-title">企业账号登录</h1>
+      <p>企业所有者和员工均使用绑定手机号进入所属企业工作台。</p>
+    </div>
+    <div class="marketing-auth-panel">
+      <h2>手机号登录</h2>
+      {# 企业身份只能由服务端根据全局唯一手机号恢复，表单不接收租户编码。 #}
+      <form method="post" action="/login" class="form-grid auth-form-grid">
+        <label class="full-row" for="enterprise-mobile"><span>手机号</span></label><input class="full-row" id="enterprise-mobile" name="mobile" type="tel" autocomplete="username" inputmode="tel" value="{{ prefill_mobile or '' }}" required />
+        <label class="full-row" for="enterprise-password"><span>密码</span></label><input class="full-row" id="enterprise-password" name="password" type="password" autocomplete="current-password" required />
+        <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">登录</button></div>
+      </form>
+      <div class="marketing-auth-links"><a href="/register">免费试用 7 天</a></div>
+    </div>
+  </div>
+</section>
+{% endblock %}

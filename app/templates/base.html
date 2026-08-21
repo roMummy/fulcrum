@@ -7,13 +7,13 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-{# 平台与租户登录页共用认证壳，但登录后的平台改密页仍使用正常应用布局。 #}
-{% set auth_shell_paths = ['/employee/login', '/platform/login', '/setup', '/setup/completed'] %}
-<body class="{% if request.url.path in auth_shell_paths %}auth-shell{% if request.url.path == '/employee/login' %} employee-auth-shell{% endif %}{% else %}app-shell{% endif %}">
+{# 平台登录和首次安装页共用认证壳，企业登录使用独立营销站点布局。 #}
+{% set auth_shell_paths = ['/platform/login', '/setup', '/setup/completed'] %}
+<body class="{% if request.url.path in auth_shell_paths %}auth-shell{% else %}app-shell{% endif %}">
   <a class="skip-link" href="#main-content">跳到主内容</a>
   {% if request.url.path in auth_shell_paths %}
   <main class="auth-layout" id="main-content" tabindex="-1">
-    <section class="auth-panel{% if request.url.path == '/employee/login' %} employee-auth-panel{% endif %}">
+    <section class="auth-panel">
       <div class="auth-brand">
         {# 对外界面使用曜枢品牌字标，内部仓库与模块命名仍保持 multi-bot-saas 不变。 #}
         <span class="brand-mark">曜</span>

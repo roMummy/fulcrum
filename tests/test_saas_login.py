@@ -23,7 +23,7 @@ TENANT_SESSION_COOKIE = "mbs_tenant_session"
 TENANT_CSRF_COOKIE = "mbs_tenant_csrf"
 PLATFORM_SESSION_COOKIE = "mbs_platform_session"
 PLATFORM_CSRF_COOKIE = "mbs_platform_csrf"
-TENANT_LOGIN_ERROR = "租户编码、用户名或密码错误"
+TENANT_LOGIN_ERROR = "手机号或密码错误"
 PLATFORM_LOGIN_ERROR = "用户名或密码错误"
 
 TENANT_PASSWORD = "Tenant-secret-123"
@@ -111,6 +111,7 @@ def identities(session_factory) -> None:
                 TenantUser(
                     tenant_id=tenant.id,
                     username="ops",
+                    mobile="13600136000",
                     display_name="租户运营",
                     role="operator",
                     password_hash=hash_password(TENANT_PASSWORD),
@@ -186,28 +187,20 @@ def _assert_deleted_cookie(response, name: str, *, expected_path: str) -> None:
     assert morsel["max-age"] == "0"
 
 
-def test_tenant_and_platform_login_pages_are_separate(client: TestClient) -> None:
-    """企业主、租户员工和平台管理员使用三个明确分离的登录入口。"""
+def test_enterprise_and_platform_login_pages_are_separate(client: TestClient) -> None:
+    """企业用户与平台员工使用两个明确分离的登录入口。"""
 
-    owner_page = client.get("/login")
-    tenant_page = client.get("/employee/login")
+    enterprise_page = client.get("/login")
+    removed_employee_page = client.get("/employee/login")
     platform_page = client.get("/platform/login")
-    missing_tenant = client.post(
-        "/employee/login",
-        data={"tenant_code": "", "username": "ops", "password": TENANT_PASSWORD},
-    )
 
-    assert owner_page.status_code == 200
-    assert "手机号" in owner_page.text
-    assert 'action="/login"' in owner_page.text
-    assert tenant_page.status_code == 200
-    assert "租户编码" in tenant_page.text
-    assert 'action="/employee/login"' in tenant_page.text
+    assert enterprise_page.status_code == 200
+    assert "手机号" in enterprise_page.text
+    assert 'action="/login"' in enterprise_page.text
+    assert removed_employee_page.status_code == 404
     assert platform_page.status_code == 200
     assert "平台" in platform_page.text
     assert 'action="/platform/login"' in platform_page.text
-    assert missing_tenant.status_code == 400
-    assert TENANT_LOGIN_ERROR in missing_tenant.text
 
 
 def test_login_errors_are_uniform_and_identity_tables_cannot_be_mixed(
@@ -217,12 +210,12 @@ def test_login_errors_are_uniform_and_identity_tables_cannot_be_mixed(
     """同名账号也只能用所属入口登录，失败提示不能泄露租户或账号是否存在。"""
 
     tenant_wrong_password = client.post(
-        "/employee/login",
-        data={"tenant_code": "alpha", "username": "ops", "password": PLATFORM_PASSWORD},
+        "/login",
+        data={"mobile": "13600136000", "password": PLATFORM_PASSWORD},
     )
     tenant_unknown = client.post(
-        "/employee/login",
-        data={"tenant_code": "missing", "username": "nobody", "password": TENANT_PASSWORD},
+        "/login",
+        data={"mobile": "13500135000", "password": TENANT_PASSWORD},
     )
     platform_wrong_password = client.post(
         "/platform/login",
@@ -249,8 +242,8 @@ def test_tenant_login_creates_database_session_and_logout_revokes_it(
     """租户登录只向浏览器返回原始令牌，注销后数据库会话和两个 Cookie 同时失效。"""
 
     login = client.post(
-        "/employee/login",
-        data={"tenant_code": "alpha", "username": "ops", "password": TENANT_PASSWORD},
+        "/login",
+        data={"mobile": "13600136000", "password": TENANT_PASSWORD},
     )
 
     assert login.status_code == 303
@@ -272,7 +265,7 @@ def test_tenant_login_creates_database_session_and_logout_revokes_it(
     logout = client.post("/logout", data={"csrf_token": csrf_cookie.value})
 
     assert logout.status_code == 303
-    assert logout.headers["location"].startswith("/employee/login")
+    assert logout.headers["location"].startswith("/login")
     _assert_deleted_cookie(logout, TENANT_SESSION_COOKIE, expected_path="/")
     _assert_deleted_cookie(logout, TENANT_CSRF_COOKIE, expected_path="/")
     with session_factory() as db:

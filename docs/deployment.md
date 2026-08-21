@@ -131,7 +131,7 @@ Copy-Item .env.example .env
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
-启动后先检查 `/healthz` 和 `/readyz`，再验证 `/`、`/pricing`、`/register`、`/login`、`/employee/login` 和 `/platform/login`。
+启动后先检查 `/healthz` 和 `/readyz`，再验证 `/`、`/pricing`、`/register`、`/login` 和 `/platform/login`。
 
 ## Docker Deployment
 

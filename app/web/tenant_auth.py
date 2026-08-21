@@ -1,4 +1,4 @@
-"""租户员工浏览器登录、注销和密码维护路由。"""
+"""企业账号浏览器注销和密码维护路由。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from fastapi.templating import Jinja2Templates
 from app.core.db import SessionLocal
 from app.models.saas import TenantUser
 from app.services.saas_auth import (
-    authenticate_tenant_user,
     create_tenant_session,
     hash_password,
     load_tenant_principal,
@@ -21,9 +20,7 @@ from app.services.saas_auth import (
 )
 from app.web.auth_common import (
     TENANT_CSRF_COOKIE,
-    TENANT_EMPLOYEE_LOGIN_PATH,
     TENANT_HOME_PATH,
-    TENANT_LOGIN_ERROR,
     TENANT_LOGIN_PATH,
     TENANT_LOGOUT_PATH,
     TENANT_PASSWORD_PATH,
@@ -40,33 +37,6 @@ from app.web.auth_common import (
 
 router = APIRouter(tags=["tenant-auth"])
 templates = Jinja2Templates(directory="app/templates")
-
-
-def _render_login(
-    request: Request,
-    *,
-    notice: str = "",
-    status_code: int = 200,
-    tenant_code: str = "",
-    username: str = "",
-):
-    """统一渲染租户登录页，失败时只回填非敏感标识字段。"""
-
-    context = build_auth_page_context(
-        request,
-        page_title="员工登录",
-        notice=notice,
-        prefill_tenant_code=tenant_code,
-        prefill_username=username,
-        # 验证码及数据库限速由共享登录保护模块接入；这里保留稳定模板字段，避免未定义值。
-        require_captcha=False,
-        captcha_question="",
-        captcha_token="",
-        needs_bootstrap_admin=False,
-        has_any_user=True,
-        identity_kind="tenant",
-    )
-    return templates.TemplateResponse(request, "login.html", context, status_code=status_code)
 
 
 def _render_password_page(
@@ -97,80 +67,19 @@ def _render_password_page(
     return templates.TemplateResponse(request, "password.html", context, status_code=status_code)
 
 
-@router.get(TENANT_EMPLOYEE_LOGIN_PATH, response_class=HTMLResponse)
-async def tenant_login_page(request: Request):
-    """展示租户登录页；已有有效会话直接进入对应工作区。"""
-
-    raw_token = tenant_session_token(request)
-    if raw_token:
-        with SessionLocal() as db:
-            principal = load_tenant_principal(db, raw_token)
-        if principal is not None:
-            target = TENANT_PASSWORD_PATH if principal.must_change_password else TENANT_HOME_PATH
-            return RedirectResponse(url=target, status_code=303)
-    return _render_login(request, notice=request.query_params.get("notice", ""))
-
-
-@router.post(TENANT_EMPLOYEE_LOGIN_PATH)
-async def tenant_login_action(
-    request: Request,
-    tenant_code: str = Form(""),
-    username: str = Form(""),
-    password: str = Form(""),
-):
-    """在指定租户内验证员工，并创建只保存摘要的数据库会话。"""
-
-    normalized_tenant_code = tenant_code.strip().lower()
-    normalized_username = username.strip()
-    # 缺少必填字段属于表单错误；提示仍与凭据错误完全一致，不泄露具体缺失项。
-    if not normalized_tenant_code or not normalized_username or not password:
-        return _render_login(
-            request,
-            notice=TENANT_LOGIN_ERROR,
-            status_code=400,
-            tenant_code=normalized_tenant_code,
-            username=normalized_username,
-        )
-
-    with SessionLocal() as db:
-        user = authenticate_tenant_user(db, normalized_tenant_code, normalized_username, password)
-        if user is None:
-            return _render_login(
-                request,
-                notice=TENANT_LOGIN_ERROR,
-                status_code=401,
-                tenant_code=normalized_tenant_code,
-                username=normalized_username,
-            )
-        created = create_tenant_session(
-            db,
-            user,
-            ip_address=request_ip_address(request),
-            user_agent=request_user_agent(request),
-        )
-        must_change_password = user.must_change_password
-
-    target = TENANT_PASSWORD_PATH if must_change_password else TENANT_HOME_PATH
-    response = RedirectResponse(url=target, status_code=303)
-    set_tenant_auth_cookies(response, created)
-    return response
-
-
 @router.post(TENANT_LOGOUT_PATH)
 async def tenant_logout_action(request: Request, csrf_token: str = Form("")):
     """校验 CSRF 后只吊销当前浏览器租户会话，并删除对应 Cookie。"""
 
     raw_token = tenant_session_token(request)
-    login_redirect = TENANT_LOGIN_PATH
     with SessionLocal() as db:
         principal = load_tenant_principal(db, raw_token, touch=False)
         # 已经过期或被吊销的会话没有可继续执行的权限，注销保持幂等并只清理浏览器状态。
         if principal is not None:
-            login_redirect = TENANT_LOGIN_PATH if principal.is_owner else TENANT_EMPLOYEE_LOGIN_PATH
             require_tenant_csrf(db, request, csrf_token)
             revoke_tenant_session_by_token(db, raw_token, reason="logout")
 
-    response = RedirectResponse(url=f"{login_redirect}?notice=" + quote("已退出登录"), status_code=303)
+    response = RedirectResponse(url=f"{TENANT_LOGIN_PATH}?notice=" + quote("已退出登录"), status_code=303)
     delete_tenant_auth_cookies(response)
     return response
 

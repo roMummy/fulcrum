@@ -18,7 +18,6 @@ from app.models.saas import (
     TENANT_ROLES,
     PlatformSession,
     PlatformUser,
-    Tenant,
     TenantSession,
     TenantSubscription,
     TenantUser,
@@ -107,39 +106,8 @@ def authenticate_platform_user(db: Session, username: str, password: str) -> Pla
     return user if verify_password(password, user.password_hash) else None
 
 
-def authenticate_tenant_user(
-    db: Session,
-    tenant_code: str,
-    username: str,
-    password: str,
-) -> TenantUser | None:
-    """在指定租户内验证员工；停用租户仍可登录读取历史数据，但写入由统一策略拒绝。"""
-
-    normalized_tenant_code = (tenant_code or "").strip().lower()
-    normalized_username = (username or "").strip()
-    if not normalized_tenant_code or not normalized_username or not password:
-        return None
-    tenant = db.scalar(
-        select(Tenant).where(
-            Tenant.code == normalized_tenant_code,
-        )
-    )
-    if tenant is None:
-        return None
-    user = db.scalar(
-        select(TenantUser).where(
-            TenantUser.tenant_id == tenant.id,
-            TenantUser.username == normalized_username,
-            TenantUser.is_enabled.is_(True),
-        )
-    )
-    if user is None or user.role not in TENANT_ROLES:
-        return None
-    return user if verify_password(password, user.password_hash) else None
-
-
-def authenticate_tenant_owner(db: Session, mobile: str, password: str) -> TenantUser | None:
-    """使用全局唯一手机号验证企业所有者，最终仍创建既有租户会话。"""
+def authenticate_tenant_account(db: Session, mobile: str, password: str) -> TenantUser | None:
+    """使用全局唯一手机号验证任意启用的企业账号，并恢复其可信租户归属。"""
 
     # 延迟导入避免 registration 在复用 hash_password 时形成模块初始化环；手机号规则只有一份实现。
     from app.services.registration import RegistrationError, normalize_mobile
@@ -153,7 +121,6 @@ def authenticate_tenant_owner(db: Session, mobile: str, password: str) -> Tenant
     user = db.scalar(
         select(TenantUser).where(
             TenantUser.mobile == normalized_mobile,
-            TenantUser.is_owner.is_(True),
             TenantUser.is_enabled.is_(True),
         )
     )

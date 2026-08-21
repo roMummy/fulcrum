@@ -97,6 +97,7 @@ def session_factory(tmp_path, monkeypatch):
                 TenantUser(
                     tenant_id=tenant.id,
                     username="employee",
+                    mobile="13700137000",
                     display_name="企业员工",
                     role="operator",
                     password_hash=hash_password(EMPLOYEE_PASSWORD),
@@ -142,20 +143,24 @@ def test_registration_captcha_is_signed_png_and_rejects_wrong_answer() -> None:
 def test_public_pages_are_accessible_but_dashboard_requires_tenant_login(client: TestClient) -> None:
     """营销、套餐、注册和登录公开可读，租户控制台仍要求可信租户会话。"""
 
-    for path in ("/", "/pricing", "/register", "/login", "/employee/login"):
+    for path in ("/", "/pricing", "/register", "/login"):
         response = client.get(path)
         assert response.status_code == 200, path
+
+    # 旧员工入口已从产品和路由中删除，不保留跳转或降级认证。
+    assert client.get("/employee/login").status_code == 404
+    assert client.post("/employee/login", data={}).status_code == 404
 
     dashboard = client.get("/dashboard")
     assert dashboard.status_code == 303
     assert dashboard.headers["location"] == "/login"
 
 
-def test_owner_and_employee_login_use_separate_credentials_and_same_session_cookie(
+def test_owner_and_employee_share_mobile_login_and_tenant_session_cookie(
     client: TestClient,
     session_factory,
 ) -> None:
-    """企业主与员工入口查询字段不同，但成功后都签发现有租户数据库会话。"""
+    """企业主与企业员工都通过全局唯一手机号签发同类租户会话。"""
 
     owner_login = client.post(
         "/login",
@@ -168,8 +173,8 @@ def test_owner_and_employee_login_use_separate_credentials_and_same_session_cook
 
     client.cookies.clear()
     employee_login = client.post(
-        "/employee/login",
-        data={"tenant_code": "alpha", "username": "employee", "password": EMPLOYEE_PASSWORD},
+        "/login",
+        data={"mobile": "13700137000", "password": EMPLOYEE_PASSWORD},
     )
     assert employee_login.status_code == 303
     assert employee_login.headers["location"] == "/dashboard"
@@ -180,7 +185,7 @@ def test_owner_and_employee_login_use_separate_credentials_and_same_session_cook
 
 
 def test_owner_login_does_not_accept_the_old_employee_form_contract(client: TestClient) -> None:
-    """原 `/login` 不再按租户编码和用户名查询员工，防止两个身份入口继续混用。"""
+    """企业登录只接收手机号，租户编码和用户名不能恢复任何身份。"""
 
     response = client.post(
         "/login",

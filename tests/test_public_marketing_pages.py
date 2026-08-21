@@ -132,13 +132,14 @@ def test_pricing_renders_three_public_plans_with_server_side_prices(marketing_cl
 
 
 def test_public_auth_forms_have_labels_autocomplete_and_live_error_container(marketing_client: TestClient) -> None:
-    """注册、企业主和员工登录必须保留明确标签、自动填充语义及可感知错误区域。"""
+    """注册和统一企业登录保留明确标签、自动填充语义及可感知错误区域。"""
 
     register = marketing_client.get("/register?notice=测试错误")
-    owner_login = marketing_client.get("/login?notice=测试错误")
-    employee_login = marketing_client.get("/employee/login")
+    enterprise_login = marketing_client.get("/login?notice=测试错误")
+    removed_employee_login = marketing_client.get("/employee/login")
 
-    assert register.status_code == owner_login.status_code == employee_login.status_code == 200
+    assert register.status_code == enterprise_login.status_code == 200
+    assert removed_employee_login.status_code == 404
     for field_name, autocomplete in (
         ("enterprise_name", "organization"),
         ("contact_name", "name"),
@@ -150,14 +151,11 @@ def test_public_auth_forms_have_labels_autocomplete_and_live_error_container(mar
         assert f'autocomplete="{autocomplete}"' in register.text
     assert 'role="alert"' in register.text
     assert 'aria-live="polite"' in register.text
-    assert 'name="mobile"' in owner_login.text
-    assert 'autocomplete="username"' in owner_login.text
-    assert 'autocomplete="current-password"' in owner_login.text
-    assert 'role="alert"' in owner_login.text
-    assert 'name="tenant_code"' in employee_login.text
-    assert 'autocomplete="organization"' in employee_login.text
-    assert 'name="username" autocomplete="username"' in employee_login.text
-    assert 'autocomplete="current-password"' in employee_login.text
+    assert 'name="mobile"' in enterprise_login.text
+    assert 'autocomplete="username"' in enterprise_login.text
+    assert 'autocomplete="current-password"' in enterprise_login.text
+    assert 'role="alert"' in enterprise_login.text
+    assert 'name="tenant_code"' not in enterprise_login.text
 
 
 def test_console_marketing_asset_is_committed_webp() -> None:

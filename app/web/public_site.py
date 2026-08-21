@@ -1,4 +1,4 @@
-"""曜枢 AI 公开营销、企业注册和企业主登录路由。"""
+"""曜枢 AI 公开营销、企业注册和企业统一登录路由。"""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from app.models.saas import SaasPlan, TenantUser
 from app.services.billing import list_public_plans
 from app.services.image_captcha import create_captcha_challenge, verify_captcha
 from app.services.registration import RegistrationError, register_trial_tenant
-from app.services.saas_auth import authenticate_tenant_owner, create_tenant_session
+from app.services.saas_auth import authenticate_tenant_account, create_tenant_session
 from app.web.auth_common import (
     TENANT_HOME_PATH,
-    TENANT_OWNER_LOGIN_ERROR,
+    TENANT_LOGIN_ERROR,
     request_ip_address,
     request_user_agent,
     set_tenant_auth_cookies,
@@ -76,23 +76,23 @@ def _render_register(
     return templates.TemplateResponse(request, "register.html", context, status_code=status_code)
 
 
-def _render_owner_login(
+def _render_enterprise_login(
     request: Request,
     *,
     notice: str = "",
     status_code: int = 200,
     mobile: str = "",
 ):
-    """渲染企业主手机号登录页，认证失败时绝不回填密码。"""
+    """渲染企业账号手机号登录页，认证失败时绝不回填密码。"""
 
     context = _context(
         request,
-        page_title="企业主登录",
+        page_title="企业账号登录",
         notice=notice,
         notice_tone="danger" if notice else "",
         prefill_mobile=mobile,
     )
-    return templates.TemplateResponse(request, "owner_login.html", context, status_code=status_code)
+    return templates.TemplateResponse(request, "enterprise_login.html", context, status_code=status_code)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -212,43 +212,42 @@ async def register_action(
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def owner_login_page(request: Request):
-    """展示企业所有者手机号登录页。"""
+async def enterprise_login_page(request: Request):
+    """展示企业所有者与企业员工共用的手机号登录页。"""
 
     if getattr(request.state, "current_user", None) is not None:
         return RedirectResponse(url=TENANT_HOME_PATH, status_code=303)
-    return _render_owner_login(request, notice=request.query_params.get("notice", ""))
+    return _render_enterprise_login(request, notice=request.query_params.get("notice", ""))
 
 
-@router.post("/login/owner", include_in_schema=False)
 @router.post("/login")
-async def owner_login_action(
+async def enterprise_login_action(
     request: Request,
     mobile: str = Form(""),
     password: str = Form(""),
 ):
-    """只按所有者手机号验证，不接收企业编码或员工用户名作为身份依据。"""
+    """只按企业账号手机号验证，由账号记录恢复租户，不接受客户端提交租户身份。"""
 
     normalized_mobile = (mobile or "").strip()
     if not normalized_mobile or not password:
-        return _render_owner_login(
+        return _render_enterprise_login(
             request,
-            notice=TENANT_OWNER_LOGIN_ERROR,
+            notice=TENANT_LOGIN_ERROR,
             status_code=400,
             mobile=normalized_mobile,
         )
     with SessionLocal() as db:
-        owner = authenticate_tenant_owner(db, normalized_mobile, password)
-        if owner is None:
-            return _render_owner_login(
+        user = authenticate_tenant_account(db, normalized_mobile, password)
+        if user is None:
+            return _render_enterprise_login(
                 request,
-                notice=TENANT_OWNER_LOGIN_ERROR,
+                notice=TENANT_LOGIN_ERROR,
                 status_code=401,
                 mobile=normalized_mobile,
             )
         session = create_tenant_session(
             db,
-            owner,
+            user,
             ip_address=request_ip_address(request),
             user_agent=request_user_agent(request),
         )

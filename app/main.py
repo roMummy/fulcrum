@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.routing import Match
 
 from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_admin_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
 from app.core.logging import configure_logging, get_logger
@@ -151,7 +152,6 @@ from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
     TENANT_CSRF_COOKIE,
-    TENANT_EMPLOYEE_LOGIN_PATH,
     TENANT_LOGIN_PATH,
     TENANT_LOGOUT_PATH,
     TENANT_PASSWORD_PATH,
@@ -1443,15 +1443,21 @@ async def auth_middleware(request: Request, call_next):
         "/",
         "/pricing",
         "/register",
-        "/login/owner",
         "/healthz",
         "/readyz",
         "/setup",
         "/setup/completed",
         TENANT_LOGIN_PATH,
-        TENANT_EMPLOYEE_LOGIN_PATH,
         PLATFORM_LOGIN_PATH,
     }
+    # 认证中间件只保护应用真实注册的页面和接口。完全未注册的路径直接交给
+    # FastAPI 生成原生 404；仅方法不匹配的路由仍继续处理，以保留标准 405 响应。
+    has_registered_route = any(
+        route.matches(request.scope)[0] is not Match.NONE
+        for route in request.app.routes
+    )
+    if not has_registered_route:
+        return await call_next(request)
     db = get_platform_session()
     try:
         # 两类会话始终分别恢复。租户业务只读取 current_user，平台路径只读取

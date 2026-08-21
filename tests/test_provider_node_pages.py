@@ -52,7 +52,13 @@ def provider_page_context(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "start_background_workers", lambda: None)
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 
-    for module_name in ("app.web.tenant_auth", "app.web.platform_auth", "app.web.tenant_admin"):
+    # 企业登录已经归入公开站点 Router，测试数据库必须同时注入登录和后台管理模块。
+    for module_name in (
+        "app.web.public_site",
+        "app.web.tenant_auth",
+        "app.web.platform_auth",
+        "app.web.tenant_admin",
+    ):
         route_module = importlib.import_module(module_name)
         if hasattr(route_module, "SessionLocal"):
             monkeypatch.setattr(route_module, "SessionLocal", factory)
@@ -78,16 +84,17 @@ def provider_page_context(tmp_path, monkeypatch):
             TenantUser(
                 tenant_id=alpha.id,
                 username=username,
+                mobile=mobile,
                 display_name=display_name,
                 role=role,
                 password_hash=hash_password(TENANT_PASSWORD),
                 is_enabled=True,
                 must_change_password=False,
             )
-            for username, display_name, role in (
-                ("admin", "甲管理员", "tenant_admin"),
-                ("operator", "甲运营", "operator"),
-                ("readonly", "甲只读", "readonly"),
+            for username, mobile, display_name, role in (
+                ("admin", "13300133001", "甲管理员", "tenant_admin"),
+                ("operator", "13300133002", "甲运营", "operator"),
+                ("readonly", "13300133003", "甲只读", "readonly"),
             )
         ]
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人")
@@ -150,10 +157,16 @@ def provider_page_context(tmp_path, monkeypatch):
 def _login(client: TestClient, username: str) -> str:
     """切换租户测试角色并返回该会话的 CSRF 原文。"""
 
+    # 测试仍以角色名选择账号，但真实登录请求只能提交该账号绑定的全局唯一手机号。
+    mobile_by_username = {
+        "admin": "13300133001",
+        "operator": "13300133002",
+        "readonly": "13300133003",
+    }
     client.cookies.clear()
     response = client.post(
         "/login",
-        data={"tenant_code": "alpha", "username": username, "password": TENANT_PASSWORD},
+        data={"mobile": mobile_by_username[username], "password": TENANT_PASSWORD},
     )
     assert response.status_code == 303
     csrf_token = client.cookies.get("mbs_tenant_csrf")
