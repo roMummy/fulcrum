@@ -1,0 +1,59 @@
+{% extends 'marketing_base.html' %}
+{% block content %}
+<section class="marketing-hero">
+  <div class="marketing-hero-content">
+    <h1>曜枢 AI</h1>
+    <p class="marketing-hero-lead">一个后台，统一运营所有智能机器人</p>
+    <p>管理多渠道接入、自动化任务、团队权限和机器人额度。</p>
+    <div class="marketing-hero-actions">
+      {% if current_user %}
+      <a class="btn" href="/dashboard">进入控制台</a>
+      {% else %}
+      <a class="btn" href="/register">免费试用 7 天</a>
+      {% endif %}
+      <a class="btn btn-secondary" href="/pricing">查看套餐</a>
+    </div>
+  </div>
+</section>
+
+<section id="capabilities" class="marketing-section">
+  <div class="marketing-section-inner">
+    <p class="section-kicker">Capabilities</p>
+    <h2>统一接入，统一协作</h2>
+    <div class="marketing-feature-grid">
+      <article><h3>多渠道接入</h3><p>通过通用适配能力连接不同机器人账号与执行环境。</p></article>
+      <article><h3>自动化运营</h3><p>在一个工作台管理机器人、插件、消息与任务状态。</p></article>
+      <article><h3>团队权限</h3><p>按企业隔离数据，并为管理员、运营与只读成员分配权限。</p></article>
+    </div>
+  </div>
+</section>
+
+<section id="workflow" class="marketing-section marketing-section-alt">
+  <div class="marketing-section-inner">
+    <p class="section-kicker">Workflow</p>
+    <h2>从注册到运行，只需三个步骤</h2>
+    <ol class="marketing-steps">
+      <li><strong>创建企业</strong><span>手机号注册并自动开通 7 天试用。</span></li>
+      <li><strong>绑定机器人</strong><span>按套餐额度接入需要运营的机器人账号。</span></li>
+      <li><strong>开始协作</strong><span>配置渠道、任务与团队权限，统一查看运行状态。</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="marketing-section">
+  <div class="marketing-section-inner">
+    <p class="section-kicker">Pricing</p>
+    <h2>按机器人额度选择套餐</h2>
+    <div class="marketing-plan-grid">
+      {% for plan in plans %}
+      <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
+        <h3>{{ plan.name }}</h3>
+        <p><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
+        <p><strong>¥{{ format_yuan(plan.monthly_price_cents) }}</strong> / 月</p>
+        <a class="btn" href="/register">免费试用</a>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

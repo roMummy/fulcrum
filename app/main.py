@@ -146,11 +146,12 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import platform_admin_router, platform_auth_router, provider_nodes_router, tenant_admin_router, tenant_auth_router
+from app.web import platform_admin_router, platform_auth_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
     TENANT_CSRF_COOKIE,
+    TENANT_EMPLOYEE_LOGIN_PATH,
     TENANT_LOGIN_PATH,
     TENANT_LOGOUT_PATH,
     TENANT_PASSWORD_PATH,
@@ -177,6 +178,7 @@ app.include_router(open_api_admin_router)
 app.include_router(workwechat_provider_cloud_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
+app.include_router(public_site_router)
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
 app.include_router(platform_admin_router)
@@ -335,7 +337,7 @@ def build_module_links() -> dict[str, str]:
     """集中提供不携带旧环境参数的模块入口。"""
 
     return {
-        "dashboard": "/",
+        "dashboard": "/dashboard",
         "bots": "/bots",
         "channels": "/channels",
         "plugins": "/plugins",
@@ -438,7 +440,7 @@ def render(request: Request, template: str, **context):
 
     # 顶部菜单按真实使用路线重排：总览、接入、机器人、插件、消息、排障。
     primary_nav_items = [
-        nav_item("总览", "/", ("/",), exact_root=True),
+        nav_item("总览", "/dashboard", ("/dashboard",)),
         nav_item("接入", "/channels", ("/channels", "/provider-nodes")),
         nav_item("机器人", "/bots", ("/bots",)),
         nav_item("插件", "/plugins", ("/plugins",)),
@@ -1428,11 +1430,16 @@ async def auth_middleware(request: Request, call_next):
         "/api/provider",
     )
     public_paths = {
+        "/",
+        "/pricing",
+        "/register",
+        "/login/owner",
         "/healthz",
         "/readyz",
         "/setup",
         "/setup/completed",
         TENANT_LOGIN_PATH,
+        TENANT_EMPLOYEE_LOGIN_PATH,
         PLATFORM_LOGIN_PATH,
     }
     db = get_platform_session()
@@ -1518,7 +1525,7 @@ async def setup_completed_page(request: Request):
     )
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     db = get_session()
     try:

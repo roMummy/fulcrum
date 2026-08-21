@@ -1,0 +1,15 @@
+{% extends 'marketing_base.html' %}
+{% block content %}
+<section class="marketing-auth-shell" aria-labelledby="owner-login-title">
+  <div class="marketing-auth-panel">
+    <p class="section-kicker">Owner Access</p>
+    <h1 id="owner-login-title">企业主登录</h1>
+    <form method="post" action="/login" class="form-grid auth-form-grid">
+      <label class="full-row"><span>手机号</span><input name="mobile" type="tel" autocomplete="username" inputmode="tel" value="{{ prefill_mobile or '' }}" required /></label>
+      <label class="full-row"><span>密码</span><input name="password" type="password" autocomplete="current-password" required /></label>
+      <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">登录</button></div>
+    </form>
+    <div class="marketing-auth-links"><a href="/register">免费试用 7 天</a><a href="/employee/login">员工登录</a></div>
+  </div>
+</section>
+{% endblock %}

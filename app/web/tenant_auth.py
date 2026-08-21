@@ -21,6 +21,7 @@ from app.services.saas_auth import (
 )
 from app.web.auth_common import (
     TENANT_CSRF_COOKIE,
+    TENANT_EMPLOYEE_LOGIN_PATH,
     TENANT_HOME_PATH,
     TENANT_LOGIN_ERROR,
     TENANT_LOGIN_PATH,
@@ -53,7 +54,7 @@ def _render_login(
 
     context = build_auth_page_context(
         request,
-        page_title="租户登录",
+        page_title="员工登录",
         notice=notice,
         prefill_tenant_code=tenant_code,
         prefill_username=username,
@@ -96,7 +97,7 @@ def _render_password_page(
     return templates.TemplateResponse(request, "password.html", context, status_code=status_code)
 
 
-@router.get(TENANT_LOGIN_PATH, response_class=HTMLResponse)
+@router.get(TENANT_EMPLOYEE_LOGIN_PATH, response_class=HTMLResponse)
 async def tenant_login_page(request: Request):
     """展示租户登录页；已有有效会话直接进入对应工作区。"""
 
@@ -110,7 +111,7 @@ async def tenant_login_page(request: Request):
     return _render_login(request, notice=request.query_params.get("notice", ""))
 
 
-@router.post(TENANT_LOGIN_PATH)
+@router.post(TENANT_EMPLOYEE_LOGIN_PATH)
 async def tenant_login_action(
     request: Request,
     tenant_code: str = Form(""),
@@ -160,14 +161,16 @@ async def tenant_logout_action(request: Request, csrf_token: str = Form("")):
     """校验 CSRF 后只吊销当前浏览器租户会话，并删除对应 Cookie。"""
 
     raw_token = tenant_session_token(request)
+    login_redirect = TENANT_LOGIN_PATH
     with SessionLocal() as db:
         principal = load_tenant_principal(db, raw_token, touch=False)
         # 已经过期或被吊销的会话没有可继续执行的权限，注销保持幂等并只清理浏览器状态。
         if principal is not None:
+            login_redirect = TENANT_LOGIN_PATH if principal.is_owner else TENANT_EMPLOYEE_LOGIN_PATH
             require_tenant_csrf(db, request, csrf_token)
             revoke_tenant_session_by_token(db, raw_token, reason="logout")
 
-    response = RedirectResponse(url=f"{TENANT_LOGIN_PATH}?notice=" + quote("已退出登录"), status_code=303)
+    response = RedirectResponse(url=f"{login_redirect}?notice=" + quote("已退出登录"), status_code=303)
     delete_tenant_auth_cookies(response)
     return response
 

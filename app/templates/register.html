@@ -1,0 +1,23 @@
+{% extends 'marketing_base.html' %}
+{% block content %}
+<section class="marketing-auth-shell" aria-labelledby="register-title">
+  <div class="marketing-auth-panel">
+    <p class="section-kicker">Start</p>
+    <h1 id="register-title">免费试用 7 天</h1>
+    <form method="post" action="/register" class="form-grid auth-form-grid">
+      <label class="full-row"><span>企业名称</span><input name="enterprise_name" autocomplete="organization" value="{{ form_values.enterprise_name or '' }}" maxlength="150" required /></label>
+      <label class="full-row"><span>联系人</span><input name="contact_name" autocomplete="name" value="{{ form_values.contact_name or '' }}" maxlength="100" required /></label>
+      <label class="full-row"><span>手机号</span><input name="mobile" type="tel" autocomplete="tel" inputmode="tel" value="{{ form_values.mobile or '' }}" required /></label>
+      <label class="full-row"><span>密码</span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label>
+      <label class="full-row"><span>确认密码</span><input name="confirm_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label>
+      <input type="hidden" name="captcha_token" value="{{ captcha_token }}" />
+      <label class="full-row">
+        <span>图形验证码</span>
+        <span class="marketing-captcha-row"><img src="{{ captcha_image }}" width="166" height="54" alt="图形验证码" /><input name="captcha_answer" inputmode="numeric" autocomplete="off" maxlength="5" required /></span>
+      </label>
+      <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">创建企业并开始试用</button></div>
+    </form>
+    <p class="muted-text">已有企业主账号？<a href="/login">手机号登录</a></p>
+  </div>
+</section>
+{% endblock %}

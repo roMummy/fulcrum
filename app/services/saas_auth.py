@@ -56,6 +56,7 @@ class TenantPrincipal:
     tenant_status: str
     subscription_status: str | None
     subscription_expires_at: datetime | None
+    is_owner: bool = False
 
 
 @dataclass(frozen=True)
@@ -336,6 +337,7 @@ def load_tenant_principal(db: Session, raw_token: str | None, *, touch: bool = T
         tenant_status=tenant.status,
         subscription_status=subscription.status if subscription else None,
         subscription_expires_at=subscription.expires_at if subscription else None,
+        is_owner=bool(user.is_owner),
     )
 
 

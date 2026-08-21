@@ -29,9 +29,11 @@ LEGACY_AUTH_COOKIE = "mba_auth"
 TENANT_COOKIE_PATH = "/"
 PLATFORM_COOKIE_PATH = "/platform"
 
+# 企业所有者默认使用手机号入口；员工入口保留企业编码和用户名，二者最终共享租户会话。
 TENANT_LOGIN_PATH = "/login"
+TENANT_EMPLOYEE_LOGIN_PATH = "/employee/login"
 TENANT_LOGOUT_PATH = "/logout"
-TENANT_HOME_PATH = "/"
+TENANT_HOME_PATH = "/dashboard"
 TENANT_PASSWORD_PATH = "/profile/password"
 
 PLATFORM_LOGIN_PATH = "/platform/login"
@@ -40,6 +42,7 @@ PLATFORM_HOME_PATH = "/platform"
 PLATFORM_PASSWORD_PATH = "/platform/profile/password"
 
 TENANT_LOGIN_ERROR = "租户编码、用户名或密码错误"
+TENANT_OWNER_LOGIN_ERROR = "手机号或密码错误"
 PLATFORM_LOGIN_ERROR = "用户名或密码错误"
 
 # 中间件发现账号仍使用一次性初始密码时，只允许进入改密和注销端点。静态资源、

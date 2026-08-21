@@ -64,7 +64,12 @@ def session_factory(tmp_path, monkeypatch):
 
     # Task 6 会把两类认证路由拆到 app.web。这里兼容路由模块直接导入
     # SessionLocal 的实现方式，使测试在模块落地后仍只连接当前临时数据库。
-    for module_name in ("app.web.tenant_auth", "app.web.platform_auth", "app.web.tenant_admin"):
+    for module_name in (
+        "app.web.public_site",
+        "app.web.tenant_auth",
+        "app.web.platform_auth",
+        "app.web.tenant_admin",
+    ):
         try:
             route_module = importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
@@ -182,18 +187,22 @@ def _assert_deleted_cookie(response, name: str, *, expected_path: str) -> None:
 
 
 def test_tenant_and_platform_login_pages_are_separate(client: TestClient) -> None:
-    """租户入口要求租户编码，平台入口只展示平台账号登录表单。"""
+    """企业主、租户员工和平台管理员使用三个明确分离的登录入口。"""
 
-    tenant_page = client.get("/login")
+    owner_page = client.get("/login")
+    tenant_page = client.get("/employee/login")
     platform_page = client.get("/platform/login")
     missing_tenant = client.post(
-        "/login",
+        "/employee/login",
         data={"tenant_code": "", "username": "ops", "password": TENANT_PASSWORD},
     )
 
+    assert owner_page.status_code == 200
+    assert "手机号" in owner_page.text
+    assert 'action="/login"' in owner_page.text
     assert tenant_page.status_code == 200
     assert "租户编码" in tenant_page.text
-    assert 'action="/login"' in tenant_page.text
+    assert 'action="/employee/login"' in tenant_page.text
     assert platform_page.status_code == 200
     assert "平台" in platform_page.text
     assert 'action="/platform/login"' in platform_page.text
@@ -208,11 +217,11 @@ def test_login_errors_are_uniform_and_identity_tables_cannot_be_mixed(
     """同名账号也只能用所属入口登录，失败提示不能泄露租户或账号是否存在。"""
 
     tenant_wrong_password = client.post(
-        "/login",
+        "/employee/login",
         data={"tenant_code": "alpha", "username": "ops", "password": PLATFORM_PASSWORD},
     )
     tenant_unknown = client.post(
-        "/login",
+        "/employee/login",
         data={"tenant_code": "missing", "username": "nobody", "password": TENANT_PASSWORD},
     )
     platform_wrong_password = client.post(
@@ -240,12 +249,12 @@ def test_tenant_login_creates_database_session_and_logout_revokes_it(
     """租户登录只向浏览器返回原始令牌，注销后数据库会话和两个 Cookie 同时失效。"""
 
     login = client.post(
-        "/login",
+        "/employee/login",
         data={"tenant_code": "alpha", "username": "ops", "password": TENANT_PASSWORD},
     )
 
     assert login.status_code == 303
-    assert login.headers["location"] == "/"
+    assert login.headers["location"] == "/dashboard"
     session_cookie = _response_cookie(login, TENANT_SESSION_COOKIE)
     csrf_cookie = _response_cookie(login, TENANT_CSRF_COOKIE)
     _assert_session_cookie(session_cookie, expected_path="/")
@@ -263,7 +272,7 @@ def test_tenant_login_creates_database_session_and_logout_revokes_it(
     logout = client.post("/logout", data={"csrf_token": csrf_cookie.value})
 
     assert logout.status_code == 303
-    assert logout.headers["location"].startswith("/login")
+    assert logout.headers["location"].startswith("/employee/login")
     _assert_deleted_cookie(logout, TENANT_SESSION_COOKIE, expected_path="/")
     _assert_deleted_cookie(logout, TENANT_CSRF_COOKIE, expected_path="/")
     with session_factory() as db:
@@ -328,7 +337,7 @@ def test_legacy_mba_auth_cookie_cannot_create_new_saas_identity(
         legacy_cookie = build_auth_cookie(legacy_user)
 
     client.cookies.set("mba_auth", legacy_cookie, path="/")
-    response = client.get("/")
+    response = client.get("/dashboard")
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"

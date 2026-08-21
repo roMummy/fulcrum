@@ -1,0 +1,27 @@
+{% extends 'marketing_base.html' %}
+{% block content %}
+<section class="marketing-page-head">
+  <p class="section-kicker">Pricing</p>
+  <h1>套餐价格</h1>
+  <p>所有套餐均按通用机器人额度计费，不绑定具体渠道或 Provider。</p>
+</section>
+<section class="marketing-section">
+  <div class="marketing-section-inner marketing-plan-grid">
+    {% for plan in plans %}
+    <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
+      {% if plan.is_featured %}<span class="chip chip-success">推荐</span>{% endif %}
+      <h2>{{ plan.name }}</h2>
+      <p><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
+      <dl>
+        <div><dt>月付</dt><dd>¥{{ format_yuan(plan.monthly_price_cents) }}</dd></div>
+        <div><dt>年付</dt><dd>¥{{ format_yuan(plan.yearly_price_cents) }}</dd></div>
+      </dl>
+      <p>{{ plan.description or '适用于持续运营智能机器人的团队。' }}</p>
+      <a class="btn" href="/register">免费试用 7 天</a>
+    </article>
+    {% else %}
+    <p>公开套餐正在配置中。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

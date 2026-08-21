@@ -16,13 +16,13 @@
       </div>
       <span class="chip chip-outline">租户员工入口</span>
     </div>
-    <p class="muted-text">请输入租户编码和员工账号信息。</p>
+    <p class="muted-text">请输入企业编码和员工账号信息。</p>
 
     {#
       tenant_code 与 username 可在认证失败后由服务端安全回填，减少重复输入；密码始终保持空白。
-      字段名称必须与 /login 的 SaaS 租户认证接口一致，不能继续沿用旧 AdminUser 单账号登录契约。
+      字段名称必须与 /employee/login 的员工认证接口一致，不能与企业主手机号入口混用。
     #}
-    <form method="post" action="/login" class="form-grid auth-form-grid">
+    <form method="post" action="/employee/login" class="form-grid auth-form-grid">
       <label class="full-row">
         <span>租户编码</span>
         <input name="tenant_code" value="{{ prefill_tenant_code or '' }}" autocapitalize="none" spellcheck="false" required />
@@ -51,6 +51,8 @@
         <button class="btn auth-submit" type="submit">登录</button>
       </div>
     </form>
+
+    <p class="muted-text">企业所有者请使用<a href="/login">手机号登录</a>。</p>
 
     {# 仅说明入口归属，不在登录页放置安装流程或旧管理员初始化提示。 #}
     <div class="panel inset-panel auth-tip-panel">
