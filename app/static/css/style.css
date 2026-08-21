@@ -661,6 +661,36 @@ code {
   border-radius: var(--radius-lg);
 }
 
+.dashboard-overview {
+  margin-bottom: 24px;
+}
+
+.dashboard-overview .section-head {
+  padding: 0 2px;
+}
+
+.dashboard-kpi-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.dashboard-kpi-grid .metric-item:nth-child(5n) {
+  border-right: 0;
+}
+
+.dashboard-kpi-grid .metric-item:nth-child(n + 6) {
+  border-top: 1px solid var(--border);
+}
+
+.metric-band-compact {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin: 18px 0 0;
+  background: var(--surface-soft);
+}
+
+.metric-item-danger strong {
+  color: var(--danger);
+}
+
 .stat-card,
 .metric-item {
   min-width: 0;
@@ -2037,6 +2067,22 @@ code {
   .metric-band,
   .compact-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-kpi-grid .metric-item:nth-child(5n) {
+    border-right: 1px solid var(--border);
+  }
+
+  .dashboard-kpi-grid .metric-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .dashboard-kpi-grid .metric-item:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
   }
 
   .stat-card:nth-child(2n),
