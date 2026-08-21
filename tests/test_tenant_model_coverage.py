@@ -34,6 +34,7 @@ from app.models.entities import (
     WorkWechatContactRelation,
 )
 from app.models.mixins import TenantOwnedMixin
+from app.models.saas import BotBinding
 
 
 # 该清单是共享数据库中的业务隔离边界。新增业务表时如果忘记加入租户混入，
@@ -102,3 +103,15 @@ def test_business_identity_constraints_are_tenant_local() -> None:
         "channel_id",
         "request_id",
     ) in _unique_columns(CustomerOperationRequest)
+
+
+def test_bot_binding_links_to_actual_bot_and_channel() -> None:
+    """商业额度必须能够定位到真正运行的机器人和主渠道。"""
+
+    bot_foreign_keys = {str(key.column) for key in BotBinding.__table__.c.bot_id.foreign_keys}
+    channel_foreign_keys = {str(key.column) for key in BotBinding.__table__.c.channel_id.foreign_keys}
+
+    assert bot_foreign_keys == {"bots.id"}
+    assert channel_foreign_keys == {"channels.id"}
+    assert BotBinding.bot.property.mapper.class_ is Bot
+    assert BotBinding.channel.property.mapper.class_ is Channel

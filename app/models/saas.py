@@ -217,6 +217,20 @@ class BotBinding(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    # 旧版手工绑定记录可能没有实际机器人和渠道，因此迁移保持可空；新的账号
+    # 接入事务必须同时填写这两个唯一外键，保证一个额度对应一个可运行账号。
+    bot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bots.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("channels.id"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     adapter_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     bot_account_id: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
@@ -233,6 +247,8 @@ class BotBinding(Base, TimestampMixin):
     release_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tenant = relationship("Tenant", back_populates="bot_bindings")
+    bot = relationship("Bot", back_populates="entitlement_binding")
+    channel = relationship("Channel", back_populates="entitlement_binding")
     released_by_user = relationship("PlatformUser", back_populates="released_bot_bindings")
 
 

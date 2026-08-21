@@ -21,6 +21,9 @@ class Bot(Base, TenantOwnedMixin, TimestampMixin):
     channels = relationship("Channel", back_populates="bot", cascade="all, delete-orphan")
     plugin_bindings = relationship("BotPlugin", back_populates="bot", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="bot", cascade="all, delete-orphan")
+    # 商业额度绑定与业务机器人保持一对一关系。旧绑定允许暂时没有关联，
+    # 新的统一账号接入流程会在同一事务中写入真实机器人和主渠道。
+    entitlement_binding = relationship("BotBinding", back_populates="bot", uselist=False)
 
 
 class Channel(Base, TenantOwnedMixin, TimestampMixin):
@@ -57,6 +60,8 @@ class Channel(Base, TenantOwnedMixin, TimestampMixin):
     chatrooms = relationship("Chatroom", back_populates="channel", cascade="all, delete-orphan")
     provider_node = relationship("ProviderNode")
     provider_account = relationship("ProviderNodeAccount")
+    # 一个正式接入账号只能占用一个主渠道，避免额度记录与实际运行渠道脱节。
+    entitlement_binding = relationship("BotBinding", back_populates="channel", uselist=False)
 
 
 class Plugin(Base, TimestampMixin):
