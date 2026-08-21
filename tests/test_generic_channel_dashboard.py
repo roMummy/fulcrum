@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+import app.main as main_module
+
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import Channel
@@ -51,3 +53,18 @@ def test_dashboard_uses_generic_channel_status_and_copy(provider_page_context) -
     for page in (bot_list.text, bot_detail.text):
         assert "企业微信账号" not in page
         assert "渠道" in page
+
+
+def test_manual_bot_creation_route_and_button_are_removed(provider_page_context) -> None:
+    """机器人仍可作为内部运行对象查看，但租户不能再从页面或 POST 手工创建。"""
+
+    client, _ids = provider_page_context
+    _login(client, "admin")
+    page = client.get("/bots")
+    assert page.status_code == 200
+    assert "新建机器人" not in page.text
+    assert 'action="/bots"' not in page.text
+    assert not any(
+        getattr(route, "path", "") == "/bots" and "POST" in (getattr(route, "methods", None) or set())
+        for route in main_module.app.routes
+    )

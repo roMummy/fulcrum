@@ -24,7 +24,7 @@ from app.core.tenant_db import open_tenant_session, platform_session, tenant_ses
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
 from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.models.saas import BotBinding
-from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
+from app.schemas.forms import BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.auth import validate_password_change
 from app.services.account_connections import (
     AccountConnectionError,
@@ -47,7 +47,6 @@ from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.crud import (
     bind_plugin,
-    create_bot,
     create_channel,
     delete_bot,
     get_binding,
@@ -170,6 +169,7 @@ from app.web.auth_common import (
     require_tenant_csrf,
     tenant_must_change_password_redirect,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 configure_logging()
 logger = get_logger(__name__)
 
@@ -434,73 +434,7 @@ def render(request: Request, template: str, **context):
     notice_tone = context.get("notice_tone")
     if not notice_tone:
         notice_tone = "danger" if response_status >= 400 else infer_notice_tone(notice)
-    path = request.url.path
-
-    def is_path_active(prefixes: tuple[str, ...], *, exact_root: bool = False) -> bool:
-        """按任务流判断激活态，避免顶部菜单只按单一路由前缀高亮。"""
-        if exact_root:
-            return path == "/"
-        return any(path == prefix or (prefix != "/" and path.startswith(prefix)) for prefix in prefixes)
-
-    def nav_item(label: str, href: str, prefixes: tuple[str, ...], *, exact_root: bool = False) -> dict[str, str | bool]:
-        return {
-            "label": label,
-            "href": href,
-            "active": is_path_active(prefixes, exact_root=exact_root),
-        }
-
-    # 企业顶部菜单只保留租户业务能力，平台运维和全局日志使用独立平台后台。
-    primary_nav_items = [
-        nav_item("总览", "/dashboard", ("/dashboard",)),
-        nav_item("接入", "/channels", ("/channels", "/provider-nodes")),
-        nav_item("机器人", "/bots", ("/bots",)),
-        nav_item("插件", "/plugins", ("/plugins",)),
-        nav_item("消息", "/conversations", ("/conversations", "/messages")),
-        nav_item("套餐与额度", "/account/billing", ("/account",)),
-    ]
-    secondary_nav_items: list[dict[str, str | bool]] = [
-        nav_item("租户设置", "/tenant/users", ("/tenant",)),
-    ]
-    nav_items = [*primary_nav_items, *secondary_nav_items]
-    secondary_nav_active = any(bool(item["active"]) for item in secondary_nav_items)
-
-    # 二级入口只放当前任务域内的高频分支，避免顶部菜单横向堆满，同时让用户进入模块后能继续按业务路径切换。
-    section_nav_items: list[dict[str, str | bool]] = []
-    if is_path_active(("/channels", "/provider-nodes")):
-        section_nav_items = [
-            nav_item("渠道清单", "/channels", ("/channels",)),
-            nav_item("Provider 节点", "/provider-nodes", ("/provider-nodes",)),
-        ]
-    elif is_path_active(("/bots",)):
-        section_nav_items = [
-            nav_item("机器人", "/bots", ("/bots",)),
-        ]
-    elif is_path_active(("/plugins",)):
-        section_nav_items = [
-            {
-                "label": "插件开关",
-                "href": "/plugins",
-                "active": path == "/plugins" or (path.startswith("/plugins/") and not path.startswith("/plugins/runtime")),
-            },
-            nav_item("运行状态", "/plugins/runtime", ("/plugins/runtime",)),
-        ]
-    elif is_path_active(("/conversations", "/messages")):
-        section_nav_items = [
-            nav_item("会话", "/conversations", ("/conversations",)),
-            nav_item("消息", "/messages", ("/messages",)),
-        ]
-    elif is_path_active(("/tenant",)):
-        section_nav_items = [
-            nav_item("员工管理", "/tenant/users", ("/tenant/users",)),
-            nav_item("订阅信息", "/tenant/subscription", ("/tenant/subscription",)),
-        ]
-    elif is_path_active(("/account",)):
-        section_nav_items = [
-            nav_item("新手引导", "/account/onboarding", ("/account/onboarding",)),
-            nav_item("套餐与额度", "/account/billing", ("/account/billing",)),
-            nav_item("订单", "/account/orders", ("/account/orders",)),
-            nav_item("机器人绑定", "/account/bot-bindings", ("/account/bot-bindings",)),
-        ]
+    navigation_context = build_tenant_navigation(request.url.path)
     base_context = {
         "current_user": getattr(request.state, "current_user", None),
         # 所有租户页面共用同一个可信 CSRF Cookie；状态变更表单必须把原始值放入
@@ -510,13 +444,9 @@ def render(request: Request, template: str, **context):
         "password_action": TENANT_PASSWORD_PATH,
         "app_started_at": APP_STARTED_AT,
         "notice_tone": notice_tone,
-        "nav_items": nav_items,
-        "primary_nav_items": primary_nav_items,
-        "secondary_nav_items": secondary_nav_items,
-        "secondary_nav_active": secondary_nav_active,
-        "section_nav_items": section_nav_items,
         "module_links": build_module_links(),
     }
+    base_context.update(navigation_context)
     base_context.update(context)
     response = templates.TemplateResponse(request, template, base_context)
     response.status_code = response_status
@@ -1653,41 +1583,6 @@ async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
             notice_tone=request.query_params.get("tone", ""),
             back_href=safe_return_to(return_to, detail_fallback("/bots")),
         )
-    finally:
-        db.close()
-
-
-@app.post("/bots")
-async def create_bot_action(
-    request: Request,
-    name: str = Form(...),
-):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        cleaned_name = name.strip()
-        if not cleaned_name:
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称不能为空") + "&tone=danger",
-                status_code=303,
-            )
-        if db.scalar(select(Bot.id).where(Bot.name == cleaned_name)) is not None:
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
-                status_code=303,
-            )
-        try:
-            bot = create_bot(db, BotCreate(name=cleaned_name))
-        except IntegrityError:
-            # 数据库唯一约束负责并发兜底；回滚后只向用户返回业务提示，不暴露 SQL 细节。
-            db.rollback()
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
-                status_code=303,
-            )
-        record_audit(db, "bot.create", "bot", bot.id, f"创建机器人 {bot.name}")
-        notice = quote("机器人已创建，请继续添加渠道")
-        return RedirectResponse(url=f"/bots/{bot.id}?notice={notice}", status_code=303)
     finally:
         db.close()
 

@@ -116,3 +116,28 @@ def test_non_admin_cannot_start_account_connection(provider_page_context) -> Non
         },
     )
     assert response.status_code == 403
+
+
+def test_tenant_navigation_uses_business_modules_only(provider_page_context) -> None:
+    """企业顶部菜单只保留六个业务模块，不展示内部机器人和执行端概念。"""
+
+    client, _ids = provider_page_context
+    _login(client, "admin")
+    page = client.get("/channels")
+    assert page.status_code == 200
+    navigation = page.text.split('<nav class="app-primary-nav"', 1)[1].split("</nav>", 1)[0]
+    for label in ("总览", "账号接入", "运营能力", "消息", "套餐", "企业设置"):
+        assert label in navigation
+    for removed_label in ("机器人", "Provider", "租户设置", "更多"):
+        assert removed_label not in navigation
+
+
+def test_provider_pages_use_enterprise_wechat_client_copy(provider_page_context) -> None:
+    """租户侧执行端页面统一使用企业微信客户端文案。"""
+
+    client, _ids = provider_page_context
+    _login(client, "admin")
+    page = client.get("/provider-nodes")
+    assert page.status_code == 200
+    assert "企业微信客户端" in page.text
+    assert "Provider 节点" not in page.text

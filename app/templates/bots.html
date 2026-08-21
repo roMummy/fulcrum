@@ -1,7 +1,6 @@
 {% extends 'base.html' %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <button class="btn" type="button" data-modal-open="create-bot-modal">新建机器人</button>
   <span class="chip chip-outline">共 {{ bot_count }} 个机器人</span>
 </div>
 {% endblock %}
@@ -61,7 +60,7 @@
     </div>
     {% else %}
     {# 空状态脱离固定宽度表格，在窄屏上始终使用当前工作表面的完整可见宽度。 #}
-    <div class="empty-state"><strong>当前还没有机器人</strong><p>新建机器人后继续添加渠道。</p></div>
+    <div class="empty-state"><strong>当前还没有机器人</strong><p>完成账号接入后会自动创建。</p></div>
     {% endif %}
   </form>
 
@@ -81,22 +80,4 @@
   {% endfor %}
 </section>
 
-<dialog class="app-modal" id="create-bot-modal">
-  <div class="app-modal-card">
-    <div class="app-modal-head">
-      <div>
-        <p class="section-kicker">Create</p>
-        <h2>新建机器人</h2>
-      </div>
-      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
-    </div>
-    <form method="post" action="/bots" class="form-grid">
-      <label class="full-row"><span>机器人名称</span><input name="name" maxlength="100" placeholder="例如：售后客服" required /></label>
-      <div class="full-row form-actions-inline">
-        <button class="btn" type="submit">创建机器人</button>
-        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-      </div>
-    </form>
-  </div>
-</dialog>
 {% endblock %}

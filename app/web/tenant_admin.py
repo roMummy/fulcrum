@@ -27,6 +27,7 @@ from app.web.auth_common import (
     TENANT_PASSWORD_PATH,
     require_tenant_csrf,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 
 
 router = APIRouter(prefix="/tenant", tags=["tenant-admin"])
@@ -55,7 +56,6 @@ def _tenant_context(
     request: Request,
     *,
     page_title: str,
-    active: str,
     notice: str = "",
     notice_tone: str = "",
     **extra,
@@ -63,26 +63,10 @@ def _tenant_context(
     """构造租户治理页面上下文，并保持与业务工作台一致的身份操作。"""
 
     principal = _require_principal(request)
-    primary_nav_items = [
-        {"label": "总览", "href": "/dashboard", "active": False},
-        {"label": "接入", "href": "/channels", "active": False},
-        {"label": "机器人", "href": "/bots", "active": False},
-        {"label": "插件", "href": "/plugins", "active": False},
-        {"label": "消息", "href": "/conversations", "active": False},
-        {"label": "套餐与额度", "href": "/account/billing", "active": False},
-        {"label": "租户设置", "href": "/tenant/users", "active": True},
-    ]
     context: dict[str, object] = {
         "request": request,
         "page_title": page_title,
         "current_user": principal,
-        "primary_nav_items": primary_nav_items,
-        "secondary_nav_items": [],
-        "secondary_nav_active": False,
-        "section_nav_items": [
-            {"label": "员工管理", "href": "/tenant/users", "active": active == "users"},
-            {"label": "订阅信息", "href": "/tenant/subscription", "active": active == "subscription"},
-        ],
         "module_links": {},
         "notice": notice,
         "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice else "info"),
@@ -92,6 +76,7 @@ def _tenant_context(
         "format_time": format_shanghai_time,
         "can_manage_users": has_tenant_role(principal, "tenant_admin"),
     }
+    context.update(build_tenant_navigation(request.url.path))
     context.update(extra)
     return context
 
@@ -130,7 +115,6 @@ async def tenant_users_page(request: Request):
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             users=list_tenant_users(db),
@@ -169,7 +153,6 @@ async def tenant_user_create_action(
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice="员工创建成功。请立即安全交付初始密码，离开本页后无法再次查看。",
             users=list_tenant_users(db),
             initial_password=created.initial_password,
@@ -230,7 +213,6 @@ async def tenant_user_reset_password_action(
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice="员工密码已重置。请立即安全交付，离开本页后无法再次查看。",
             users=list_tenant_users(db),
             initial_password=initial_password,
@@ -253,7 +235,6 @@ async def tenant_subscription_page(request: Request):
         context = _tenant_context(
             request,
             page_title="订阅信息",
-            active="subscription",
             tenant=tenant,
         )
         return templates.TemplateResponse(request, "tenant_subscription.html", context)
