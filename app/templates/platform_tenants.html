@@ -1,45 +1,59 @@
 {% extends 'platform_base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/platform/plans">管理套餐</a>{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <button class="btn" type="button" data-modal-open="create-tenant-modal">开通企业</button>
+  <a class="btn btn-secondary" href="/platform/plans">管理套餐</a>
+</div>
+{% endblock %}
 {% block content %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Provision tenant</p><h2>开通新租户</h2><p class="muted-text">创建成功后，初始密码只在成功页显示一次。</p></div></div>
-  {% if plans %}
-  <form method="post" action="/platform/tenants" class="form-grid">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label><span>租户编码</span><input name="code" required placeholder="acme-corp" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" /></label>
-    <label><span>租户名称</span><input name="name" required placeholder="示例企业" /></label>
-    <label><span>套餐</span><select name="plan_id" required>{% for plan in plans %}<option value="{{ plan.id }}">{{ plan.name }} / {{ plan.provider_node_limit }} 个节点</option>{% endfor %}</select></label>
-    <label><span>有效期至</span><input name="expires_on" type="date" /></label>
-    <label><span>管理员用户名</span><input name="admin_username" value="admin" required /></label>
-    <label><span>管理员登录手机号</span><input name="admin_mobile" type="tel" inputmode="tel" autocomplete="tel" required /></label>
-    <label><span>管理员显示名</span><input name="admin_display_name" value="企业管理员" required /></label>
-    <label><span>联系人</span><input name="contact_name" /></label>
-    <label><span>联系电话</span><input name="contact_phone" /></label>
-    <label class="full-row"><span>备注</span><textarea name="notes" rows="3"></textarea></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建租户</button></div>
-  </form>
-  {% else %}
-  <div class="empty-state"><strong>没有可用套餐</strong><p>先创建并启用一个套餐后才能开通租户。</p><a class="btn" href="/platform/plans">创建套餐</a></div>
-  {% endif %}
+  <div class="section-head">
+    <div><p class="section-kicker">Enterprises</p><h2>企业清单</h2></div>
+    <span class="chip chip-outline">{{ tenants|length }} 个企业</span>
+  </div>
+  <div class="table-scroll">
+    <table class="table">
+      <thead><tr><th>企业</th><th>管理员手机号</th><th>套餐</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for tenant in tenants %}
+        {% set subscription = current_subscription(tenant) %}
+        <tr>
+          <td><strong>{{ tenant.name }}</strong></td>
+          <td>{{ tenant.contact_phone or '-' }}</td>
+          <td>{{ subscription.plan.name if subscription and subscription.plan else '-' }}</td>
+          <td>{{ format_time(subscription.expires_at) if subscription and subscription.expires_at else '长期有效' }}</td>
+          <td><span class="chip {% if tenant.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ '正常' if tenant.status == 'active' else '已停用' }}</span></td>
+          <td><a class="btn btn-small btn-secondary" href="/platform/tenants/{{ tenant.id }}">详情</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state"><strong>暂无企业</strong><p>开通企业后会显示在这里。</p></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
-<section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Tenants</p><h2>租户清单</h2></div><span class="chip chip-outline">{{ tenants|length }} 个租户</span></div>
-  <table class="table">
-    <thead><tr><th>租户</th><th>联系人</th><th>套餐</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody>
-      {% for tenant in tenants %}
-      {% set subscription = current_subscription(tenant) %}
-      <tr>
-        <td><strong>{{ tenant.name }}</strong><div class="muted-text"><code>{{ tenant.code }}</code> / #{{ tenant.id }}</div></td>
-        <td>{{ tenant.contact_name or '-' }}<div class="muted-text">{{ tenant.contact_phone or '' }}</div></td>
-        <td>{{ subscription.plan.name if subscription and subscription.plan else '-' }}</td>
-        <td>{{ format_time(subscription.expires_at) if subscription and subscription.expires_at else '长期有效' }}</td>
-        <td><span class="chip {% if tenant.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ tenant.status }}</span></td>
-        <td><a class="btn btn-small btn-secondary" href="/platform/tenants/{{ tenant.id }}">详情</a></td>
-      </tr>
-      {% else %}<tr><td colspan="6"><div class="empty-state"><strong>暂无租户</strong></div></td></tr>{% endfor %}
-    </tbody>
-  </table>
-</section>
+<dialog class="app-modal" id="create-tenant-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><p class="section-kicker">Create</p><h2>开通企业</h2></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    {% if plans %}
+    <form method="post" action="/platform/tenants" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label class="full-row"><span>企业名称</span><input name="name" required maxlength="150" autocomplete="organization" placeholder="示例科技有限公司" /></label>
+      <label><span>管理员手机号</span><input name="admin_mobile" type="tel" inputmode="tel" autocomplete="tel" required /></label>
+      <label><span>套餐</span><select name="plan_id" required>{% for plan in plans %}<option value="{{ plan.id }}">{{ plan.name }} / {{ plan.bot_limit }} 个机器人</option>{% endfor %}</select></label>
+      <label><span>到期时间</span><input name="expires_on" type="date" /></label>
+      <div class="full-row form-actions-inline">
+        <button class="btn" type="submit">确认开通</button>
+        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty-state"><strong>没有可用套餐</strong><a class="btn" href="/platform/plans">创建套餐</a></div>
+    {% endif %}
+  </div>
+</dialog>
 {% endblock %}

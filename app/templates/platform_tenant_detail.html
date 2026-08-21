@@ -12,10 +12,8 @@
 <div class="panel-grid panel-grid-balanced">
   <section class="work-surface">
     <div class="section-head"><div><p class="section-kicker">Tenant</p><h2>租户信息</h2></div><span class="chip {% if tenant.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ tenant.status }}</span></div>
-    <div class="detail-row"><span>租户编码</span><strong><code>{{ tenant.code }}</code></strong></div>
     <div class="detail-row"><span>联系人</span><strong>{{ tenant.contact_name or '-' }}</strong></div>
     <div class="detail-row"><span>联系电话</span><strong>{{ tenant.contact_phone or '-' }}</strong></div>
-    <div class="detail-row"><span>备注</span><strong>{{ tenant.notes or '-' }}</strong></div>
     <form method="post" action="/platform/tenants/{{ tenant.id }}/status" class="form-actions-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="status" value="{{ 'disabled' if tenant.status == 'active' else 'active' }}" />
@@ -26,16 +24,25 @@
   <section class="work-surface">
     <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>当前订阅</h2></div></div>
     <div class="detail-row"><span>套餐</span><strong>{{ subscription.plan.name if subscription and subscription.plan else '-' }}</strong></div>
-    <div class="detail-row"><span>节点额度</span><strong>{{ subscription.plan.provider_node_limit if subscription and subscription.plan else 0 }}</strong></div>
+    <div class="detail-row"><span>机器人额度</span><strong>{{ subscription.plan.bot_limit if subscription and subscription.plan else 0 }}</strong></div>
     <div class="detail-row"><span>到期时间</span><strong>{{ format_time(subscription.expires_at) if subscription and subscription.expires_at else '长期有效' }}</strong></div>
     <form method="post" action="/platform/tenants/{{ tenant.id }}/renew" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>套餐</span><select name="plan_id">{% for plan in plans %}{% if plan.status == 'active' %}<option value="{{ plan.id }}" {% if subscription and subscription.plan_id == plan.id %}selected{% endif %}>{{ plan.name }} / {{ plan.provider_node_limit }} 个节点</option>{% endif %}{% endfor %}</select></label>
+      <label><span>套餐</span><select name="plan_id">{% for plan in plans %}{% if plan.status == 'active' %}<option value="{{ plan.id }}" {% if subscription and subscription.plan_id == plan.id %}selected{% endif %}>{{ plan.name }} / {{ plan.bot_limit }} 个机器人</option>{% endif %}{% endfor %}</select></label>
       <label><span>有效期至</span><input name="expires_on" type="date" /></label>
       <div class="full-row form-actions-inline"><button class="btn" type="submit">更新套餐与有效期</button></div>
     </form>
   </section>
 </div>
+
+<details class="action-disclosure">
+  <summary><div class="action-disclosure-copy"><h3>高级信息</h3></div></summary>
+  <div class="action-disclosure-body">
+    <div class="detail-row"><span>租户编码</span><strong><code>{{ tenant.code }}</code></strong></div>
+    <div class="detail-row"><span>内部编号</span><strong>#{{ tenant.id }}</strong></div>
+    <div class="detail-row"><span>备注</span><strong>{{ tenant.notes or '-' }}</strong></div>
+  </div>
+</details>
 
 <section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Tenant users</p><h2>租户员工</h2></div><span class="chip chip-outline">{{ tenant.users|length }} 个账号</span></div>

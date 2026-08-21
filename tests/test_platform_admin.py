@@ -34,12 +34,13 @@ def db(tmp_path):
 
 
 def _create_plan(db: Session, *, status: str = "active") -> SaasPlan:
-    """创建只限制 Provider 节点数的首期套餐。"""
+    """创建同时包含通用机器人额度的测试套餐。"""
 
     plan = SaasPlan(
         code=f"plan-{status}",
         name=f"{status} 套餐",
         provider_node_limit=2,
+        bot_limit=2,
         status=status,
     )
     db.add(plan)
@@ -134,13 +135,10 @@ def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically
     expires_at = now_shanghai() + timedelta(days=365)
     created = platform_admin.create_tenant_with_subscription(
         db,
-        code="Acme-Corp",
         name="示例企业",
         plan_id=plan.id,
         expires_at=expires_at,
-        admin_username="admin",
         admin_mobile="13200132001",
-        admin_display_name="企业管理员",
         actor_user_id=None,
     )
 
@@ -149,8 +147,9 @@ def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically
     subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
     audit = db.scalar(select(PlatformAuditLog).where(PlatformAuditLog.target_tenant_id == tenant.id))
 
-    assert tenant.code == "acme-corp"
+    assert tenant.code.startswith("org-")
     assert subscription.plan_id == plan.id
+    assert admin.username == "owner"
     assert admin.role == "tenant_admin"
     assert admin.mobile == "13200132001"
     assert admin.is_owner is True
@@ -159,20 +158,17 @@ def test_platform_admin_creates_tenant_subscription_and_initial_admin_atomically
     assert created.initial_password not in (audit.detail or "")
 
 
-def test_platform_admin_rejects_disabled_plan_and_duplicate_tenant_code(db: Session) -> None:
-    """停用套餐不能开通新租户，租户编码在大小写归一后仍必须全局唯一。"""
+def test_platform_admin_rejects_disabled_plan_and_duplicate_mobile(db: Session) -> None:
+    """停用套餐不能开通新企业，同一手机号不能重复成为企业所有者。"""
 
     disabled_plan = _create_plan(db, status="disabled")
     with pytest.raises(PlatformAdminError, match="plan_disabled"):
         platform_admin.create_tenant_with_subscription(
             db,
-            code="blocked",
             name="不可开通租户",
             plan_id=disabled_plan.id,
             expires_at=now_shanghai() + timedelta(days=30),
-            admin_username="admin",
             admin_mobile="13200132002",
-            admin_display_name="管理员",
         )
 
     active_plan = SaasPlan(code="active-plan", name="启用套餐", provider_node_limit=1, status="active")
@@ -180,24 +176,18 @@ def test_platform_admin_rejects_disabled_plan_and_duplicate_tenant_code(db: Sess
     db.commit()
     platform_admin.create_tenant_with_subscription(
         db,
-        code="same-code",
         name="首个租户",
         plan_id=active_plan.id,
         expires_at=None,
-        admin_username="admin",
         admin_mobile="13200132003",
-        admin_display_name="管理员",
     )
-    with pytest.raises(PlatformAdminError, match="tenant_code_exists"):
+    with pytest.raises(PlatformAdminError, match="mobile_already_registered"):
         platform_admin.create_tenant_with_subscription(
             db,
-            code="SAME-CODE",
             name="重复租户",
             plan_id=active_plan.id,
             expires_at=None,
-            admin_username="admin",
-            admin_mobile="13200132004",
-            admin_display_name="管理员",
+            admin_mobile="13200132003",
         )
 
 
@@ -213,16 +203,13 @@ def test_tenant_creation_rolls_back_all_rows_when_admin_password_hash_fails(db: 
     with pytest.raises(RuntimeError, match="password_hash_failed"):
         platform_admin.create_tenant_with_subscription(
             db,
-            code="rollback-me",
             name="事务回滚租户",
             plan_id=plan.id,
             expires_at=None,
-            admin_username="admin",
             admin_mobile="13200132005",
-            admin_display_name="管理员",
         )
 
-    assert db.scalar(select(func.count(Tenant.id)).where(Tenant.code == "rollback-me")) == 0
+    assert db.scalar(select(func.count(Tenant.id)).where(Tenant.name == "事务回滚租户")) == 0
     assert db.scalar(select(func.count(TenantSubscription.id))) == 0
     assert db.scalar(select(func.count(TenantUser.id))) == 0
 
@@ -301,13 +288,10 @@ def test_platform_admin_can_renew_disable_and_reset_admin_password(db: Session) 
     db.commit()
     created = platform_admin.create_tenant_with_subscription(
         db,
-        code="lifecycle",
         name="生命周期租户",
         plan_id=first_plan.id,
         expires_at=now_shanghai() + timedelta(days=30),
-        admin_username="root",
         admin_mobile="13200132006",
-        admin_display_name="租户管理员",
     )
 
     renewed = platform_admin.renew_tenant_subscription(
@@ -376,6 +360,22 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
         client.cookies.set(PLATFORM_SESSION_COOKIE, created_session.raw_token)
         client.cookies.set(PLATFORM_CSRF_COOKIE, created_session.raw_csrf_token)
 
+        tenants_page = client.get("/platform/tenants")
+        assert tenants_page.status_code == 200
+        assert 'name="name"' in tenants_page.text
+        assert 'name="admin_mobile"' in tenants_page.text
+        assert 'name="plan_id"' in tenants_page.text
+        assert 'name="expires_on"' in tenants_page.text
+        for removed_field in (
+            "code",
+            "admin_username",
+            "admin_display_name",
+            "contact_name",
+            "contact_phone",
+            "notes",
+        ):
+            assert f'name="{removed_field}"' not in tenants_page.text
+
         users_page = client.get("/platform/users")
         assert users_page.status_code == 200
         assert "租户编码" not in users_page.text
@@ -406,13 +406,10 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
             "/platform/tenants",
             data={
                 "csrf_token": created_session.raw_csrf_token,
-                "code": "web-tenant",
                 "name": "页面创建租户",
                 "plan_id": str(plan_id),
                 "expires_on": "2027-08-01",
-                "admin_username": "admin",
                 "admin_mobile": "13200132007",
-                "admin_display_name": "企业管理员",
             },
         )
 
@@ -422,7 +419,7 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
         initial_password = password_match.group(1)
 
         with factory() as db:
-            tenant = db.scalar(select(Tenant).where(Tenant.code == "web-tenant"))
+            tenant = db.scalar(select(Tenant).where(Tenant.name == "页面创建租户"))
             admin = db.scalar(select(TenantUser).where(TenantUser.tenant_id == tenant.id))
             assert verify_password(initial_password, admin.password_hash)
             tenant_id = int(tenant.id)

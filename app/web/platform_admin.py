@@ -294,16 +294,10 @@ async def platform_tenants_page(request: Request):
 @router.post("/tenants", response_class=HTMLResponse)
 async def platform_tenant_create_action(
     request: Request,
-    code: str = Form(""),
     name: str = Form(""),
     plan_id: int = Form(0),
     expires_on: str = Form(""),
-    admin_username: str = Form("admin"),
     admin_mobile: str = Form(""),
-    admin_display_name: str = Form("企业管理员"),
-    contact_name: str = Form(""),
-    contact_phone: str = Form(""),
-    notes: str = Form(""),
     csrf_token: str = Form(""),
 ):
     """开通租户并在当前响应页一次性展示初始密码。"""
@@ -314,16 +308,10 @@ async def platform_tenant_create_action(
         try:
             created = create_tenant_with_subscription(
                 db,
-                code=code,
                 name=name,
                 plan_id=plan_id,
                 expires_at=_parse_expiry(expires_on),
-                admin_username=admin_username,
                 admin_mobile=admin_mobile,
-                admin_display_name=admin_display_name,
-                contact_name=contact_name,
-                contact_phone=contact_phone,
-                notes=notes,
                 actor_user_id=principal.user_id,
             )
         except PlatformAdminError as exc:
