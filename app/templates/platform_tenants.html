@@ -2,7 +2,7 @@
 {% block page_intro %}<p>开通租户、分配套餐和首个管理员，并跟踪租户当前状态。</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/platform/plans">管理套餐</a>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Provision tenant</p><h2>开通新租户</h2><p class="muted-text">创建成功后，初始密码只在成功页显示一次。</p></div></div>
   {% if plans %}
   <form method="post" action="/platform/tenants" class="form-grid">
@@ -24,7 +24,7 @@
   {% endif %}
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Tenants</p><h2>租户清单</h2></div><span class="chip chip-outline">{{ tenants|length }} 个租户</span></div>
   <table class="table">
     <thead><tr><th>租户</th><th>联系人</th><th>套餐</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead>

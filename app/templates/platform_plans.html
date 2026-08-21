@@ -2,7 +2,7 @@
 {% block page_intro %}<p>维护公开套餐价格、通用机器人额度与旧节点兼容额度。</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/platform/tenants">租户管理</a>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Plan</p><h2>新增套餐</h2></div></div>
   <form method="post" action="/platform/plans" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -23,7 +23,7 @@
   </form>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Plans</p><h2>套餐清单</h2></div></div>
   <div class="table-scroll">
     <table class="table">

@@ -10,29 +10,29 @@
 {% endblock %}
 {% block content %}
 <div class="stats-grid compact-grid">
-  <div class="stat-card accent-card">
+  <div class="metric-item metric-item-accent">
     <span>账号总数</span>
     <strong>{{ stats.total }}</strong>
     <div class="muted-text">已纳入后台认证的用户</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>启用中</span>
     <strong>{{ stats.enabled }}</strong>
     <div class="muted-text">当前允许登录的账号</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>管理员</span>
     <strong>{{ stats.admins }}</strong>
     <div class="muted-text">含禁用中的管理员账号</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>启用管理员</span>
     <strong>{{ stats.enabled_admins }}</strong>
     <div class="muted-text">后台至少需要保留 1 个</div>
   </div>
 </div>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Governance</p>

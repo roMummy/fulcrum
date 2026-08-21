@@ -9,7 +9,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Plugin Registry</p>
@@ -18,19 +18,19 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>功能型插件</span>
       <strong>{{ runtime_summary.functional_total }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>已迁移功能型</span>
       <strong>{{ runtime_summary.functional_migrated }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>可执行功能型</span>
       <strong>{{ runtime_summary.functional_executable }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>启用绑定</span>
       <strong>{{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</strong>
     </div>
@@ -67,11 +67,11 @@
   </table>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <table class="table">
     <thead><tr><th class="col-id">绑定ID</th><th>插件</th><th>Bot</th><th class="col-status">配置状态</th><th class="col-status">运行态</th><th class="col-type">分类</th><th class="col-status">迁移状态</th><th>能力清单</th><th class="col-time">最近重载</th><th class="col-time">最近执行</th><th>执行摘要</th><th>最近调度</th><th class="col-action">操作</th></tr></thead>
     <tbody>
-      {% for card in binding_cards %}
+      {% for work-surface in binding_cards %}
       {% set item = card.binding %}
       {% set runtime_info = card.runtime_info %}
       {% set dispatch_view = card.dispatch_view or {} %}

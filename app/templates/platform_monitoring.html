@@ -7,18 +7,18 @@
 </form>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Platform health</p><h2>全局运行概览</h2></div><a class="btn btn-secondary" href="/platform/logs">查看全局日志</a></div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card accent-card"><span>健康检查总数</span><strong>{{ stats.health_checks }}</strong></div>
-    <div class="stat-card danger-soft"><span>未关闭告警</span><strong>{{ stats.open_alerts }}</strong></div>
-    <div class="stat-card"><span>租户审计日志</span><strong>{{ stats.audit_logs }}</strong></div>
-    <div class="stat-card"><span>最近 24h 消息</span><strong>{{ stats.messages_24h }}</strong></div>
-    <div class="stat-card"><span>最近 24h Webhook 异常</span><strong>{{ stats.webhook_failures_24h }}</strong></div>
+    <div class="metric-item metric-item-accent"><span>健康检查总数</span><strong>{{ stats.health_checks }}</strong></div>
+    <div class="metric-item danger-soft"><span>未关闭告警</span><strong>{{ stats.open_alerts }}</strong></div>
+    <div class="metric-item"><span>租户审计日志</span><strong>{{ stats.audit_logs }}</strong></div>
+    <div class="metric-item"><span>最近 24h 消息</span><strong>{{ stats.messages_24h }}</strong></div>
+    <div class="metric-item"><span>最近 24h Webhook 异常</span><strong>{{ stats.webhook_failures_24h }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Alerts</p><h2>未关闭告警</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-md">
     <table class="table table-tight ops-record-table">
@@ -44,7 +44,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Checks</p><h2>最近健康检查</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-md">
     <table class="table table-tight ops-record-table">
@@ -58,7 +58,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Audit trail</p><h2>最近租户操作审计</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-lg">
     <table class="table table-tight ops-record-table">

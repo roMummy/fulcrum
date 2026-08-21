@@ -1,7 +1,7 @@
 {% extends 'platform_base.html' %}
 {% block page_intro %}<p>读取服务器全局日志原文，按日志类型、轮转文件和关键字筛选。</p>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div><p class="section-kicker">Log overview</p><h2>日志文件概览</h2></div>
     <div class="chip-row"><span class="chip chip-outline">{{ overview.active_file }}</span><span class="chip">总行数 {{ overview.total_lines }}</span><span class="chip chip-muted">本页 {{ overview.displayed_lines }}</span></div>
@@ -9,7 +9,7 @@
   <p class="muted-text">文件路径：<code>{{ overview.active_file_path }}</code></p>
 </section>
 
-<section class="card filter-card">
+<section class="work-surface filter-card">
   <div class="section-head"><div><p class="section-kicker">Log filter</p><h2>日志筛选</h2></div><span class="chip chip-outline">{{ active_tab|upper }}</span></div>
   <form method="get" action="/platform/logs" class="form-grid">
     <input type="hidden" name="tab" value="{{ active_tab }}" />
@@ -19,7 +19,7 @@
   </form>
 </section>
 
-<section class="card">
+<section class="work-surface">
   {% set error_query = '/platform/logs?tab=error' %}
   {% if source_file %}{% set error_query = error_query ~ '&source_file=' ~ source_file|urlencode %}{% endif %}
   {% if keyword %}{% set error_query = error_query ~ '&keyword=' ~ keyword|urlencode %}{% endif %}

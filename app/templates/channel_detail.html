@@ -14,7 +14,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Operations</p>
@@ -89,32 +89,32 @@
 
   <div class="stack-panel">
       <div class="stats-grid compact-grid time-metric-grid">
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>Token 预览</span>
           <strong>{{ token_preview }}</strong>
         </div>
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>当前状态</span>
           <strong>{{ channel.status or '-' }}</strong>
         </div>
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>API Base</span>
           <strong>{{ '云端模式不需要' if health_checks.api_base_not_required else ('已配置' if health_checks.api_base else '缺失') }}</strong>
         </div>
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>Webhook</span>
           <strong>{{ '云端模式不需要' if health_checks.webhook_not_required else ('已配置' if health_checks.webhook_path else '缺失') }}</strong>
         </div>
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>Adapter Config</span>
           <strong>{{ '已配置' if health_checks.adapter_config else '缺失' }}</strong>
         </div>
-        <div class="stat-card stat-card-time nested-card">
+        <div class="metric-item metric-item-time ">
           <span>最近健康检查</span>
           <strong class="stat-value stat-value-time">{{ channel_health_timeline.latest.created_at|bj_time if channel_health_timeline.latest else '-' }}</strong>
         </div>
       </div>
-      <div class="card subcard">
+      <div class="subsection">
         <table class="table table-tight">
           <tbody>
             <tr><th>Bot Token</th><td>{{ '已单独保存' if health_checks.bot_token else '未配置' }}</td></tr>
@@ -138,7 +138,7 @@
 </section>
 
 {% if wechat_ipad_overview %}
-<section class="card" id="wechat-ipad-login-section">
+<section class="work-surface" id="wechat-ipad-login-section">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Wechat iPad</p>
@@ -151,16 +151,16 @@
     </div>
   </div>
   <div class="stats-grid compact-grid time-metric-grid">
-    <div class="stat-card nested-card"><span>登录状态</span><strong id="wechat-ipad-login-state">{{ wechat_ipad_overview.login_state_display or wechat_ipad_overview.login_state }}</strong></div>
-    <div class="stat-card nested-card"><span>二维码状态</span><strong id="wechat-ipad-qrcode-status">{{ wechat_ipad_overview.qrcode_status_display }}</strong></div>
-    <div class="stat-card nested-card"><span>剩余有效期</span><strong id="wechat-ipad-qrcode-countdown">{{ wechat_ipad_overview.qrcode_countdown_label or '-' }}</strong></div>
-    <div class="stat-card nested-card"><span>是否过期</span><strong id="wechat-ipad-qrcode-expired">{{ '已过期' if wechat_ipad_overview.qrcode_is_expired else '有效中' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近心跳</span><strong id="wechat-ipad-last-heartbeat-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_heartbeat_at_display or '-' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近拉取</span><strong id="wechat-ipad-last-message-sync-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_message_sync_at_display or '-' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近接收</span><strong id="wechat-ipad-last-receive-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_receive_at_display or '-' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近发送</span><strong id="wechat-ipad-last-send-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_send_at_display or '-' }}</strong></div>
+    <div class="metric-item "><span>登录状态</span><strong id="wechat-ipad-login-state">{{ wechat_ipad_overview.login_state_display or wechat_ipad_overview.login_state }}</strong></div>
+    <div class="metric-item "><span>二维码状态</span><strong id="wechat-ipad-qrcode-status">{{ wechat_ipad_overview.qrcode_status_display }}</strong></div>
+    <div class="metric-item "><span>剩余有效期</span><strong id="wechat-ipad-qrcode-countdown">{{ wechat_ipad_overview.qrcode_countdown_label or '-' }}</strong></div>
+    <div class="metric-item "><span>是否过期</span><strong id="wechat-ipad-qrcode-expired">{{ '已过期' if wechat_ipad_overview.qrcode_is_expired else '有效中' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近心跳</span><strong id="wechat-ipad-last-heartbeat-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_heartbeat_at_display or '-' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近拉取</span><strong id="wechat-ipad-last-message-sync-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_message_sync_at_display or '-' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近接收</span><strong id="wechat-ipad-last-receive-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_receive_at_display or '-' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近发送</span><strong id="wechat-ipad-last-send-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_send_at_display or '-' }}</strong></div>
   </div>
-  <div class="card subcard" style="margin-top:16px;margin-bottom:16px;">
+  <div class="subsection" style="margin-top:16px;margin-bottom:16px;">
     <p class="section-kicker">Latest Error</p>
     <p class="muted-text" id="wechat-ipad-last-error-summary">{{ wechat_ipad_overview.last_error_operator_summary or wechat_ipad_overview.last_error or '-' }}</p>
     <table class="table table-tight">
@@ -173,7 +173,7 @@
     </table>
   </div>
   <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="card subcard">
+    <div class="subsection">
       <div class="actions wechat-ipad-login-actions" style="margin-bottom:12px;">
         <label class="wechat-ipad-profile-picker">
           <span class="muted-text">登录档位</span>
@@ -207,7 +207,7 @@
       <p id="wechat-ipad-qrcode-empty" class="muted-text" style="margin-top:12px;">当前还没有二维码图片。</p>
       {% endif %}
     </div>
-    <div class="card subcard">
+    <div class="subsection">
       <table class="table table-tight">
         <tbody>
           <tr><th>二维码链接</th><td>{% if wechat_ipad_overview.qrcode_link_url %}<a href="{{ wechat_ipad_overview.qrcode_link_url }}" target="_blank" rel="noreferrer">打开二维码链接</a>{% else %}-{% endif %}</td></tr>
@@ -225,7 +225,7 @@
       </table>
     </div>
   </div>
-  <div class="card subcard" style="margin-top:16px;">
+  <div class="subsection" style="margin-top:16px;">
     <div class="toolbar">
       <div>
         <p class="section-kicker">Protocol Responses</p>
@@ -264,7 +264,7 @@
 {% endif %}
 
 {% if wechat_ipad_group_summary %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Chatrooms</p>
@@ -274,15 +274,15 @@
     <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">进入群管理</a>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>群总数</span><strong>{{ wechat_ipad_group_summary.chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>已补群资料</span><strong>{{ wechat_ipad_group_summary.active_chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>已有成员快照</span><strong>{{ wechat_ipad_group_summary.member_synced_chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>仅消息观测群</span><strong>{{ wechat_ipad_group_summary.message_observed_count }}</strong></div>
-    <div class="stat-card nested-card"><span>群权限记录</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.total }}</strong></div>
-    <div class="stat-card nested-card"><span>存在覆盖的群</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.overridden_chatrooms }}</strong></div>
+    <div class="metric-item "><span>群总数</span><strong>{{ wechat_ipad_group_summary.chatroom_count }}</strong></div>
+    <div class="metric-item "><span>已补群资料</span><strong>{{ wechat_ipad_group_summary.active_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>已有成员快照</span><strong>{{ wechat_ipad_group_summary.member_synced_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>仅消息观测群</span><strong>{{ wechat_ipad_group_summary.message_observed_count }}</strong></div>
+    <div class="metric-item "><span>群权限记录</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.total }}</strong></div>
+    <div class="metric-item "><span>存在覆盖的群</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.overridden_chatrooms }}</strong></div>
   </div>
   <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="card subcard">
+    <div class="subsection">
       <p class="section-kicker">Summary</p>
       <p class="muted-text" style="margin:0 0 10px;">{{ wechat_ipad_group_summary.summary_snapshot.operator_summary }}</p>
       <div class="chip-row">
@@ -291,7 +291,7 @@
       </div>
       <p class="muted-text" style="margin:10px 0 0;">{{ wechat_ipad_group_summary.empty_state_message }}</p>
     </div>
-    <div class="card subcard">
+    <div class="subsection">
       <p class="section-kicker">Coverage</p>
       <p class="muted-text" style="margin:0 0 10px;">{{ wechat_ipad_group_summary.coverage_snapshot.summary_label }}</p>
       <div class="chip-row" style="margin-bottom:10px;">
@@ -308,7 +308,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Recent Chatrooms</p>
@@ -352,7 +352,7 @@
 {% endif %}
 
 {% if channel_chatroom_summary %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Chatrooms</p>
@@ -369,16 +369,16 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>群总数</span><strong>{{ channel_chatroom_summary.total }}</strong></div>
-    <div class="stat-card nested-card"><span>已启用管理</span><strong>{{ channel_chatroom_summary.active_chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>待启用群</span><strong>{{ channel_chatroom_summary.pending_chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>已有成员快照</span><strong>{{ channel_chatroom_summary.member_snapshot_chatroom_count }}</strong></div>
-    <div class="stat-card nested-card"><span>插件绑定</span><strong>{{ channel_chatroom_summary.binding_enabled_total }} / {{ channel_chatroom_summary.binding_total }}</strong></div>
-    <div class="stat-card nested-card"><span>存在群级覆盖</span><strong>{{ channel_chatroom_summary.overridden_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>群总数</span><strong>{{ channel_chatroom_summary.total }}</strong></div>
+    <div class="metric-item "><span>已启用管理</span><strong>{{ channel_chatroom_summary.active_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>待启用群</span><strong>{{ channel_chatroom_summary.pending_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>已有成员快照</span><strong>{{ channel_chatroom_summary.member_snapshot_chatroom_count }}</strong></div>
+    <div class="metric-item "><span>插件绑定</span><strong>{{ channel_chatroom_summary.binding_enabled_total }} / {{ channel_chatroom_summary.binding_total }}</strong></div>
+    <div class="metric-item "><span>存在群级覆盖</span><strong>{{ channel_chatroom_summary.overridden_chatroom_count }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Recent Chatrooms</p>
@@ -422,7 +422,7 @@
 {% endif %}
 
 {% if workwechat_contact_summary %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">WorkWechat Contacts</p>
@@ -438,9 +438,9 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>联系人总数</span><strong>{{ workwechat_contact_summary.total }}</strong></div>
-    <div class="stat-card nested-card"><span>有效联系人</span><strong>{{ workwechat_contact_summary.active }}</strong></div>
-    <div class="stat-card nested-card"><span>已删除标记</span><strong>{{ workwechat_contact_summary.deleted }}</strong></div>
+    <div class="metric-item "><span>联系人总数</span><strong>{{ workwechat_contact_summary.total }}</strong></div>
+    <div class="metric-item "><span>有效联系人</span><strong>{{ workwechat_contact_summary.active }}</strong></div>
+    <div class="metric-item "><span>已删除标记</span><strong>{{ workwechat_contact_summary.deleted }}</strong></div>
   </div>
   {% if workwechat_contact_summary.recent_contacts %}
   <table class="table table-tight" style="margin-top:16px;">
@@ -462,7 +462,7 @@
 {% endif %}
 
 {% if wechat_ipad_contact_list %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Contacts</p>
@@ -515,7 +515,7 @@
 {% endif %}
 
 {% if wechat_ipad_overview %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Action Console</p>
@@ -531,7 +531,7 @@
     </span>
   </div>
   <div class="wechat-action-console">
-    <div class="wechat-action-composer card subcard">
+    <div class="wechat-action-composer subsection">
       <div class="wechat-action-meta">
         <label class="full-row wechat-action-field">
           <span class="wechat-action-label">动作类型</span>
@@ -561,17 +561,17 @@
         {% endif %}
       </div>
     </div>
-    <div class="wechat-action-result card subcard">
+    <div class="wechat-action-result subsection">
       <div class="wechat-action-result-head">
         <p class="section-kicker">Latest Result</p>
         <p class="muted-text">最近一次动作的摘要、参数和返回预览会集中展示在这里。</p>
       </div>
       <div class="wechat-action-facts">
-        <div class="stat-card nested-card">
+        <div class="metric-item ">
           <span>最近动作</span>
           <strong id="wechat-ipad-action-last-name">{{ wechat_ipad_overview.action_console.last_action_name or '-' }}</strong>
         </div>
-        <div class="stat-card nested-card stat-card-time">
+        <div class="metric-item  metric-item-time">
           <span>最近时间</span>
           <strong id="wechat-ipad-action-last-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.action_console.last_action_at|bj_time if wechat_ipad_overview.action_console.last_action_at else '-' }}</strong>
         </div>
@@ -594,7 +594,7 @@
   </div>
 </section>
 
-<section class="card" id="wechat-ipad-message-section" {% if wechat_ipad_overview.login_state != 'online' and wechat_ipad_overview.qrcode_status != 'success' %}style="display:none;"{% endif %}>
+<section class="work-surface" id="wechat-ipad-message-section" {% if wechat_ipad_overview.login_state != 'online' and wechat_ipad_overview.qrcode_status != 'success' %}style="display:none;"{% endif %}>
   <div class="toolbar">
     <div>
       <p class="section-kicker">Recent Messages</p>
@@ -1232,7 +1232,7 @@
       <label><span>是否启用</span><select name="is_enabled"><option value="true" {% if channel.is_enabled %}selected{% endif %}>启用</option><option value="false" {% if not channel.is_enabled %}selected{% endif %}>停用</option></select></label>
       <label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="3">{{ channel.allow_from or '' }}</textarea></label>
       {% if channel.channel_type == 'wechat_ipad' %}
-      <div class="full-row card subcard" style="padding:16px;">
+      <div class="full-row subsection" style="padding:16px;">
         <p class="section-kicker">Wechat iPad 代理</p>
         <p class="muted-text" style="margin-top:0;">需要通过代理登录时，可以在这里填写代理信息。保存后，获取二维码会自动带上代理参数。</p>
         <div class="panel-grid panel-grid-balanced">

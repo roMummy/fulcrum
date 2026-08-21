@@ -10,7 +10,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">WorkWechat Contacts</p>
@@ -30,15 +30,15 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>联系人总数</span><strong>{{ list_view.total }}</strong></div>
-    <div class="stat-card nested-card"><span>有效</span><strong>{{ list_view.status_counts.get('active', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>已删除</span><strong>{{ list_view.status_counts.get('deleted', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>外部联系人</span><strong>{{ list_view.kind_counts.get('external_contact', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>内部成员</span><strong>{{ list_view.kind_counts.get('internal_member', 0) }}</strong></div>
+    <div class="metric-item "><span>联系人总数</span><strong>{{ list_view.total }}</strong></div>
+    <div class="metric-item "><span>有效</span><strong>{{ list_view.status_counts.get('active', 0) }}</strong></div>
+    <div class="metric-item "><span>已删除</span><strong>{{ list_view.status_counts.get('deleted', 0) }}</strong></div>
+    <div class="metric-item "><span>外部联系人</span><strong>{{ list_view.kind_counts.get('external_contact', 0) }}</strong></div>
+    <div class="metric-item "><span>内部成员</span><strong>{{ list_view.kind_counts.get('internal_member', 0) }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <form method="get" action="/channels/{{ channel.id }}/workwechat/contacts" class="form-grid">
     <label><span>搜索</span><input name="q" value="{{ list_view.filters.query }}" placeholder="姓名 / 手机 / 邮箱 / 公司 / ID" /></label>
     <label><span>联系人类型</span><select name="contact_kind">
@@ -61,7 +61,7 @@
   </form>
 </section>
 
-<section class="card">
+<section class="work-surface">
   {% if list_view['items'] %}
   <table class="table">
     <thead>

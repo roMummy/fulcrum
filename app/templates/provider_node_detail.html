@@ -11,7 +11,7 @@
 {% endblock %}
 {% block content %}
 {% if activation_code %}
-<section class="card" style="border-color:#f0b429;">
+<section class="work-surface" style="border-color:#f0b429;">
   <div class="section-head">
     <div>
       <p class="section-kicker">One-time activation</p>
@@ -24,7 +24,7 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Node status</p>
@@ -61,10 +61,10 @@
     {% endif %}
   </div>
   <div class="stats-grid compact-grid time-metric-grid">
-    <div class="stat-card nested-card"><span>发现账号</span><strong>{{ node.accounts|length }}</strong></div>
-    <div class="stat-card nested-card"><span>绑定渠道</span><strong>{{ bound_channel_count }}</strong></div>
-    <div class="stat-card nested-card"><span>客户端版本</span><strong>{{ node.client_version or '-' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近心跳</span><strong class="stat-value stat-value-time">{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</strong></div>
+    <div class="metric-item "><span>发现账号</span><strong>{{ node.accounts|length }}</strong></div>
+    <div class="metric-item "><span>绑定渠道</span><strong>{{ bound_channel_count }}</strong></div>
+    <div class="metric-item "><span>客户端版本</span><strong>{{ node.client_version or '-' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近心跳</span><strong class="stat-value stat-value-time">{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</strong></div>
   </div>
   <div class="table-scroll" style="margin-top:16px;">
     <table class="table table-tight">
@@ -78,7 +78,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Discovered accounts</p>
@@ -105,7 +105,7 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Channel binding</p>

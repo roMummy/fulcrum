@@ -10,7 +10,7 @@
 {% endblock %}
 {% block content %}
 {# 消息页是排障高频入口，筛选条件固定在独立卡片中，结果列表保持可扫读。 #}
-<section class="card filter-card">
+<section class="work-surface filter-card">
   <div class="section-head">
     <div>
       <p class="section-kicker">Search console</p>
@@ -64,26 +64,26 @@
     </div>
   </form>
   <div class="stats-grid compact-grid top-gap">
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>入站消息</span>
       <strong>{{ messages | selectattr('direction', 'equalto', 'in') | list | length }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>出站消息</span>
       <strong>{{ messages | selectattr('direction', 'equalto', 'out') | list | length }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>当前关键词</span>
       <strong>{{ keyword or '未设置' }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>总匹配数</span>
       <strong>{{ pagination.total if pagination else messages|length }}</strong>
     </div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Result set</p>

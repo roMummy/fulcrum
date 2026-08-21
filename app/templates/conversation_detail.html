@@ -6,7 +6,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <h2>会话信息</h2>
   <table class="table">
     <tbody>
@@ -21,7 +21,7 @@
   </table>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <h2>手工发送测试消息</h2>
   <form method="post" action="/conversations/{{ conversation.id }}/messages" class="form-grid">
     <label class="full-row"><span>消息内容</span><textarea name="content" rows="3" placeholder="输入一条用于测试的出站消息" required></textarea></label>
@@ -30,7 +30,7 @@
   <p class="muted-text">统一出站接口：<code>POST /channels/{{ conversation.channel_id }}/outbound</code>，JSON 传 <code>conversation_id</code> 与 <code>content</code>。当前会按渠道 adapter 执行真实出站；除 <code>wechat_ipad</code> 外，其它通道默认走通用 HTTP bridge。</p>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Messages</p>

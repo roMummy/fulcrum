@@ -2,7 +2,7 @@
 {% block page_intro %}<p>查看通用机器人额度和当前绑定状态。</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/account/billing">套餐与额度</a>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Quota</p><h2>机器人额度</h2></div></div>
   {% if quota %}
   <dl class="detail-grid">
@@ -15,7 +15,7 @@
 </section>
 
 {% if can_manage_billing and quota and quota.remaining > 0 %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Binding</p><h2>绑定机器人账号</h2></div></div>
   <form method="post" action="/account/bot-bindings" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -29,7 +29,7 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="table-scroll">
     <table class="table">
       <thead><tr><th>机器人账号</th><th>适配类型</th><th>显示名称</th><th>状态</th><th>绑定时间</th></tr></thead>

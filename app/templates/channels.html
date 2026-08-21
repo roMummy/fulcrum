@@ -10,7 +10,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Coverage</p>
@@ -18,19 +18,19 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>启用中</span>
       <strong>{{ channels | selectattr('is_enabled') | list | length }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>已配置 Webhook</span>
       <strong>{{ channels | selectattr('webhook_path') | list | length }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>已录入 Token</span>
       <strong>{{ channels | selectattr('bot_token_masked') | list | length }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>Adapter Config</span>
       <strong>{{ channels | selectattr('adapter_config_json') | list | length }}</strong>
     </div>
@@ -38,7 +38,7 @@
   <p class="muted-text">这些指标可以帮助你快速确认哪些渠道已经接通、哪些还缺少关键配置。</p>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Channel inventory</p>

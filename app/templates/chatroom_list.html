@@ -15,7 +15,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Chatrooms</p>
@@ -29,17 +29,17 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card"><span>群总数</span><strong>{{ list_view.total }}</strong></div>
-    <div class="stat-card"><span>待启用群</span><strong>{{ list_view.pending_chatroom_count or 0 }}</strong></div>
-    <div class="stat-card"><span>已启用管理</span><strong>{{ list_view.active_chatroom_count or 0 }}</strong></div>
-    <div class="stat-card"><span>已停用</span><strong>{{ list_view.disabled_chatroom_count or 0 }}</strong></div>
-    <div class="stat-card"><span>有成员快照的群</span><strong>{{ list_view.member_snapshot_chatroom_count }}</strong></div>
-    <div class="stat-card"><span>继承 bot_plugin 的群</span><strong>{{ list_view.inherited_chatroom_count }}</strong></div>
-    <div class="stat-card"><span>存在群级覆盖的群</span><strong>{{ list_view.overridden_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>群总数</span><strong>{{ list_view.total }}</strong></div>
+    <div class="metric-item"><span>待启用群</span><strong>{{ list_view.pending_chatroom_count or 0 }}</strong></div>
+    <div class="metric-item"><span>已启用管理</span><strong>{{ list_view.active_chatroom_count or 0 }}</strong></div>
+    <div class="metric-item"><span>已停用</span><strong>{{ list_view.disabled_chatroom_count or 0 }}</strong></div>
+    <div class="metric-item"><span>有成员快照的群</span><strong>{{ list_view.member_snapshot_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>继承 bot_plugin 的群</span><strong>{{ list_view.inherited_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>存在群级覆盖的群</span><strong>{{ list_view.overridden_chatroom_count }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Registry</p>
@@ -56,7 +56,7 @@
   </form>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Checklist</p>

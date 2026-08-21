@@ -7,7 +7,7 @@
 {% endif %}
 
 {% if can_manage_users %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Create employee</p><h2>新增员工</h2></div></div>
   <form method="post" action="/tenant/users" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -20,7 +20,7 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Employees</p><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
   <table class="table">
     <thead><tr><th>账号</th><th>手机号</th><th>显示名</th><th>角色</th><th>状态</th>{% if can_manage_users %}<th>管理</th>{% endif %}</tr></thead>

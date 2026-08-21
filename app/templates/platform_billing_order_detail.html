@@ -2,7 +2,7 @@
 {% block page_intro %}<p>{{ status_labels.get(order.status, order.status) }}</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/platform/billing/orders">返回订单</a>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <dl class="detail-grid">
     <div><dt>企业</dt><dd>{{ order.tenant.name }}</dd></div>
     <div><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
@@ -20,7 +20,7 @@
 </section>
 
 {% if order.status == 'payment_submitted' %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head"><div><p class="section-kicker">Review</p><h2>审核操作</h2></div></div>
   <form method="post" action="/platform/billing/orders/{{ order.id }}/approve" data-confirm-mode="confirm" data-confirm-title="批准订单" data-confirm-message="批准后将立即创建或续期订阅。">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

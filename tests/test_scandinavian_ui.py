@@ -100,3 +100,28 @@ def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> No
     assert ".metric-band" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".app-nav-toggle" in stylesheet
+
+
+def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
+    """全站模板不得继续引用旧卡片语义或通过内联样式恢复大圆角。
+
+    新样式不提供旧类名兼容层，因此这里同时约束模板和 CSS。这样后续新增页面必须
+    明确选择工作表面、指标单元或内部小节，而不能继续使用含义模糊的通用卡片。
+    """
+
+    template_source = "\n".join(
+        _read_project_file(path)
+        for path in sorted(TEMPLATE_ROOT.glob("*.html"))
+    )
+    stylesheet = _read_project_file(STYLE_PATH)
+
+    for legacy_token in ("card", "stat-card", "nested-card", "subcard", "inset-panel"):
+        assert f'class="{legacy_token}' not in template_source
+        assert f" {legacy_token} " not in template_source
+        assert f' {legacy_token}"' not in template_source
+
+    for legacy_selector in (".card", ".stat-card", ".subcard", ".inset-panel"):
+        assert legacy_selector not in stylesheet
+
+    assert "border-radius:999px" not in template_source
+    assert "border-radius: 999px" not in template_source

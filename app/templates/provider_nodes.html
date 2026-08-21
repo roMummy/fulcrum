@@ -12,7 +12,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Quota</p>
@@ -20,14 +20,14 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>套餐额度</span><strong>{{ quota.limit }}</strong></div>
-    <div class="stat-card nested-card"><span>已占用</span><strong>{{ quota.used }}</strong></div>
-    <div class="stat-card nested-card"><span>剩余额度</span><strong>{{ quota.remaining }}</strong></div>
-    <div class="stat-card nested-card"><span>节点总数</span><strong>{{ nodes|length }}</strong></div>
+    <div class="metric-item "><span>套餐额度</span><strong>{{ quota.limit }}</strong></div>
+    <div class="metric-item "><span>已占用</span><strong>{{ quota.used }}</strong></div>
+    <div class="metric-item "><span>剩余额度</span><strong>{{ quota.remaining }}</strong></div>
+    <div class="metric-item "><span>节点总数</span><strong>{{ nodes|length }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
       <p class="section-kicker">Provider inventory</p>

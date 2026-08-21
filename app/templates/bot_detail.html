@@ -9,7 +9,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card action-zone">
+<section class="work-surface action-zone">
   <div class="toolbar">
     <div>
       <strong>{{ bot.name }}</strong>
@@ -38,17 +38,17 @@
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <h2>运行摘要</h2>
   <div class="stats-grid compact-grid">
-    <div class="stat-card"><span>运行状态</span><strong><span class="badge badge-{{ bot.status|lower }}">{{ bot.status }}</span></strong></div>
-    <div class="stat-card"><span>企业微信账号</span><strong>{{ channel_count }}</strong></div>
-    <div class="stat-card"><span>插件</span><strong>{{ binding_count }}</strong></div>
-    <div class="stat-card"><span>会话</span><strong>{{ conversation_count }}</strong></div>
+    <div class="metric-item"><span>运行状态</span><strong><span class="badge badge-{{ bot.status|lower }}">{{ bot.status }}</span></strong></div>
+    <div class="metric-item"><span>企业微信账号</span><strong>{{ channel_count }}</strong></div>
+    <div class="metric-item"><span>插件</span><strong>{{ binding_count }}</strong></div>
+    <div class="metric-item"><span>会话</span><strong>{{ conversation_count }}</strong></div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div><p class="section-kicker">Work WeChat</p><h2>企业微信账号</h2></div>
     <a class="btn btn-secondary btn-small" href="/channels">管理账号</a>
@@ -70,7 +70,7 @@
   </table>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div><p class="section-kicker">Plugins</p><h2>插件</h2></div>
     <a class="btn btn-secondary btn-small" href="/plugins">管理插件</a>

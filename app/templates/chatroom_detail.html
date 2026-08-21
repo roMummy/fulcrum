@@ -19,7 +19,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Chatroom</p>
@@ -33,16 +33,16 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
-    <div class="stat-card"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
-    <div class="stat-card"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
-    <div class="stat-card"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
-    <div class="stat-card"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
-    <div class="stat-card"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
-    <div class="stat-card"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
+    <div class="metric-item"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
+    <div class="metric-item"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
+    <div class="metric-item"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
+    <div class="metric-item"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
+    <div class="metric-item"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
+    <div class="metric-item"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
+    <div class="metric-item"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
   </div>
   <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="card subcard">
+    <div class="subsection">
       <table class="table table-tight">
         <tbody>
           <tr><th>群名</th><td>{{ detail.name }}</td></tr>
@@ -80,7 +80,7 @@
       <p class="muted-text" style="margin-top:12px;">当前渠道暂不支持群级附件自动下载配置。</p>
       {% endif %}
     </div>
-    <div class="card subcard">
+    <div class="subsection">
       <p class="section-kicker">Member Snapshot</p>
       <h3 style="margin:0 0 8px;">成员角色概览</h3>
       <div class="chip-row" style="margin-bottom:10px;">
@@ -97,7 +97,7 @@
 </section>
 
 {% if detail.message_flow is defined %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Message Flow</p>
@@ -164,7 +164,7 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Members</p>
@@ -191,7 +191,7 @@
       <tr>
         <td>
           {% if item.has_avatar %}
-          <img src="{{ item.avatar_url }}" alt="{{ item.nickname }}" style="width:40px;height:40px;border-radius:999px;object-fit:cover;display:block;margin-bottom:6px;border:1px solid rgba(148,163,184,.25);" />
+          <img src="{{ item.avatar_url }}" alt="{{ item.nickname }}" style="width:40px;height:40px;border-radius:4px;object-fit:cover;display:block;margin-bottom:6px;border:1px solid rgba(148,163,184,.25);" />
           {% endif %}
           <div><code>{{ item.member_external_id }}</code></div>
           <div class="muted-text">{% if item.has_avatar %}有头像{% else %}暂无头像{% endif %}</div>
@@ -227,7 +227,7 @@
   {% endif %}
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">BotPlugin Scope</p>

@@ -1,35 +1,35 @@
 {% extends 'base.html' %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>功能型插件</span>
       <strong>{{ runtime_summary.functional_total }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>已迁移功能型</span>
       <strong>{{ runtime_summary.functional_migrated }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>可执行功能型</span>
       <strong>{{ runtime_summary.functional_executable }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>启用绑定</span>
       <strong>{{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>Manifest 异常</span>
       <strong>{{ runtime_summary.manifest_invalid }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item ">
       <span>Manifest 告警</span>
       <strong>{{ runtime_summary.manifest_warning }}</strong>
     </div>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <h2>机器人插件开关</h2>
@@ -165,7 +165,7 @@
 })();
 </script>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <h2>插件清单</h2>
@@ -267,7 +267,7 @@
   {% endif %}
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <h2>后续操作</h2>
     <div class="actions">
