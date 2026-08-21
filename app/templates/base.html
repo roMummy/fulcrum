@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f4f6f5" />
   <title>{{ page_title }} - 曜枢 AI</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
@@ -331,7 +332,7 @@
             submitter.dataset.originalText = submitter.textContent || "";
             submitter.disabled = true;
             if (submitter.tagName === "BUTTON") {
-              submitter.textContent = "处理中...";
+                  submitter.textContent = "处理中…";
             }
           });
         });

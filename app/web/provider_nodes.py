@@ -1,4 +1,4 @@
-"""租户 Provider 节点、激活码和渠道解绑管理页面。"""
+"""租户企业微信客户端、激活码和账号状态管理页面。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from app.services.provider_nodes import (
     list_provider_nodes,
     reactivate_provider_node,
     revoke_provider_node_credentials,
-    unbind_provider_channel,
 )
 from app.services.saas_auth import has_tenant_role
 from app.web.auth_common import (
@@ -299,26 +298,3 @@ async def provider_node_disable_action(node_id: int, request: Request, csrf_toke
     finally:
         db.close()
     return _redirect(f"/provider-nodes/{node_id}", "企业微信客户端已停用")
-
-
-@router.post("/{node_id}/channels/{channel_id}/unbind")
-async def provider_node_channel_unbind_action(
-    node_id: int,
-    channel_id: int,
-    request: Request,
-    csrf_token: str = Form(""),
-):
-    """从节点详情解绑渠道，运行中任务存在时由服务层拒绝。"""
-
-    _require_tenant_admin(request)
-    db = open_tenant_session(TenantSessionLocal)
-    try:
-        require_tenant_csrf(db, request, csrf_token)
-        try:
-            channel = unbind_provider_channel(db, node_id, channel_id)
-            record_audit(db, "provider_node.channel.unbind", "channel", channel.id, f"解绑渠道 {channel.name}")
-        except ProviderNodeError as exc:
-            return _redirect(f"/provider-nodes/{node_id}", f"渠道解绑失败：{exc}", danger=True)
-    finally:
-        db.close()
-    return _redirect(f"/provider-nodes/{node_id}", "账号已解除客户端关联")

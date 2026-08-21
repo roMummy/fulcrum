@@ -75,16 +75,16 @@
   <form method="post" action="/channels/connect/start" class="form-grid connection-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <input type="hidden" name="channel_type" value="{{ requested_type }}" />
-    <label class="full-row"><span>账号名称</span><input name="display_name" maxlength="100" autocomplete="off" placeholder="例如：售后客服" required /></label>
+    <label class="full-row"><span>账号名称</span><input name="display_name" maxlength="100" autocomplete="off" placeholder="例如：售后客服…" required /></label>
     {% if requested_type == 'telegram' %}
     <label class="full-row"><span>Bot Token</span><input name="bot_token" type="password" autocomplete="off" required /></label>
     {% elif requested_type in ['wechat_ipad', 'wechat_winauto'] %}
-    <label class="full-row"><span>{% if requested_type == 'wechat_ipad' %}协议服务地址{% else %}客户端地址{% endif %}</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="http://127.0.0.1:{% if requested_type == 'wechat_ipad' %}8848{% else %}8182{% endif %}" required /></label>
+    <label class="full-row"><span>{% if requested_type == 'wechat_ipad' %}协议服务地址{% else %}客户端地址{% endif %}</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="http://127.0.0.1:{% if requested_type == 'wechat_ipad' %}8848{% else %}8182{% endif %}…" required /></label>
     <label class="full-row"><span>访问凭证</span><input name="bot_token" type="password" autocomplete="off" /></label>
     {% elif requested_type == 'workwechat' %}
     <label>
       <span>企业微信客户端</span>
-      <select name="provider_node_id" id="connection-provider-node" required>
+      <select name="provider_node_id" id="connection-provider-node" autocomplete="off" required>
         <option value="">请选择已连接客户端</option>
         {% for node in provider_nodes if node.status == 'active' %}
         <option value="{{ node.id }}">{{ node.name }}</option>
@@ -93,7 +93,7 @@
     </label>
     <label>
       <span>在线账号</span>
-      <select name="provider_account_id" id="connection-provider-account" required>
+      <select name="provider_account_id" id="connection-provider-account" autocomplete="off" required>
         <option value="">请选择在线账号</option>
         {% for node in provider_nodes if node.status == 'active' %}
           {% for account in node.accounts if account.status == 'online' %}
@@ -119,7 +119,7 @@
   <div class="connection-progress-body">
     {% if channel.channel_type == 'wechat_ipad' %}
     <div class="connection-qrcode-panel">
-      <img id="connection-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url if wechat_ipad_overview and wechat_ipad_overview.qrcode_image_url else '' }}" alt="微信登录二维码"{% if not wechat_ipad_overview or not wechat_ipad_overview.qrcode_visible %} hidden{% endif %} />
+      <img id="connection-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url if wechat_ipad_overview and wechat_ipad_overview.qrcode_image_url else '' }}" alt="微信登录二维码" width="220" height="220"{% if not wechat_ipad_overview or not wechat_ipad_overview.qrcode_visible %} hidden{% endif %} />
       <div>
         <strong id="connection-progress-title">使用微信扫码登录</strong>
         <p class="muted-text" id="connection-progress-message" aria-live="polite">{{ wechat_ipad_overview.last_status_summary if wechat_ipad_overview else connection.message }}</p>

@@ -4,7 +4,9 @@
 {%- endmacro %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
+  {% if can_manage_channel %}
   <button class="btn" type="button" data-modal-open="edit-channel-modal">高级设置</button>
+  {% endif %}
   <span class="chip chip-outline">账号 #{{ channel.id }}</span>
   <span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span>
   <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span>
@@ -21,9 +23,12 @@
       <form method="post" action="/channels/{{ channel.id }}/health-check">
         <button class="btn btn-secondary" type="submit">健康检查</button>
       </form>
+      {% if can_manage_channel %}
       <form method="post" action="/channels/{{ channel.id }}/toggle">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <button class="btn" type="submit">{{ '停用账号' if channel.is_enabled else '启用账号' }}</button>
       </form>
+      {% endif %}
     </div>
   </div>
 
@@ -113,6 +118,7 @@
       <details class="action-disclosure">
         <summary><div class="action-disclosure-copy"><h3>高级连接信息</h3></div><span class="action-disclosure-hint"></span></summary>
         <div class="action-disclosure-body">
+        <div class="table-scroll">
         <table class="table table-tight">
           <tbody>
             <tr><th>最近成功</th><td>{{ channel_health_timeline.latest_success_at|bj_time if channel_health_timeline.latest_success_at else '-' }}</td></tr>
@@ -121,7 +127,7 @@
             <tr><th>私聊策略</th><td>{{ channel.dm_policy or '-' }}</td></tr>
             {% if channel.channel_type == 'workwechat' %}
             <tr><th>连接方式</th><td>企业微信客户端主动连接</td></tr>
-            <tr><th>企业微信客户端</th><td>{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
+            <tr><th>企业微信客户端</th><td class="cell-break">{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
             <tr><th>企微账号</th><td>{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未绑定{% endif %}</td></tr>
             {% endif %}
             {% if channel.channel_type == 'wechat_ipad' %}
@@ -129,6 +135,7 @@
             {% endif %}
           </tbody>
         </table>
+        </div>
         </div>
       </details>
   </div>
@@ -196,10 +203,10 @@
         </tbody>
       </table>
       {% if wechat_ipad_overview.qrcode_image_url %}
-      <img id="wechat-ipad-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url }}" alt="Wechat iPad 登录二维码" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:{{ 'block' if wechat_ipad_overview.qrcode_visible else 'none' }};" />
+      <img id="wechat-ipad-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url }}" alt="Wechat iPad 登录二维码" width="240" height="240" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:{{ 'block' if wechat_ipad_overview.qrcode_visible else 'none' }};" />
       <p id="wechat-ipad-qrcode-empty" class="muted-text" style="display:{{ 'none' if wechat_ipad_overview.qrcode_visible else 'block' }};margin-top:12px;">{% if wechat_ipad_overview.qrcode_visible %}当前还没有二维码图片。{% else %}当前已登录，二维码已暂时隐藏；需要重新扫码时再获取即可。{% endif %}</p>
       {% else %}
-      <img id="wechat-ipad-qrcode-image" src="" alt="Wechat iPad 登录二维码" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:none;" />
+      <img id="wechat-ipad-qrcode-image" src="" alt="Wechat iPad 登录二维码" width="240" height="240" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:none;" />
       <p id="wechat-ipad-qrcode-empty" class="muted-text" style="margin-top:12px;">当前还没有二维码图片。</p>
       {% endif %}
     </div>
@@ -377,8 +384,7 @@
   <div class="toolbar">
     <div>
       <p class="section-kicker">Recent Chatrooms</p>
-      <h2>最近群样本</h2>
-      <p class="muted-text">可以从这些群进入详情页，继续查看成员快照、消息流水和插件配置。</p>
+      <h2>最近群聊</h2>
     </div>
     <span class="chip chip-outline">{{ channel_chatroom_summary.recent_chatrooms|length }} 个群</span>
   </div>
@@ -451,7 +457,7 @@
     </tbody>
   </table>
   {% else %}
-  <p class="muted-text" style="margin-top:16px;">当前渠道还没有联系人。联系人是渠道级资料，不会从群成员自动生成。</p>
+  <p class="muted-text" style="margin-top:16px;">暂无联系人。</p>
   {% endif %}
 </section>
 {% endif %}
@@ -627,7 +633,7 @@
         <td class="col-status">{{ item.status or '-' }}</td>
         <td>
           {% set message_content = item.content or '' %}
-          {% set message_short = message_content[:100] ~ ('...' if message_content|length > 100 else '') %}
+          {% set message_short = message_content[:100] ~ ('…' if message_content|length > 100 else '') %}
           {% if message_content|length > 100 %}
           <details class="message-preview-card">
             <summary class="message-preview-toggle">
@@ -1168,7 +1174,7 @@
         setText(els.actionFeedback, `JSON 参数解析失败：${error}`);
         return;
       }
-      setText(els.actionFeedback, `正在执行 ${selected.key}...`);
+      setText(els.actionFeedback, `正在执行 ${selected.key}…`);
       try {
         const result = await postAction(endpoints.actionTemplate.replace("__ACTION__", selected.key), payload);
         actionConsole.last_action_name = result.runtime_info ? result.runtime_info.last_action_name : selected.key;
@@ -1199,6 +1205,7 @@
 </script>
 {% endif %}
 
+{% if can_manage_channel %}
 <dialog class="app-modal" id="edit-channel-modal">
   <div class="app-modal-card">
     <div class="app-modal-head">
@@ -1210,40 +1217,29 @@
     </div>
     <form method="post" action="/channels/{{ channel.id }}/edit" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <input type="hidden" name="bot_id" value="{{ channel.bot_id }}" />
-      <label class="full-row"><span>账号名称</span><input name="name" value="{{ channel.name }}" required /></label>
+      <label class="full-row"><span>账号名称</span><input name="name" value="{{ channel.name }}" autocomplete="off" required /></label>
       <input type="hidden" name="channel_type" value="{{ channel.channel_type }}" />
-      <label><span>平台</span><input value="{{ channel_definition.label }}" disabled /></label>
-      {% if channel_config_field_map.get('provider_node_id') %}
-      <label><span>{{ channel_config_field_map.provider_node_id.label }}</span><select name="provider_node_id" data-provider-node-select><option value="0">请选择已激活节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}<option value="{{ node.id }}" {% if node.id == channel.provider_node_id %}selected{% endif %}>{{ node.name }}{% if node.status != 'active' %}（{{ node.status }}）{% endif %}</option>{% endfor %}</select></label>
-      {% endif %}
-      {% if channel_config_field_map.get('provider_account_id') %}
-      <label><span>{{ channel_config_field_map.provider_account_id.label }}</span><select name="provider_account_id" data-provider-account-select><option value="0">请先选择节点</option>{% for node in provider_nodes if node.status == 'active' or node.id == channel.provider_node_id %}{% for account in node.accounts if account.status == 'online' or account.id == channel.provider_account_id %}<option value="{{ account.id }}" data-provider-node-id="{{ node.id }}" {% if account.id == channel.provider_account_id %}selected{% endif %}>{{ account.display_name or account.account_key }}{% if account.status != 'online' %}（{{ account.status }}）{% endif %}</option>{% endfor %}{% endfor %}</select></label>
-      {% endif %}
+      <label><span>平台</span><input value="{{ channel_definition.label }}" autocomplete="off" disabled /></label>
       {% if channel_config_field_map.get('api_base') %}
-      <label><span>{{ channel_config_field_map.api_base.label }}</span><input name="api_base" value="{{ channel.api_base or '' }}" placeholder="{{ channel_config_field_map.api_base.placeholder }}" /></label>
+      <label><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ channel.api_base or '' }}" placeholder="{{ channel_config_field_map.api_base.placeholder }}…" /></label>
       {% endif %}
       {% if channel_config_field_map.get('bot_token') %}
-      <label><span>{{ channel_config_field_map.bot_token.label }}</span><input name="bot_token" type="password" autocomplete="new-password" placeholder="留空保持当前凭证" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('webhook_path') %}
-      <label><span>{{ channel_config_field_map.webhook_path.label }}</span><input name="webhook_path" value="{{ channel.webhook_path or '' }}" placeholder="{{ channel_config_field_map.webhook_path.placeholder }}" /></label>
+      <label><span>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" placeholder="留空保持当前凭证…" /></label>
       {% endif %}
       {% if channel_config_field_map.get('dm_policy') %}
-      <label><span>{{ channel_config_field_map.dm_policy.label }}</span><select name="dm_policy"><option value="allowlist" {% if channel.dm_policy == 'allowlist' %}selected{% endif %}>allowlist</option><option value="allow" {% if channel.dm_policy == 'allow' %}selected{% endif %}>allow</option><option value="deny" {% if channel.dm_policy == 'deny' %}selected{% endif %}>deny</option></select></label>
+      <label><span>私聊策略</span><select name="dm_policy" autocomplete="off"><option value="allowlist" {% if channel.dm_policy == 'allowlist' %}selected{% endif %}>仅允许名单</option><option value="allow" {% if channel.dm_policy == 'allow' %}selected{% endif %}>允许全部</option><option value="deny" {% if channel.dm_policy == 'deny' %}selected{% endif %}>拒绝私聊</option></select></label>
       {% endif %}
-      <label><span>是否启用</span><select name="is_enabled"><option value="true" {% if channel.is_enabled %}selected{% endif %}>启用</option><option value="false" {% if not channel.is_enabled %}selected{% endif %}>停用</option></select></label>
       {% if channel_config_field_map.get('proxy_host') %}
-      <label><span>{{ channel_config_field_map.proxy_host.label }}</span><input name="proxy_host" value="{{ wechat_ipad_proxy_form.host }}" /></label>
+      <label><span>{{ channel_config_field_map.proxy_host.label }}</span><input name="proxy_host" autocomplete="off" value="{{ wechat_ipad_proxy_form.host }}" /></label>
       {% endif %}
       {% if channel_config_field_map.get('proxy_port') %}
-      <label><span>{{ channel_config_field_map.proxy_port.label }}</span><input name="proxy_port" value="{{ wechat_ipad_proxy_form.port }}" inputmode="numeric" /></label>
+      <label><span>{{ channel_config_field_map.proxy_port.label }}</span><input name="proxy_port" type="number" min="1" max="65535" value="{{ wechat_ipad_proxy_form.port }}" inputmode="numeric" autocomplete="off" /></label>
       {% endif %}
       {% if channel_config_field_map.get('proxy_username') %}
       <label><span>{{ channel_config_field_map.proxy_username.label }}</span><input name="proxy_username" value="{{ wechat_ipad_proxy_form.username }}" autocomplete="off" /></label>
       {% endif %}
       {% if channel_config_field_map.get('proxy_password') %}
-      <label><span>{{ channel_config_field_map.proxy_password.label }}</span><input name="proxy_password" type="password" value="{{ wechat_ipad_proxy_form.password }}" autocomplete="new-password" /></label>
+      <label><span>{{ channel_config_field_map.proxy_password.label }}</span><input name="proxy_password" type="password" autocomplete="new-password" placeholder="留空保持当前密码…" /></label>
       {% endif %}
       {% if channel_config_field_map.get('allow_from') %}
       <label class="full-row"><span>{{ channel_config_field_map.allow_from.label }}</span><textarea name="allow_from" rows="{{ channel_config_field_map.allow_from.rows or 3 }}">{{ channel.allow_from or '' }}</textarea></label>
@@ -1255,29 +1251,5 @@
     </form>
   </div>
 </dialog>
-{% endblock %}
-{% block scripts %}
-<script>
-(() => {
-  const nodeSelect = document.querySelector("[data-provider-node-select]");
-  const accountSelect = document.querySelector("[data-provider-account-select]");
-  if (!nodeSelect || !accountSelect) return;
-  const options = Array.from(accountSelect.querySelectorAll("option[data-provider-node-id]"));
-  const refreshAccounts = () => {
-    const nodeId = nodeSelect.value;
-    let firstVisible = null;
-    options.forEach((option) => {
-      const visible = option.dataset.providerNodeId === nodeId;
-      option.hidden = !visible;
-      option.disabled = !visible;
-      if (visible && !firstVisible) firstVisible = option;
-    });
-    if (!options.some((option) => !option.hidden && option.value === accountSelect.value)) {
-      accountSelect.value = firstVisible ? firstVisible.value : "0";
-    }
-  };
-  nodeSelect.addEventListener("change", refreshAccounts);
-  refreshAccounts();
-})();
-</script>
+{% endif %}
 {% endblock %}

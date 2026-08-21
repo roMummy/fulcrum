@@ -66,6 +66,7 @@ textarea {
 button,
 summary {
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 button:disabled,
@@ -101,6 +102,7 @@ h4 {
   color: var(--text);
   font-weight: 500;
   line-height: 1.25;
+  text-wrap: balance;
 }
 
 p {
@@ -817,6 +819,7 @@ code {
   color: var(--text);
   font-size: 26px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   line-height: 1.15;
 }
 
@@ -903,6 +906,7 @@ code {
   color: var(--text-soft);
   background: transparent;
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .table th,
@@ -1317,14 +1321,14 @@ code {
   border-color: var(--border-strong);
 }
 
-.form-grid input:focus,
-.form-grid select:focus,
-.form-grid textarea:focus,
-.inline-form input:focus,
-.inline-form select:focus,
-.confirm-match-input input:focus,
-.chatroom-scope-select:focus,
-.wechat-action-select:focus {
+.form-grid input:focus-visible,
+.form-grid select:focus-visible,
+.form-grid textarea:focus-visible,
+.inline-form input:focus-visible,
+.inline-form select:focus-visible,
+.confirm-match-input input:focus-visible,
+.chatroom-scope-select:focus-visible,
+.wechat-action-select:focus-visible {
   outline: none;
   background: #fff;
   border-color: var(--primary);
@@ -2488,6 +2492,7 @@ code {
   background: transparent;
   border: 0;
   overflow: visible;
+  overscroll-behavior: contain;
 }
 
 .app-modal::backdrop {
@@ -2498,6 +2503,7 @@ code {
   max-height: calc(100vh - 48px);
   padding: 26px;
   overflow: auto;
+  overscroll-behavior: contain;
   background: #fbfaf8;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-soft);

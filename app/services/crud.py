@@ -93,15 +93,6 @@ def add_channel(
     return channel
 
 
-def create_channel(db: Session, data: ChannelCreate) -> Channel:
-    """创建并独立提交渠道，供传统后台动作使用。"""
-
-    channel = add_channel(db, data)
-    db.commit()
-    db.refresh(channel)
-    return channel
-
-
 def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channel:
     token = (data.bot_token or "").strip()
     if data.channel_type.strip() != channel.channel_type:

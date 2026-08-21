@@ -85,7 +85,7 @@ COMMON_POLICY_FIELDS = (
 CHANNEL_TYPE_DEFINITIONS = (
     ChannelTypeDefinition(
         code="workwechat",
-        label="企业微信 Hook",
+        label="企业微信",
         summary="通过企业本地执行端接入企业微信账号、联系人和群聊。",
         runtime_mode="remote_executor",
         capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "remote_executor"}),

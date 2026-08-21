@@ -17,7 +17,7 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
-from app.models.saas import ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.models.saas import BotBinding, ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.provider_nodes import ProviderNodeError, validate_channel_executor_binding
 from app.services.saas_auth import hash_password
 
@@ -292,32 +292,51 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
             )
 
 
-def test_channel_create_route_persists_verified_node_account_binding(provider_page_context) -> None:
-    """渠道表单提交后保存服务端重新校验过的节点和账号主键。"""
+def test_tenant_cannot_unbind_commercial_account_from_provider_page(provider_page_context) -> None:
+    """租户节点页只能查看已绑定账号，商业绑定释放必须保留给平台管理员。"""
 
     client, ids = provider_page_context
     csrf_token = _login(client, "admin")
-    response = client.post(
-        "/channels",
-        data={
-            "bot_id": ids["bot"],
-            "name": "页面企微渠道",
-            "channel_type": "workwechat",
-            "provider_node_id": ids["active_node"],
-            "provider_account_id": ids["account_a"],
-            "csrf_token": csrf_token,
-            "api_base": "",
-            "bot_token": "",
-            "webhook_path": "",
-            "dm_policy": "allowlist",
-            "allow_from": "",
-            "adapter_config_json": '{"workwechat_delivery_mode":"cloud_poll"}',
-            "is_enabled": "true",
-        },
-    )
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        channel = Channel(
+            bot_id=ids["bot"],
+            name="正式企微账号",
+            channel_type="workwechat",
+            provider_node_id=ids["active_node"],
+            provider_account_id=ids["account_a"],
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        db.add(
+            BotBinding(
+                tenant_id=ids["alpha"],
+                bot_id=ids["bot"],
+                channel_id=channel.id,
+                adapter_type="workwechat",
+                bot_account_id="workwechat-account-a",
+                device_fingerprint_hash="a" * 64,
+                status="active",
+            )
+        )
+        db.commit()
+        channel_id = int(channel.id)
 
-    assert response.status_code == 303
+    page = client.get(f"/provider-nodes/{ids['active_node']}")
+    assert page.status_code == 200
+    assert f"/provider-nodes/{ids['active_node']}/channels/{channel_id}/unbind" not in page.text
+    assert "解绑" not in page.text
+
+    response = client.post(
+        f"/provider-nodes/{ids['active_node']}/channels/{channel_id}/unbind",
+        data={"csrf_token": csrf_token},
+    )
+    assert response.status_code in (404, 405)
+
     with ids["factory"]() as db:
-        channel = db.scalar(select(Channel).where(Channel.tenant_id == ids["alpha"], Channel.name == "页面企微渠道"))
+        channel = db.get(Channel, channel_id)
+        binding = db.scalar(select(BotBinding).where(BotBinding.channel_id == channel_id))
         assert channel.provider_node_id == ids["active_node"]
         assert channel.provider_account_id == ids["account_a"]
+        assert binding.status == "active"

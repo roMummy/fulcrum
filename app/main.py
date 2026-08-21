@@ -24,7 +24,7 @@ from app.core.tenant_db import open_tenant_session, platform_session, tenant_ses
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
 from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.models.saas import BotBinding
-from app.schemas.forms import BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
+from app.schemas.forms import BotPluginBindCreate, BotUpdate, ChannelUpdate
 from app.services.auth import validate_password_change
 from app.services.account_connections import (
     AccountConnectionError,
@@ -47,7 +47,6 @@ from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.crud import (
     bind_plugin,
-    create_channel,
     delete_bot,
     get_binding,
     get_bot,
@@ -2079,6 +2078,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             workwechat_cloud_poll_config=workwechat_cloud_poll_config,
             wechat_ipad_contact_list=wechat_ipad_contact_list,
             wechat_ipad_proxy_form=wechat_ipad_proxy_form,
+            can_manage_channel=has_tenant_role(require_user(request), "tenant_admin"),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -2310,126 +2310,23 @@ async def poll_wechat_ipad_login_flow(request: Request, channel_id: int):
         db.close()
 
 
-@app.post("/channels")
-async def create_channel_action(
-    request: Request,
-    bot_id: int = Form(...),
-    name: str = Form(...),
-    channel_type: str = Form(...),
-    api_base: str = Form(""),
-    bot_token: str = Form(""),
-    webhook_path: str = Form(""),
-    dm_policy: str = Form("allowlist"),
-    allow_from: str = Form(""),
-    adapter_config_json: str = Form(""),
-    proxy_host: str = Form(""),
-    proxy_port: str = Form(""),
-    proxy_username: str = Form(""),
-    proxy_password: str = Form(""),
-    provider_node_id: int = Form(0),
-    provider_account_id: int = Form(0),
-    csrf_token: str = Form(""),
-    is_enabled: str = Form("true"),
-):
-    principal = enforce_role(request, "ops")
-    db = get_session()
-    try:
-        try:
-            normalized_channel_type = require_supported_channel_type(channel_type)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not has_tenant_role(principal, "tenant_admin"):
-            raise HTTPException(status_code=403, detail="Permission denied")
-        require_tenant_csrf(db, request, csrf_token)
-        merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=normalized_channel_type,
-            adapter_config_json=adapter_config_json,
-            proxy_host=proxy_host,
-            proxy_port=proxy_port,
-            proxy_username=proxy_username,
-            proxy_password=proxy_password,
-        )
-        if adapter_error:
-            return RedirectResponse(url="/channels?notice=" + quote(adapter_error), status_code=303)
-        try:
-            provider_node, provider_account = validate_channel_executor_binding(
-                db,
-                channel_type=normalized_channel_type,
-                provider_node_id=provider_node_id,
-                provider_account_id=provider_account_id,
-            )
-        except ProviderNodeError as exc:
-            return RedirectResponse(
-                url="/channels?notice=" + quote(f"执行端绑定失败：{exc}") + "&tone=danger",
-                status_code=303,
-            )
-        enabled = is_enabled == "true"
-        try:
-            validate_enabled_channel_configuration(
-                normalized_channel_type,
-                is_enabled=enabled,
-                field_values={
-                    "api_base": api_base,
-                    "bot_token": bot_token,
-                    "webhook_path": webhook_path,
-                    "dm_policy": dm_policy,
-                    "allow_from": allow_from,
-                    "adapter_config_json": merged_adapter_config_json,
-                    "proxy_host": proxy_host,
-                    "proxy_port": proxy_port,
-                    "proxy_username": proxy_username,
-                    "proxy_password": proxy_password,
-                    "provider_node_id": provider_node.id if provider_node else None,
-                    "provider_account_id": provider_account.id if provider_account else None,
-                },
-            )
-        except ChannelConfigurationError as exc:
-            return RedirectResponse(
-                url="/channels?notice=" + quote(str(exc)) + "&tone=danger",
-                status_code=303,
-            )
-        payload = ChannelCreate(
-            bot_id=bot_id,
-            name=name,
-            channel_type=normalized_channel_type,
-            api_base=api_base,
-            bot_token=bot_token,
-            webhook_path=webhook_path,
-            dm_policy=dm_policy,
-            allow_from=allow_from,
-            adapter_config_json=merged_adapter_config_json,
-            provider_node_id=provider_node.id if provider_node else None,
-            provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=enabled,
-        )
-        channel = create_channel(db, payload)
-        record_audit(db, "channel.create", "channel", channel.id, f"创建渠道 {channel.name}")
-        return RedirectResponse(url="/channels", status_code=303)
-    finally:
-        db.close()
-
-
 @app.post("/channels/{channel_id}/edit")
 async def edit_channel_action(
     request: Request,
     channel_id: int,
-    bot_id: int = Form(...),
     name: str = Form(...),
     channel_type: str = Form(...),
     api_base: str = Form(""),
     bot_token: str = Form(""),
-    webhook_path: str = Form(""),
+    webhook_path: str | None = Form(None),
     dm_policy: str = Form("allowlist"),
     allow_from: str = Form(""),
     adapter_config_json: str | None = Form(None),
     proxy_host: str = Form(""),
     proxy_port: str = Form(""),
     proxy_username: str = Form(""),
-    proxy_password: str = Form(""),
-    provider_node_id: int = Form(0),
-    provider_account_id: int = Form(0),
+    proxy_password: str | None = Form(None),
     csrf_token: str = Form(""),
-    is_enabled: str = Form("true"),
 ):
     principal = enforce_role(request, "ops")
     db = get_session()
@@ -2449,25 +2346,30 @@ async def edit_channel_action(
                 url=f"/channels/{channel_id}?notice={quote('渠道类型不可修改，请新建渠道后停用旧渠道')}&tone=danger",
                 status_code=303,
             )
-        # 普通租户页面不再回显原始适配 JSON；表单未提交该字段时保留服务端现有配置，
-        # 只允许通过明确的服务地址、代理和策略字段修改对应设置。
+        # 普通租户页面不再回显原始适配 JSON 和代理密码；没有提交的高级字段必须
+        # 保留服务端现值，避免页面收口后一次普通保存意外清空运行配置。
         adapter_config_source = channel.adapter_config_json if adapter_config_json is None else adapter_config_json
+        existing_proxy = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
+        resolved_proxy_password = str(proxy_password or "").strip() or existing_proxy["password"]
+        resolved_webhook_path = channel.webhook_path if webhook_path is None else webhook_path
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
             channel_type=channel.channel_type,
             adapter_config_json=adapter_config_source or "",
             proxy_host=proxy_host,
             proxy_port=proxy_port,
             proxy_username=proxy_username,
-            proxy_password=proxy_password,
+            proxy_password=resolved_proxy_password,
         )
         if adapter_error:
             return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(adapter_error)}", status_code=303)
         try:
+            # 机器人、外部账号和执行器共同构成商业绑定身份。高级设置只允许
+            # 调整运行配置，任何额外表单字段都不能把渠道改挂到另一账号或机器人。
             provider_node, provider_account = validate_channel_executor_binding(
                 db,
                 channel_type=channel.channel_type,
-                provider_node_id=provider_node_id,
-                provider_account_id=provider_account_id,
+                provider_node_id=channel.provider_node_id,
+                provider_account_id=channel.provider_account_id,
                 channel_id=channel.id,
             )
         except ProviderNodeError as exc:
@@ -2475,22 +2377,21 @@ async def edit_channel_action(
                 url=f"/channels/{channel_id}?notice={quote(f'执行端绑定失败：{exc}')}&tone=danger",
                 status_code=303,
             )
-        enabled = is_enabled == "true"
         try:
             validate_enabled_channel_configuration(
                 channel.channel_type,
-                is_enabled=enabled,
+                is_enabled=channel.is_enabled,
                 field_values={
                     "api_base": api_base,
                     "bot_token": bot_token,
-                    "webhook_path": webhook_path,
+                    "webhook_path": resolved_webhook_path,
                     "dm_policy": dm_policy,
                     "allow_from": allow_from,
                     "adapter_config_json": merged_adapter_config_json,
                     "proxy_host": proxy_host,
                     "proxy_port": proxy_port,
                     "proxy_username": proxy_username,
-                    "proxy_password": proxy_password,
+                    "proxy_password": resolved_proxy_password,
                     "provider_node_id": provider_node.id if provider_node else None,
                     "provider_account_id": provider_account.id if provider_account else None,
                 },
@@ -2502,18 +2403,18 @@ async def edit_channel_action(
                 status_code=303,
             )
         payload = ChannelUpdate(
-            bot_id=bot_id,
+            bot_id=channel.bot_id,
             name=name,
             channel_type=channel.channel_type,
             api_base=api_base,
             bot_token=bot_token,
-            webhook_path=webhook_path,
+            webhook_path=resolved_webhook_path,
             dm_policy=dm_policy,
             allow_from=allow_from,
             adapter_config_json=merged_adapter_config_json,
             provider_node_id=provider_node.id if provider_node else None,
             provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=enabled,
+            is_enabled=channel.is_enabled,
         )
         update_channel(db, channel, payload)
         record_audit(db, "channel.update", "channel", channel.id, f"更新渠道 {channel.name}")
@@ -2523,15 +2424,33 @@ async def edit_channel_action(
 
 
 @app.post("/channels/{channel_id}/toggle")
-async def toggle_channel_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
+async def toggle_channel_action(request: Request, channel_id: int, csrf_token: str = Form("")):
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if not channel.is_enabled:
-            # 草稿启用必须重新执行服务端规则，不能通过独立开关绕过配置和执行器校验。
+            # 启用动作必须关联当前租户的有效商业绑定；仅有完整协议配置的草稿
+            # 仍不能进入调度，避免绕过可信身份验证、设备限制和机器人额度占用。
+            binding = db.scalar(
+                select(BotBinding).where(
+                    BotBinding.tenant_id == require_tenant_id(),
+                    BotBinding.bot_id == channel.bot_id,
+                    BotBinding.channel_id == channel.id,
+                    BotBinding.adapter_type == channel.channel_type,
+                    BotBinding.status.in_(("active", "disabled")),
+                )
+            )
+            if binding is None:
+                return RedirectResponse(
+                    url=f"/channels/{channel_id}?notice={quote('请通过账号接入完成身份验证和额度绑定')}&tone=danger",
+                    status_code=303,
+                )
             try:
                 validate_channel_executor_binding(
                     db,

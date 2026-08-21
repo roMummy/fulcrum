@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, TaskJob
+from app.models.entities import Channel
 from app.models.saas import (
     ProviderActivationCode,
     ProviderCredential,
@@ -476,36 +476,6 @@ def validate_channel_executor_binding(
         # 因此即使另一个渠道已停用，也必须先显式解绑再重新分配。
         raise ProviderNodeError("provider_account_already_bound")
     return node, account
-
-
-def unbind_provider_channel(db: Session, node_id: int, channel_id: int) -> Channel:
-    """从节点详情页解绑渠道；存在运行中租约时拒绝，避免任务回报失去绑定依据。"""
-
-    node = get_provider_node(db, node_id)
-    if node is None:
-        raise ProviderNodeError("provider_node_not_found")
-    channel = db.scalar(
-        select(Channel).where(
-            Channel.id == int(channel_id),
-            Channel.provider_node_id == node.id,
-        )
-    )
-    if channel is None:
-        raise ProviderNodeError("provider_channel_not_found")
-    running_job = db.scalar(
-        select(TaskJob.id).where(
-            TaskJob.provider_node_id == node.id,
-            TaskJob.provider_account_id == channel.provider_account_id,
-            TaskJob.status == "running",
-        )
-    )
-    if running_job is not None:
-        raise ProviderNodeError("provider_channel_has_running_job")
-    channel.provider_node_id = None
-    channel.provider_account_id = None
-    db.commit()
-    db.refresh(channel)
-    return channel
 
 
 def provider_poll_allowed(db: Session, tenant_id: int) -> bool:

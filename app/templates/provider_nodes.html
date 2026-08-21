@@ -68,8 +68,8 @@
     </div>
     <form method="post" action="/provider-nodes" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>客户端名称</span><input name="name" maxlength="100" placeholder="例如：客服电脑A" required /></label>
-      <label class="full-row"><span>备注</span><textarea name="notes" rows="3" placeholder="可填写位置、负责人或资产编号"></textarea></label>
+      <label><span>客户端名称</span><input name="name" maxlength="100" autocomplete="off" placeholder="例如：客服电脑 A…" required /></label>
+      <label class="full-row"><span>备注</span><textarea name="notes" rows="3" autocomplete="off" placeholder="例如：二楼客服区…"></textarea></label>
       <p class="muted-text full-row" style="margin:0;">创建后会立即生成一次性激活码，仅在成功页面显示一次。</p>
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">创建并生成激活码</button>

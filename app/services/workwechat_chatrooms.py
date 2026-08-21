@@ -399,8 +399,9 @@ def build_workwechat_chatroom_list(db: Session, channel: Channel) -> dict[str, A
         "supports_sync": True,
         "sync_action": f"/channels/{channel.id}/workwechat/sync-chatrooms",
         "sync_button_label": "同步企微群列表",
-        "intro_summary": "基于企微 Hook 群列表接口和已入站消息样本生成群管理视图。",
-        "empty_state_message": "当前还没有企微群样本；可以先同步群列表，或让目标群产生一条消息。",
+        # 租户页面只说明可执行的业务动作，不暴露 Hook 接口和消息观测等内部实现。
+        "intro_summary": "集中查看已同步的企业微信群聊和运营状态。",
+        "empty_state_message": "暂无企业微信群聊，可以先同步群列表。",
     }
 
 

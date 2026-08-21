@@ -25,6 +25,12 @@ def test_public_channel_catalog_contains_real_supported_channels() -> None:
     )
 
 
+def test_public_channel_catalog_uses_business_platform_names() -> None:
+    """租户页面展示业务平台名称，不能暴露 Hook 等内部实现术语。"""
+
+    assert get_channel_type_definition("workwechat").label == "企业微信"
+
+
 @pytest.mark.parametrize("channel_type", list_supported_channel_types())
 def test_channel_schema_accepts_supported_channel_types(channel_type: str) -> None:
     """创建和编辑输入模型必须共享同一份渠道目录，不能再写死企微允许列表。"""
