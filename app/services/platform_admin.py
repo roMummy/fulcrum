@@ -78,11 +78,18 @@ def save_plan(
     code: str,
     name: str,
     provider_node_limit: int,
+    bot_limit: int | None = None,
+    monthly_price_cents: int = 0,
+    yearly_price_cents: int = 0,
+    trial_days: int = 0,
+    is_public: bool = False,
+    is_featured: bool = False,
+    display_order: int = 0,
     status: str = "active",
     description: str = "",
     actor_user_id: int | None = None,
 ) -> SaasPlan:
-    """创建或更新套餐，首期只管理 Provider 节点额度。"""
+    """创建或更新套餐，并把金额严格保存为整数分。"""
 
     normalized_code = _normalize_code(code, kind="plan")
     normalized_name = (name or "").strip()
@@ -91,20 +98,58 @@ def save_plan(
         raise PlatformAdminError("plan_name_required")
     if normalized_status not in {"active", "disabled"}:
         raise PlatformAdminError("plan_status_invalid")
-    if int(provider_node_limit) < 0:
+    normalized_provider_node_limit = int(provider_node_limit)
+    # 旧调用方尚未传 bot_limit 时沿用节点额度，保证平台既有维护动作不会把通用额度清零。
+    normalized_bot_limit = normalized_provider_node_limit if bot_limit is None else int(bot_limit)
+    normalized_monthly_price = int(monthly_price_cents)
+    normalized_yearly_price = int(yearly_price_cents)
+    normalized_trial_days = int(trial_days)
+    normalized_display_order = int(display_order)
+    normalized_is_public = bool(is_public)
+    normalized_is_featured = bool(is_featured)
+    if normalized_provider_node_limit < 0:
         raise PlatformAdminError("provider_node_limit_invalid")
+    if normalized_bot_limit < 0:
+        raise PlatformAdminError("bot_limit_invalid")
+    if normalized_monthly_price < 0:
+        raise PlatformAdminError("monthly_price_invalid")
+    if normalized_yearly_price < 0:
+        raise PlatformAdminError("yearly_price_invalid")
+    # 首版试用只允许 0 到 365 天，防止表单错误产生近乎永久的免费订阅。
+    if normalized_trial_days < 0 or normalized_trial_days > 365:
+        raise PlatformAdminError("trial_days_invalid")
+    if normalized_display_order < 0:
+        raise PlatformAdminError("display_order_invalid")
+    if normalized_is_public and normalized_bot_limit <= 0:
+        raise PlatformAdminError("public_plan_bot_limit_invalid")
+    if normalized_is_featured and not normalized_is_public:
+        raise PlatformAdminError("featured_plan_must_be_public")
 
-    plan = db.get(SaasPlan, int(plan_id or 0)) if int(plan_id or 0) > 0 else None
-    if plan is None:
-        plan = SaasPlan(code=normalized_code, name=normalized_name)
-        db.add(plan)
-    duplicate = db.scalar(select(SaasPlan).where(SaasPlan.code == normalized_code, SaasPlan.id != (plan.id or 0)))
+    normalized_plan_id = int(plan_id or 0)
+    plan = db.get(SaasPlan, normalized_plan_id) if normalized_plan_id > 0 else None
+    if normalized_plan_id > 0 and plan is None:
+        raise PlatformAdminError("plan_not_found")
+    duplicate_query = select(SaasPlan).where(SaasPlan.code == normalized_code)
+    if plan is not None:
+        duplicate_query = duplicate_query.where(SaasPlan.id != plan.id)
+    duplicate = db.scalar(duplicate_query)
     if duplicate is not None:
         raise PlatformAdminError("plan_code_exists")
+    if plan is None:
+        # 唯一性检查必须发生在把新对象加入 Session 之前，避免 autoflush 后把对象自身误判为重复编码。
+        plan = SaasPlan(code=normalized_code, name=normalized_name)
+        db.add(plan)
 
     plan.code = normalized_code
     plan.name = normalized_name
-    plan.provider_node_limit = int(provider_node_limit)
+    plan.provider_node_limit = normalized_provider_node_limit
+    plan.bot_limit = normalized_bot_limit
+    plan.monthly_price_cents = normalized_monthly_price
+    plan.yearly_price_cents = normalized_yearly_price
+    plan.trial_days = normalized_trial_days
+    plan.is_public = normalized_is_public
+    plan.is_featured = normalized_is_featured
+    plan.display_order = normalized_display_order
     plan.status = normalized_status
     plan.description = (description or "").strip() or None
     db.flush()
@@ -114,7 +159,11 @@ def save_plan(
         action="plan.save",
         target_type="saas_plan",
         target_id=plan.id,
-        detail=f"code={plan.code};status={plan.status};provider_node_limit={plan.provider_node_limit}",
+        detail=(
+            f"code={plan.code};status={plan.status};bot_limit={plan.bot_limit};"
+            f"monthly_price_cents={plan.monthly_price_cents};yearly_price_cents={plan.yearly_price_cents};"
+            f"provider_node_limit={plan.provider_node_limit};is_public={str(plan.is_public).lower()}"
+        ),
     )
     db.commit()
     db.refresh(plan)

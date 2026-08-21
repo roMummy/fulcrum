@@ -139,6 +139,71 @@ def test_tenant_creation_rolls_back_all_rows_when_admin_password_hash_fails(db: 
     assert db.scalar(select(func.count(TenantUser.id))) == 0
 
 
+def test_save_plan_persists_public_prices_and_generic_bot_quota(db: Session) -> None:
+    """平台保存套餐时必须同时维护通用机器人额度和公开价格字段。"""
+
+    plan = platform_admin.save_plan(
+        db,
+        code="commercial-standard",
+        name="商业标准版",
+        provider_node_limit=2,
+        bot_limit=3,
+        monthly_price_cents=25_900,
+        yearly_price_cents=259_000,
+        trial_days=0,
+        is_public=True,
+        is_featured=True,
+        display_order=20,
+        status="active",
+    )
+
+    assert plan.provider_node_limit == 2
+    assert plan.bot_limit == 3
+    assert plan.monthly_price_cents == 25_900
+    assert plan.yearly_price_cents == 259_000
+    assert plan.is_public is True
+    assert plan.is_featured is True
+    assert plan.display_order == 20
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error_code"),
+    [
+        ({"bot_limit": -1}, "bot_limit_invalid"),
+        ({"monthly_price_cents": -1}, "monthly_price_invalid"),
+        ({"yearly_price_cents": -1}, "yearly_price_invalid"),
+        ({"trial_days": -1}, "trial_days_invalid"),
+        ({"trial_days": 366}, "trial_days_invalid"),
+        ({"display_order": -1}, "display_order_invalid"),
+        ({"bot_limit": 0, "is_public": True}, "public_plan_bot_limit_invalid"),
+    ],
+)
+def test_save_plan_rejects_invalid_commercial_values(
+    db: Session,
+    overrides: dict[str, object],
+    error_code: str,
+) -> None:
+    """负数金额、负额度、异常试用天数和零额度公开套餐不得写入数据库。"""
+
+    values: dict[str, object] = {
+        "code": f"invalid-{error_code.replace('_', '-')}",
+        "name": "非法套餐",
+        "provider_node_limit": 1,
+        "bot_limit": 1,
+        "monthly_price_cents": 9_900,
+        "yearly_price_cents": 99_000,
+        "trial_days": 0,
+        "is_public": False,
+        "is_featured": False,
+        "display_order": 10,
+        "status": "active",
+    }
+    values.update(overrides)
+
+    with pytest.raises(PlatformAdminError, match=error_code):
+        platform_admin.save_plan(db, **values)
+
+
 def test_platform_admin_can_renew_disable_and_reset_admin_password(db: Session) -> None:
     """平台能够完成租户生命周期的三个高频维护动作。"""
 
@@ -259,6 +324,37 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
             },
         )
         assert rejected.status_code == 403
+
+        saved_plan = client.post(
+            "/platform/plans",
+            data={
+                "csrf_token": created_session.raw_csrf_token,
+                "code": "priced-plan",
+                "name": "精确价格套餐",
+                "bot_limit": "3",
+                "monthly_price": "259.90",
+                "yearly_price": "2599.00",
+                "trial_days": "0",
+                "is_public": "true",
+                "is_featured": "true",
+                "display_order": "20",
+                "provider_node_limit": "2",
+                "status": "active",
+            },
+            follow_redirects=False,
+        )
+        assert saved_plan.status_code == 303
+
+        with factory() as db:
+            priced_plan = db.scalar(select(SaasPlan).where(SaasPlan.code == "priced-plan"))
+            assert priced_plan.monthly_price_cents == 25_990
+            assert priced_plan.yearly_price_cents == 259_900
+            assert priced_plan.bot_limit == 3
+
+        plans_page = client.get("/platform/plans")
+        assert plans_page.status_code == 200
+        assert "¥259.90" in plans_page.text
+        assert "机器人额度" in plans_page.text
 
     Base.metadata.drop_all(bind=engine)
     engine.dispose()

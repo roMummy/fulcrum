@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -95,6 +96,28 @@ def _parse_expiry(value: str) -> datetime | None:
     except ValueError as exc:
         raise PlatformAdminError("subscription_expiry_invalid") from exc
     return datetime.combine(parsed, time.max, tzinfo=SHANGHAI_TZ)
+
+
+def _yuan_to_cents(value: str, *, field: str) -> int:
+    """用十进制定点数把页面元金额转换成分，拒绝隐藏舍入和浮点误差。"""
+
+    normalized = (value or "0").strip()
+    try:
+        amount = Decimal(normalized)
+    except (InvalidOperation, ValueError) as exc:
+        raise PlatformAdminError(f"{field}_invalid") from exc
+    if not amount.is_finite() or amount.as_tuple().exponent < -2:
+        raise PlatformAdminError(f"{field}_invalid")
+    cents = amount * 100
+    if cents != cents.to_integral_value():
+        raise PlatformAdminError(f"{field}_invalid")
+    return int(cents)
+
+
+def _format_yuan(cents: int) -> str:
+    """把数据库整数分格式化为两位小数，避免模板执行浮点运算。"""
+
+    return f"{Decimal(int(cents)) / Decimal(100):.2f}"
 
 
 def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectResponse:
@@ -306,6 +329,7 @@ async def platform_plans_page(request: Request):
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             plans=list_plans(db),
+            format_yuan=_format_yuan,
         )
         return templates.TemplateResponse(request, "platform_plans.html", context)
 
@@ -317,6 +341,13 @@ async def platform_plan_save_action(
     code: str = Form(""),
     name: str = Form(""),
     provider_node_limit: int = Form(1),
+    bot_limit: int = Form(1),
+    monthly_price: str = Form("0"),
+    yearly_price: str = Form("0"),
+    trial_days: int = Form(0),
+    is_public: bool = Form(False),
+    is_featured: bool = Form(False),
+    display_order: int = Form(0),
     status: str = Form("active"),
     description: str = Form(""),
     csrf_token: str = Form(""),
@@ -333,6 +364,13 @@ async def platform_plan_save_action(
                 code=code,
                 name=name,
                 provider_node_limit=provider_node_limit,
+                bot_limit=bot_limit,
+                monthly_price_cents=_yuan_to_cents(monthly_price, field="monthly_price"),
+                yearly_price_cents=_yuan_to_cents(yearly_price, field="yearly_price"),
+                trial_days=trial_days,
+                is_public=is_public,
+                is_featured=is_featured,
+                display_order=display_order,
                 status=status,
                 description=description,
                 actor_user_id=principal.user_id,
