@@ -25,20 +25,20 @@
 
 - 为非所有者 `TenantUser` 填入全局唯一手机号。
 - 断言企业所有者和企业员工都能通过 `POST /login` 登录。
-- 断言 `GET /employee/login` 返回 `303 /login`，旧 POST 不再验证租户编码。
+- 断言 `GET/POST /employee/login` 均返回 `404`。
 
 **Step 2: 运行失败测试**
 
 Run: `.venv/bin/python -m pytest tests/test_public_site_auth.py -q`
 
-Expected: 员工手机号登录和兼容跳转断言失败。
+Expected: 员工手机号登录和旧路由删除断言失败。
 
 **Step 3: 实现最小登录改动**
 
 - 在 `saas_auth.py` 增加按手机号验证任意启用企业用户的函数，不再限制 `is_owner=True`。
 - `/login` 统一调用新函数，页面文案改为“企业账号登录”。
-- `/employee/login` GET/POST 只做 `303` 兼容跳转，删除产品页面中的独立员工入口。
-- 保留旧认证函数供历史测试或脚本兼容，但不再由 Web 入口调用。
+- 删除 `/employee/login` GET/POST、独立员工登录模板和产品页面入口。
+- 删除按租户编码与用户名认证的旧函数及对应测试，保持单一手机号登录链。
 
 **Step 4: 运行定向测试**
 
