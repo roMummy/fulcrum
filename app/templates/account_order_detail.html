@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block page_intro %}<p>{{ status_labels.get(order.status, order.status) }}</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">返回订单</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <dl class="detail-grid">
+    <div><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
+    <div><dt>套餐</dt><dd>{{ order.plan.name }}</dd></div>
+    <div><dt>计费周期</dt><dd>{{ '月付' if order.billing_cycle == 'monthly' else '年付' }}</dd></div>
+    <div><dt>机器人额度</dt><dd>{{ order.bot_limit_snapshot }}</dd></div>
+    <div><dt>订单金额</dt><dd>¥{{ format_yuan(order.amount_cents) }}</dd></div>
+    <div><dt>订单状态</dt><dd>{{ status_labels.get(order.status, order.status) }}</dd></div>
+  </dl>
+  {% if order.rejection_reason %}<section class="notice-card notice-card-danger">驳回原因：{{ order.rejection_reason }}</section>{% endif %}
+</section>
+
+{% if order.status in ['pending_payment', 'rejected'] and can_manage_billing %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Payment</p><h2>{{ payment_instructions.title }}</h2></div></div>
+  {% if payment_instructions.instructions %}<p>{{ payment_instructions.instructions }}</p>{% endif %}
+  {% if payment_instructions.qr_image %}<img class="payment-qr-image" src="{{ payment_instructions.qr_image }}" alt="收款二维码" />{% endif %}
+  {% if payment_instructions.bank_details %}<pre class="payment-bank-details">{{ payment_instructions.bank_details }}</pre>{% endif %}
+  <form method="post" action="/account/orders/{{ order.id }}/pay" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>交易流水号</span><input name="payment_reference" maxlength="255" required /></label>
+    <label class="full-row"><span>付款凭证</span><input name="payment_proof" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" required /></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">提交付款凭证</button></div>
+  </form>
+  <form method="post" action="/account/orders/{{ order.id }}/cancel" data-confirm-mode="confirm" data-confirm-title="取消订单" data-confirm-message="取消后该订单不再进入审核。">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn btn-secondary" type="submit">取消订单</button>
+  </form>
+</section>
+{% elif order.status == 'payment_submitted' %}
+<section class="notice-card">已提交付款凭证，等待审核。{% if has_payment_proof %}<a href="/account/orders/{{ order.id }}/proof">查看已提交凭证</a>{% endif %}</section>
+{% elif order.status == 'approved' %}
+<section class="notice-card">订单已审核开通，新的机器人额度已经生效。</section>
+{% endif %}
+{% endblock %}

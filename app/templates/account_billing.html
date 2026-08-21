@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block page_intro %}<p>查看当前订阅、机器人额度和可购买套餐。</p>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">订单记录</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>当前套餐</h2></div></div>
+  {% if subscription %}
+  <dl class="detail-grid">
+    <div><dt>套餐</dt><dd>{{ subscription.plan.name }}</dd></div>
+    <div><dt>订阅状态</dt><dd>{{ subscription.status }}</dd></div>
+    <div><dt>有效期至</dt><dd>{{ format_time(subscription.expires_at) }}</dd></div>
+    <div><dt>机器人额度</dt><dd>{{ used_bot_count }} / {{ subscription.plan.bot_limit }}</dd></div>
+  </dl>
+  {% else %}<div class="empty-state"><strong>当前没有订阅</strong></div>{% endif %}
+</section>
+
+<section class="card">
+  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>购买套餐</h2></div></div>
+  <div class="marketing-plan-grid">
+    {% for plan in plans %}
+    <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
+      {% if plan.is_featured %}<span class="chip chip-success">推荐</span>{% endif %}
+      <h3>{{ plan.name }}</h3>
+      <p><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
+      <p>月付 ¥{{ format_yuan(plan.monthly_price_cents) }}</p>
+      <p>年付 ¥{{ format_yuan(plan.yearly_price_cents) }}</p>
+      {% if can_manage_billing %}
+      <form method="post" action="/account/orders" class="form-grid">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="plan_id" value="{{ plan.id }}" />
+        <label class="full-row"><span>计费周期</span><select name="billing_cycle"><option value="monthly">月付</option><option value="yearly">年付</option></select></label>
+        <div class="full-row form-actions-inline"><button class="btn" type="submit">创建订单</button></div>
+      </form>
+      {% else %}<p class="muted-text">仅企业管理员可以创建订单。</p>{% endif %}
+    </article>
+    {% else %}<div class="empty-state"><strong>暂无可购买套餐</strong></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

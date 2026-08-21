@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ page_title }} - Multi Bot SaaS</title>
+  <title>{{ page_title }} - 曜枢 AI</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 {# 平台与租户登录页共用认证壳，但登录后的平台改密页仍使用正常应用布局。 #}
-{% set auth_shell_paths = ['/login', '/platform/login', '/setup', '/setup/completed'] %}
+{% set auth_shell_paths = ['/employee/login', '/platform/login', '/setup', '/setup/completed'] %}
 <body class="{% if request.url.path in auth_shell_paths %}auth-shell{% else %}app-shell{% endif %}">
   <a class="skip-link" href="#main-content">跳到主内容</a>
   {% if request.url.path in auth_shell_paths %}
@@ -17,8 +17,8 @@
       <div class="auth-brand">
         <span class="brand-mark">MB</span>
         <div>
-          <strong>Multi Bot SaaS</strong>
-          <p>企业微信多租户运营与 Provider 控制台</p>
+          <strong>曜枢 AI</strong>
+          <p>全渠道智能机器人运营平台</p>
         </div>
       </div>
       {% if notice %}
@@ -29,11 +29,11 @@
     {# 顶部菜单栏是本轮 UI 重构确认保留的主导航结构，后续页面只在模块内补二级入口。 #}
     <header class="topbar">
       <div class="topbar-main">
-        <a href="/" class="brand">
+        <a href="/dashboard" class="brand">
           <span class="brand-mark">MB</span>
           <span class="brand-copy">
-            <strong>Multi Bot SaaS</strong>
-            <small>WorkWechat SaaS Console</small>
+            <strong>曜枢 AI</strong>
+            <small>Intelligent Bot Console</small>
           </span>
         </a>
         {% set visible_nav_items = primary_nav_items|default(nav_items) %}

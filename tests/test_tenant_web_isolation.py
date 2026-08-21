@@ -49,7 +49,12 @@ def tenant_web_context(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "start_background_workers", lambda: None)
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 
-    for module_name in ("app.web.tenant_auth", "app.web.platform_auth", "app.web.tenant_admin"):
+    for module_name in (
+        "app.web.billing",
+        "app.web.tenant_auth",
+        "app.web.platform_auth",
+        "app.web.tenant_admin",
+    ):
         route_module = importlib.import_module(module_name)
         if hasattr(route_module, "SessionLocal"):
             monkeypatch.setattr(route_module, "SessionLocal", factory)
@@ -95,7 +100,7 @@ def tenant_web_context(tmp_path, monkeypatch):
 
     with TestClient(main_module.app, follow_redirects=False) as client:
         login = client.post(
-            "/login",
+            "/employee/login",
             data={"tenant_code": "alpha", "username": "admin", "password": TENANT_PASSWORD},
         )
         assert login.status_code == 303

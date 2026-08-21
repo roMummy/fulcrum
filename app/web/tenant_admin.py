@@ -64,12 +64,13 @@ def _tenant_context(
 
     principal = _require_principal(request)
     primary_nav_items = [
-        {"label": "总览", "href": "/", "active": False},
+        {"label": "总览", "href": "/dashboard", "active": False},
         {"label": "接入", "href": "/channels", "active": False},
         {"label": "机器人", "href": "/bots", "active": False},
         {"label": "插件", "href": "/plugins", "active": False},
         {"label": "消息", "href": "/conversations", "active": False},
         {"label": "开放接口", "href": "/open-api/apps", "active": False},
+        {"label": "套餐与额度", "href": "/account/billing", "active": False},
         {"label": "租户设置", "href": "/tenant/users", "active": True},
     ]
     context: dict[str, object] = {

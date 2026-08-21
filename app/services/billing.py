@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import (
@@ -139,6 +139,18 @@ def list_tenant_orders(db: Session, *, tenant_id: int) -> list[BillingOrder]:
         .where(BillingOrder.tenant_id == int(tenant_id))
         .order_by(BillingOrder.id.desc())
     ).all()
+
+
+def get_current_subscription(db: Session, *, tenant_id: int) -> TenantSubscription | None:
+    """返回租户最新订阅及套餐，用于账户页展示和后续额度判断。"""
+
+    return db.scalar(
+        select(TenantSubscription)
+        .where(TenantSubscription.tenant_id == int(tenant_id))
+        .options(selectinload(TenantSubscription.plan))
+        .order_by(TenantSubscription.starts_at.desc(), TenantSubscription.id.desc())
+        .limit(1)
+    )
 
 
 def _normalize_proof_path(value: str) -> str:

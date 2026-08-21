@@ -146,7 +146,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import platform_admin_router, platform_auth_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
+from app.web import billing_router, platform_admin_router, platform_auth_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -181,6 +181,7 @@ app.include_router(provider_router)
 app.include_router(public_site_router)
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
+app.include_router(billing_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
@@ -445,6 +446,7 @@ def render(request: Request, template: str, **context):
         nav_item("机器人", "/bots", ("/bots",)),
         nav_item("插件", "/plugins", ("/plugins",)),
         nav_item("消息", "/conversations", ("/conversations", "/messages", "/lab")),
+        nav_item("套餐与额度", "/account/billing", ("/account",)),
         nav_item("开放接口", "/open-api/apps", ("/open-api",)),
         nav_item("排障", "/monitoring", ("/monitoring", "/errors")),
     ]
@@ -493,6 +495,12 @@ def render(request: Request, template: str, **context):
         section_nav_items = [
             nav_item("员工管理", "/tenant/users", ("/tenant/users",)),
             nav_item("订阅信息", "/tenant/subscription", ("/tenant/subscription",)),
+        ]
+    elif is_path_active(("/account",)):
+        section_nav_items = [
+            nav_item("新手引导", "/account/onboarding", ("/account/onboarding",)),
+            nav_item("套餐与额度", "/account/billing", ("/account/billing",)),
+            nav_item("订单", "/account/orders", ("/account/orders",)),
         ]
     base_context = {
         "current_user": getattr(request.state, "current_user", None),

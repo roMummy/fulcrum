@@ -45,6 +45,7 @@ def session_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(main_module, "stop_background_workers", lambda: None)
 
     for module_name in (
+        "app.web.billing",
         "app.web.public_site",
         "app.web.tenant_auth",
         "app.web.platform_auth",
@@ -226,6 +227,7 @@ def test_register_route_creates_session_and_redirects_to_onboarding(
     assert response.status_code == 303
     assert response.headers["location"] == "/account/onboarding"
     assert TENANT_SESSION_COOKIE in response.headers.get("set-cookie", "")
+    assert client.get("/account/onboarding").status_code == 200
     with session_factory() as db:
         owner = db.scalar(select(TenantUser).where(TenantUser.mobile == "13900139000"))
         assert owner is not None

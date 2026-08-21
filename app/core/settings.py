@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     billing_payment_instructions: str = "请完成转账后填写交易流水号并上传付款凭证。"
     billing_payment_qr_image: str = ""
     billing_payment_bank_details: str = ""
+    billing_payment_proof_max_bytes: int = 5 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
