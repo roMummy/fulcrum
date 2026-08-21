@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+
+class ChannelTypeNotSupported(ValueError):
+    """表示渠道类型未进入正式产品目录，调用方不得静默降级执行。"""
+
+    def __init__(self, channel_type: str | None = None):
+        self.channel_type = str(channel_type or "").strip()
+        super().__init__("channel_type_not_supported")
+
+
+@dataclass(frozen=True)
+class ChannelConfigField:
+    """描述渠道表单字段及启用校验规则，供页面和服务端共享。"""
+
+    name: str
+    label: str
+    input_type: str = "text"
+    placeholder: str = ""
+    required_when_enabled: bool = False
+    secret: bool = False
+    rows: int = 0
+
+
+@dataclass(frozen=True)
+class ChannelTypeDefinition:
+    """渠道稳定编码、运行能力和适配器工厂的唯一来源。"""
+
+    code: str
+    label: str
+    summary: str
+    runtime_mode: str
+    capabilities: frozenset[str]
+    config_fields: tuple[ChannelConfigField, ...]
+    adapter_factory: Callable[[], Any]
+    requires_executor_binding: bool = False
+
+
+def _build_workwechat_adapter():
+    # 使用延迟导入，避免渠道目录与 channel_adapters 包初始化形成循环依赖。
+    from app.services.channel_adapters.workwechat import WorkWechatAdapter
+
+    return WorkWechatAdapter()
+
+
+def _build_wechat_ipad_adapter():
+    from app.services.channel_adapters.wechat_ipad import WechatIpadAdapter
+
+    return WechatIpadAdapter()
+
+
+def _build_wechat_winauto_adapter():
+    from app.services.channel_adapters.wechat_winauto import WechatWinAutoAdapter
+
+    return WechatWinAutoAdapter()
+
+
+def _build_telegram_adapter():
+    from app.services.channel_adapters.telegram import TelegramAdapter
+
+    return TelegramAdapter()
+
+
+COMMON_POLICY_FIELDS = (
+    ChannelConfigField("webhook_path", "Webhook Path", placeholder="/webhooks/channel"),
+    ChannelConfigField("dm_policy", "私聊策略", input_type="select"),
+    ChannelConfigField("allow_from", "允许名单", input_type="textarea", rows=2),
+    ChannelConfigField("adapter_config_json", "适配配置 JSON", input_type="textarea", rows=5),
+)
+
+
+CHANNEL_TYPE_DEFINITIONS = (
+    ChannelTypeDefinition(
+        code="workwechat",
+        label="企业微信 Hook",
+        summary="通过企业本地执行端接入企业微信账号、联系人和群聊。",
+        runtime_mode="remote_executor",
+        capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "remote_executor"}),
+        config_fields=(
+            ChannelConfigField("provider_node_id", "执行端节点", input_type="executor_node", required_when_enabled=True),
+            ChannelConfigField(
+                "provider_account_id",
+                "执行端账号",
+                input_type="executor_account",
+                required_when_enabled=True,
+            ),
+            ChannelConfigField("api_base", "API Base", placeholder="直连 HTTP 模式使用，可留空"),
+            ChannelConfigField("bot_token", "Bot Token", input_type="password", secret=True),
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_workwechat_adapter,
+        requires_executor_binding=True,
+    ),
+    ChannelTypeDefinition(
+        code="wechat_ipad",
+        label="微信 iPad 协议",
+        summary="通过微信协议服务接入个人微信，支持登录、消息、联系人和群聊。",
+        runtime_mode="platform_polling",
+        capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
+        config_fields=(
+            ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:8848", required_when_enabled=True),
+            ChannelConfigField("bot_token", "访问凭证", input_type="password", secret=True),
+            ChannelConfigField("proxy_host", "代理地址"),
+            ChannelConfigField("proxy_port", "代理端口"),
+            ChannelConfigField("proxy_username", "代理用户名"),
+            ChannelConfigField("proxy_password", "代理密码", input_type="password", secret=True),
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_wechat_ipad_adapter,
+    ),
+    ChannelTypeDefinition(
+        code="wechat_winauto",
+        label="微信 Windows",
+        summary="通过 Windows 微信执行端接入个人微信消息和群聊。",
+        runtime_mode="webhook",
+        capabilities=frozenset({"send", "inbound", "health", "chatrooms"}),
+        config_fields=(
+            ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:8182", required_when_enabled=True),
+            ChannelConfigField("bot_token", "访问凭证", input_type="password", secret=True),
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_wechat_winauto_adapter,
+    ),
+    ChannelTypeDefinition(
+        code="telegram",
+        label="Telegram",
+        summary="通过 Telegram Bot API 接入私聊和群聊消息。",
+        runtime_mode="platform_polling",
+        capabilities=frozenset({"send", "inbound", "health", "polling"}),
+        config_fields=(
+            ChannelConfigField("bot_token", "Bot Token", input_type="password", required_when_enabled=True, secret=True),
+            ChannelConfigField("api_base", "API Base", placeholder="https://api.telegram.org"),
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_telegram_adapter,
+    ),
+)
+
+_CHANNEL_TYPE_BY_CODE = {definition.code: definition for definition in CHANNEL_TYPE_DEFINITIONS}
+
+
+def list_channel_type_definitions() -> tuple[ChannelTypeDefinition, ...]:
+    """按产品展示顺序返回正式渠道定义。"""
+
+    return CHANNEL_TYPE_DEFINITIONS
+
+
+def list_supported_channel_types() -> tuple[str, ...]:
+    """返回所有允许租户创建、编辑和运行的稳定渠道编码。"""
+
+    return tuple(definition.code for definition in CHANNEL_TYPE_DEFINITIONS)
+
+
+def get_channel_type_definition(value: str | None) -> ChannelTypeDefinition:
+    """读取正式渠道定义；未知类型必须显式失败，禁止隐式降级。"""
+
+    normalized = str(value or "").strip()
+    definition = _CHANNEL_TYPE_BY_CODE.get(normalized)
+    if definition is None:
+        raise ChannelTypeNotSupported(normalized)
+    return definition
+
+
+def require_supported_channel_type(value: str | None) -> str:
+    """规范化并校验渠道编码，供页面、Schema 和开放接口共同复用。"""
+
+    return get_channel_type_definition(value).code
+
+
+def channel_supports(channel_type: str | None, capability: str) -> bool:
+    """判断正式渠道是否声明某项能力，调用方无需识别具体协议实现。"""
+
+    definition = get_channel_type_definition(channel_type)
+    return str(capability or "").strip() in definition.capabilities
+

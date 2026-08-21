@@ -18,7 +18,7 @@ DEFAULT_TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
 class TelegramAdapter(BaseChannelAdapter):
-    provider = "telegram"
+    adapter_type = "telegram"
 
     def send_chat_action(
         self,
@@ -32,7 +32,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if not token:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "action": "send_chat_action",
                 "status": "failed",
                 "error_code": "missing_bot_token",
@@ -41,7 +41,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if not chat_id:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "action": "send_chat_action",
                 "status": "failed",
                 "error_code": "missing_chat_id",
@@ -54,7 +54,7 @@ class TelegramAdapter(BaseChannelAdapter):
         except Exception as exc:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "action": "send_chat_action",
                 "status": "failed",
                 "error_code": "request_failed",
@@ -63,7 +63,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if not self._response_indicates_success(raw_response):
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "action": "send_chat_action",
                 "status": "failed",
                 "error_code": self._extract_error_code(raw_response),
@@ -71,7 +71,7 @@ class TelegramAdapter(BaseChannelAdapter):
             }
         return {
             "ok": True,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "action": "send_chat_action",
             "status": "sent",
             "external_status": "ok",
@@ -199,7 +199,7 @@ class TelegramAdapter(BaseChannelAdapter):
         event_key = update_id or external_message_id
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": event_type,
             "should_persist_message": bool(content),
@@ -228,7 +228,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if not token:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "Telegram Bot Token 缺失",
                 "details": {"reason": "missing_bot_token"},
@@ -242,7 +242,7 @@ class TelegramAdapter(BaseChannelAdapter):
         except Exception as exc:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": f"Telegram API 请求失败: {exc}",
                 "details": {"reason": "request_failed"},
@@ -251,7 +251,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if not self._response_indicates_success(me_response):
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": self._extract_error_message(me_response),
                 "details": {
@@ -277,7 +277,7 @@ class TelegramAdapter(BaseChannelAdapter):
 
         return {
             "ok": status == "online",
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "status": status,
             "summary": summary,
             "details": {

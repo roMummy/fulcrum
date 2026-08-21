@@ -11,7 +11,7 @@ from .wechat_winauto import WechatWinAutoAdapter
 
 
 class WorkWechatAdapter(WechatWinAutoAdapter):
-    provider = "workwechat"
+    adapter_type = "workwechat"
 
     HOOK_MESSAGE_TYPE_MAP = {
         11041: "text",
@@ -42,7 +42,7 @@ class WorkWechatAdapter(WechatWinAutoAdapter):
                 issues.append("Bot Token 未配置")
             return {
                 "ok": not issues,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "online" if not issues else "degraded",
                 "summary": "企微云端 WS/拉取模式在线，不需要 API Base" if not issues else "；".join(issues),
                 "details": {
@@ -90,7 +90,7 @@ class WorkWechatAdapter(WechatWinAutoAdapter):
         headers: dict[str, str] | None,
     ) -> dict[str, Any]:
         normalized = super().normalize_inbound_payload(channel, payload, headers=headers)
-        normalized["provider"] = self.provider
+        normalized["adapter_type"] = self.adapter_type
         details = normalized.get("details")
         if isinstance(details, dict):
             details.setdefault("source_protocol", "workwechat_provider")
@@ -193,7 +193,7 @@ class WorkWechatAdapter(WechatWinAutoAdapter):
         }
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": "message" if message_type not in {"event", "revoke"} else message_type,
             "should_persist_message": bool(content) and message_type != "revoke",

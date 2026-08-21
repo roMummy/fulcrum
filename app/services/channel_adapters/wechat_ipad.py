@@ -21,7 +21,7 @@ DEFAULT_TIMEOUT_SECONDS = 12
 
 
 class WechatIpadAdapter(BaseChannelAdapter):
-    provider = "wechat_ipad"
+    adapter_type = "wechat_ipad"
 
     MSG_TYPE_MAP = {
         1: "text",
@@ -189,7 +189,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         timestamp = self._coerce_int(self._pick_value(envelope, "CreateTime", "CreateTimestamp"))
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": event_type,
             "should_persist_message": bool(content),
@@ -234,7 +234,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         if not channel.api_base:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "缺少 API Base",
                 "details": {"reason": "missing_api_base"},
@@ -242,7 +242,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         if not wxid:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "缺少 wxid",
                 "details": {"reason": "missing_wxid"},
@@ -280,7 +280,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             failed_probe = next((item for item in probe_results if not item["ok"]), {})
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "degraded",
                 "summary": f"微信渠道关键探针失败：{failed_probe.get('name') or 'heartbeat'}",
                 "details": {
@@ -293,7 +293,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         summary = "微信渠道心跳与缓存探针通过" if not optional_failed else "微信渠道心跳通过，缓存探针异常"
         return {
             "ok": not optional_failed,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "status": "online" if not optional_failed else "degraded",
             "summary": summary,
             "details": {

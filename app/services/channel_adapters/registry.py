@@ -1,25 +1,16 @@
 from __future__ import annotations
 
 from app.models.entities import Channel
+from app.services.channel_catalog import get_channel_type_definition
 
 from .base import BaseChannelAdapter
-from .generic import GenericHttpAdapter
-from .simulator import SimulatorAdapter
-from .telegram import TelegramAdapter
-from .wechat_ipad import WechatIpadAdapter
-from .wechat_winauto import WechatWinAutoAdapter
-from .workwechat import WorkWechatAdapter
 
 
 def get_channel_adapter(channel: Channel) -> BaseChannelAdapter:
-    if channel.channel_type == "wechat_ipad":
-        return WechatIpadAdapter()
-    if channel.channel_type == "wechat_winauto":
-        return WechatWinAutoAdapter()
-    if channel.channel_type == "workwechat":
-        return WorkWechatAdapter()
-    if channel.channel_type == "telegram":
-        return TelegramAdapter()
-    if channel.channel_type == "simulator":
-        return SimulatorAdapter()
-    return GenericHttpAdapter()
+    """从统一渠道目录构造适配器，未知类型不得降级到通用 HTTP 请求。"""
+
+    definition = get_channel_type_definition(channel.channel_type)
+    adapter = definition.adapter_factory()
+    if not isinstance(adapter, BaseChannelAdapter):
+        raise TypeError("channel_adapter_factory_invalid")
+    return adapter

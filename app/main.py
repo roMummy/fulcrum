@@ -27,12 +27,9 @@ from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, Channel
 from app.services.auth import validate_password_change
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.channel_adapters import get_channel_adapter
+from app.services.channel_catalog import list_supported_channel_types, require_supported_channel_type
 from app.services.channel_events import ingest_inbound_event
-from app.services.channel_labels import (
-    SAAS_ENABLED_CHANNEL_TYPES,
-    get_channel_type_label,
-    require_saas_enabled_channel_type,
-)
+from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.crud import (
     bind_plugin,
@@ -186,7 +183,7 @@ app.include_router(platform_operations_router)
 app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
-BUILTIN_CHANNEL_TYPES = SAAS_ENABLED_CHANNEL_TYPES
+BUILTIN_CHANNEL_TYPES = list_supported_channel_types()
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
 
@@ -1805,10 +1802,10 @@ async def delete_bot_action(request: Request, bot_id: int, confirmation_name: st
 async def channels_page(request: Request):
     db = get_session()
     try:
-        # 历史数据库可能仍有旧渠道记录；SaaS 租户页面只展示当前产品允许的企业微信渠道。
+        # 租户页面只展示统一目录中的正式渠道，未知历史类型不进入可运行产品入口。
         channels = db.scalars(
             select(Channel)
-            .where(Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES))
+            .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES))
             .order_by(Channel.id.desc())
         ).all()
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
@@ -1835,7 +1832,7 @@ async def channel_detail_page(request: Request, channel_id: int):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
+        if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         wechat_ipad_proxy_form = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
@@ -2181,7 +2178,7 @@ async def create_channel_action(
     db = get_session()
     try:
         try:
-            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
+            normalized_channel_type = require_supported_channel_type(channel_type)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not has_tenant_role(principal, "tenant_admin"):
@@ -2256,10 +2253,10 @@ async def edit_channel_action(
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
+        if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         try:
-            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
+            normalized_channel_type = require_supported_channel_type(channel_type)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not has_tenant_role(principal, "tenant_admin"):
@@ -2358,7 +2355,7 @@ async def check_channel_health_action(request: Request, channel_id: int):
             details={
                 "channel": channel.name,
                 "type": channel.channel_type,
-                "adapter_provider": adapter_result.get("provider"),
+                "adapter_type": adapter_result.get("adapter_type"),
                 "adapter_details": adapter_result.get("details"),
             },
         )
@@ -4082,7 +4079,7 @@ async def inbound_webhook(channel_id: int, request: Request):
             details={
                 "event_key": event_key or "-",
                 "mapped": result["mapped"],
-                "provider": normalized.get("provider"),
+                "adapter_type": normalized.get("adapter_type"),
                 "event_type": normalized.get("event_type"),
                 "adapter_details": normalized.get("details"),
                 "dispatch": result.get("dispatch"),

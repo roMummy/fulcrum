@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 class SimulatorAdapter(BaseChannelAdapter):
-    provider = "simulator"
+    adapter_type = "simulator"
 
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
         message_type = str(payload.get("message_type") or "text").strip().lower() or "text"
@@ -36,7 +36,7 @@ class SimulatorAdapter(BaseChannelAdapter):
         raw_response = {
             "ok": True,
             "status": "accepted",
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "simulated_at": now.isoformat(),
             "echo": {
                 "message_type": message_type,
@@ -60,7 +60,7 @@ class SimulatorAdapter(BaseChannelAdapter):
         logger.debug("simulator adapter health check", extra={"channel_id": channel.id})
         return {
             "ok": True,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "status": "online",
             "summary": "内置模拟渠道可用",
             "details": {"channel_id": channel.id, "mode": "local-loopback"},
