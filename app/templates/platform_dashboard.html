@@ -1,7 +1,7 @@
 {% extends 'platform_base.html' %}
 {% block hero_actions %}<a class="btn" href="/platform/tenants">开通租户</a>{% endblock %}
 {% block content %}
-{# 平台指标使用一个连续数据带，避免平台首页再次形成四张同质化卡片。 #}
+{# 平台指标使用连续数据带，并通过专用类统一标签、数值和说明的纵向基线。 #}
 <div class="metric-band platform-metric-band">
   <div class="metric-item"><span>租户总数</span><strong>{{ stats.tenant_total }}</strong><div class="muted-text">平台已登记租户</div></div>
   <div class="metric-item"><span>启用租户</span><strong>{{ stats.tenant_active }}</strong><div class="muted-text">当前允许登录</div></div>

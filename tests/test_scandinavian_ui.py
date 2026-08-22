@@ -99,6 +99,24 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
         assert forbidden_class not in platform_dashboard
 
 
+def test_overview_grids_align_cards_without_fixed_heights() -> None:
+    """总览卡片必须通过网格拉伸对齐，不能依赖容易溢出的固定高度。
+
+    企业总览包含五组双列业务卡片，必须统一声明总览专用网格语义，避免通用的
+    相邻卡片外边距让右侧卡片下移。平台总览沿用连续指标带，但需要独立规则稳定
+    每个指标项的说明位置，使两类总览保持一致的纵向节奏。
+    """
+
+    tenant_dashboard = _read_project_file(TEMPLATE_ROOT / "dashboard.html")
+    platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
+    stylesheet = _read_project_file(STYLE_PATH)
+
+    assert tenant_dashboard.count("overview-card-grid") == 5
+    assert "platform-metric-band" in platform_dashboard
+    assert ".overview-card-grid > .work-surface" in stylesheet
+    assert ".platform-metric-band .metric-item" in stylesheet
+
+
 def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> None:
     """共享样式必须显式覆盖移动导航与单层业务表面，避免依赖桌面自然挤压。"""
 

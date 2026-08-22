@@ -774,6 +774,27 @@ code {
   padding: 0 2px;
 }
 
+/*
+ * 企业总览的双列工作表面只由网格 gap 管理间距。通用相邻卡片规则适用于纵向页面，
+ * 放进网格后会额外下移右侧卡片，因此这里必须重置直接子级外边距并让同排卡片拉伸。
+ */
+.overview-card-grid {
+  align-items: stretch;
+  margin-bottom: 20px;
+}
+
+.overview-card-grid > .work-surface {
+  display: flex;
+  align-self: stretch;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+}
+
+.overview-card-grid > .work-surface + .work-surface {
+  margin-top: 0;
+}
+
 .dashboard-kpi-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -825,6 +846,17 @@ code {
 
 .metric-item .muted-text {
   margin-top: 7px;
+}
+
+/* 平台概览把说明推到指标项底部，文案长度不同时仍保持统一的阅读基线。 */
+.platform-metric-band .metric-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.platform-metric-band .metric-item .muted-text {
+  margin-top: auto;
+  padding-top: 7px;
 }
 
 .metric-item-accent {
