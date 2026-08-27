@@ -3065,6 +3065,7 @@ code {
 
   .page-header {
     display: grid;
+    justify-content: stretch;
     gap: 18px;
     margin-bottom: 32px;
   }
@@ -3076,6 +3077,11 @@ code {
   .page-header-actions,
   .hero-action-cluster {
     justify-content: flex-start;
+  }
+
+  /* 大盘页头在网格模式下必须拉满轨道，否则桌面的 space-between 会让分段控件按内容宽度收缩。 */
+  .page-header-actions:has(.analytics-page-actions) {
+    width: 100%;
   }
 
   .analytics-page-actions {
