@@ -16,6 +16,12 @@ def _read_project_file(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_css_rule(stylesheet: str, selector: str) -> str:
+    """读取单个基础 CSS 规则，便于直接约束全局视觉基线而不匹配后续响应式覆盖。"""
+
+    return stylesheet.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+
+
 def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
     """全站样式必须使用已确认的北欧极简 token，并彻底移除旧装饰语言。
 
@@ -68,6 +74,7 @@ def test_backend_shell_uses_top_navigation_and_keeps_platform_identity_separate(
 
     base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
     platform_template = _read_project_file(TEMPLATE_ROOT / "platform_base.html")
+    stylesheet = _read_project_file(STYLE_PATH)
 
     for required_class in (
         'class="app-topbar"',
@@ -83,6 +90,21 @@ def test_backend_shell_uses_top_navigation_and_keeps_platform_identity_separate(
     assert "企业工作台" in base_template
     assert "平台管理后台" in platform_template
     assert "request.url.path.startswith('/platform')" in base_template
+    assert '<meta name="theme-color" content="#f5f0eb" />' in base_template
+
+    # 顶栏、工作区和页头必须通过暖色表面与留白建立层级，不再叠加粗字重和贯穿边界。
+    topbar_rule = _read_css_rule(stylesheet, ".app-topbar")
+    topbar_inner_rule = _read_css_rule(stylesheet, ".app-topbar-inner")
+    workspace_rule = _read_css_rule(stylesheet, ".workspace")
+    page_header_rule = _read_css_rule(stylesheet, ".page-header")
+    active_nav_rule = _read_css_rule(stylesheet, ".nav-link.active")
+
+    assert "background: rgba(245, 240, 235, 0.92);" in topbar_rule
+    assert "min-height: 68px;" in topbar_inner_rule
+    assert "padding: 48px 0 88px;" in workspace_rule
+    assert "margin-bottom: 40px;" in page_header_rule
+    assert "border-bottom" not in page_header_rule
+    assert "font-weight" not in active_nav_rule
 
 
 def test_marketing_and_auth_pages_preserve_product_and_accessibility_contracts() -> None:
@@ -152,10 +174,11 @@ def test_section_navigation_wraps_without_horizontal_scrollbar() -> None:
     """
 
     stylesheet = _read_project_file(STYLE_PATH)
-    section_tabs_rule = stylesheet.split(".section-tabs {", 1)[1].split("}", 1)[0]
+    section_tabs_rule = _read_css_rule(stylesheet, ".section-tabs")
 
     assert "flex-wrap: wrap;" in section_tabs_rule
     assert "overflow-x" not in section_tabs_rule
+    assert "border-bottom" not in section_tabs_rule
     assert ".section-tabs {\n    overflow-x: auto;" not in stylesheet
 
 

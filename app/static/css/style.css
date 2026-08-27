@@ -152,9 +152,9 @@ code {
   transform: translateY(0);
 }
 
-/* 后台壳层使用统一顶部导航，桌面与移动端共享入口和账号操作，不维护两套导航结构。 */
+/* 后台壳层让暖灰白成为连续画布，顶部导航只用轻边界定位，不再切出冷灰工作区。 */
 .app-shell {
-  background: var(--bg-cool);
+  background: var(--bg);
 }
 
 .app-frame {
@@ -173,7 +173,7 @@ code {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: #eee9e3;
+  background: rgba(245, 240, 235, 0.92);
   border-bottom: 1px solid var(--border);
 }
 
@@ -181,9 +181,9 @@ code {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 24px;
-  width: min(var(--content-width), calc(100% - 64px));
-  min-height: 72px;
+  gap: 28px;
+  width: min(var(--content-width), calc(100% - 80px));
+  min-height: 68px;
   margin: 0 auto;
 }
 
@@ -201,34 +201,36 @@ code {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   color: #f8f5f0;
-  background: var(--text);
+  background: #48443f;
   border-radius: var(--radius-md);
-  font-size: 16px;
-  font-weight: 600;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 15px;
+  font-weight: 520;
 }
 
 .brand-copy {
   display: grid;
-  gap: 1px;
+  gap: 0;
 }
 
 .brand-copy strong {
-  font-size: 16px;
-  font-weight: 600;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .brand-copy small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .app-primary-nav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -237,38 +239,23 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding: 7px 11px;
+  min-height: 40px;
+  padding: 8px 12px;
   color: var(--muted);
   border-radius: var(--radius-md);
   text-decoration: none;
   white-space: nowrap;
-  transition: color 320ms ease, background-color 320ms ease;
-}
-
-.nav-link::before {
-  position: absolute;
-  right: 11px;
-  bottom: 3px;
-  left: 11px;
-  height: 2px;
-  content: "";
-  background: transparent;
+  transition: color 420ms ease, background-color 420ms ease;
 }
 
 .nav-link:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.32);
 }
 
 .nav-link.active {
   color: var(--primary-strong);
-  background: rgba(255, 255, 255, 0.52);
-  font-weight: 600;
-}
-
-.nav-link.active::before {
-  background: var(--primary);
+  background: rgba(255, 255, 255, 0.54);
 }
 
 .nav-more {
@@ -287,8 +274,8 @@ code {
   position: relative;
   display: inline-flex;
   align-items: center;
-  min-height: 38px;
-  padding: 7px 25px 7px 11px;
+  min-height: 40px;
+  padding: 8px 26px 8px 12px;
   color: var(--muted);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -318,7 +305,7 @@ code {
 .nav-more-trigger.active,
 .nav-more[open] > .nav-more-trigger {
   color: var(--primary-strong);
-  background: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.54);
 }
 
 .nav-popover {
@@ -328,8 +315,8 @@ code {
   z-index: 60;
   display: grid;
   min-width: 190px;
-  padding: 8px;
-  background: #fbfaf8;
+  padding: 9px;
+  background: var(--surface-strong);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-soft);
@@ -344,8 +331,8 @@ code {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 38px;
-  padding: 7px 10px;
+  min-height: 40px;
+  padding: 8px 11px;
   color: var(--muted);
   background: transparent;
   border: 0;
@@ -376,7 +363,7 @@ code {
 
 .account-menu-trigger:hover,
 .account-menu[open] > .account-menu-trigger {
-  background: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.48);
 }
 
 .account-avatar {
@@ -388,7 +375,7 @@ code {
   background: var(--primary-strong);
   border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .account-summary {
@@ -401,14 +388,14 @@ code {
   max-width: 112px;
   overflow: hidden;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .account-summary small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .account-menu-panel {
@@ -449,19 +436,19 @@ code {
 }
 
 .workspace {
-  width: min(var(--content-width), calc(100vw - 64px));
+  width: min(var(--content-width), calc(100vw - 80px));
   margin: 0 auto;
-  padding: 36px 0 64px;
+  padding: 48px 0 88px;
 }
 
+/* 页面标题使用字号和空间形成第一层级，贯穿分隔线会把每一页重新切成传统后台面板。 */
 .page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 32px;
-  margin-bottom: 28px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--border);
+  gap: 40px;
+  margin-bottom: 40px;
+  padding-bottom: 0;
 }
 
 .page-header-copy {
@@ -471,23 +458,24 @@ code {
 .eyebrow,
 .section-kicker,
 .marketing-hero-eyebrow {
-  margin: 0 0 7px;
+  margin: 0 0 9px;
   color: var(--wood);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  font-weight: 480;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 32px;
-  font-weight: 500;
+  font-size: 36px;
+  font-weight: 430;
 }
 
 .page-intro p {
   max-width: 720px;
-  margin: 9px 0 0;
+  margin: 12px 0 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .page-header-actions,
@@ -511,17 +499,16 @@ code {
 .section-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
-  margin: -8px 0 28px;
-  border-bottom: 1px solid var(--border);
+  gap: 30px;
+  margin: -6px 0 40px;
 }
 
 .section-tab {
   position: relative;
-  padding: 11px 0 10px;
+  padding: 10px 0 11px;
   color: var(--muted);
   text-decoration: none;
-  transition: color 300ms ease;
+  transition: color 420ms ease;
 }
 
 .section-tab:hover,
@@ -534,7 +521,7 @@ code {
   right: 0;
   bottom: -1px;
   left: 0;
-  height: 2px;
+  height: 1px;
   content: "";
   background: var(--primary);
 }
