@@ -117,6 +117,11 @@ def test_marketing_and_auth_pages_preserve_product_and_accessibility_contracts()
 
     assert "/static/images/yaoshu-console.webp" in marketing_home
     assert 'class="marketing-product-visual"' in marketing_home
+    assert 'class="marketing-hero marketing-hero-stage"' in marketing_home
+    assert 'class="marketing-hero-copy"' in marketing_home
+    assert marketing_home.count("<h1>") == 1
+    assert "<h1>曜枢 AI</h1>" in marketing_home
+    assert "marketing-hero-content" not in marketing_home
     assert 'role="alert"' in marketing_base
     assert 'autocomplete="username"' in enterprise_login
     assert 'autocomplete="current-password"' in enterprise_login
