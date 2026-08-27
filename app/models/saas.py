@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -138,6 +138,14 @@ class TenantSubscription(Base, TimestampMixin):
             name="ck_tenant_subscriptions_status",
         ),
         UniqueConstraint("tenant_id", "starts_at", name="uq_tenant_subscription_start"),
+        # 平台按状态和到期时间识别有效、即将到期及失效订阅，并回到租户与套餐统计。
+        Index(
+            "ix_tenant_subscriptions_platform_health",
+            "status",
+            "expires_at",
+            "tenant_id",
+            "plan_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -166,6 +174,8 @@ class BillingOrder(Base, TimestampMixin):
             "status IN ('pending_payment', 'payment_submitted', 'approved', 'rejected', 'cancelled')",
             name="ck_billing_orders_status",
         ),
+        # 经营大盘按订单状态和审核时间统计待办与已审核金额，不读取付款凭证内容。
+        Index("ix_billing_orders_platform_revenue", "status", "reviewed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -213,6 +223,8 @@ class BotBinding(Base, TimestampMixin):
             "status IN ('active', 'disabled', 'released')",
             name="ck_bot_bindings_status",
         ),
+        # 使用漏斗和租户排行按未释放状态、租户及适配类型统计通用接入账号。
+        Index("ix_bot_bindings_platform_usage", "status", "tenant_id", "adapter_type"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -299,6 +311,16 @@ class TenantSession(Base, TimestampMixin):
     """租户员工数据库会话，tenant_id 用于每次请求快速恢复可信租户上下文。"""
 
     __tablename__ = "tenant_sessions"
+    __table_args__ = (
+        # 在线员工统计先按最近访问时间过滤，再校验吊销、过期状态并按租户去重。
+        Index(
+            "ix_tenant_sessions_platform_presence",
+            "last_seen_at",
+            "revoked_at",
+            "expires_at",
+            "tenant_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
@@ -371,6 +393,8 @@ class ProviderNode(Base, TenantOwnedMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_provider_nodes_tenant_name"),
         CheckConstraint("status IN ('pending', 'active', 'disabled')", name="ck_provider_nodes_status"),
+        # 平台在线状态只读取通用节点状态和心跳时间，并按租户汇总活跃执行客户端。
+        Index("ix_provider_nodes_platform_presence", "status", "last_heartbeat_at", "tenant_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

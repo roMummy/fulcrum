@@ -13,6 +13,16 @@ from sqlalchemy import create_engine, inspect, text
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DELETED_TABLES = {"bot_groups", "config_templates", "bot_tags", "bot_tag_links"}
 DELETED_BOT_COLUMNS = {"slug", "command_prefix", "group_id", "config_template_id", "environment"}
+PLATFORM_ANALYTICS_INDEXES = {
+    "messages": "ix_messages_platform_analytics",
+    "message_activity_hourly": "ix_message_activity_hourly_platform_analytics",
+    "tenant_sessions": "ix_tenant_sessions_platform_presence",
+    "channels": "ix_channels_platform_health",
+    "billing_orders": "ix_billing_orders_platform_revenue",
+    "tenant_subscriptions": "ix_tenant_subscriptions_platform_health",
+    "bot_bindings": "ix_bot_bindings_platform_usage",
+    "provider_nodes": "ix_provider_nodes_platform_presence",
+}
 
 
 def _run_alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -65,10 +75,14 @@ def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) 
     actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
 
     assert _current_revision(database_path) == expected_database_revision()
-    assert expected_database_revision() == "20260821_0007"
+    assert expected_database_revision() == "20260827_0008"
     assert actual_tables == set(Base.metadata.tables)
     assert DELETED_TABLES.isdisjoint(actual_tables)
     assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})
+    # 平台大盘的跨租户查询必须命中明确的组合索引，不能依赖数据量小时的全表扫描表现。
+    for table_name, index_name in PLATFORM_ANALYTICS_INDEXES.items():
+        actual_indexes = {item["name"] for item in inspector.get_indexes(table_name)}
+        assert index_name in actual_indexes
     migration_engine.dispose()
 
 

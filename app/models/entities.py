@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
@@ -28,6 +28,10 @@ class Bot(Base, TenantOwnedMixin, TimestampMixin):
 
 class Channel(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "channels"
+    __table_args__ = (
+        # 平台大盘按租户汇总启用渠道及通用运行、登录状态，组合索引避免逐列索引回表扫描。
+        Index("ix_channels_platform_health", "tenant_id", "is_enabled", "status", "login_state"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), index=True)
@@ -369,6 +373,10 @@ class RawWebhookEvent(Base, TenantOwnedMixin, TimestampMixin):
 
 class Message(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "messages"
+    __table_args__ = (
+        # 平台分析只扫描有限时间窗口，并按方向、租户和发送者完成消息及触发用户统计。
+        Index("ix_messages_platform_analytics", "created_at", "direction", "tenant_id", "sender_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
@@ -578,6 +586,15 @@ class PluginExecutionLog(Base, TenantOwnedMixin, TimestampMixin):
 
 class MessageActivityHourly(Base, TenantOwnedMixin):
     __tablename__ = "message_activity_hourly"
+    __table_args__ = (
+        # 全平台趋势先按时间范围过滤，再按租户和消息方向聚合，不依赖原始消息回退。
+        Index(
+            "ix_message_activity_hourly_platform_analytics",
+            "bucket_start",
+            "tenant_id",
+            "direction",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bucket_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True)
