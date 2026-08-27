@@ -16,7 +16,6 @@ from app.services.platform_admin import (
     PlatformAdminError,
     create_tenant_with_subscription,
     current_subscription,
-    dashboard_stats,
     get_tenant_detail,
     list_plans,
     list_tenants,
@@ -25,6 +24,7 @@ from app.services.platform_admin import (
     save_plan,
     set_tenant_status,
 )
+from app.services.platform_analytics import build_platform_analytics
 from app.services.platform_staff import (
     PlatformStaffError,
     create_platform_user,
@@ -154,7 +154,7 @@ def _platform_staff_error_message(error: PlatformStaffError) -> str:
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def platform_dashboard_page(request: Request):
-    """展示平台关键统计和最近租户。"""
+    """展示平台跨租户使用、经营、渠道健康和待办数据。"""
 
     with SessionLocal() as db:
         context = _platform_context(
@@ -163,8 +163,8 @@ async def platform_dashboard_page(request: Request):
             active="dashboard",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
-            stats=dashboard_stats(db),
-            tenants=list_tenants(db)[:8],
+            # 时间范围只交给聚合服务规范化；路由不接受客户端 tenant_id，也不维护旧四指标双轨数据。
+            analytics=build_platform_analytics(db, range_key=request.query_params.get("range", "7d")),
         )
         return templates.TemplateResponse(request, "platform_dashboard.html", context)
 

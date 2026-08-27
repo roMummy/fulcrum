@@ -1,32 +1,174 @@
 {% extends 'platform_base.html' %}
-{% block hero_actions %}<a class="btn" href="/platform/tenants">开通租户</a>{% endblock %}
+{% block hero_actions %}
+<div class="analytics-page-actions">
+  <nav class="analytics-range-control" aria-label="数据时间范围">
+    {% for option in analytics.range_options %}
+    <a class="analytics-range-option{% if option.active %} active{% endif %}" href="{{ option.href }}" data-range="{{ option.key }}"{% if option.active %} aria-current="page"{% endif %}>{{ option.label }}</a>
+    {% endfor %}
+  </nav>
+  <a class="btn" href="/platform/tenants">开通租户</a>
+</div>
+{% endblock %}
 {% block content %}
-{# 平台指标使用连续数据带，并通过专用类统一标签、数值和说明的纵向基线。 #}
-<div class="metric-band platform-metric-band">
-  <div class="metric-item"><span>租户总数</span><strong>{{ stats.tenant_total }}</strong><div class="muted-text">平台已登记租户</div></div>
-  <div class="metric-item"><span>启用租户</span><strong>{{ stats.tenant_active }}</strong><div class="muted-text">当前允许登录</div></div>
-  <div class="metric-item"><span>套餐数量</span><strong>{{ stats.plan_total }}</strong><div class="muted-text">含停用套餐</div></div>
-  <div class="metric-item"><span>员工账号</span><strong>{{ stats.user_total }}</strong><div class="muted-text">所有租户员工</div></div>
+{# 核心指标使用单一连续数据带，周期指标与当前状态通过短说明区分，不再保留旧四指标入口。 #}
+<div class="metric-band platform-metric-band platform-analytics-kpis">
+  {% for item in analytics.core_metric_items %}
+  <div class="metric-item">
+    <span>{{ item.label }}</span>
+    <strong>{{ item.value }}</strong>
+    <div class="muted-text">{{ item.note }}</div>
+  </div>
+  {% endfor %}
 </div>
 
-<section class="page-section">
-  <div class="section-head"><div><p class="section-kicker">Recent tenants</p><h2>最近开通租户</h2></div><a class="btn btn-secondary" href="/platform/tenants">查看全部</a></div>
-  <table class="table">
-    <thead><tr><th>租户</th><th>状态</th><th>套餐</th><th>有效期</th><th>操作</th></tr></thead>
-    <tbody>
-      {% for tenant in tenants %}
-      {% set subscription = current_subscription(tenant) %}
-      <tr>
-        <td><strong>{{ tenant.name }}</strong><div class="muted-text"><code>{{ tenant.code }}</code> / #{{ tenant.id }}</div></td>
-        <td><span class="chip {% if tenant.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ tenant.status }}</span></td>
-        <td>{{ subscription.plan.name if subscription and subscription.plan else '-' }}</td>
-        <td>{{ format_time(subscription.expires_at) if subscription and subscription.expires_at else '长期有效' }}</td>
-        <td><a class="btn btn-small btn-secondary" href="/platform/tenants/{{ tenant.id }}">详情</a></td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5"><div class="empty-state"><strong>暂无租户</strong><p>先创建套餐，再开通首个租户。</p></div></td></tr>
+<div class="platform-analytics-grid platform-analytics-chart-grid">
+  <section class="page-section analytics-chart-section">
+    <div class="section-head">
+      <div><p class="section-kicker">Message trend</p><h2>消息趋势</h2></div>
+      <div class="analytics-chart-total"><strong>{{ analytics.core_metrics.message_total }}</strong><span>{{ analytics.range_label }}总量</span></div>
+    </div>
+    <div class="analytics-chart-legend" aria-label="消息趋势图例">
+      <span><i class="legend-line legend-line-info"></i>入站 {{ analytics.core_metrics.inbound_total }}</span>
+      <span><i class="legend-line legend-line-primary"></i>出站 {{ analytics.core_metrics.outbound_total }}</span>
+    </div>
+    <div class="analytics-chart-shell">
+      <svg class="analytics-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="入站与出站消息趋势">
+        <line class="analytics-chart-grid-line" x1="2" y1="50" x2="98" y2="50"></line>
+        <line class="analytics-chart-baseline" x1="2" y1="88" x2="98" y2="88"></line>
+        <polyline class="analytics-chart-series analytics-chart-series-info" points="{{ analytics.message_trend.chart.points.inbound }}"></polyline>
+        <polyline class="analytics-chart-series analytics-chart-series-primary" points="{{ analytics.message_trend.chart.points.outbound }}"></polyline>
+      </svg>
+      <div class="analytics-chart-axis">
+        {% for label in analytics.message_trend.chart.axis_labels %}<span>{{ label }}</span>{% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="page-section analytics-chart-section">
+    <div class="section-head">
+      <div><p class="section-kicker">Activity trend</p><h2>活跃趋势</h2></div>
+      <div class="analytics-chart-total"><strong>{{ analytics.core_metrics.trigger_user_total }}</strong><span>触发用户</span></div>
+    </div>
+    <div class="analytics-chart-legend" aria-label="活跃趋势图例">
+      <span><i class="legend-line legend-line-primary"></i>触发用户</span>
+      <span><i class="legend-line legend-line-wood"></i>活跃租户</span>
+    </div>
+    <div class="analytics-chart-shell">
+      <svg class="analytics-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="触发用户与活跃租户趋势">
+        <line class="analytics-chart-grid-line" x1="2" y1="50" x2="98" y2="50"></line>
+        <line class="analytics-chart-baseline" x1="2" y1="88" x2="98" y2="88"></line>
+        <polyline class="analytics-chart-series analytics-chart-series-primary" points="{{ analytics.activity_trend.chart.points.trigger_users }}"></polyline>
+        <polyline class="analytics-chart-series analytics-chart-series-wood" points="{{ analytics.activity_trend.chart.points.active_tenants }}"></polyline>
+      </svg>
+      <div class="analytics-chart-axis">
+        {% for label in analytics.activity_trend.chart.axis_labels %}<span>{{ label }}</span>{% endfor %}
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="platform-analytics-grid platform-analytics-operations-grid">
+  <section class="page-section platform-adoption-funnel">
+    <div class="section-head"><div><p class="section-kicker">Adoption</p><h2>SaaS 使用漏斗</h2></div></div>
+    <div class="analytics-funnel">
+      {% for item in analytics.adoption_funnel %}
+      <div class="analytics-funnel-row">
+        <div class="analytics-funnel-label"><span>{{ item.step }}</span><strong>{{ item.label }}</strong></div>
+        <div class="analytics-funnel-track" aria-label="{{ item.label }} {{ item.count }} 个">
+          <span class="analytics-funnel-fill" style="width: {{ item.share_rate }}%"></span>
+        </div>
+        <div class="analytics-funnel-value"><strong>{{ item.count }}</strong><span>{% if item.step == 1 %}平台租户{% else %}上层转化 {{ item.conversion_rate }}%{% endif %}</span></div>
+      </div>
       {% endfor %}
-    </tbody>
-  </table>
+    </div>
+  </section>
+
+  <section class="page-section platform-subscription-summary">
+    <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>订阅经营</h2></div><a class="text-link" href="/platform/billing/orders">订单审核</a></div>
+    <div class="analytics-summary-grid">
+      <div class="analytics-summary-item"><span>试用租户</span><strong>{{ analytics.subscription_summary.trial_tenant_total }}</strong></div>
+      <div class="analytics-summary-item"><span>付费租户</span><strong>{{ analytics.subscription_summary.paid_tenant_total }}</strong></div>
+      <div class="analytics-summary-item"><span>7 天内到期</span><strong>{{ analytics.subscription_summary.expiring_soon_total }}</strong></div>
+      <div class="analytics-summary-item"><span>失效订阅</span><strong>{{ analytics.subscription_summary.inactive_total }}</strong></div>
+      <div class="analytics-summary-item"><span>待审核订单</span><strong>{{ analytics.subscription_summary.pending_order_total }}</strong></div>
+      <div class="analytics-summary-item analytics-summary-item-wide"><span>{{ analytics.range_label }}审核通过金额</span><strong>¥{{ analytics.subscription_summary.approved_amount_yuan }}</strong></div>
+    </div>
+  </section>
+</div>
+
+<section class="page-section platform-channel-summary">
+  <div class="section-head"><div><p class="section-kicker">Channel health</p><h2>渠道运行情况</h2></div></div>
+  <div class="table-scroll">
+    <table class="table analytics-table">
+      <thead><tr><th>渠道类型</th><th>接入账号</th><th>在线</th><th>异常或离线</th><th>{{ analytics.range_label }}消息</th><th>最近活跃</th></tr></thead>
+      <tbody>
+        {% for item in analytics.channel_summary %}
+        <tr>
+          <td><strong>{{ item.channel_label }}</strong><div class="muted-text"><code>{{ item.channel_type }}</code></div></td>
+          <td>{{ item.account_total }}</td>
+          <td>{{ item.online_total }}</td>
+          <td>{{ item.abnormal_total }}</td>
+          <td>{{ item.message_total }}</td>
+          <td>{{ format_time(item.last_active_at) if item.last_active_at else '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state"><strong>暂无渠道数据</strong></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
+
+<section class="page-section platform-tenant-rankings">
+  <div class="section-head"><div><p class="section-kicker">Tenant usage</p><h2>租户使用排行</h2></div><a class="text-link" href="/platform/tenants">租户管理</a></div>
+  <div class="table-scroll">
+    <table class="table analytics-table analytics-ranking-table">
+      <thead><tr><th>租户</th><th>套餐</th><th>消息</th><th>触发用户</th><th>接入账号</th><th>在线渠道</th><th>额度使用</th><th>最近活跃</th></tr></thead>
+      <tbody>
+        {% for item in analytics.tenant_rankings %}
+        <tr>
+          <td><a class="record-link" href="/platform/tenants/{{ item.tenant_id }}">{{ item.tenant_name }}</a></td>
+          <td><span class="chip {% if item.subscription_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ item.plan_name }}</span></td>
+          <td><strong>{{ item.message_total }}</strong></td>
+          <td>{{ item.trigger_user_total }}</td>
+          <td>{{ item.account_total }}</td>
+          <td>{{ item.online_channel_total }}</td>
+          <td><span class="analytics-quota-value">{{ item.quota_text }}</span><small>{{ item.quota_usage_rate }}%</small></td>
+          <td>{{ format_time(item.last_active_at) if item.last_active_at else '-' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8"><div class="empty-state"><strong>当前周期暂无活跃租户</strong></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="platform-analytics-grid platform-analytics-health-grid">
+  <section class="page-section platform-tenant-health">
+    <div class="section-head"><div><p class="section-kicker">Attention</p><h2>租户健康情况</h2></div></div>
+    <div class="analytics-health-list">
+      {% for item in analytics.tenant_health %}
+      <a class="analytics-health-row" href="/platform/tenants/{{ item.tenant_id }}">
+        <span class="analytics-health-index">{{ loop.index }}</span>
+        <span class="analytics-health-tenant"><strong>{{ item.tenant_name }}</strong><small>{{ item.detail }}</small></span>
+        <span class="badge badge-{{ item.tone }}">{{ item.status_label }}</span>
+      </a>
+      {% else %}
+      <div class="empty-state"><strong>当前没有需要介入的租户</strong></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="page-section platform-presence-summary">
+    <div class="section-head"><div><p class="section-kicker">Presence</p><h2>在线状态</h2></div></div>
+    <div class="analytics-summary-grid analytics-presence-grid">
+      <div class="analytics-summary-item"><span>近 30 分钟活跃员工</span><strong>{{ analytics.presence_summary.active_employee_total }}</strong></div>
+      <div class="analytics-summary-item"><span>当前有效会话</span><strong>{{ analytics.presence_summary.valid_session_total }}</strong></div>
+      <div class="analytics-summary-item"><span>在线执行客户端</span><strong>{{ analytics.presence_summary.online_executor_total }}</strong></div>
+      <div class="analytics-summary-item"><span>在线渠道</span><strong>{{ analytics.presence_summary.online_channel_total }}</strong></div>
+      <div class="analytics-summary-item analytics-summary-item-wide"><span>异常渠道</span><strong>{{ analytics.presence_summary.abnormal_channel_total }}</strong></div>
+    </div>
+  </section>
+</div>
 {% endblock %}

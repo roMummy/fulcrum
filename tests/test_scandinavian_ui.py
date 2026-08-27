@@ -138,7 +138,19 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
     assert 'class="metric-band' in tenant_dashboard
     assert 'class="metric-band' in platform_dashboard
     assert tenant_dashboard.count('class="page-section') >= 10
-    assert 'class="page-section"' in platform_dashboard
+    assert platform_dashboard.count('class="page-section') >= 7
+    for required_class in (
+        "analytics-range-control",
+        "platform-analytics-kpis",
+        "platform-analytics-chart-grid",
+        "platform-adoption-funnel",
+        "platform-channel-summary",
+        "platform-tenant-rankings",
+        "platform-tenant-health",
+        "platform-subscription-summary",
+        "platform-presence-summary",
+    ):
+        assert required_class in platform_dashboard
     assert 'class="work-surface"' not in tenant_dashboard
     assert 'class="work-surface"' not in platform_dashboard
     for forbidden_class in ("dashboard-hero-card", "nested-card", "accent-card"):
@@ -162,6 +174,21 @@ def test_overview_grids_align_cards_without_fixed_heights() -> None:
     assert "platform-metric-band" in platform_dashboard
     assert ".overview-card-grid > .page-section" in stylesheet
     assert ".platform-metric-band .metric-item" in stylesheet
+
+
+def test_platform_analytics_uses_stable_charts_and_mobile_single_column_layout() -> None:
+    """平台大盘图表必须有稳定尺寸，窄屏改为单列且表格只在自身区域滚动。"""
+
+    platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
+    stylesheet = _read_project_file(STYLE_PATH)
+
+    assert platform_dashboard.count('class="analytics-chart"') == 2
+    assert 'viewBox="0 0 100 100"' in platform_dashboard
+    assert 'class="table-scroll"' in platform_dashboard
+    assert ".platform-analytics-chart-grid" in stylesheet
+    assert "aspect-ratio: 16 / 7;" in stylesheet
+    assert "@media (max-width: 820px)" in stylesheet
+    assert ".platform-analytics-grid" in stylesheet
 
 
 def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> None:

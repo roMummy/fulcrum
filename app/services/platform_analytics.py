@@ -385,7 +385,13 @@ def build_platform_analytics(
         count = len(values)
         rate = 100 if index == 0 and count > 0 else _percentage(count, previous_count)
         adoption_funnel.append(
-            {"step": index + 1, "label": label, "count": count, "conversion_rate": rate}
+            {
+                "step": index + 1,
+                "label": label,
+                "count": count,
+                "conversion_rate": rate,
+                "share_rate": _percentage(count, len(tenant_ids)),
+            }
         )
         previous_count = count
 

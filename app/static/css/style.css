@@ -869,6 +869,341 @@ code {
   padding-top: 7px;
 }
 
+/*
+ * 平台分析大盘沿用开放页面分区：时间切换、指标、图表和运营清单共享一套低边界语言，
+ * 只给图形本身稳定尺寸，不把每个统计项重新包装成独立卡片。
+ */
+.analytics-page-actions,
+.analytics-range-control,
+.analytics-chart-legend,
+.analytics-chart-axis {
+  display: flex;
+  align-items: center;
+}
+
+.analytics-page-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.analytics-range-control {
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.34);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.analytics-range-option {
+  min-width: 70px;
+  padding: 8px 12px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  text-align: center;
+  text-decoration: none;
+  transition: color 420ms ease, background-color 420ms ease;
+}
+
+.analytics-range-option:hover,
+.analytics-range-option.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.platform-analytics-kpis {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0 30px;
+  padding: 6px 22px;
+}
+
+.platform-analytics-kpis .metric-item {
+  min-height: 142px;
+}
+
+.platform-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 48px;
+  margin-bottom: var(--space-section);
+}
+
+.platform-analytics-grid > .page-section {
+  margin-bottom: 0;
+}
+
+.platform-analytics-chart-grid {
+  gap: 56px;
+}
+
+.analytics-chart-section {
+  min-width: 0;
+}
+
+.analytics-chart-total {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-chart-total strong {
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 28px;
+  font-weight: 430;
+  line-height: 1;
+}
+
+.analytics-chart-total span,
+.analytics-chart-legend,
+.analytics-chart-axis {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analytics-chart-legend {
+  gap: 18px;
+  margin: -8px 0 14px;
+}
+
+.analytics-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  background: var(--primary);
+}
+
+.legend-line-info {
+  background: var(--info);
+}
+
+.legend-line-wood {
+  background: var(--wood);
+}
+
+.analytics-chart-shell {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 7;
+  min-height: 240px;
+  padding-bottom: 26px;
+}
+
+.analytics-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.analytics-chart-grid-line,
+.analytics-chart-baseline {
+  stroke: var(--border);
+  stroke-width: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+.analytics-chart-grid-line {
+  opacity: 0.55;
+}
+
+.analytics-chart-series {
+  fill: none;
+  stroke: var(--primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.analytics-chart-series-info {
+  stroke: var(--info);
+}
+
+.analytics-chart-series-wood {
+  stroke: var(--wood);
+}
+
+.analytics-chart-axis {
+  position: absolute;
+  right: 2%;
+  bottom: 0;
+  left: 2%;
+  justify-content: space-between;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-analytics-operations-grid {
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.55fr);
+}
+
+.analytics-funnel {
+  display: grid;
+  gap: 17px;
+}
+
+.analytics-funnel-row {
+  display: grid;
+  grid-template-columns: minmax(145px, 0.8fr) minmax(160px, 2fr) minmax(92px, 0.55fr);
+  align-items: center;
+  gap: 18px;
+  min-height: 48px;
+}
+
+.analytics-funnel-label,
+.analytics-funnel-value,
+.analytics-health-tenant {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.analytics-funnel-label span,
+.analytics-funnel-value span,
+.analytics-summary-item span,
+.analytics-health-tenant small,
+.analytics-ranking-table small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analytics-funnel-label strong,
+.analytics-funnel-value strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.analytics-funnel-track {
+  height: 10px;
+  overflow: hidden;
+  background: rgba(168, 146, 121, 0.11);
+  border-radius: var(--radius-sm);
+}
+
+.analytics-funnel-fill {
+  display: block;
+  min-width: 3px;
+  height: 100%;
+  background: var(--primary);
+  opacity: 0.76;
+}
+
+.analytics-funnel-value {
+  justify-items: end;
+  text-align: right;
+}
+
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+
+.analytics-summary-item {
+  display: grid;
+  align-content: space-between;
+  gap: 10px;
+  min-height: 88px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.analytics-summary-item strong {
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 25px;
+  font-weight: 420;
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-summary-item-wide {
+  grid-column: 1 / -1;
+}
+
+.analytics-table {
+  min-width: 760px;
+}
+
+.analytics-ranking-table {
+  min-width: 1060px;
+}
+
+.analytics-ranking-table small {
+  display: block;
+  margin-top: 4px;
+}
+
+.analytics-quota-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-analytics-health-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  margin-bottom: 0;
+}
+
+.analytics-health-list {
+  border-top: 1px solid var(--border);
+}
+
+.analytics-health-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 74px;
+  padding: 13px 0;
+  color: var(--text-soft);
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  transition: color 420ms ease, background-color 420ms ease;
+}
+
+.analytics-health-row:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.analytics-health-index {
+  color: var(--wood);
+  font-family: "Albert Sans", sans-serif;
+  font-size: 12px;
+}
+
+.analytics-health-tenant strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.badge-muted {
+  color: var(--muted);
+  background: var(--surface-muted);
+}
+
+.text-link {
+  color: var(--primary-strong);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
+}
+
 .metric-item-accent {
   color: var(--primary-strong);
   background: transparent;
@@ -2591,6 +2926,15 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .platform-analytics-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .platform-analytics-operations-grid,
+  .platform-analytics-health-grid {
+    grid-template-columns: 1fr;
+  }
+
   .provider-action-grid,
   .plugin-card-grid,
   .plugin-toggle-grid,
@@ -2732,6 +3076,39 @@ code {
   .page-header-actions,
   .hero-action-cluster {
     justify-content: flex-start;
+  }
+
+  .analytics-page-actions {
+    align-items: stretch;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .analytics-range-control {
+    flex: 1;
+  }
+
+  .analytics-range-option {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .platform-analytics-grid,
+  .platform-analytics-chart-grid,
+  .platform-analytics-operations-grid,
+  .platform-analytics-health-grid {
+    grid-template-columns: 1fr;
+    gap: 44px;
+  }
+
+  .analytics-chart-shell {
+    aspect-ratio: 4 / 3;
+    min-height: 220px;
+  }
+
+  .analytics-funnel-row {
+    grid-template-columns: minmax(130px, 0.9fr) minmax(120px, 1.4fr) minmax(78px, 0.55fr);
+    gap: 12px;
   }
 
   .panel-grid,
@@ -2893,6 +3270,48 @@ code {
 
   .account-metric-band {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .platform-analytics-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 18px;
+    padding: 4px 14px;
+  }
+
+  .platform-analytics-kpis .metric-item {
+    min-height: 128px;
+  }
+
+  .analytics-page-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-funnel-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .analytics-funnel-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .analytics-funnel-value {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .analytics-summary-grid {
+    gap: 0 18px;
+  }
+
+  .analytics-health-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .analytics-health-row .badge {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .metric-item,

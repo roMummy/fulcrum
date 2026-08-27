@@ -360,6 +360,29 @@ def test_platform_web_creates_tenant_and_only_shows_password_on_success_response
         client.cookies.set(PLATFORM_SESSION_COOKIE, created_session.raw_token)
         client.cookies.set(PLATFORM_CSRF_COOKIE, created_session.raw_csrf_token)
 
+        dashboard = client.get("/platform/dashboard?range=24h")
+        assert dashboard.status_code == 200
+        assert 'data-range="24h" aria-current="page"' in dashboard.text
+        for section_title in (
+            "消息趋势",
+            "活跃趋势",
+            "SaaS 使用漏斗",
+            "渠道运行情况",
+            "租户使用排行",
+            "租户健康情况",
+            "订阅经营",
+            "在线状态",
+        ):
+            assert section_title in dashboard.text
+        for metric_title in ("消息总数", "触发用户", "接入账号", "在线渠道", "待审核订单"):
+            assert metric_title in dashboard.text
+        assert "sender_id" not in dashboard.text
+        assert "设备 ID" not in dashboard.text
+
+        normalized_dashboard = client.get("/platform/dashboard?range=invalid")
+        assert normalized_dashboard.status_code == 200
+        assert 'data-range="7d" aria-current="page"' in normalized_dashboard.text
+
         tenants_page = client.get("/platform/tenants")
         assert tenants_page.status_code == 200
         assert 'name="name"' in tenants_page.text
