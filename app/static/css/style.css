@@ -2127,6 +2127,15 @@ code {
   gap: 28px;
 }
 
+/* 窄屏公开导航允许横向浏览，但滚动条不参与视觉层级。 */
+.marketing-nav {
+  scrollbar-width: none;
+}
+
+.marketing-nav::-webkit-scrollbar {
+  display: none;
+}
+
 .marketing-nav a,
 .marketing-footer a {
   color: var(--muted);
@@ -2582,26 +2591,6 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dashboard-kpi-grid .metric-item:nth-child(5n) {
-    border-right: 1px solid var(--border);
-  }
-
-  .dashboard-kpi-grid .metric-item:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .dashboard-kpi-grid .metric-item:nth-child(n + 3) {
-    border-top: 1px solid var(--border);
-  }
-
-  .metric-item:nth-child(2n) {
-    border-right: 0;
-  }
-
-  .metric-item:nth-child(n + 3) {
-    border-top: 1px solid var(--border);
-  }
-
   .provider-action-grid,
   .plugin-card-grid,
   .plugin-toggle-grid,
@@ -2610,11 +2599,11 @@ code {
   }
 
   .marketing-hero-copy h1 {
-    font-size: 56px;
+    font-size: 72px;
   }
 
   .marketing-hero-lead {
-    font-size: 30px;
+    font-size: 28px;
   }
 }
 
@@ -2622,8 +2611,8 @@ code {
   .app-topbar-inner {
     grid-template-columns: 1fr auto auto;
     gap: 8px;
-    width: calc(100% - 32px);
-    min-height: 62px;
+    width: calc(100% - 40px);
+    min-height: 64px;
   }
 
   .brand-mark {
@@ -2640,8 +2629,8 @@ code {
     align-items: stretch;
     flex-direction: column;
     gap: 2px;
-    max-height: calc(100vh - 62px);
-    padding: 14px 18px 20px;
+    max-height: calc(100vh - 64px);
+    padding: 16px 20px 22px;
     overflow-y: auto;
     background: #f6f3ef;
     border-bottom: 1px solid var(--border);
@@ -2658,11 +2647,6 @@ code {
     min-height: 44px;
     padding-right: 14px;
     padding-left: 14px;
-  }
-
-  .app-primary-nav .nav-link::before {
-    right: 14px;
-    left: 14px;
   }
 
   .app-primary-nav .nav-more {
@@ -2707,8 +2691,8 @@ code {
   }
 
   .workspace {
-    width: min(100% - 32px, 720px);
-    padding: 28px 0 48px;
+    width: min(100% - 40px, 720px);
+    padding: 36px 0 64px;
   }
 
   .record-row {
@@ -2738,11 +2722,11 @@ code {
   .page-header {
     display: grid;
     gap: 18px;
-    margin-bottom: 22px;
+    margin-bottom: 32px;
   }
 
   .page-header h1 {
-    font-size: 28px;
+    font-size: 32px;
   }
 
   .page-header-actions,
@@ -2763,15 +2747,22 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .page-section,
+  .editor-surface {
+    margin-bottom: 44px;
+  }
+
+  .editor-surface,
   .work-surface,
   .panel {
-    padding: 20px;
+    padding: 24px;
   }
 
   .table {
     min-width: 720px;
   }
 
+  .page-section:has(> .table),
   .work-surface:has(> .table) {
     overflow-x: auto;
   }
@@ -2815,19 +2806,19 @@ code {
   }
 
   .marketing-hero {
-    min-height: 610px;
+    min-height: 640px;
   }
 
   .marketing-hero-copy {
-    padding: 72px 0 84px;
+    padding: 84px 0 96px;
   }
 
   .marketing-hero-copy h1 {
-    font-size: 48px;
+    font-size: 64px;
   }
 
   .marketing-hero-lead {
-    font-size: 27px;
+    font-size: 26px;
   }
 
   .marketing-section-heading,
@@ -2855,7 +2846,7 @@ code {
 
 @media (max-width: 560px) {
   body {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .workspace,
@@ -2866,7 +2857,7 @@ code {
   .marketing-hero-copy,
   .marketing-auth-layout,
   .marketing-notice {
-    width: min(100% - 28px, 520px);
+    width: min(100% - 40px, 520px);
   }
 
   .brand-copy small {
@@ -2906,7 +2897,6 @@ code {
 
   .metric-item,
   .metric-item:nth-child(2n) {
-    border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
@@ -2941,16 +2931,17 @@ code {
   }
 
   .section-tabs {
-    gap: 18px;
+    gap: 20px;
   }
 
+  .editor-surface,
   .work-surface,
   .panel,
   .marketing-auth-panel,
   .auth-form-card,
   .login-card,
   .auth-complete-card {
-    padding: 18px;
+    padding: 22px;
   }
 
   .marketing-header-inner {
@@ -2972,15 +2963,15 @@ code {
   }
 
   .marketing-hero {
-    min-height: 570px;
+    min-height: 600px;
   }
 
   .marketing-hero-copy h1 {
-    font-size: 42px;
+    font-size: 54px;
   }
 
   .marketing-hero-lead {
-    font-size: 24px;
+    font-size: 23px;
   }
 
   .marketing-hero-summary {
@@ -2996,7 +2987,7 @@ code {
   .marketing-section,
   .marketing-page-head,
   .marketing-auth-shell {
-    padding: 70px 0;
+    padding: 80px 0;
   }
 
   .marketing-section-heading h2,

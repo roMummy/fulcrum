@@ -264,10 +264,16 @@ def test_mobile_data_table_and_platform_login_keep_page_boundaries() -> None:
 
     bots_template = _read_project_file(TEMPLATE_ROOT / "bots.html")
     platform_login = _read_project_file(TEMPLATE_ROOT / "platform_login.html")
+    stylesheet = _read_project_file(STYLE_PATH)
 
     assert '<div class="table-scroll">' in bots_template
     assert '<tr><td colspan="7"><div class="empty-state">' not in bots_template
     assert '<h1 id="platform-login-title">平台管理后台</h1>' in platform_login
+    assert ".page-section:has(> .table)" in stylesheet
+    assert ".marketing-nav::-webkit-scrollbar" in stylesheet
+    assert "width: min(100% - 40px, 520px);" in stylesheet
+    assert "body {\n    font-size: 15px;" in stylesheet
+    assert ".dashboard-kpi-grid .metric-item:nth-child(5n)" not in stylesheet
 
 
 def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
