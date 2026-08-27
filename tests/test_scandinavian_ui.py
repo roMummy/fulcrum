@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STYLE_PATH = PROJECT_ROOT / "app/static/css/style.css"
+FONT_STYLE_PATH = PROJECT_ROOT / "app/static/css/fonts.css"
 TEMPLATE_ROOT = PROJECT_ROOT / "app/templates"
 
 
@@ -24,6 +25,7 @@ def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
     """
 
     stylesheet = _read_project_file(STYLE_PATH)
+    font_stylesheet = _read_project_file(FONT_STYLE_PATH)
 
     for required_token in (
         "--bg: #f5f0eb;",
@@ -31,8 +33,22 @@ def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
         "--primary: #5a7a6b;",
         "--wood: #a89279;",
         "--radius-lg: 6px;",
+        "--surface: rgba(255, 255, 255, 0.46);",
+        "--border: rgba(168, 146, 121, 0.22);",
+        "--space-section: 56px;",
     ):
         assert required_token in stylesheet
+
+    # 字体资源必须随应用发布，不能继续依赖运行设备是否预装 Avenir、苹方或思源黑体。
+    assert 'font-family: "Albert Sans";' in font_stylesheet
+    assert 'font-family: "Noto Sans SC";' in font_stylesheet
+    assert "font-size: 15px;" in stylesheet
+    assert "font-weight: 380;" in stylesheet
+
+    font_root = PROJECT_ROOT / "app/static/fonts"
+    assert len(list((font_root / "albert-sans").glob("*.woff2"))) == 2
+    assert len(list((font_root / "noto-sans-sc").glob("*.woff2"))) >= 100
+    assert (font_root / "FONT-LICENSES.md").exists()
 
     for forbidden_pattern in (
         "linear-gradient(",

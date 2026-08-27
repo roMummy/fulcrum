@@ -1,38 +1,45 @@
+/* 字体定义单独维护，保证中文分片可按需加载，同时让所有页面共享同一排版基线。 */
+@import url("./fonts.css");
+
 :root {
   color-scheme: light;
-  /* 北欧极简主色板以自然光、木材与苔藓为来源，同时保留冷灰蓝辅助色区分运营数据。 */
+  /* 北欧工作台以暖灰白承接自然光，冷色只用于数据辅助，不再让后台整体偏冷。 */
   --bg: #f5f0eb;
-  --bg-cool: #f4f6f5;
-  --surface: rgba(255, 255, 255, 0.78);
-  --surface-strong: #ffffff;
-  --surface-soft: #f8f7f4;
-  --surface-muted: #ece8e2;
+  --bg-soft: #faf8f5;
+  --bg-cool: #f7f4f0;
+  --surface: rgba(255, 255, 255, 0.46);
+  --surface-strong: rgba(255, 255, 255, 0.76);
+  --surface-soft: rgba(255, 255, 255, 0.32);
+  --surface-muted: rgba(212, 205, 197, 0.34);
   --text: #3d3d3d;
-  --text-soft: #5e5a55;
+  --text-soft: #5e5953;
   --muted: #746d65;
   --wood: #a89279;
-  --border: rgba(168, 146, 121, 0.28);
-  --border-strong: rgba(90, 122, 107, 0.48);
+  --border: rgba(168, 146, 121, 0.22);
+  --border-strong: rgba(90, 122, 107, 0.42);
   --primary: #5a7a6b;
   --primary-strong: #405f52;
-  --primary-soft: #e4ece7;
-  --secondary: #e8edef;
+  --primary-soft: rgba(90, 122, 107, 0.11);
+  --secondary: rgba(123, 160, 184, 0.12);
   --secondary-text: #506873;
   --success: #3f715c;
-  --success-soft: #e5efe9;
+  --success-soft: rgba(90, 122, 107, 0.12);
   --warning: #8a6a39;
-  --warning-soft: #f5ecdc;
+  --warning-soft: rgba(201, 168, 140, 0.18);
   --danger: #9a4f55;
-  --danger-soft: #f6e7e8;
+  --danger-soft: rgba(154, 79, 85, 0.1);
   --info: #607683;
-  --info-soft: #e7edef;
+  --info-soft: rgba(123, 160, 184, 0.13);
   --focus: rgba(90, 122, 107, 0.28);
-  --shadow-soft: 0 8px 24px rgba(61, 61, 61, 0.1);
+  --shadow-soft: 0 18px 48px rgba(61, 61, 61, 0.07);
   --radius-xl: 6px;
   --radius-lg: 6px;
   --radius-md: 4px;
   --radius-sm: 2px;
   --content-width: 1280px;
+  --space-section: 56px;
+  --space-block: 36px;
+  --space-tight: 20px;
 }
 
 * {
@@ -50,9 +57,11 @@ body {
   margin: 0;
   color: var(--text);
   background: var(--bg);
-  font-family: "Avenir Next", "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
-  font-size: 14px;
-  line-height: 1.65;
+  font-family: "Noto Sans SC", "Albert Sans", sans-serif;
+  font-size: 15px;
+  font-weight: 380;
+  line-height: 1.7;
+  font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
 
@@ -100,8 +109,9 @@ h3,
 h4 {
   margin-top: 0;
   color: var(--text);
-  font-weight: 500;
-  line-height: 1.25;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-weight: 460;
+  line-height: 1.3;
   text-wrap: balance;
 }
 
