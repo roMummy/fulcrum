@@ -6,7 +6,7 @@
 {% endif %}
 
 {% if can_manage_users %}
-<section class="work-surface">
+<section class="editor-surface">
   <div class="section-head"><div><h2>新增员工</h2></div></div>
   <form method="post" action="/tenant/users" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -19,7 +19,7 @@
 </section>
 {% endif %}
 
-<section class="work-surface">
+<section class="page-section">
   <div class="section-head"><div><h2>员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
   <div class="record-list">
     {% for user in users %}

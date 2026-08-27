@@ -526,11 +526,35 @@ code {
   background: var(--primary);
 }
 
-/* 单层工作表面只承担真实业务边界；嵌套时主动退化为无框内容区，避免卡片套卡片。 */
+/*
+ * 页面内容只保留三种表面语义：无框页面区、明确的编辑表面和真正独立的业务工具面板。
+ * 这三类不能互相充当兼容别名，模板必须按当前业务边界选择唯一结构。
+ */
+.page-section {
+  min-width: 0;
+  margin-bottom: var(--space-section);
+  padding: 0;
+  background: transparent;
+}
+
+.page-section:last-child {
+  margin-bottom: 0;
+}
+
+.editor-surface {
+  min-width: 0;
+  margin-bottom: var(--space-section);
+  padding: 32px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* 独立工具面板继续保留轻表面，但降低白色覆盖率，避免重新形成连续卡片墙。 */
 .work-surface,
 .panel {
-  margin-bottom: 20px;
-  padding: 24px;
+  margin-bottom: var(--space-block);
+  padding: 28px;
   background: var(--surface);
   border-radius: var(--radius-lg);
 }
@@ -545,10 +569,9 @@ code {
   border-radius: 0;
 }
 
-.stack-panel + .stack-panel,
 .work-surface + .work-surface,
 .panel + .panel {
-  margin-top: 20px;
+  margin-top: var(--space-block);
 }
 
 .section-head,
@@ -569,7 +592,7 @@ code {
 
 .section-head,
 .toolbar {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .section-head h2,
@@ -579,8 +602,8 @@ code {
 .login-card h2,
 .app-modal-head h2 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 500;
+  font-size: 23px;
+  font-weight: 430;
 }
 
 .muted-text,
@@ -592,12 +615,12 @@ code {
 }
 
 .muted-text {
-  margin: 4px 0 0;
-  font-size: 12px;
+  margin: 6px 0 0;
+  font-size: 13px;
 }
 
 .top-gap {
-  margin-top: 20px;
+  margin-top: var(--space-tight);
 }
 
 .notice-card,
@@ -642,8 +665,8 @@ code {
   border: 1px solid var(--text);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 460;
   text-decoration: none;
   transition: color 300ms ease, background-color 300ms ease, border-color 300ms ease, filter 300ms ease;
 }
@@ -705,8 +728,8 @@ code {
   background: var(--secondary);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 480;
   line-height: 1.25;
 }
 
@@ -758,13 +781,15 @@ code {
 }
 
 .metric-band {
-  margin-bottom: 24px;
-  background: var(--surface);
+  gap: 0 28px;
+  margin-bottom: var(--space-section);
+  padding: 8px 22px;
+  background: rgba(255, 255, 255, 0.28);
   border-radius: var(--radius-lg);
 }
 
 .dashboard-overview {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-section);
 }
 
 .dashboard-overview .section-head {
@@ -772,15 +797,14 @@ code {
 }
 
 /*
- * 企业总览的双列工作表面只由网格 gap 管理间距。通用相邻卡片规则适用于纵向页面，
- * 放进网格后会额外下移右侧卡片，因此这里必须重置直接子级外边距并让同排卡片拉伸。
+ * 企业总览的双列页面区只由网格管理间距。直接子区块必须拉伸，但不能恢复白色卡片背景。
  */
 .overview-card-grid {
   align-items: stretch;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-section);
 }
 
-.overview-card-grid > .work-surface {
+.overview-card-grid > .page-section {
   display: flex;
   align-self: stretch;
   flex-direction: column;
@@ -788,7 +812,7 @@ code {
   margin: 0;
 }
 
-.overview-card-grid > .work-surface + .work-surface {
+.overview-card-grid > .page-section + .page-section {
   margin-top: 0;
 }
 
@@ -796,18 +820,11 @@ code {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
-.dashboard-kpi-grid .metric-item:nth-child(5n) {
-  border-right: 0;
-}
-
-.dashboard-kpi-grid .metric-item:nth-child(n + 6) {
-  border-top: 1px solid var(--border);
-}
-
 .metric-band-compact {
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  margin: 18px 0 0;
-  background: var(--surface-soft);
+  margin: 22px 0 0;
+  padding: 4px 0;
+  background: transparent;
 }
 
 .metric-item-danger strong {
@@ -816,27 +833,23 @@ code {
 
 .metric-item {
   min-width: 0;
-  padding: 18px 20px;
+  padding: 20px 0 22px;
   background: transparent;
-  border-right: 1px solid var(--border);
-}
-
-.metric-item:last-child {
-  border-right: 0;
 }
 
 .metric-item span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .metric-item strong {
   display: block;
-  margin-top: 6px;
+  margin-top: 8px;
   color: var(--text);
-  font-size: 26px;
-  font-weight: 500;
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 30px;
+  font-weight: 420;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
 }
@@ -858,12 +871,12 @@ code {
 
 .metric-item-accent {
   color: var(--primary-strong);
-  background: rgba(90, 122, 107, 0.06);
+  background: transparent;
 }
 
 .danger-soft {
   color: var(--danger);
-  background: rgba(154, 79, 85, 0.06);
+  background: transparent;
 }
 
 .compact-grid {
@@ -934,13 +947,13 @@ code {
   border-collapse: collapse;
   color: var(--text-soft);
   background: transparent;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 .table th,
 .table td {
-  padding: 13px 12px;
+  padding: 15px 12px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--border);
@@ -948,18 +961,18 @@ code {
 
 .table th {
   color: var(--muted);
-  background: rgba(232, 237, 239, 0.52);
-  font-size: 11px;
-  font-weight: 600;
+  background: rgba(123, 160, 184, 0.08);
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
 .table tbody tr {
-  transition: background-color 300ms ease;
+  transition: background-color 420ms ease;
 }
 
 .table tbody tr:hover {
-  background: rgba(90, 122, 107, 0.045);
+  background: rgba(90, 122, 107, 0.035);
 }
 
 .table tbody tr:last-child td {
@@ -992,7 +1005,7 @@ code {
   min-width: 136px;
 }
 
-/* 管理型清单使用连续记录行展示摘要，编辑表单放入独立弹窗，避免表格行被表单撑高。 */
+/* 管理型清单使用开放记录行展示摘要，轻横线只承担扫描基线，不再制造独立记录卡片。 */
 .record-list {
   border-top: 1px solid var(--border);
 }
@@ -1002,8 +1015,8 @@ code {
   grid-template-columns: minmax(170px, 1.1fr) minmax(0, 3fr) 40px;
   align-items: center;
   gap: 22px;
-  min-height: 76px;
-  padding: 14px 0;
+  min-height: 82px;
+  padding: 17px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1019,15 +1032,15 @@ code {
 
 .record-primary strong {
   overflow: hidden;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .record-primary > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .record-meta {
@@ -1047,14 +1060,14 @@ code {
 
 .record-meta dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .record-meta dd {
   min-width: 0;
   margin: 0;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -1092,7 +1105,7 @@ code {
 
 .record-link {
   color: var(--primary-strong);
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
 }
 
@@ -1288,7 +1301,7 @@ code {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 17px 20px;
+  gap: 20px 24px;
 }
 
 .form-grid label,
@@ -1297,10 +1310,10 @@ code {
 .chatroom-scope-mode-form,
 .chatroom-scope-config-form {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 460;
 }
 
 .form-grid input,
@@ -1312,13 +1325,13 @@ code {
 .chatroom-scope-select,
 .wechat-action-select {
   width: 100%;
-  min-height: 42px;
-  padding: 9px 11px;
+  min-height: 44px;
+  padding: 10px 12px;
   color: var(--text);
-  background: rgba(255, 255, 255, 0.52);
+  background: var(--surface-strong);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  transition: background-color 300ms ease, border-color 300ms ease, box-shadow 300ms ease;
+  transition: background-color 420ms ease, border-color 420ms ease, box-shadow 420ms ease;
 }
 
 .form-grid textarea {
@@ -1359,7 +1372,7 @@ code {
 .chatroom-scope-select:focus-visible,
 .wechat-action-select:focus-visible {
   outline: none;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.94);
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--focus);
 }

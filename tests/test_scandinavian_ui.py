@@ -132,6 +132,10 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
 
     assert 'class="metric-band' in tenant_dashboard
     assert 'class="metric-band' in platform_dashboard
+    assert tenant_dashboard.count('class="page-section') >= 10
+    assert 'class="page-section"' in platform_dashboard
+    assert 'class="work-surface"' not in tenant_dashboard
+    assert 'class="work-surface"' not in platform_dashboard
     for forbidden_class in ("dashboard-hero-card", "nested-card", "accent-card"):
         assert forbidden_class not in tenant_dashboard
         assert forbidden_class not in platform_dashboard
@@ -151,7 +155,7 @@ def test_overview_grids_align_cards_without_fixed_heights() -> None:
 
     assert tenant_dashboard.count("overview-card-grid") == 5
     assert "platform-metric-band" in platform_dashboard
-    assert ".overview-card-grid > .work-surface" in stylesheet
+    assert ".overview-card-grid > .page-section" in stylesheet
     assert ".platform-metric-band .metric-item" in stylesheet
 
 
@@ -161,6 +165,8 @@ def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> No
     stylesheet = _read_project_file(STYLE_PATH)
 
     assert ".work-surface" in stylesheet
+    assert ".page-section" in stylesheet
+    assert ".editor-surface" in stylesheet
     assert ".metric-band" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".app-nav-toggle" in stylesheet
@@ -194,6 +200,8 @@ def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> Non
     platform_plans = _read_project_file(TEMPLATE_ROOT / "platform_plans.html")
 
     for template_source in (tenant_users, platform_users, platform_plans):
+        assert 'class="editor-surface"' in template_source
+        assert 'class="page-section"' in template_source
         assert 'class="record-list"' in template_source
         assert 'class="record-row"' in template_source
         assert 'class="record-actions"' in template_source
@@ -204,6 +212,9 @@ def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> Non
     assert '<td colspan="5">' not in tenant_users
     assert '<td colspan="4">' not in platform_users
     assert '<td colspan="9">' not in platform_plans
+
+    account_onboarding = _read_project_file(TEMPLATE_ROOT / "account_onboarding.html")
+    assert account_onboarding.count('class="page-section"') == 2
 
 
 def test_visible_copy_omits_development_process_and_keeps_required_warnings() -> None:

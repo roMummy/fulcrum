@@ -5,7 +5,7 @@
 <section class="notice-card"><strong>一次性初始密码</strong><p><code>{{ initial_password }}</code></p><p class="muted-text">该密码未保存明文，离开或刷新本页后无法再次查看。</p></section>
 {% endif %}
 
-<section class="work-surface">
+<section class="editor-surface">
   <div class="section-head"><div><h2>新增平台员工</h2></div></div>
   {# 平台员工与企业身份彻底分离，表单不接收租户编码或企业主键。 #}
   <form method="post" action="/platform/users" class="form-grid">
@@ -17,7 +17,7 @@
   </form>
 </section>
 
-<section class="work-surface">
+<section class="page-section">
   <div class="section-head"><div><h2>平台员工清单</h2></div><span class="chip chip-outline">{{ users|length }} 个账号</span></div>
   <div class="record-list">
     {% for user in users %}
