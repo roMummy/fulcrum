@@ -64,6 +64,19 @@ class PlatformSession(Base, TimestampMixin):
     user = relationship("PlatformUser", back_populates="sessions")
 
 
+class PlatformProtocolService(Base, TimestampMixin):
+    """平台统一维护的协议服务入口，不属于任何租户，也不保存账号级凭证。"""
+
+    __tablename__ = "platform_protocol_services"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 渠道稳定编码与渠道目录一致，唯一约束保证首期每种协议只有一个平台入口。
+    channel_type: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    api_base: Mapped[str] = mapped_column(String(500), nullable=False)
+    # 停用只关闭新的账号接入；已有渠道保留最后一次同步的地址，避免维护动作直接中断业务。
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+
+
 class Tenant(Base, TimestampMixin):
     """共享数据库中的租户根实体，普通请求的 tenant_id 必须来自可信会话。"""
 
