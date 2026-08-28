@@ -198,17 +198,11 @@ code {
 
 .brand-mark,
 .marketing-brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   flex: 0 0 auto;
   width: 36px;
   height: 36px;
-  color: #ffffff;
-  background: var(--signal);
-  border-radius: var(--radius-md);
-  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
-  font-size: 15px;
-  font-weight: 520;
+  object-fit: contain;
 }
 
 .brand-copy {
