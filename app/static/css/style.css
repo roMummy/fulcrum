@@ -2604,8 +2604,8 @@ code {
 }
 
 .marketing-product-visual img {
-  opacity: 0.14;
-  filter: grayscale(1) contrast(1.12) brightness(1.1);
+  opacity: 0.2;
+  filter: grayscale(1) contrast(1.12) brightness(1.04);
 }
 
 /* 首屏正文只占据画布左侧，让产品截图保留足够空气感并露出下一内容带。 */
@@ -2930,6 +2930,12 @@ code {
 .marketing-auth-context li {
   color: var(--muted);
   font-size: 15px;
+}
+
+/* 信号区文字必须覆盖通用次级文字色，确保红底上的中文说明具备稳定对比度。 */
+.marketing-auth-context.marketing-auth-context-signal > p,
+.marketing-auth-context.marketing-auth-context-signal li {
+  color: #ffffff;
 }
 
 .marketing-auth-context ul {
