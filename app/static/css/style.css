@@ -3390,30 +3390,32 @@ code {
   }
 
   .marketing-hero-signal {
-    top: 86px;
+    top: auto;
     right: 24px;
-    width: 160px;
+    bottom: 16px;
+    width: 72px;
   }
 
   .marketing-hero-axis-horizontal {
-    top: 48%;
-    left: 62%;
+    top: auto;
+    bottom: 52px;
+    left: 58%;
   }
 
   .marketing-hero-axis-vertical {
-    right: 104px;
+    display: none;
   }
 
   .marketing-hero-marker {
-    top: 286px;
-    right: 40px;
-    width: 52px;
-    height: 52px;
+    top: auto;
+    right: 112px;
+    bottom: 38px;
+    width: 20px;
+    height: 20px;
   }
 
   .marketing-hero-index {
-    top: 58px;
-    right: 24px;
+    display: none;
   }
 
   .marketing-hero-copy h1 {
@@ -3620,11 +3622,12 @@ code {
   }
 
   .marketing-hero-signal {
-    top: 86px;
+    top: auto;
     right: 20px;
+    bottom: 16px;
     left: auto;
-    width: 92px;
-    height: 92px;
+    width: 72px;
+    height: 72px;
   }
 
   .marketing-hero-signal span {
@@ -3635,7 +3638,8 @@ code {
   }
 
   .marketing-hero-axis-horizontal {
-    top: 188px;
+    top: auto;
+    bottom: 52px;
     left: 56%;
   }
 
@@ -3644,15 +3648,15 @@ code {
   }
 
   .marketing-hero-marker {
-    top: 202px;
-    right: 28px;
-    width: 28px;
-    height: 28px;
+    top: auto;
+    right: 104px;
+    bottom: 38px;
+    width: 20px;
+    height: 20px;
   }
 
   .marketing-hero-index {
-    top: 58px;
-    right: 20px;
+    display: none;
   }
 
   .marketing-hero-copy h1 {
