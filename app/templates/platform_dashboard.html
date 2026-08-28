@@ -21,6 +21,8 @@
   {% endfor %}
 </div>
 
+{# 双趋势共享一个 Swiss 业务表面，内部图表保持单层结构，避免重复卡片边界。 #}
+<section class="platform-analytics-surface platform-analytics-trends-surface">
 <div class="platform-analytics-grid platform-analytics-chart-grid">
   <section class="page-section analytics-chart-section">
     <div class="section-head">
@@ -66,7 +68,10 @@
     </div>
   </section>
 </div>
+</section>
 
+{# 使用漏斗与订阅经营属于同一租户采用链路，共享经营分析表面。 #}
+<section class="platform-analytics-surface platform-analytics-operations-surface">
 <div class="platform-analytics-grid platform-analytics-operations-grid">
   <section class="page-section platform-adoption-funnel">
     <div class="section-head"><div><p class="section-kicker">Adoption</p><h2>SaaS 使用漏斗</h2></div></div>
@@ -95,6 +100,7 @@
     </div>
   </section>
 </div>
+</section>
 
 <section class="page-section platform-channel-summary">
   <div class="section-head"><div><p class="section-kicker">Channel health</p><h2>渠道运行情况</h2></div></div>
@@ -144,6 +150,8 @@
   </div>
 </section>
 
+{# 租户风险与系统在线能力共同构成平台健康判断，组合为最后一个运行表面。 #}
+<section class="platform-analytics-surface platform-analytics-health-surface">
 <div class="platform-analytics-grid platform-analytics-health-grid">
   <section class="page-section platform-tenant-health">
     <div class="section-head"><div><p class="section-kicker">Attention</p><h2>租户健康情况</h2></div></div>
@@ -171,4 +179,5 @@
     </div>
   </section>
 </div>
+</section>
 {% endblock %}

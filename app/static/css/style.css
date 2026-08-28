@@ -888,10 +888,7 @@ code {
   padding-top: 7px;
 }
 
-/*
- * 平台分析大盘沿用开放页面分区：时间切换、指标、图表和运营清单共享一套低边界语言，
- * 只给图形本身稳定尺寸，不把每个统计项重新包装成独立卡片。
- */
+/* 平台大盘使用大业务表面承载同一分析链路，内部图表和统计项保持单层结构。 */
 .analytics-page-actions,
 .analytics-range-control,
 .analytics-chart-legend,
@@ -943,8 +940,33 @@ code {
 .platform-analytics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 48px;
+  gap: 32px;
   margin-bottom: var(--space-section);
+}
+
+.platform-analytics-surface {
+  min-width: 0;
+  margin-bottom: var(--space-section);
+  padding: 28px;
+  background: var(--surface);
+  border-top: 4px solid var(--border-strong);
+}
+
+.platform-analytics-surface > .platform-analytics-grid {
+  margin-bottom: 0;
+}
+
+/* 组合表面内部的 page-section 只保留语义，不重复生成背景和黑色顶部规则。 */
+.platform-analytics-surface .page-section {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-top: 0;
+}
+
+.platform-analytics-surface .page-section + .page-section {
+  padding-left: 32px;
+  border-left: 1px solid var(--border);
 }
 
 .platform-analytics-grid > .page-section {
@@ -952,7 +974,7 @@ code {
 }
 
 .platform-analytics-chart-grid {
-  gap: 56px;
+  gap: 32px;
 }
 
 .analytics-chart-section {
@@ -3033,6 +3055,14 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .platform-analytics-operations-surface .page-section + .page-section,
+  .platform-analytics-health-surface .page-section + .page-section {
+    padding-top: 32px;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
   .provider-action-grid,
   .plugin-card-grid,
   .plugin-toggle-grid,
@@ -3203,6 +3233,17 @@ code {
   .platform-analytics-health-grid {
     grid-template-columns: 1fr;
     gap: 44px;
+  }
+
+  .platform-analytics-surface {
+    padding: 22px;
+  }
+
+  .platform-analytics-surface .page-section + .page-section {
+    padding-top: 32px;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
   }
 
   .analytics-chart-shell {
@@ -3394,7 +3435,7 @@ code {
   .platform-analytics-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 18px;
-    padding: 4px 14px;
+    padding: 0;
   }
 
   .platform-analytics-kpis .metric-item {
@@ -3422,6 +3463,10 @@ code {
 
   .analytics-summary-grid {
     gap: 0 18px;
+  }
+
+  .platform-analytics-surface {
+    padding: 20px;
   }
 
   .analytics-health-row {
