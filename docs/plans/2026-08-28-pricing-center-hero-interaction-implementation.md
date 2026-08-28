@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 修复公开套餐价格页左右偏移，并将营销首屏替换为无截图、可交互、支持减少动态效果的 Swiss 几何场景。
+**Goal:** 修复公开套餐价格页左右偏移，将营销首屏替换为无截图的 Swiss 交互场景，并统一站内 Logo 与圆角 favicon。
 
-**Architecture:** 保留现有 FastAPI、Jinja2 与共享营销布局，只移除冲突的网格外边距和旧截图链路。Hero 使用普通 DOM 元素、CSS 自定义属性与一个无依赖原生脚本完成受限指针反馈，业务文案、路由和套餐数据保持不变。
+**Architecture:** 保留现有 FastAPI、Jinja2 与共享营销布局，只移除冲突的网格外边距和旧截图链路。Hero 使用普通 DOM 元素、CSS 自定义属性与一个无依赖原生脚本完成受限指针反馈；品牌使用共享内部几何的直角站内 SVG 与圆角 favicon，业务文案、路由和套餐数据保持不变。
 
 **Tech Stack:** FastAPI、Jinja2、原生 CSS、原生 JavaScript、Pytest、Playwright Chromium、Docker Compose
 
@@ -85,7 +85,50 @@ Run: `LOG_DIR=$(mktemp -d) .venv/bin/python -m pytest tests/test_swiss_ui.py -q`
 
 Expected: 新增套餐容器断言通过；Hero 相关断言仍失败。
 
-### Task 3: 实现无截图 Swiss Hero 交互
+### Task 3: 建立并实现统一 Swiss 品牌标志
+
+**Files:**
+- Create: `app/static/brand-mark.svg`
+- Modify: `app/static/favicon.svg`
+- Modify: `app/templates/base.html`
+- Modify: `app/templates/marketing_base.html`
+- Modify: `app/static/css/style.css`
+- Test: `tests/test_swiss_ui.py`
+
+**Step 1: 增加失败契约**
+
+使用 `xml.etree.ElementTree` 解析两个 SVG，断言都不包含渐变；站内标志使用直角外轮廓，favicon 外层矩形使用 `rx="14"`；两个文件必须包含相同的白色抽象 `Y` 路径和蓝色中心方块。模板必须引用 `/static/brand-mark.svg`，且不再输出文字方块 `<span class="brand-mark">曜</span>`。
+
+**Step 2: 创建两个品牌资产**
+
+`brand-mark.svg` 使用 `64x64` 直角红底、白色抽象 `Y` 和蓝色枢点。`favicon.svg` 复用内部图形，仅将红色外层改为带透明边角的 `rx="14"` 圆角矩形。
+
+**Step 3: 统一模板调用**
+
+把企业后台、平台后台、认证壳和营销页头中的文字方块替换为装饰性图片：
+
+```html
+<img class="brand-mark" src="/static/brand-mark.svg" alt="" />
+```
+
+营销站使用 `marketing-brand-mark` 类名。相邻“曜枢 AI”文字继续提供品牌名称。
+
+**Step 4: 校准共享尺寸**
+
+删除旧标记的字体、文字颜色和背景声明，只保留固定尺寸、块级显示和 `object-fit: contain`。移动端继续使用现有 `34px` 尺寸。
+
+**Step 5: 运行品牌定向测试并提交**
+
+Run: `LOG_DIR=$(mktemp -d) .venv/bin/python -m pytest tests/test_swiss_ui.py -q`
+
+Expected: 品牌契约通过；尚未实现的 Hero 契约仍失败。
+
+```bash
+git add app/static/brand-mark.svg app/static/favicon.svg app/templates/base.html app/templates/marketing_base.html app/static/css/style.css tests/test_swiss_ui.py
+git commit -m "品牌：统一Swiss标志与圆角favicon"
+```
+
+### Task 4: 实现无截图 Swiss Hero 交互
 
 **Files:**
 - Modify: `app/templates/marketing_home.html`
@@ -166,7 +209,7 @@ git add app/templates/marketing_home.html app/templates/marketing_base.html app/
 git commit -m "界面：修复套餐居中并重构Swiss Hero交互"
 ```
 
-### Task 4: 浏览器验收和响应式校准
+### Task 5: 浏览器验收和响应式校准
 
 **Files:**
 - Modify when required: `app/static/css/style.css`
@@ -201,6 +244,7 @@ Expected: 只重建 `multi-bot-saas-app`，MariaDB 保持运行。
 - 主要按钮键盘聚焦可见；
 - `reduced_motion="reduce"` 环境下 transform 为静态值；
 - 下一业务区在首屏底部保持可见。
+- 营销页和后台顶栏标志边界清晰，favicon 为圆角外轮廓且没有渐变。
 
 **Step 4: 保存桌面和移动截图**
 
@@ -223,7 +267,7 @@ git add app/static/css/style.css app/static/js/marketing.js
 git commit -m "界面：完成套餐与Hero响应式校准"
 ```
 
-### Task 5: 生产验证与推送
+### Task 6: 生产验证与推送
 
 **Files:**
 - No source changes expected
@@ -247,4 +291,3 @@ Expected: 健康与就绪接口成功，应用和 MariaDB 均为 healthy。
 Run: `git push origin ui/scandinavian-refactor`
 
 Expected: 远程分支指向最终提交，工作区仅保留用户自有 `.rcodex/`。
-
