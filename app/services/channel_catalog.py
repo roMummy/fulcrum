@@ -47,6 +47,8 @@ class ChannelTypeDefinition:
     config_fields: tuple[ChannelConfigField, ...]
     adapter_factory: Callable[[], Any]
     requires_executor_binding: bool = False
+    # 平台托管端点表示租户不能填写或修改 api_base，连接服务必须从平台配置读取。
+    platform_managed_endpoint: bool = False
 
 
 def _build_workwechat_adapter():
@@ -111,7 +113,6 @@ CHANNEL_TYPE_DEFINITIONS = (
         runtime_mode="platform_polling",
         capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
         config_fields=(
-            ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:9064", required_when_enabled=True),
             ChannelConfigField("proxy_host", "代理地址"),
             ChannelConfigField("proxy_port", "代理端口"),
             ChannelConfigField("proxy_username", "代理用户名"),
@@ -119,6 +120,7 @@ CHANNEL_TYPE_DEFINITIONS = (
             *COMMON_POLICY_FIELDS,
         ),
         adapter_factory=_build_wechat_ipad_adapter,
+        platform_managed_endpoint=True,
     ),
     ChannelTypeDefinition(
         code="wechat_winauto",
@@ -174,6 +176,7 @@ def serialize_channel_type_definitions() -> tuple[dict[str, Any], ...]:
             "runtime_mode": definition.runtime_mode,
             "capabilities": sorted(definition.capabilities),
             "requires_executor_binding": definition.requires_executor_binding,
+            "platform_managed_endpoint": definition.platform_managed_endpoint,
             "config_fields": [
                 {
                     "name": field.name,
