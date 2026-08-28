@@ -36,6 +36,7 @@ from app.web.billing import (
     PaymentProofError,
     resolve_order_proof_path,
 )
+from app.web.platform_navigation import build_platform_primary_navigation
 
 
 router = APIRouter(prefix="/platform", tags=["platform-billing"])
@@ -73,14 +74,7 @@ def _platform_context(
         "request": request,
         "page_title": page_title,
         "current_user": principal,
-        "primary_nav_items": [
-            {"label": "平台概览", "href": "/platform/dashboard", "active": False},
-            {"label": "租户管理", "href": "/platform/tenants", "active": False},
-            {"label": "套餐管理", "href": "/platform/plans", "active": False},
-            {"label": "订单审核", "href": "/platform/billing/orders", "active": True},
-            {"label": "平台员工", "href": "/platform/users", "active": False},
-            {"label": "系统运维", "href": "/platform/operations", "active": False},
-        ],
+        "primary_nav_items": build_platform_primary_navigation("billing"),
         "secondary_nav_items": [],
         "secondary_nav_active": False,
         "section_nav_items": [

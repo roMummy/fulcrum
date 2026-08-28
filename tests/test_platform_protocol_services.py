@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-import app.web.platform_admin as platform_admin_web
+import app.web.platform_operations as platform_operations_web
 from app.core.db import Base
 from app.models.entities import Bot, Channel
 from app.models.saas import PlatformAuditLog, PlatformProtocolService, PlatformUser, Tenant
@@ -181,7 +181,7 @@ def test_platform_protocol_service_page_saves_with_platform_auth_and_csrf(tmp_pa
         db.refresh(platform_user)
         session = create_platform_session(db, platform_user)
 
-    monkeypatch.setattr(platform_admin_web, "SessionLocal", factory)
+    monkeypatch.setattr(platform_operations_web, "SessionLocal", factory)
     test_app = FastAPI()
 
     @test_app.middleware("http")
@@ -194,7 +194,7 @@ def test_platform_protocol_service_page_saves_with_platform_auth_and_csrf(tmp_pa
             )
         return await call_next(request)
 
-    test_app.include_router(platform_admin_web.router)
+    test_app.include_router(platform_operations_web.router)
     with TestClient(test_app) as client:
         assert client.get("/platform/protocol-services").status_code == 401
         client.cookies.set(PLATFORM_SESSION_COOKIE, session.raw_token)
@@ -205,6 +205,13 @@ def test_platform_protocol_service_page_saves_with_platform_auth_and_csrf(tmp_pa
         assert "微信 iPad 协议" in page.text
         assert 'name="api_base"' in page.text
         assert "已同步账号" in page.text
+        primary_navigation = page.text.split('<nav class="app-primary-nav"', 1)[1].split("</nav>", 1)[0]
+        operations_navigation = page.text.split('<nav class="section-tabs"', 1)[1].split("</nav>", 1)[0]
+        assert ">协议服务</a>" not in primary_navigation
+        assert 'href="/platform/operations" class="nav-link active"' in primary_navigation
+        for label in ("运行监控", "协议服务", "全局日志"):
+            assert label in operations_navigation
+        assert 'class="section-tab active" href="/platform/protocol-services"' in operations_navigation
 
         rejected = client.post(
             "/platform/protocol-services/wechat_ipad",

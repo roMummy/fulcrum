@@ -114,25 +114,40 @@ def _set_platform_identity(client: TestClient, created_session) -> None:
     client.cookies.set(PLATFORM_CSRF_COOKIE, created_session.raw_csrf_token, path="/platform")
 
 
-def test_platform_monitoring_and_logs_require_platform_identity(platform_operations_env) -> None:
-    """租户 Cookie 不能替代平台身份，平台会话可以读取全局运维与日志。"""
+def test_platform_operations_pages_require_identity_and_share_secondary_navigation(platform_operations_env) -> None:
+    """平台运维页面共用二级导航，租户 Cookie 不能替代平台员工身份。"""
 
     with TestClient(main_module.app, follow_redirects=False) as client:
-        for path in ("/platform/operations", "/platform/logs"):
+        for path in ("/platform/operations", "/platform/protocol-services", "/platform/logs"):
             denied = client.get(path)
             assert denied.status_code == 303, path
             assert denied.headers["location"] == "/platform/login"
 
         _set_platform_identity(client, platform_operations_env["session"])
         monitoring = client.get("/platform/operations")
+        protocol_services = client.get("/platform/protocol-services")
         logs = client.get("/platform/logs?tab=error&keyword=target")
 
         assert monitoring.status_code == 200
         assert "全局运行概览" in monitoring.text
         assert "租户运维告警" in monitoring.text
+        assert protocol_services.status_code == 200
+        assert "微信 iPad 协议" in protocol_services.text
         assert logs.status_code == 200
         assert "target traceback" in logs.text
         assert "ignored error" not in logs.text
+        for response, active_href in (
+            (monitoring, "/platform/operations"),
+            (protocol_services, "/platform/protocol-services"),
+            (logs, "/platform/logs"),
+        ):
+            primary_navigation = response.text.split('<nav class="app-primary-nav"', 1)[1].split("</nav>", 1)[0]
+            operations_navigation = response.text.split('<nav class="section-tabs"', 1)[1].split("</nav>", 1)[0]
+            assert ">协议服务</a>" not in primary_navigation
+            assert 'href="/platform/operations" class="nav-link active"' in primary_navigation
+            for label in ("运行监控", "协议服务", "全局日志"):
+                assert label in operations_navigation
+            assert f'class="section-tab active" href="{active_href}"' in operations_navigation
 
 
 def test_platform_alert_resolution_requires_csrf_and_writes_platform_audit(platform_operations_env) -> None:
