@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -8,6 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STYLE_PATH = PROJECT_ROOT / "app/static/css/style.css"
 FONT_STYLE_PATH = PROJECT_ROOT / "app/static/css/fonts.css"
 MARKETING_SCRIPT_PATH = PROJECT_ROOT / "app/static/js/marketing.js"
+BRAND_MARK_PATH = PROJECT_ROOT / "app/static/brand-mark.svg"
+FAVICON_PATH = PROJECT_ROOT / "app/static/favicon.svg"
 TEMPLATE_ROOT = PROJECT_ROOT / "app/templates"
 
 
@@ -186,6 +189,48 @@ def test_marketing_hero_interaction_respects_motion_and_keyboard_boundaries() ->
         'scene.style.setProperty("--hero-pointer-y"',
     ):
         assert required_script in script
+
+
+def test_swiss_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
+    """站内标志与圆角 favicon 必须共享内部几何，并彻底删除旧渐变机器人。
+
+    SVG 使用 XML 解析而不是字符串猜测结构。站内版本保持直角红底，浏览器图标只
+    改变外层圆角；白色 Y 路径和蓝色枢点必须完全相同，避免形成两套品牌标志。
+    """
+
+    assert BRAND_MARK_PATH.exists()
+    brand_root = ET.parse(BRAND_MARK_PATH).getroot()
+    favicon_root = ET.parse(FAVICON_PATH).getroot()
+    namespace = {"svg": "http://www.w3.org/2000/svg"}
+
+    assert not brand_root.findall(".//svg:linearGradient", namespace)
+    assert not favicon_root.findall(".//svg:linearGradient", namespace)
+
+    brand_background = brand_root.find("svg:rect", namespace)
+    favicon_background = favicon_root.find("svg:rect", namespace)
+    assert brand_background is not None
+    assert favicon_background is not None
+    assert brand_background.attrib.get("rx") in (None, "0")
+    assert favicon_background.attrib.get("rx") == "14"
+    assert brand_background.attrib.get("fill") == favicon_background.attrib.get("fill") == "#ff0000"
+
+    brand_path = brand_root.find("svg:path", namespace)
+    favicon_path = favicon_root.find("svg:path", namespace)
+    assert brand_path is not None
+    assert favicon_path is not None
+    assert brand_path.attrib == favicon_path.attrib
+
+    brand_pivot = brand_root.findall("svg:rect", namespace)[1]
+    favicon_pivot = favicon_root.findall("svg:rect", namespace)[1]
+    assert brand_pivot.attrib == favicon_pivot.attrib
+    assert brand_pivot.attrib.get("fill") == "#0057b8"
+
+    base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
+    marketing_base = _read_project_file(TEMPLATE_ROOT / "marketing_base.html")
+    assert base_template.count('/static/brand-mark.svg') == 2
+    assert marketing_base.count('/static/brand-mark.svg') == 1
+    assert '<span class="brand-mark">曜</span>' not in base_template
+    assert '<span class="marketing-brand-mark" aria-hidden="true">曜</span>' not in marketing_base
 
 
 def test_dashboards_use_swiss_data_bands_and_single_layer_surfaces() -> None:
