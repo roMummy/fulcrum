@@ -78,8 +78,6 @@
     <label class="full-row"><span>账号名称</span><input name="display_name" maxlength="100" autocomplete="off" placeholder="例如：售后客服…" required /></label>
     {% if requested_type == 'telegram' %}
     <label class="full-row"><span>Bot Token</span><input name="bot_token" type="password" autocomplete="off" required /></label>
-    {% elif requested_type == 'wechat_ipad' %}
-    <label class="full-row"><span>协议服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="http://127.0.0.1:9064" required /></label>
     {% elif requested_type == 'wechat_winauto' %}
     <label class="full-row"><span>客户端地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="http://127.0.0.1:8182" required /></label>
     <label class="full-row"><span>访问凭证</span><input name="bot_token" type="password" autocomplete="off" /></label>

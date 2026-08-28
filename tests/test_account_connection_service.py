@@ -10,7 +10,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
-from app.models.saas import BotBinding, DeviceTrialClaim, SaasPlan, Tenant, TenantSubscription
+from app.models.saas import BotBinding, DeviceTrialClaim, PlatformProtocolService, SaasPlan, Tenant, TenantSubscription
 from app.services.account_connections.contracts import AccountConnectionError, AccountConnectionResult, VerifiedAccountIdentity
 from app.services.account_connections.service import (
     begin_account_connection,
@@ -151,3 +151,62 @@ def test_unverified_draft_cannot_be_enabled(db: Session) -> None:
         )
         with pytest.raises(AccountConnectionError, match="connection_not_verified"):
             finalize_account_connection(db, channel_id=draft.id, display_name="未验证账号")
+
+
+def test_platform_managed_connection_requires_enabled_service_before_creating_draft(db: Session) -> None:
+    """平台服务缺失或暂停时必须在建 Bot 前失败，不能产生孤立草稿。"""
+
+    tenant = _seed_paid_tenant(db)
+    with tenant_scope(tenant.id):
+        with pytest.raises(AccountConnectionError, match="platform_protocol_service_missing"):
+            begin_account_connection(
+                db,
+                channel_type="wechat_ipad",
+                display_name="缺少平台服务",
+                connection_values={"api_base": "http://forged.internal:9064"},
+            )
+        assert db.scalars(select(Bot)).all() == []
+        assert db.scalars(select(Channel)).all() == []
+
+        db.add(
+            PlatformProtocolService(
+                channel_type="wechat_ipad",
+                api_base="http://ipad.platform.internal:9064",
+                is_enabled=False,
+            )
+        )
+        db.commit()
+        with pytest.raises(AccountConnectionError, match="platform_protocol_service_disabled"):
+            begin_account_connection(
+                db,
+                channel_type="wechat_ipad",
+                display_name="暂停接入账号",
+                connection_values={"api_base": "http://forged.internal:9064"},
+            )
+        assert db.scalars(select(Bot)).all() == []
+        assert db.scalars(select(Channel)).all() == []
+
+
+def test_platform_managed_connection_ignores_tenant_api_base(db: Session) -> None:
+    """租户夹带的服务地址不能覆盖平台配置，新草稿只保存平台托管地址。"""
+
+    tenant = _seed_paid_tenant(db)
+    db.add(
+        PlatformProtocolService(
+            channel_type="wechat_ipad",
+            api_base="http://ipad.platform.internal:9064",
+            is_enabled=True,
+        )
+    )
+    db.commit()
+
+    with tenant_scope(tenant.id):
+        draft = begin_account_connection(
+            db,
+            channel_type="wechat_ipad",
+            display_name="平台托管账号",
+            connection_values={"api_base": "http://forged.internal:9064"},
+        )
+
+    assert draft.api_base == "http://ipad.platform.internal:9064"
+    assert draft.api_base != "http://forged.internal:9064"

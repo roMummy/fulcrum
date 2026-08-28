@@ -47,8 +47,9 @@ def test_connection_forms_only_show_required_business_fields(provider_page_conte
 
     ipad_page = client.get("/channels/connect?channel_type=wechat_ipad")
     assert ipad_page.status_code == 200
-    assert "协议服务地址" in ipad_page.text
-    assert "http://127.0.0.1:9064" in ipad_page.text
+    assert 'name="api_base"' not in ipad_page.text
+    assert "协议服务地址" not in ipad_page.text
+    assert "http://127.0.0.1:9064" not in ipad_page.text
     assert 'name="bot_token"' not in ipad_page.text
     for removed_text in ("Webhook", "私聊策略", "允许名单", "适配配置 JSON"):
         assert removed_text not in ipad_page.text

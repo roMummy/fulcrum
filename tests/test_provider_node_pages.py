@@ -17,7 +17,7 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
-from app.models.saas import BotBinding, ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.models.saas import BotBinding, PlatformProtocolService, ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.provider_nodes import ProviderNodeError, validate_channel_executor_binding
 from app.services.saas_auth import hash_password
 
@@ -117,7 +117,13 @@ def provider_page_context(tmp_path, monkeypatch):
             status="active",
             device_id="provider-pages-beta-active",
         )
-        db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node])
+        # 租户接入页使用平台托管 iPad 服务；页面夹具显式准备平台配置，避免测试依赖生产初始化数据。
+        ipad_protocol_service = PlatformProtocolService(
+            channel_type="wechat_ipad",
+            api_base="http://ipad.platform.internal:9064",
+            is_enabled=True,
+        )
+        db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node, ipad_protocol_service])
         db.flush()
         account_a = ProviderNodeAccount(
             tenant_id=alpha.id,

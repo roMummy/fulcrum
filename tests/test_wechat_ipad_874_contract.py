@@ -279,11 +279,12 @@ def test_ipad_874_video_metadata_initializes_download_section_from_xml() -> None
     }
 
 
-def test_wechat_ipad_catalog_uses_874_address_without_unused_token() -> None:
-    """租户配置入口只展示 874 真正需要的字段，不能继续暗示存在 API Token 鉴权。"""
+def test_wechat_ipad_catalog_uses_platform_managed_endpoint_without_unused_token() -> None:
+    """租户目录不暴露平台地址或无效 Token，只声明端点由平台统一托管。"""
 
     definition = get_channel_type_definition("wechat_ipad")
     fields = {field.name: field for field in definition.config_fields}
 
-    assert fields["api_base"].placeholder == IPAD_874_CONTRACT.default_api_base
+    assert "api_base" not in fields
     assert "bot_token" not in fields
+    assert definition.platform_managed_endpoint is True

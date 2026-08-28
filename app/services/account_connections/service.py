@@ -22,6 +22,10 @@ from app.services.bot_entitlements import (
 )
 from app.services.channel_catalog import get_channel_type_definition
 from app.services.crud import add_bot, add_channel
+from app.services.platform_protocol_services import (
+    PlatformProtocolServiceError,
+    require_enabled_platform_protocol_service,
+)
 
 from .contracts import AccountConnectionError, AccountConnectionResult
 from .registry import get_account_connector
@@ -81,6 +85,25 @@ def _unique_bot_name(db: Session, requested_name: str) -> str:
     return candidate
 
 
+def _resolve_connection_api_base(
+    db: Session,
+    *,
+    channel_type: str,
+    submitted_api_base: object,
+) -> str:
+    """解析连接草稿使用的服务地址，平台托管渠道只信任平台级配置。"""
+
+    definition = get_channel_type_definition(channel_type)
+    if not definition.platform_managed_endpoint:
+        return str(submitted_api_base or "").strip()
+    try:
+        # 平台托管地址必须在创建 Bot 之前解析，缺失或停用时不能留下孤立草稿。
+        service = require_enabled_platform_protocol_service(db, definition.code)
+    except PlatformProtocolServiceError as exc:
+        raise AccountConnectionError(str(exc)) from exc
+    return service.api_base
+
+
 def begin_account_connection(
     db: Session,
     *,
@@ -94,6 +117,12 @@ def begin_account_connection(
     quota = get_bot_quota(db)
     if quota.remaining <= 0:
         raise AccountConnectionError("bot_quota_exceeded")
+    values = dict(connection_values)
+    resolved_api_base = _resolve_connection_api_base(
+        db,
+        channel_type=definition.code,
+        submitted_api_base=values.get("api_base"),
+    )
     bot_name = _unique_bot_name(db, display_name or definition.label)
     bot = add_bot(
         db,
@@ -101,7 +130,6 @@ def begin_account_connection(
         is_enabled=False,
         status="stopped",
     )
-    values = dict(connection_values)
     provider_node_id = int(values.get("provider_node_id") or 0) or None
     provider_account_id = int(values.get("provider_account_id") or 0) or None
     if not definition.requires_executor_binding:
@@ -114,7 +142,7 @@ def begin_account_connection(
             bot_id=bot.id,
             name=bot_name,
             channel_type=definition.code,
-            api_base=str(values.get("api_base") or ""),
+            api_base=resolved_api_base,
             bot_token=str(values.get("bot_token") or ""),
             webhook_path="",
             dm_policy="allowlist",

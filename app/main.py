@@ -37,6 +37,7 @@ from app.services.bot_entitlements import BotEntitlementError, get_bot_quota
 from app.services.channel_adapters import get_channel_adapter
 from app.services.channel_catalog import (
     ChannelConfigurationError,
+    get_channel_type_definition,
     list_supported_channel_types,
     require_supported_channel_type,
     serialize_channel_type_definitions,
@@ -1808,6 +1809,8 @@ def _account_connection_error_message(code: str) -> str:
         "connection_not_found": "连接记录不存在",
         "connection_type_not_supported": "暂不支持该接入方式",
         "account_identity_missing": "客户端没有返回可验证的账号身份",
+        "platform_protocol_service_missing": "平台尚未配置该协议服务，请联系平台管理员",
+        "platform_protocol_service_disabled": "该协议服务已暂停新账号接入，请联系平台管理员",
     }
     normalized = str(code or "").strip()
     return messages.get(normalized, normalized or "账号连接失败")
@@ -2346,6 +2349,9 @@ async def edit_channel_action(
                 url=f"/channels/{channel_id}?notice={quote('渠道类型不可修改，请新建渠道后停用旧渠道')}&tone=danger",
                 status_code=303,
             )
+        channel_definition = get_channel_type_definition(channel.channel_type)
+        # 平台托管渠道的地址只能由平台后台同步。租户即使手工构造表单字段，保存时也必须保留服务端现值。
+        resolved_api_base = channel.api_base if channel_definition.platform_managed_endpoint else api_base
         # 普通租户页面不再回显原始适配 JSON 和代理密码；没有提交的高级字段必须
         # 保留服务端现值，避免页面收口后一次普通保存意外清空运行配置。
         adapter_config_source = channel.adapter_config_json if adapter_config_json is None else adapter_config_json
@@ -2382,7 +2388,7 @@ async def edit_channel_action(
                 channel.channel_type,
                 is_enabled=channel.is_enabled,
                 field_values={
-                    "api_base": api_base,
+                    "api_base": resolved_api_base,
                     "bot_token": bot_token,
                     "webhook_path": resolved_webhook_path,
                     "dm_policy": dm_policy,
@@ -2406,7 +2412,7 @@ async def edit_channel_action(
             bot_id=channel.bot_id,
             name=name,
             channel_type=channel.channel_type,
-            api_base=api_base,
+            api_base=resolved_api_base,
             bot_token=bot_token,
             webhook_path=resolved_webhook_path,
             dm_policy=dm_policy,

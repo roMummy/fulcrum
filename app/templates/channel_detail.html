@@ -123,7 +123,9 @@
           <tbody>
             <tr><th>最近成功</th><td>{{ channel_health_timeline.latest_success_at|bj_time if channel_health_timeline.latest_success_at else '-' }}</td></tr>
             <tr><th>最近失败</th><td>{{ channel_health_timeline.latest_failure_at|bj_time if channel_health_timeline.latest_failure_at else '-' }}</td></tr>
+            {% if not channel_definition.platform_managed_endpoint %}
             <tr><th>服务地址</th><td>{{ '客户端主动连接' if health_checks.api_base_not_required else (channel.api_base or '-') }}</td></tr>
+            {% endif %}
             <tr><th>私聊策略</th><td>{{ channel.dm_policy or '-' }}</td></tr>
             {% if channel.channel_type == 'workwechat' %}
             <tr><th>连接方式</th><td>企业微信客户端主动连接</td></tr>

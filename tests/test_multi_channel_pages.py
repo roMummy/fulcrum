@@ -198,7 +198,7 @@ def test_blank_token_keeps_existing_encrypted_secret_on_edit(provider_page_conte
 
 
 def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_context) -> None:
-    """874 不使用访问凭证，旧密钥和伪造表单值都必须在统一更新路径中被清除。"""
+    """874 不使用访问凭证，租户编辑也不能覆盖平台托管的服务地址。"""
 
     client, ids = provider_page_context
     csrf_token = _login(client, "admin")
@@ -206,7 +206,7 @@ def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_cont
         ids,
         name="874 微信账号",
         channel_type="wechat_ipad",
-        api_base="http://127.0.0.1:9064",
+        api_base="http://ipad.platform.internal:9064",
     )
     with ids["factory"]() as db:
         channel = db.get(Channel, channel_id)
@@ -217,6 +217,8 @@ def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_cont
     detail = client.get(f"/channels/{channel_id}")
     assert detail.status_code == 200
     assert 'name="bot_token"' not in detail.text
+    assert 'name="api_base"' not in detail.text
+    assert "http://ipad.platform.internal:9064" not in detail.text
 
     edited = client.post(
         f"/channels/{channel_id}/edit",
@@ -225,7 +227,7 @@ def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_cont
             csrf_token,
             name="874 微信账号",
             channel_type="wechat_ipad",
-            api_base="http://127.0.0.1:9064",
+            api_base="http://forged.internal:9064",
             bot_token="forged-token",
         ),
     )
@@ -235,6 +237,7 @@ def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_cont
         channel = db.get(Channel, channel_id)
         assert channel.bot_token_encrypted is None
         assert channel.bot_token_masked is None
+        assert channel.api_base == "http://ipad.platform.internal:9064"
 
 
 def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provider_page_context) -> None:
