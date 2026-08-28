@@ -22,26 +22,27 @@ def _read_css_rule(stylesheet: str, selector: str) -> str:
     return stylesheet.split(f"{selector} {{", 1)[1].split("}", 1)[0]
 
 
-def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
-    """全站样式必须使用已确认的北欧极简 token，并彻底移除旧装饰语言。
+def test_swiss_tokens_and_forbidden_visual_patterns() -> None:
+    """全站必须使用已确认的 Swiss Style 色板和直角网格语言。
 
-    这里检查的是产品级硬约束，不尝试枚举每个组件的具体像素值。渐变、玻璃模糊
-    和全圆角是旧版界面产生强装饰感与卡片感的主要来源，因此不允许通过局部页面
-    重新引入；必要状态反馈应改用颜色、边框和亮度变化表达。
+    这里约束产品级视觉基础，不枚举每个业务组件的像素值。黑白灰承担信息结构，
+    红、蓝、黄只承担信号与状态；渐变、玻璃模糊和全圆角会破坏理性网格，因此不能
+    通过局部页面重新引入。
     """
 
     stylesheet = _read_project_file(STYLE_PATH)
     font_stylesheet = _read_project_file(FONT_STYLE_PATH)
 
     for required_token in (
-        "--bg: #f5f0eb;",
-        "--text: #3d3d3d;",
-        "--primary: #5a7a6b;",
-        "--wood: #a89279;",
-        "--radius-lg: 6px;",
-        "--surface: rgba(255, 255, 255, 0.46);",
-        "--border: rgba(168, 146, 121, 0.22);",
-        "--space-section: 56px;",
+        "--bg: #fafafa;",
+        "--surface: #ffffff;",
+        "--surface-muted: #f0f0f0;",
+        "--text: #0a0a0a;",
+        "--signal: #ff0000;",
+        "--info: #0057b8;",
+        "--warning: #ffcc00;",
+        "--radius-lg: 0;",
+        "--space-section: 48px;",
     ):
         assert required_token in stylesheet
 
@@ -65,8 +66,8 @@ def test_scandinavian_tokens_and_forbidden_visual_patterns() -> None:
         assert forbidden_pattern not in stylesheet
 
 
-def test_backend_shell_uses_top_navigation_and_keeps_platform_identity_separate() -> None:
-    """双后台必须共享顶部导航，同时保留平台与企业身份的清晰边界。
+def test_backend_shell_uses_swiss_top_navigation_and_keeps_platform_identity_separate() -> None:
+    """双后台必须共享 Swiss 顶部导航，同时保留平台与企业身份边界。
 
     桌面侧栏会长期占用业务工作区，且和移动顶部栏形成两套结构。本轮统一为顶部
     导航后，只允许保留一套导航数据和一个响应式壳层，避免后续入口在两处产生差异。
@@ -90,25 +91,27 @@ def test_backend_shell_uses_top_navigation_and_keeps_platform_identity_separate(
     assert "企业工作台" in base_template
     assert "平台管理后台" in platform_template
     assert "request.url.path.startswith('/platform')" in base_template
-    assert '<meta name="theme-color" content="#f5f0eb" />' in base_template
+    assert '<meta name="theme-color" content="#fafafa" />' in base_template
 
-    # 顶栏、工作区和页头必须通过暖色表面与留白建立层级，不再叠加粗字重和贯穿边界。
+    # 顶栏、工作区和页头必须通过黑白网格与信号红建立层级，不能退回低对比暖灰表面。
     topbar_rule = _read_css_rule(stylesheet, ".app-topbar")
     topbar_inner_rule = _read_css_rule(stylesheet, ".app-topbar-inner")
     workspace_rule = _read_css_rule(stylesheet, ".workspace")
     page_header_rule = _read_css_rule(stylesheet, ".page-header")
     active_nav_rule = _read_css_rule(stylesheet, ".nav-link.active")
 
-    assert "background: rgba(245, 240, 235, 0.92);" in topbar_rule
+    assert "background: var(--surface);" in topbar_rule
+    assert "border-bottom: 1px solid var(--border-strong);" in topbar_rule
     assert "min-height: 68px;" in topbar_inner_rule
-    assert "padding: 48px 0 88px;" in workspace_rule
-    assert "margin-bottom: 40px;" in page_header_rule
-    assert "border-bottom" not in page_header_rule
-    assert "font-weight" not in active_nav_rule
+    assert "padding: 44px 0 80px;" in workspace_rule
+    assert "margin-bottom: 36px;" in page_header_rule
+    assert "border-bottom: 1px solid var(--border);" in page_header_rule
+    assert "color: var(--text);" in active_nav_rule
+    assert ".nav-link.active::after" in stylesheet
 
 
-def test_marketing_and_auth_pages_preserve_product_and_accessibility_contracts() -> None:
-    """营销与认证页面换结构后仍需保留真实产品素材和表单可访问性语义。"""
+def test_marketing_and_auth_pages_use_swiss_grid_and_preserve_accessibility_contracts() -> None:
+    """营销与认证页面必须使用 Swiss 网格，并保留真实产品与表单语义。"""
 
     marketing_home = _read_project_file(TEMPLATE_ROOT / "marketing_home.html")
     marketing_base = _read_project_file(TEMPLATE_ROOT / "marketing_base.html")
@@ -118,19 +121,23 @@ def test_marketing_and_auth_pages_preserve_product_and_accessibility_contracts()
     assert "/static/images/yaoshu-console.webp" in marketing_home
     assert 'class="marketing-product-visual"' in marketing_home
     assert 'class="marketing-hero marketing-hero-stage"' in marketing_home
+    assert 'class="marketing-hero-signal"' in marketing_home
     assert 'class="marketing-hero-copy"' in marketing_home
     assert marketing_home.count("<h1>") == 1
     assert "<h1>曜枢 AI</h1>" in marketing_home
     assert "marketing-hero-content" not in marketing_home
     assert 'role="alert"' in marketing_base
+    assert '<meta name="theme-color" content="#fafafa" />' in marketing_base
+    assert 'class="marketing-auth-context marketing-auth-context-signal"' in enterprise_login
+    assert 'class="marketing-auth-context marketing-auth-context-signal"' in register
     assert 'autocomplete="username"' in enterprise_login
     assert 'autocomplete="current-password"' in enterprise_login
     for autocomplete in ("organization", "name", "tel", "new-password"):
         assert f'autocomplete="{autocomplete}"' in register
 
 
-def test_dashboards_use_data_bands_without_nested_cards() -> None:
-    """两个总览必须依靠连续数据带和单层工作表面组织信息。"""
+def test_dashboards_use_swiss_data_bands_and_single_layer_surfaces() -> None:
+    """两个总览必须使用连续数据带和单层 Swiss 业务表面。"""
 
     tenant_dashboard = _read_project_file(TEMPLATE_ROOT / "dashboard.html")
     platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
@@ -138,7 +145,8 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
     assert 'class="metric-band' in tenant_dashboard
     assert 'class="metric-band' in platform_dashboard
     assert tenant_dashboard.count('class="page-section') >= 10
-    assert platform_dashboard.count('class="page-section') >= 7
+    assert platform_dashboard.count('class="page-section') >= 4
+    assert platform_dashboard.count('class="platform-analytics-surface') == 3
     for required_class in (
         "analytics-range-control",
         "platform-analytics-kpis",
@@ -149,6 +157,9 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
         "platform-tenant-health",
         "platform-subscription-summary",
         "platform-presence-summary",
+        "platform-analytics-trends-surface",
+        "platform-analytics-operations-surface",
+        "platform-analytics-health-surface",
     ):
         assert required_class in platform_dashboard
     assert 'class="work-surface"' not in tenant_dashboard
@@ -158,8 +169,8 @@ def test_dashboards_use_data_bands_without_nested_cards() -> None:
         assert forbidden_class not in platform_dashboard
 
 
-def test_overview_grids_align_cards_without_fixed_heights() -> None:
-    """总览卡片必须通过网格拉伸对齐，不能依赖容易溢出的固定高度。
+def test_overview_grids_align_swiss_surfaces_without_fixed_heights() -> None:
+    """总览业务表面必须通过网格拉伸对齐，不能依赖固定高度。
 
     企业总览包含五组双列业务卡片，必须统一声明总览专用网格语义，避免通用的
     相邻卡片外边距让右侧卡片下移。平台总览沿用连续指标带，但需要独立规则稳定
@@ -177,7 +188,7 @@ def test_overview_grids_align_cards_without_fixed_heights() -> None:
 
 
 def test_platform_analytics_uses_stable_charts_and_mobile_single_column_layout() -> None:
-    """平台大盘图表必须有稳定尺寸，窄屏改为单列且表格只在自身区域滚动。"""
+    """平台大盘必须有稳定图表、明确 Swiss 分区和移动单列布局。"""
 
     platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
     stylesheet = _read_project_file(STYLE_PATH)
@@ -186,13 +197,15 @@ def test_platform_analytics_uses_stable_charts_and_mobile_single_column_layout()
     assert 'viewBox="0 0 100 100"' in platform_dashboard
     assert 'class="table-scroll"' in platform_dashboard
     assert ".platform-analytics-chart-grid" in stylesheet
+    assert ".platform-analytics-surface" in stylesheet
+    assert ".platform-analytics-surface > .platform-analytics-grid" in stylesheet
     assert "aspect-ratio: 16 / 7;" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".platform-analytics-grid" in stylesheet
 
 
-def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> None:
-    """共享样式必须显式覆盖移动导航与单层业务表面，避免依赖桌面自然挤压。"""
+def test_shared_styles_define_mobile_navigation_and_swiss_work_surfaces() -> None:
+    """共享样式必须显式覆盖移动导航与直角单层业务表面。"""
 
     stylesheet = _read_project_file(STYLE_PATH)
 
@@ -200,6 +213,10 @@ def test_shared_styles_define_mobile_navigation_and_stable_work_surfaces() -> No
     assert ".page-section" in stylesheet
     assert ".editor-surface" in stylesheet
     assert ".metric-band" in stylesheet
+    page_section_rule = _read_css_rule(stylesheet, ".page-section")
+    assert "background: var(--surface);" in page_section_rule
+    assert "border-top: 4px solid var(--border-strong);" in page_section_rule
+    assert "border-radius: var(--radius-lg);" in page_section_rule
     assert "@media (max-width: 820px)" in stylesheet
     assert ".app-nav-toggle" in stylesheet
 
