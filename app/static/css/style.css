@@ -2325,13 +2325,19 @@ code {
 
 .auth-panel {
   display: grid;
-  gap: 28px;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
 }
 
 .auth-brand {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
+  padding: 36px;
+  color: #ffffff;
+  background: var(--text);
 }
 
 .auth-brand strong {
@@ -2341,19 +2347,19 @@ code {
 
 .auth-brand p {
   margin: 2px 0 0;
-  color: var(--muted);
+  color: #cfcfcf;
 }
 
 .auth-showcase {
   display: grid;
   grid-template-columns: minmax(260px, 0.82fr) minmax(380px, 1.18fr);
-  gap: 64px;
+  gap: 0;
   align-items: center;
 }
 
 .auth-showcase-single {
-  grid-template-columns: minmax(0, 560px);
-  justify-content: center;
+  display: block;
+  min-width: 0;
 }
 
 .auth-showcase-copy h1,
@@ -2396,12 +2402,21 @@ code {
   margin: 0;
   padding: 34px;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 0;
   border-radius: var(--radius-lg);
 }
 
 .auth-card-head {
   margin-bottom: 24px;
+}
+
+.auth-form-card-swiss {
+  min-height: 100%;
+}
+
+.auth-form-card-swiss .auth-card-head {
+  padding-bottom: 18px;
+  border-bottom: 4px solid var(--border-strong);
 }
 
 .auth-form-grid {
@@ -2512,6 +2527,13 @@ code {
   gap: 8px;
 }
 
+/* 公开站点的主要转化动作使用唯一信号红，后台常规命令仍保持黑色。 */
+.marketing-actions .btn:not(.btn-secondary),
+.marketing-hero-actions .btn:not(.btn-secondary) {
+  background: var(--signal);
+  border-color: var(--signal);
+}
+
 .marketing-notice {
   width: min(1200px, calc(100vw - 48px));
   margin: 18px auto 0;
@@ -2523,6 +2545,26 @@ code {
   min-height: 720px;
   overflow: hidden;
   background: var(--bg);
+}
+
+/* 红色信号块对应参考风格的单一强调色，只建立构图锚点，不遮挡产品截图。 */
+.marketing-hero-signal {
+  position: absolute;
+  top: 92px;
+  right: max(6vw, calc((100vw - 1200px) / 2));
+  z-index: 1;
+  width: clamp(210px, 22vw, 300px);
+  aspect-ratio: 1;
+  background: var(--signal);
+}
+
+.marketing-hero-signal span {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
 }
 
 .marketing-hero-image,
@@ -2540,8 +2582,8 @@ code {
 }
 
 .marketing-product-visual img {
-  opacity: 0.16;
-  filter: grayscale(1) contrast(1.08) brightness(1.08);
+  opacity: 0.14;
+  filter: grayscale(1) contrast(1.12) brightness(1.1);
 }
 
 /* 首屏正文只占据画布左侧，让产品截图保留足够空气感并露出下一内容带。 */
@@ -2550,19 +2592,19 @@ code {
   z-index: 1;
   width: min(1200px, calc(100vw - 48px));
   margin: auto;
-  padding: 112px 0 136px;
+  padding: 112px 0 128px;
 }
 
 .marketing-hero-copy h1 {
   margin: 0 0 18px;
   font-family: "Albert Sans", "Noto Sans SC", sans-serif;
-  font-size: 92px;
+  font-size: 88px;
   font-weight: 650;
   line-height: 1;
 }
 
 .marketing-hero-lead {
-  max-width: 720px;
+  max-width: 680px;
   margin: 0;
   color: var(--text);
   font-size: 31px;
@@ -2647,8 +2689,8 @@ code {
 
 .marketing-feature-grid article,
 .marketing-steps li {
-  padding: 30px 0 0;
-  border-top: 1px solid var(--border-strong);
+  padding: 26px 20px 0 0;
+  border-top: 4px solid var(--border-strong);
 }
 
 .marketing-feature-grid article > span,
@@ -2688,6 +2730,16 @@ code {
 .marketing-plan-card.is-featured {
   background: var(--surface);
   border-color: var(--signal);
+}
+
+.marketing-plan-card.is-featured::before {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  left: -1px;
+  height: 8px;
+  content: "";
+  background: var(--signal);
 }
 
 .marketing-plan-card h3 {
@@ -2818,17 +2870,38 @@ code {
 
 .marketing-auth-layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(420px, 1.15fr);
-  gap: 90px;
-  align-items: center;
-  width: min(1040px, calc(100vw - 48px));
+  grid-template-columns: minmax(320px, 5fr) minmax(420px, 7fr);
+  gap: 0;
+  align-items: stretch;
+  width: min(1120px, calc(100vw - 48px));
   margin: 0 auto;
+  border: 1px solid var(--border-strong);
+}
+
+.marketing-auth-context {
+  padding: 48px;
+}
+
+.marketing-auth-context-signal {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 560px;
+  color: #ffffff;
+  background: var(--signal);
+}
+
+.marketing-auth-context-signal .section-kicker,
+.marketing-auth-context-signal h1,
+.marketing-auth-context-signal > p,
+.marketing-auth-context-signal li {
+  color: #ffffff;
 }
 
 .marketing-auth-context h1 {
   margin: 0 0 16px;
   font-size: 46px;
-  font-weight: 400;
+  font-weight: 650;
 }
 
 .marketing-auth-context > p,
@@ -2843,9 +2916,9 @@ code {
 }
 
 .marketing-auth-panel {
-  padding: 38px;
+  padding: 48px;
   background: var(--surface-strong);
-  border: 1px solid var(--border-strong);
+  border: 0;
   border-radius: var(--radius-lg);
 }
 
@@ -3186,12 +3259,17 @@ code {
   }
 
   .auth-panel {
-    gap: 34px;
+    grid-template-columns: 1fr;
+    gap: 0;
   }
 
   .auth-showcase {
     grid-template-columns: 1fr;
-    gap: 34px;
+    gap: 0;
+  }
+
+  .auth-brand {
+    padding: 24px;
   }
 
   .auth-showcase-copy h1,
@@ -3221,6 +3299,12 @@ code {
     padding: 84px 0 96px;
   }
 
+  .marketing-hero-signal {
+    top: 86px;
+    right: 24px;
+    width: 160px;
+  }
+
   .marketing-hero-copy h1 {
     font-size: 64px;
   }
@@ -3232,7 +3316,11 @@ code {
   .marketing-section-heading,
   .marketing-auth-layout {
     grid-template-columns: 1fr;
-    gap: 34px;
+    gap: 0;
+  }
+
+  .marketing-auth-context-signal {
+    min-height: 0;
   }
 
   .marketing-feature-grid,
@@ -3416,6 +3504,19 @@ code {
     min-height: 600px;
   }
 
+  .marketing-hero-signal {
+    top: 86px;
+    right: auto;
+    left: 20px;
+    width: 88px;
+    height: 10px;
+    aspect-ratio: auto;
+  }
+
+  .marketing-hero-signal span {
+    display: none;
+  }
+
   .marketing-hero-copy h1 {
     font-size: 54px;
   }
@@ -3438,6 +3539,11 @@ code {
   .marketing-page-head,
   .marketing-auth-shell {
     padding: 80px 0;
+  }
+
+  .marketing-auth-context,
+  .marketing-auth-panel {
+    padding: 24px;
   }
 
   .marketing-section-heading h2,

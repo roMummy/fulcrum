@@ -7,7 +7,8 @@
 #}
 {% block content %}
 <section class="auth-showcase auth-showcase-single" aria-labelledby="platform-login-title">
-  <section class="login-card auth-form-card">
+  {# 平台登录使用独立 Swiss 表单表面，不与企业营销认证路径共享身份参数。 #}
+  <section class="login-card auth-form-card auth-form-card-swiss">
     {# 标题区明确当前入口属于平台管理后台，防止租户员工误用平台账号入口。 #}
     <div class="section-head auth-card-head">
       <div>
