@@ -25,6 +25,11 @@ from app.services.platform_admin import (
     set_tenant_status,
 )
 from app.services.platform_analytics import build_platform_analytics
+from app.services.platform_protocol_services import (
+    PlatformProtocolServiceError,
+    list_platform_protocol_services,
+    save_platform_protocol_service,
+)
 from app.services.platform_staff import (
     PlatformStaffError,
     create_platform_user,
@@ -71,6 +76,11 @@ def _platform_context(
         {"label": "租户管理", "href": "/platform/tenants", "active": active == "tenants"},
         {"label": "套餐管理", "href": "/platform/plans", "active": active == "plans"},
         {"label": "订单审核", "href": "/platform/billing/orders", "active": active == "billing"},
+        {
+            "label": "协议服务",
+            "href": "/platform/protocol-services",
+            "active": active == "protocol_services",
+        },
         {"label": "平台员工", "href": "/platform/users", "active": active == "users"},
         {"label": "系统运维", "href": "/platform/operations", "active": active == "operations"},
     ]
@@ -152,6 +162,16 @@ def _platform_staff_error_message(error: PlatformStaffError) -> str:
     return messages.get(str(error), "平台员工信息保存失败")
 
 
+def _protocol_service_error_message(error: PlatformProtocolServiceError) -> str:
+    """把协议服务内部错误转换为平台员工可直接处理的表单提示。"""
+
+    messages = {
+        "platform_protocol_service_url_invalid": "请输入有效的 HTTP 或 HTTPS 服务地址",
+        "platform_protocol_service_type_not_managed": "该渠道不使用平台托管协议服务",
+    }
+    return messages.get(str(error), "协议服务配置保存失败")
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def platform_dashboard_page(request: Request):
     """展示平台跨租户使用、经营、渠道健康和待办数据。"""
@@ -167,6 +187,52 @@ async def platform_dashboard_page(request: Request):
             analytics=build_platform_analytics(db, range_key=request.query_params.get("range", "7d")),
         )
         return templates.TemplateResponse(request, "platform_dashboard.html", context)
+
+
+@router.get("/protocol-services", response_class=HTMLResponse)
+async def platform_protocol_services_page(request: Request):
+    """展示由平台统一维护、租户不可见的协议服务入口。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="协议服务",
+            active="protocol_services",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            protocol_services=list_platform_protocol_services(db),
+        )
+        return templates.TemplateResponse(request, "platform_protocol_services.html", context)
+
+
+@router.post("/protocol-services/{channel_type}")
+async def platform_protocol_service_save_action(
+    channel_type: str,
+    request: Request,
+    api_base: str = Form(""),
+    is_enabled: bool = Form(False),
+    csrf_token: str = Form(""),
+):
+    """保存平台协议地址并同步已有渠道，表单不接收任何租户或账号主键。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            save_platform_protocol_service(
+                db,
+                channel_type=channel_type,
+                api_base=api_base,
+                is_enabled=is_enabled,
+                actor_user_id=principal.user_id,
+            )
+        except PlatformProtocolServiceError as exc:
+            return _redirect(
+                "/platform/protocol-services",
+                _protocol_service_error_message(exc),
+                danger=True,
+            )
+    return _redirect("/platform/protocol-services", "协议服务配置已更新")
 
 
 @router.get("/users", response_class=HTMLResponse)

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+import app.web.platform_admin as platform_admin_web
 from app.core.db import Base
 from app.models.entities import Bot, Channel
-from app.models.saas import PlatformAuditLog, PlatformProtocolService, Tenant
+from app.models.saas import PlatformAuditLog, PlatformProtocolService, PlatformUser, Tenant
 from app.services.channel_catalog import get_channel_type_definition
 from app.services.platform_protocol_services import (
     PlatformProtocolServiceError,
@@ -14,6 +17,8 @@ from app.services.platform_protocol_services import (
     require_enabled_platform_protocol_service,
     save_platform_protocol_service,
 )
+from app.services.saas_auth import create_platform_session, hash_password, load_platform_principal
+from app.web.auth_common import PLATFORM_CSRF_COOKIE, PLATFORM_SESSION_COOKIE
 
 
 @pytest.fixture()
@@ -153,3 +158,83 @@ def test_platform_service_requires_valid_enabled_managed_configuration(db: Sessi
             is_enabled=True,
             actor_user_id=None,
         )
+
+
+def test_platform_protocol_service_page_saves_with_platform_auth_and_csrf(tmp_path, monkeypatch) -> None:
+    """协议服务页面只能由平台会话访问，并使用平台 CSRF 保存统一地址。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'platform-protocol-page.db'}")
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(bind=engine)
+    with factory() as db:
+        platform_user = PlatformUser(
+            username="protocol-admin",
+            display_name="协议管理员",
+            password_hash=hash_password("Protocol-admin-123"),
+            role="platform_admin",
+            is_enabled=True,
+            auth_version=1,
+            must_change_password=False,
+        )
+        db.add(platform_user)
+        db.commit()
+        db.refresh(platform_user)
+        session = create_platform_session(db, platform_user)
+
+    monkeypatch.setattr(platform_admin_web, "SessionLocal", factory)
+    test_app = FastAPI()
+
+    @test_app.middleware("http")
+    async def restore_platform_principal(request: Request, call_next):
+        # 测试只恢复平台会话，不引入主应用 Worker、安装流程或租户 Cookie。
+        with factory() as db:
+            request.state.platform_principal = load_platform_principal(
+                db,
+                request.cookies.get(PLATFORM_SESSION_COOKIE),
+            )
+        return await call_next(request)
+
+    test_app.include_router(platform_admin_web.router)
+    with TestClient(test_app) as client:
+        assert client.get("/platform/protocol-services").status_code == 401
+        client.cookies.set(PLATFORM_SESSION_COOKIE, session.raw_token)
+        client.cookies.set(PLATFORM_CSRF_COOKIE, session.raw_csrf_token)
+
+        page = client.get("/platform/protocol-services")
+        assert page.status_code == 200
+        assert "微信 iPad 协议" in page.text
+        assert 'name="api_base"' in page.text
+        assert "已同步账号" in page.text
+
+        rejected = client.post(
+            "/platform/protocol-services/wechat_ipad",
+            data={
+                "csrf_token": "forged",
+                "api_base": "http://forged.internal:9064",
+                "is_enabled": "true",
+            },
+        )
+        assert rejected.status_code == 403
+
+        saved = client.post(
+            "/platform/protocol-services/wechat_ipad",
+            data={
+                "csrf_token": session.raw_csrf_token,
+                "api_base": "http://ipad.internal:9064/",
+                "is_enabled": "true",
+            },
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        assert saved.headers["location"].startswith("/platform/protocol-services?notice=")
+
+    with factory() as db:
+        service = db.scalar(
+            select(PlatformProtocolService).where(
+                PlatformProtocolService.channel_type == "wechat_ipad"
+            )
+        )
+        assert service.api_base == "http://ipad.internal:9064"
+        assert service.is_enabled is True
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
