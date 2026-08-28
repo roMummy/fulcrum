@@ -70,6 +70,7 @@ from app.services.seed import seed_auth_users
 from app.services.security import build_telegram_webhook_secret, encrypt_secret, mask_secret, sign_webhook_payload
 from app.services.workwechat_cloud_poll import exchange_authorization_code, issue_authorization_code
 from app.services.wechat_ipad.client import WechatIpadApiClient
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 import app.services.wechat_ipad.service as wechat_ipad_service
 from app.services.wechat_ipad.service import build_wechat_ipad_group_summary, build_wechat_ipad_overview, refresh_wechat_ipad_status
 from app.services.wechat_ipad.chatrooms import upsert_wechat_ipad_chatroom_profile
@@ -682,7 +683,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(image_response.status_code, 200)
         image_data = image_response.json()
-        self.assertEqual(image_data["adapter"]["endpoint"], "/Msg/SendCDNImg")
+        self.assertEqual(image_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_cdn_image)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -700,7 +701,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(voice_response.status_code, 200)
         voice_data = voice_response.json()
-        self.assertEqual(voice_data["adapter"]["endpoint"], "/Msg/SendVoice")
+        self.assertEqual(voice_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_voice)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._encode_audio_to_silk",
@@ -720,7 +721,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(converted_voice_response.status_code, 200)
         converted_voice_data = converted_voice_response.json()
-        self.assertEqual(converted_voice_data["adapter"]["endpoint"], "/Msg/SendVoice")
+        self.assertEqual(converted_voice_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_voice)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -738,7 +739,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(video_response.status_code, 200)
         video_data = video_response.json()
-        self.assertEqual(video_data["adapter"]["endpoint"], "/Msg/SendVideo")
+        self.assertEqual(video_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_video)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -754,7 +755,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(file_response.status_code, 200)
         file_data = file_response.json()
-        self.assertEqual(file_data["adapter"]["endpoint"], "/Msg/SendApp")
+        self.assertEqual(file_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_app)
 
         response = self.client.post(
             "/channels/1/outbound",
@@ -771,7 +772,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             side_effect=[
                 {
                     "ok": True,
-                    "endpoint": "/api/Login/HeartBeat?wxid=wxid_demo_account_001/slash",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat,
                     "http_status": 200,
                     "response_status": "0",
                     "error_message": None,
@@ -796,7 +797,11 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertEqual(health_redirect.status_code, 303)
         self.assertEqual(
             health_probe.call_args_list[0].args[1],
-            "/api/Login/HeartBeat?wxid=wxid_demo_account_001/slash",
+            IPAD_874_CONTRACT.endpoints.login_heartbeat,
+        )
+        self.assertEqual(
+            health_probe.call_args_list[0].kwargs["query"],
+            {"wxid": "wxid_demo_account_001/slash"},
         )
 
         with SessionLocal() as db:
@@ -1427,7 +1432,7 @@ consume_policy = "continue"
                     "transport_status": "sent",
                     "external_status": "0",
                     "external_message_id": "auto-msg-1",
-                    "endpoint": "/Msg/SendTxt",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_text,
                 },
             ),
         ) as outbound_mock, patch(
@@ -1462,7 +1467,10 @@ consume_policy = "continue"
         self.assertEqual(len(auto_outbound), 1)
         self.assertTrue(auto_outbound[0]["ok"])
         self.assertEqual(auto_outbound[0]["payload"]["message_type"], "text")
-        self.assertEqual(auto_outbound[0]["adapter_result"]["endpoint"], "/Msg/SendTxt")
+        self.assertEqual(
+            auto_outbound[0]["adapter_result"]["endpoint"],
+            IPAD_874_CONTRACT.endpoints.message_send_text,
+        )
 
     def test_auto_outbound_payloads_support_explicit_image_path_reply(self):
         image_file = Path(TEST_DIR) / "auto-reply-image.bin"
@@ -6293,7 +6301,7 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_SEND_APP_ENDPOINT,
+                    IPAD_874_CONTRACT.endpoints.message_send_app,
                     body={"Wxid": "wxid_runtime_001", "ToWxid": "wxid_target_001", "Xml": "<appmsg />", "Type": 74},
                 )
 
@@ -6306,8 +6314,8 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_CONTACT_DETAIL_ENDPOINT,
-                    body={"Wxid": "wxid_runtime_001", "Towxids": "wxid_a,wxid_b", "Chatroom": "room-001@chatroom"},
+                    IPAD_874_CONTRACT.endpoints.friend_get_detail,
+                    body={"Wxid": "wxid_runtime_001", "Towxids": "wxid_a,wxid_b", "ChatRoom": "room-001@chatroom"},
                 )
 
             with patch.object(client, "request_json", return_value={"Success": True}) as mocked:
@@ -6318,17 +6326,8 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_CHATROOM_QRCODE_ENDPOINT,
-                    body={"Wxid": "wxid_runtime_001", "Chatroom": "room-001@chatroom"},
-                )
-
-            with patch.object(client, "request_json", return_value={"Running": True}) as mocked:
-                client.check_database(channel)
-                mocked.assert_called_with(
-                    channel,
-                    WechatIpadApiClient.DEFAULT_CHECK_DATABASE_ENDPOINT,
-                    body=None,
-                    method="GET",
+                    IPAD_874_CONTRACT.endpoints.group_get_qrcode,
+                    body={"Wxid": "wxid_runtime_001", "QID": "room-001@chatroom"},
                 )
 
     def test_wechat_ipad_qrcode_base64_is_served_as_image_without_exposing_raw_text(self):
@@ -6585,11 +6584,11 @@ consume_policy = "shared"
             self.assertEqual(runtime_info.get("last_error"), "heartbeat down")
             self.assertIsInstance(context, dict)
             self.assertEqual(context.get("stage"), "heartbeat")
-            self.assertEqual(context.get("endpoint"), WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT)
+            self.assertEqual(context.get("endpoint"), IPAD_874_CONTRACT.endpoints.login_heartbeat)
             self.assertTrue(context.get("at"))
             self.assertEqual(channel.status, "degraded")
             self.assertEqual(overview["last_error_stage"], "heartbeat")
-            self.assertEqual(overview["last_error_endpoint"], WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT)
+            self.assertEqual(overview["last_error_endpoint"], IPAD_874_CONTRACT.endpoints.login_heartbeat)
 
     def test_wechat_ipad_overview_exposes_error_context(self):
         reference_time = datetime(2026, 3, 23, 12, 40, 0, tzinfo=timezone.utc)
@@ -6832,7 +6831,7 @@ consume_policy = "shared"
                     "last_error": "登录确认超时",
                     "last_error_context": {
                         "stage": "login_confirm",
-                        "endpoint": "/api/Login/CheckQR?uuid=confirm-001",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_check_qr,
                         "at": "2026-03-24T01:02:03+00:00",
                     },
                 },
@@ -6847,7 +6846,7 @@ consume_policy = "shared"
                     "last_error": "auto auth denied",
                     "last_error_context": {
                         "stage": "auto_login",
-                        "endpoint": "/api/Login/TwiceAutoAuth?wxid=wxid_auto_login",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
                         "at": "2026-03-24T04:05:06+00:00",
                     },
                 },
@@ -6892,7 +6891,7 @@ consume_policy = "shared"
                     "last_error": "awake timeout",
                     "last_error_context": {
                         "stage": "awake",
-                        "endpoint": "/api/Login/Awaken",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_awaken,
                         "at": "2026-03-24T08:18:09+00:00",
                     },
                 },

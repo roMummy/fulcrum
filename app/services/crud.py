@@ -4,8 +4,16 @@ from sqlalchemy.orm import Session
 from app.core.tenant_context import require_tenant_id
 from app.models.entities import Bot, BotPlugin, Channel, Plugin
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
+from app.services.channel_catalog import get_channel_type_definition
 from app.services.runtime import compute_binding_runtime
 from app.services.security import encrypt_secret, mask_secret
+
+
+def _channel_declares_bot_token(channel_type: str) -> bool:
+    """以统一渠道目录判断是否允许保存 Token，拒绝隐藏表单字段绕过产品配置。"""
+
+    definition = get_channel_type_definition(channel_type)
+    return any(field.name == "bot_token" for field in definition.config_fields)
 
 
 def add_bot(
@@ -69,7 +77,8 @@ def add_channel(
 ) -> Channel:
     """把渠道加入当前租户事务，并统一处理敏感字段。"""
 
-    token = (data.bot_token or "").strip() or None
+    # 密钥能力由渠道目录声明；874 未声明 Token，因此即使请求夹带该字段也不会落库。
+    token = (data.bot_token or "").strip() or None if _channel_declares_bot_token(data.channel_type) else None
     adapter_config = (data.adapter_config_json or "").strip() or None
     channel = Channel(
         tenant_id=require_tenant_id(),
@@ -94,7 +103,8 @@ def add_channel(
 
 
 def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channel:
-    token = (data.bot_token or "").strip()
+    accepts_bot_token = _channel_declares_bot_token(channel.channel_type)
+    token = (data.bot_token or "").strip() if accepts_bot_token else ""
     if data.channel_type.strip() != channel.channel_type:
         # 渠道类型决定密钥结构、运行方式和外部账号身份，禁止通过通用更新服务换型。
         raise ValueError("channel_type_immutable")
@@ -104,6 +114,10 @@ def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channe
     if token:
         channel.bot_token_encrypted = encrypt_secret(token)
         channel.bot_token_masked = mask_secret(token)
+    elif not accepts_bot_token:
+        # 目录已经删除的密钥字段必须同步清空，不能在数据库中保留不可见的废弃配置。
+        channel.bot_token_encrypted = None
+        channel.bot_token_masked = None
     channel.webhook_path = (data.webhook_path or "").strip() or None
     channel.dm_policy = data.dm_policy
     channel.allow_from = (data.allow_from or "").strip() or None

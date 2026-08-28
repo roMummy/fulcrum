@@ -21,7 +21,7 @@ def test_dashboard_uses_generic_channel_status_and_copy(provider_page_context) -
                     bot_id=ids["bot"],
                     name="在线微信",
                     channel_type="wechat_ipad",
-                    api_base="http://127.0.0.1:8848",
+                    api_base="http://127.0.0.1:9064",
                     is_enabled=True,
                     status="online",
                 ),

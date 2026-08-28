@@ -111,8 +111,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         runtime_mode="platform_polling",
         capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
         config_fields=(
-            ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:8848", required_when_enabled=True),
-            ChannelConfigField("bot_token", "访问凭证", input_type="password", secret=True),
+            ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:9064", required_when_enabled=True),
             ChannelConfigField("proxy_host", "代理地址"),
             ChannelConfigField("proxy_port", "代理端口"),
             ChannelConfigField("proxy_username", "代理用户名"),

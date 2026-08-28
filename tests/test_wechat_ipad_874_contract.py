@@ -4,6 +4,7 @@ import inspect
 from unittest.mock import patch
 
 from app.models.entities import Channel
+from app.services.channel_adapters.wechat_ipad import WechatIpadAdapter
 from app.services.channel_catalog import get_channel_type_definition
 from app.services.wechat_ipad.client import WechatIpadApiClient
 from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
@@ -164,12 +165,125 @@ def test_ipad_874_tools_use_current_request_fields() -> None:
             body={"Wxid": "wxid_874", "Number": 12000},
         )
 
+    with patch.object(client, "request_json", return_value={"Success": True}) as request_json:
+        client.download_voice(
+            channel,
+            wxid="wxid_874",
+            msg_id="12345",
+            from_user_name="room-001@chatroom",
+            bufid="99887766",
+            length=3200,
+        )
+        request_json.assert_called_once_with(
+            channel,
+            IPAD_874_CONTRACT.endpoints.tools_download_voice,
+            body={
+                "Wxid": "wxid_874",
+                "MsgId": 12345,
+                "FromUserName": "room-001@chatroom",
+                "Bufid": "99887766",
+                "Length": 3200,
+            },
+        )
+
+    with patch.object(client, "request_json", return_value={"Success": True}) as request_json:
+        client.download_video(
+            channel,
+            wxid="wxid_874",
+            msg_id="54321",
+            to_wxid="wxid_sender",
+            data_len=65536,
+            start_pos=0,
+            section_length=32768,
+        )
+        request_json.assert_called_once_with(
+            channel,
+            IPAD_874_CONTRACT.endpoints.tools_download_video,
+            body={
+                "Wxid": "wxid_874",
+                "ToWxid": "wxid_sender",
+                "MsgId": 54321,
+                "DataLen": 65536,
+                "Section": {"StartPos": 0, "DataLen": 32768},
+                "CompressType": 0,
+            },
+        )
+
+
+def test_ipad_874_group_and_contact_bodies_follow_swagger_field_names() -> None:
+    """群二维码和联系人接口必须使用 874 模型字段，不能继续发送旧协议键名。"""
+
+    channel = _build_channel()
+    client = WechatIpadApiClient()
+    with patch.object(client, "request_json", return_value={"Success": True}) as request_json:
+        client.get_chatroom_qrcode(channel, wxid="wxid_874", chatroom_id="room-001@chatroom")
+        request_json.assert_called_once_with(
+            channel,
+            IPAD_874_CONTRACT.endpoints.group_get_qrcode,
+            body={"Wxid": "wxid_874", "QID": "room-001@chatroom"},
+        )
+
+    with patch.object(client, "request_json", return_value={"Success": True}) as request_json:
+        client.get_contact_detail(
+            channel,
+            wxid="wxid_874",
+            to_wxids=["wxid_a", "wxid_b"],
+            chatroom_id="room-001@chatroom",
+        )
+        request_json.assert_called_once_with(
+            channel,
+            IPAD_874_CONTRACT.endpoints.friend_get_detail,
+            body={"Wxid": "wxid_874", "Towxids": "wxid_a,wxid_b", "ChatRoom": "room-001@chatroom"},
+        )
+
+
+def test_ipad_874_voice_metadata_uses_xml_byte_length() -> None:
+    """语音下载必须读取 XML 字节长度，不能把播放时长误发给 874 下载接口。"""
+
+    metadata = WechatIpadAdapter()._extract_voice_info(
+        {
+            "MsgId": 12345,
+            "FromUserName": {"string": "room-001@chatroom"},
+            "Content": {
+                "string": '<msg><voicemsg voicelength="5200" length="3062" bufid="99887766" /></msg>'
+            },
+        }
+    )
+
+    assert metadata == {
+        "msg_id": "12345",
+        "from_user_name": "room-001@chatroom",
+        "bufid": "99887766",
+        "length": "3062",
+    }
+
+
+def test_ipad_874_video_metadata_initializes_download_section_from_xml() -> None:
+    """视频同步消息要直接生成 874 DownloadVideo 所需的总长度和首段范围。"""
+
+    metadata = WechatIpadAdapter()._extract_video_info(
+        {
+            "MsgId": 54321,
+            "FromUserName": {"string": "wxid_sender"},
+            "Content": {"string": '<msg><videomsg length="65536" playlength="8" /></msg>'},
+        }
+    )
+
+    assert metadata == {
+        "msg_id": "54321",
+        "to_wxid": "wxid_sender",
+        "data_len": "65536",
+        "start_pos": "0",
+        "section_length": "65536",
+        "compress_type": "0",
+    }
+
 
 def test_wechat_ipad_catalog_uses_874_address_without_unused_token() -> None:
     """租户配置入口只展示 874 真正需要的字段，不能继续暗示存在 API Token 鉴权。"""
 
     definition = get_channel_type_definition("wechat_ipad")
-    fields = {field.key: field for field in definition.config_fields}
+    fields = {field.name: field for field in definition.config_fields}
 
     assert fields["api_base"].placeholder == IPAD_874_CONTRACT.default_api_base
     assert "bot_token" not in fields

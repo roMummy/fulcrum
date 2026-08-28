@@ -9,56 +9,17 @@ import string
 from random import choice
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib import request as urlrequest
 
 from app.models.entities import Channel
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 
 
 DEFAULT_TIMEOUT_SECONDS = 12
 
 
 class WechatIpadApiClient:
-    DEFAULT_LOGIN_INIT_ENDPOINT = "/api/Login/GetQR"
-    DEFAULT_LOGIN_INIT_CAR_ENDPOINT = "/api/Login/GetQRCar"
-    DEFAULT_CHECK_QR_ENDPOINT = "/api/Login/CheckQR?uuid={uuid}"
-    DEFAULT_HEARTBEAT_ENDPOINT = "/api/Login/HeartBeat?wxid={wxid}"
-    DEFAULT_HEARTBEAT_LONG_ENDPOINT = "/api/Login/HeartBeatLong?wxid={wxid}"
-    DEFAULT_CACHE_INFO_ENDPOINT = "/api/Login/GetCacheInfo"
-    DEFAULT_AWAKEN_ENDPOINT = "/api/Login/Awaken?wxid={wxid}"
-    DEFAULT_TWICE_AUTO_AUTH_ENDPOINT = "/api/Login/TwiceAutoAuth?wxid={wxid}"
-    DEFAULT_LOGOUT_ENDPOINT = "/api/Login/LogOut?wxid={wxid}"
-    DEFAULT_MESSAGE_SYNC_ENDPOINT = "/api/Msg/Sync"
-    DEFAULT_MESSAGE_REVOKE_ENDPOINT = "/api/Msg/Revoke"
-    DEFAULT_SEND_TEXT_ENDPOINT = "/api/Msg/SendTxt"
-    DEFAULT_UPLOAD_IMAGE_ENDPOINT = "/api/Msg/UploadImg"
-    DEFAULT_SEND_VIDEO_ENDPOINT = "/api/Msg/SendVideo"
-    DEFAULT_SEND_VOICE_ENDPOINT = "/api/Msg/SendVoice"
-    DEFAULT_SHARE_LINK_ENDPOINT = "/api/Msg/ShareLink"
-    DEFAULT_SEND_EMOJI_ENDPOINT = "/api/Msg/SendEmoji"
-    DEFAULT_SHARE_CARD_ENDPOINT = "/api/Msg/ShareCard"
-    DEFAULT_SEND_APP_ENDPOINT = "/api/Msg/SendApp"
-    DEFAULT_SEND_CDN_FILE_ENDPOINT = "/api/Msg/SendCDNFile"
-    DEFAULT_SEND_CDN_IMAGE_ENDPOINT = "/api/Msg/SendCDNImg"
-    DEFAULT_SEND_CDN_VIDEO_ENDPOINT = "/api/Msg/SendCDNVideo"
-    DEFAULT_CHATROOM_INFO_ENDPOINT = "/api/Group/GetChatRoomInfo"
-    DEFAULT_CHATROOM_MEMBER_DETAIL_ENDPOINT = "/api/Group/GetChatRoomMemberDetail"
-    DEFAULT_CHATROOM_INFO_DETAIL_ENDPOINT = "/api/Group/GetChatRoomInfoDetail"
-    DEFAULT_CHATROOM_ADD_MEMBER_ENDPOINT = "/api/Group/AddChatRoomMember"
-    DEFAULT_CHATROOM_INVITE_MEMBER_ENDPOINT = "/api/Group/InviteChatRoomMember"
-    DEFAULT_CHATROOM_QRCODE_ENDPOINT = "/GetChatroomQRCode"
-    DEFAULT_ACCEPT_FRIEND_ENDPOINT = "/api/Friend/PassVerify"
-    DEFAULT_CONTACT_DETAIL_ENDPOINT = "/api/Friend/GetContractDetail"
-    DEFAULT_CONTACT_LIST_ENDPOINT = "/api/Friend/GetContractList"
-    DEFAULT_USER_PROFILE_ENDPOINT = "/api/User/GetContractProfile?wxid={wxid}"
-    DEFAULT_MY_QRCODE_ENDPOINT = "/GetMyQRCode"
-    DEFAULT_TOOL_DOWNLOAD_IMAGE_ENDPOINT = "/api/Tools/CdnDownloadImage"
-    DEFAULT_TOOL_DOWNLOAD_VOICE_ENDPOINT = "/DownloadVoice"
-    DEFAULT_TOOL_DOWNLOAD_FILE_ENDPOINT = "/api/Tools/DownloadFile"
-    DEFAULT_TOOL_DOWNLOAD_VIDEO_ENDPOINT = "/DownloadVideo"
-    DEFAULT_FRIEND_CIRCLE_UPLOAD_ENDPOINT = "/api/FriendCircle/Upload"
-    DEFAULT_SET_STEP_ENDPOINT = "/SetStep"
-    DEFAULT_SET_PROXY_ENDPOINT = "/SetProxy"
-    DEFAULT_CHECK_DATABASE_ENDPOINT = "/CheckDatabaseOK"
     ERROR_CODE_MESSAGES = {
         -1: "parameter_error",
         -2: "provider_error",
@@ -107,10 +68,19 @@ class WechatIpadApiClient:
         channel: Channel,
         endpoint: str,
         *,
+        query: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
         method: str = "POST",
     ) -> dict[str, Any]:
         target_url = f"{channel.api_base.rstrip('/')}{endpoint}"
+        if query:
+            # 874 的登录状态接口从查询参数读取 uuid 或 wxid；统一编码可正确处理空格、斜杠等字符。
+            encoded_query = urlencode(
+                {str(key): value for key, value in query.items() if value is not None},
+                doseq=True,
+            )
+            if encoded_query:
+                target_url = f"{target_url}{'&' if '?' in target_url else '?'}{encoded_query}"
         if body is None:
             req = urlrequest.Request(target_url, method=method)
         else:
@@ -134,22 +104,29 @@ class WechatIpadApiClient:
         device_name: str,
         device_id: str = "",
         proxy: dict[str, Any] | None = None,
-        endpoint: str | None = None,
+        login_profile: str = "ipad",
     ) -> dict[str, Any]:
         body = {"DeviceName": device_name, "DeviceID": device_id}
         if proxy:
             body["Proxy"] = self.build_proxy_info(proxy)
-        return self.request_json(channel, endpoint or self.DEFAULT_LOGIN_INIT_ENDPOINT, body=body)
+        endpoint = (
+            IPAD_874_CONTRACT.endpoints.login_get_qr_car
+            if str(login_profile or "").strip().lower() == "car"
+            else IPAD_874_CONTRACT.endpoints.login_get_qr
+        )
+        return self.request_json(channel, endpoint, body=body)
 
     def check_qr(
         self,
         channel: Channel,
         *,
         uuid: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        target = endpoint or self.DEFAULT_CHECK_QR_ENDPOINT
-        return self.request_json(channel, target.format(uuid=uuid), body=None)
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.login_check_qr,
+            query={"uuid": uuid},
+        )
 
     def heartbeat(
         self,
@@ -157,53 +134,63 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         long: bool = False,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        target = endpoint or (self.DEFAULT_HEARTBEAT_LONG_ENDPOINT if long else self.DEFAULT_HEARTBEAT_ENDPOINT)
-        return self.request_json(channel, target.format(wxid=wxid), body=None)
+        endpoint = (
+            IPAD_874_CONTRACT.endpoints.login_heartbeat_long
+            if long
+            else IPAD_874_CONTRACT.endpoints.login_heartbeat
+        )
+        return self.request_json(channel, endpoint, query={"wxid": wxid})
 
     def get_cache_info(
         self,
         channel: Channel,
         *,
         wxid: str,
-        device_id: str = "",
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        body = {"Wxid": wxid}
-        if device_id:
-            body["DeviceID"] = device_id
-        return self.request_json(channel, endpoint or self.DEFAULT_CACHE_INFO_ENDPOINT, body=body)
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.login_get_cache_info,
+            query={"wxid": wxid},
+        )
 
     def awaken_login(
         self,
         channel: Channel,
         *,
         wxid: str,
-        endpoint: str | None = None,
+        proxy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        target = endpoint or self.DEFAULT_AWAKEN_ENDPOINT
-        return self.request_json(channel, target.format(wxid=wxid), body=None)
+        # 874 已将 Awaken 从查询参数接口改成 JSON 请求体，Proxy 为空时仍发送协议定义的空结构。
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.login_awaken,
+            body={"Wxid": wxid, "Proxy": self.build_proxy_info(proxy or {})},
+        )
 
     def twice_auto_auth(
         self,
         channel: Channel,
         *,
         wxid: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        target = endpoint or self.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT
-        return self.request_json(channel, target.format(wxid=wxid), body=None)
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
+            query={"wxid": wxid},
+        )
 
     def log_out(
         self,
         channel: Channel,
         *,
         wxid: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        target = endpoint or self.DEFAULT_LOGOUT_ENDPOINT
-        return self.request_json(channel, target.format(wxid=wxid), body=None)
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.login_logout,
+            query={"wxid": wxid},
+        )
 
     def sync_message(
         self,
@@ -212,11 +199,10 @@ class WechatIpadApiClient:
         wxid: str,
         scene: int = 0,
         synckey: str = "",
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_MESSAGE_SYNC_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_sync,
             body={"Wxid": wxid, "Scene": scene, "Synckey": synckey},
         )
 
@@ -229,11 +215,10 @@ class WechatIpadApiClient:
         client_msg_id: int | str,
         create_time: int | str,
         new_msg_id: int | str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_MESSAGE_REVOKE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_revoke,
             body={
                 "Wxid": wxid,
                 "ToUserName": to_wxid,
@@ -251,12 +236,11 @@ class WechatIpadApiClient:
         to_wxid: str,
         content: str,
         at: str | list[str] = "",
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         at_value = ",".join(at) if isinstance(at, list) else str(at or "")
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_TEXT_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_text,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Content": content, "Type": 1, "At": at_value},
         )
 
@@ -267,11 +251,10 @@ class WechatIpadApiClient:
         wxid: str,
         to_wxid: str,
         base64_data: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_UPLOAD_IMAGE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_upload_image,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Base64": base64_data},
         )
 
@@ -284,11 +267,10 @@ class WechatIpadApiClient:
         video_base64: str,
         image_base64: str,
         play_length: int,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_VIDEO_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_video,
             body={
                 "Wxid": wxid,
                 "ToWxid": to_wxid,
@@ -307,11 +289,10 @@ class WechatIpadApiClient:
         base64_data: str,
         voice_time: int,
         voice_type: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_VOICE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_voice,
             body={
                 "Wxid": wxid,
                 "ToWxid": to_wxid,
@@ -327,20 +308,15 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         to_wxid: str,
-        url: str = "",
-        title: str = "",
-        desc: str = "",
-        thumb_url: str = "",
-        xml: str = "",
+        xml: str,
         link_type: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
-        body = {"Wxid": wxid, "ToWxid": to_wxid}
-        if xml:
-            body.update({"Xml": xml, "Type": link_type})
-        else:
-            body.update({"Url": url, "Title": title, "Desc": desc, "ThumbUrl": thumb_url})
-        return self.request_json(channel, endpoint or self.DEFAULT_SHARE_LINK_ENDPOINT, body=body)
+        # 874 ShareLink 控制器只读取 SendAppMsgParam，旧版 URL/标题字段会被直接忽略。
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.message_share_link,
+            body={"Wxid": wxid, "ToWxid": to_wxid, "Xml": xml, "Type": link_type},
+        )
 
     def send_emoji_message(
         self,
@@ -350,11 +326,10 @@ class WechatIpadApiClient:
         to_wxid: str,
         md5: str,
         total_len: int,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_EMOJI_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_emoji,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Md5": md5, "TotalLen": total_len},
         )
 
@@ -367,11 +342,10 @@ class WechatIpadApiClient:
         card_wxid: str,
         card_nickname: str,
         card_alias: str = "",
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SHARE_CARD_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_share_card,
             body={
                 "Wxid": wxid,
                 "ToWxid": to_wxid,
@@ -389,11 +363,10 @@ class WechatIpadApiClient:
         to_wxid: str,
         xml: str,
         app_type: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_APP_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_app,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Xml": xml, "Type": app_type},
         )
 
@@ -404,11 +377,10 @@ class WechatIpadApiClient:
         wxid: str,
         to_wxid: str,
         content_xml: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_CDN_FILE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_cdn_file,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Content": content_xml},
         )
 
@@ -419,11 +391,10 @@ class WechatIpadApiClient:
         wxid: str,
         to_wxid: str,
         content_xml: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_CDN_IMAGE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_cdn_image,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Content": content_xml},
         )
 
@@ -434,11 +405,10 @@ class WechatIpadApiClient:
         wxid: str,
         to_wxid: str,
         content_xml: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SEND_CDN_VIDEO_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.message_send_cdn_video,
             body={"Wxid": wxid, "ToWxid": to_wxid, "Content": content_xml},
         )
 
@@ -448,11 +418,10 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         chatroom_id: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_INFO_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.group_get_info,
             body={"Wxid": wxid, "QID": chatroom_id},
         )
 
@@ -462,11 +431,10 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         chatroom_id: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_MEMBER_DETAIL_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.group_get_member_detail,
             body={"Wxid": wxid, "QID": chatroom_id},
         )
 
@@ -477,11 +445,10 @@ class WechatIpadApiClient:
         wxid: str,
         chatroom_id: str,
         member_wxid: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_ADD_MEMBER_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.group_add_member,
             body={"Wxid": wxid, "ChatRoomName": chatroom_id, "ToWxids": member_wxid},
         )
 
@@ -491,11 +458,10 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         chatroom_id: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_INFO_DETAIL_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.group_get_info_detail,
             body={"Wxid": wxid, "QID": chatroom_id},
         )
 
@@ -505,12 +471,11 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         chatroom_id: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_QRCODE_ENDPOINT,
-            body={"Wxid": wxid, "Chatroom": chatroom_id},
+            IPAD_874_CONTRACT.endpoints.group_get_qrcode,
+            body={"Wxid": wxid, "QID": chatroom_id},
         )
 
     def invite_chatroom_member(
@@ -520,12 +485,11 @@ class WechatIpadApiClient:
         wxid: str,
         chatroom_id: str,
         to_wxids: str | list[str],
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         target_ids = ",".join(to_wxids) if isinstance(to_wxids, list) else str(to_wxids)
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CHATROOM_INVITE_MEMBER_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.group_invite_member,
             body={"Wxid": wxid, "ChatRoomName": chatroom_id, "ToWxids": target_ids},
         )
 
@@ -537,26 +501,11 @@ class WechatIpadApiClient:
         scene: int,
         v1: str,
         v2: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_ACCEPT_FRIEND_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.friend_pass_verify,
             body={"Wxid": wxid, "Scene": scene, "V1": v1, "V2": v2},
-        )
-
-    def get_contact(
-        self,
-        channel: Channel,
-        *,
-        wxid: str,
-        request_wxids: str | list[str],
-        endpoint: str | None = None,
-    ) -> dict[str, Any]:
-        return self.request_json(
-            channel,
-            endpoint or self.DEFAULT_CONTACT_DETAIL_ENDPOINT,
-            body={"Wxid": wxid, "RequestWxids": self._join_wxids(request_wxids)},
         )
 
     def get_contact_detail(
@@ -566,12 +515,11 @@ class WechatIpadApiClient:
         wxid: str,
         to_wxids: str | list[str],
         chatroom_id: str = "",
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CONTACT_DETAIL_ENDPOINT,
-            body={"Wxid": wxid, "Towxids": self._join_wxids(to_wxids), "Chatroom": chatroom_id},
+            IPAD_874_CONTRACT.endpoints.friend_get_detail,
+            body={"Wxid": wxid, "Towxids": self._join_wxids(to_wxids), "ChatRoom": chatroom_id},
         )
 
     def get_contact_list(
@@ -581,15 +529,14 @@ class WechatIpadApiClient:
         wxid: str,
         current_wxcontact_seq: int = 0,
         current_chatroom_contact_seq: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_CONTACT_LIST_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.friend_get_list,
             body={
                 "Wxid": wxid,
                 "CurrentWxcontactSeq": current_wxcontact_seq,
-                "CurrentChatroomContactSeq": current_chatroom_contact_seq,
+                "CurrentChatRoomContactSeq": current_chatroom_contact_seq,
             },
         )
 
@@ -599,11 +546,13 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         target_wxid: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         del wxid
-        target = endpoint or self.DEFAULT_USER_PROFILE_ENDPOINT
-        return self.request_json(channel, target.format(wxid=target_wxid), body=None)
+        return self.request_json(
+            channel,
+            IPAD_874_CONTRACT.endpoints.user_get_profile,
+            query={"wxid": target_wxid},
+        )
 
     def get_my_qrcode(
         self,
@@ -611,11 +560,10 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         style: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_MY_QRCODE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.user_get_qrcode,
             body={"Wxid": wxid, "Style": style},
         )
 
@@ -626,11 +574,10 @@ class WechatIpadApiClient:
         wxid: str,
         file_aes_key: str,
         file_no: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_TOOL_DOWNLOAD_IMAGE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.tools_download_image,
             body={"Wxid": wxid, "FileAesKey": file_aes_key, "FileNo": file_no},
         )
 
@@ -639,15 +586,23 @@ class WechatIpadApiClient:
         channel: Channel,
         *,
         wxid: str,
-        msg_id: str,
-        voice_url: str,
+        msg_id: int | str,
+        from_user_name: str,
+        bufid: str,
         length: int,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
+        # 874 的 Go 请求模型将 MsgId 声明为无符号整数，字符串形式只允许存在于平台内部。
+        resolved_msg_id = int(msg_id)
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_TOOL_DOWNLOAD_VOICE_ENDPOINT,
-            body={"Wxid": wxid, "MsgId": msg_id, "Voiceurl": voice_url, "Length": length},
+            IPAD_874_CONTRACT.endpoints.tools_download_voice,
+            body={
+                "Wxid": wxid,
+                "MsgId": resolved_msg_id,
+                "FromUserName": from_user_name,
+                "Bufid": bufid,
+                "Length": length,
+            },
         )
 
     def download_attach(
@@ -660,11 +615,10 @@ class WechatIpadApiClient:
         username: str,
         appid: str,
         start_pos: int = 0,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_TOOL_DOWNLOAD_FILE_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.tools_download_file,
             body={
                 "Wxid": wxid,
                 "AttachId": attach_id,
@@ -680,13 +634,27 @@ class WechatIpadApiClient:
         channel: Channel,
         *,
         wxid: str,
-        msg_id: str,
-        endpoint: str | None = None,
+        msg_id: int | str,
+        to_wxid: str,
+        data_len: int,
+        start_pos: int = 0,
+        section_length: int | None = None,
+        compress_type: int = 0,
     ) -> dict[str, Any]:
+        # 视频接口同样要求数值消息 ID，并按 Section 指定本次下载的字节范围。
+        resolved_msg_id = int(msg_id)
+        resolved_section_length = int(section_length or data_len)
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_TOOL_DOWNLOAD_VIDEO_ENDPOINT,
-            body={"Wxid": wxid, "MsgId": msg_id},
+            IPAD_874_CONTRACT.endpoints.tools_download_video,
+            body={
+                "Wxid": wxid,
+                "ToWxid": to_wxid,
+                "MsgId": resolved_msg_id,
+                "DataLen": data_len,
+                "Section": {"StartPos": start_pos, "DataLen": resolved_section_length},
+                "CompressType": compress_type,
+            },
         )
 
     def friend_circle_upload(
@@ -695,11 +663,10 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         base64_data: str,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_FRIEND_CIRCLE_UPLOAD_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.friend_circle_upload,
             body={"Wxid": wxid, "Base64": base64_data},
         )
 
@@ -709,12 +676,11 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         step_count: int,
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SET_STEP_ENDPOINT,
-            body={"Wxid": wxid, "StepCount": step_count},
+            IPAD_874_CONTRACT.endpoints.tools_update_step,
+            body={"Wxid": wxid, "Number": step_count},
         )
 
     def set_proxy(
@@ -723,21 +689,12 @@ class WechatIpadApiClient:
         *,
         wxid: str,
         proxy: dict[str, Any],
-        endpoint: str | None = None,
     ) -> dict[str, Any]:
         return self.request_json(
             channel,
-            endpoint or self.DEFAULT_SET_PROXY_ENDPOINT,
+            IPAD_874_CONTRACT.endpoints.tools_set_proxy,
             body={"Wxid": wxid, "Proxy": self.build_proxy_info(proxy)},
         )
-
-    def check_database(
-        self,
-        channel: Channel,
-        *,
-        endpoint: str | None = None,
-    ) -> dict[str, Any]:
-        return self.request_json(channel, endpoint or self.DEFAULT_CHECK_DATABASE_ENDPOINT, body=None, method="GET")
 
     @staticmethod
     def build_proxy_info(proxy: dict[str, Any]) -> dict[str, Any]:

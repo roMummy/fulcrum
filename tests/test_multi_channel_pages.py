@@ -142,7 +142,7 @@ def test_channel_type_is_immutable_after_creation(provider_page_context) -> None
         ids,
         name="不可换型账号",
         channel_type="wechat_ipad",
-        api_base="http://127.0.0.1:8848",
+        api_base="http://127.0.0.1:9064",
     )
 
     edited = client.post(
@@ -197,6 +197,46 @@ def test_blank_token_keeps_existing_encrypted_secret_on_edit(provider_page_conte
         assert channel.bot_token_encrypted == encrypted_before
 
 
+def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_context) -> None:
+    """874 不使用访问凭证，旧密钥和伪造表单值都必须在统一更新路径中被清除。"""
+
+    client, ids = provider_page_context
+    csrf_token = _login(client, "admin")
+    channel_id = _seed_channel(
+        ids,
+        name="874 微信账号",
+        channel_type="wechat_ipad",
+        api_base="http://127.0.0.1:9064",
+    )
+    with ids["factory"]() as db:
+        channel = db.get(Channel, channel_id)
+        channel.bot_token_encrypted = "retired-encrypted-token"
+        channel.bot_token_masked = "retired-token"
+        db.commit()
+
+    detail = client.get(f"/channels/{channel_id}")
+    assert detail.status_code == 200
+    assert 'name="bot_token"' not in detail.text
+
+    edited = client.post(
+        f"/channels/{channel_id}/edit",
+        data=_channel_edit_form(
+            ids,
+            csrf_token,
+            name="874 微信账号",
+            channel_type="wechat_ipad",
+            api_base="http://127.0.0.1:9064",
+            bot_token="forged-token",
+        ),
+    )
+
+    assert edited.status_code == 303
+    with ids["factory"]() as db:
+        channel = db.get(Channel, channel_id)
+        assert channel.bot_token_encrypted is None
+        assert channel.bot_token_masked is None
+
+
 def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provider_page_context) -> None:
     """高级页面不能回显代理密码，保存可见字段时也不能清空未展示的服务端配置。"""
 
@@ -207,7 +247,7 @@ def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provid
         ids,
         name="安全配置微信",
         channel_type="wechat_ipad",
-        api_base="http://127.0.0.1:8848",
+        api_base="http://127.0.0.1:9064",
         webhook_path="/private-webhook",
         adapter_config_json=json.dumps(
             {
@@ -233,7 +273,7 @@ def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provid
         csrf_token,
         name="安全配置微信",
         channel_type="wechat_ipad",
-        api_base="http://127.0.0.1:8848",
+        api_base="http://127.0.0.1:9064",
         proxy_host="127.0.0.1",
         proxy_port="8899",
         proxy_username="proxy-user",
@@ -258,7 +298,7 @@ def test_incomplete_draft_cannot_be_enabled_by_toggle(provider_page_context) -> 
         ids,
         name="未绑定微信",
         channel_type="wechat_ipad",
-        api_base="http://127.0.0.1:8848",
+        api_base="http://127.0.0.1:9064",
     )
 
     toggled = client.post(f"/channels/{channel_id}/toggle", data={"csrf_token": csrf_token})

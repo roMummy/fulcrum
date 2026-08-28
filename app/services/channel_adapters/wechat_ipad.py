@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 
 from app.models.entities import Channel, Conversation
 from app.services.wechat_ipad.client import WechatIpadApiClient
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 
 from .base import BaseChannelAdapter
 
@@ -58,7 +59,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         body = request_spec["body"]
 
         base_url = channel.api_base.rstrip("/")
-        target_url = f"{base_url}/api{endpoint}"
+        target_url = f"{base_url}{endpoint}"
         raw_request = {
             "url": target_url,
             "method": "POST",
@@ -251,14 +252,14 @@ class WechatIpadAdapter(BaseChannelAdapter):
         probes = [
             {
                 "name": "heartbeat",
-                "endpoint": f"/api/Login/HeartBeat?wxid={wxid}",
-                "body": None,
+                "endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat,
+                "query": {"wxid": wxid},
                 "required": True,
             },
             {
                 "name": "cache_info",
-                "endpoint": "/api/Login/GetCacheInfo",
-                "body": {"Wxid": wxid, "DeviceID": device_id} if device_id else {"Wxid": wxid},
+                "endpoint": IPAD_874_CONTRACT.endpoints.login_get_cache_info,
+                "query": {"wxid": wxid},
                 "required": False,
             },
         ]
@@ -266,7 +267,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         required_failed = False
         optional_failed = False
         for probe in probes:
-            result = self._run_health_probe(channel, probe["endpoint"], body=probe["body"])
+            result = self._run_health_probe(channel, probe["endpoint"], query=probe["query"])
             result["name"] = probe["name"]
             probe_results.append(result)
             if result["ok"]:
@@ -357,7 +358,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not content:
                 return None
             return {
-                "endpoint": "/Msg/SendTxt",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_text,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -370,7 +371,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             base64_data = self._first_non_empty(payload, "base64", "image_base64")
             if base64_data:
                 return {
-                    "endpoint": "/Msg/UploadImg",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_upload_image,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -380,7 +381,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             cdn_xml = self._first_non_empty(payload, "content", "xml", "cdn_xml", "content_xml")
             if cdn_xml:
                 return {
-                    "endpoint": "/Msg/SendCDNImg",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_cdn_image,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -393,7 +394,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not prepared_voice:
                 return None
             return {
-                "endpoint": "/Msg/SendVoice",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_voice,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -406,7 +407,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             cdn_xml = self._first_non_empty(payload, "content", "xml", "cdn_xml", "content_xml")
             if cdn_xml:
                 return {
-                    "endpoint": "/Msg/SendCDNVideo",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_cdn_video,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -419,7 +420,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 return None
             play_length = self._coerce_int(payload.get("play_length") or payload.get("duration") or payload.get("duration_seconds"))
             return {
-                "endpoint": "/Msg/SendVideo",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_video,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -435,7 +436,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 if app_type is None:
                     return None
                 return {
-                    "endpoint": "/Msg/SendApp",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -447,7 +448,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not generated_xml:
                 return None
             return {
-                "endpoint": "/Msg/SendApp",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -457,16 +458,17 @@ class WechatIpadAdapter(BaseChannelAdapter):
             }
         return None
 
-    def _run_health_probe(self, channel: Channel, endpoint: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        target_url = f"{channel.api_base.rstrip('/')}{endpoint}"
+    def _run_health_probe(
+        self,
+        channel: Channel,
+        endpoint: str,
+        *,
+        query: dict[str, Any],
+    ) -> dict[str, Any]:
+        """通过统一 874 客户端执行探针，确保健康检查与业务调用共享查询参数编码。"""
+
         try:
-            if body is None:
-                req = urlrequest.Request(target_url, method="POST")
-                with urlrequest.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
-                    raw_body = response.read().decode("utf-8", errors="replace")
-                    parsed = self._parse_json_like(raw_body, getattr(response, "status", 200))
-            else:
-                parsed = self._post_json(target_url, body)
+            parsed = WechatIpadApiClient().request_json(channel, endpoint, query=query)
             response_status = int(parsed.get("http_status") or 200)
             ok = response_status < 400 and self._response_indicates_success(parsed)
             return {
@@ -711,22 +713,48 @@ class WechatIpadAdapter(BaseChannelAdapter):
         }
 
     def _extract_voice_info(self, payload: dict[str, Any]) -> dict[str, str] | None:
-        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "NewMsgId", "msg_id"))
-        voice_url = self._clean_string(self._pick_value(payload, "VoiceUrl", "voice_url", "Voiceurl", "voiceurl"))
-        length = self._clean_string(self._pick_value(payload, "Length", "length", "VoiceLength", "voice_length"))
-        if not msg_id or not voice_url or not length:
+        """从 874 同步消息的语音 XML 生成下载接口需要的四项元数据。"""
+
+        content = self._extract_text_content(payload)
+        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "msg_id"))
+        from_user_name = self._clean_string(self._pick_value(payload, "FromUserName", "from_user_name"))
+        bufid = self._extract_xml_attribute(content, "bufid")
+        # DownloadVoice 的 Length 表示需要下载的字节数，不能使用 voicelength 播放时长。
+        length = self._extract_xml_attribute(content, "length")
+        if not msg_id or not from_user_name or not bufid or not length:
             return None
         return {
             "msg_id": msg_id,
-            "voice_url": voice_url,
+            "from_user_name": from_user_name,
+            "bufid": bufid,
             "length": length,
         }
 
     def _extract_video_info(self, payload: dict[str, Any]) -> dict[str, str] | None:
-        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "NewMsgId", "msg_id"))
-        if not msg_id:
+        """从 874 视频 XML 读取总字节数，并初始化首个下载分片。"""
+
+        content = self._extract_text_content(payload)
+        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "msg_id"))
+        to_wxid = self._clean_string(self._pick_value(payload, "FromUserName", "from_user_name"))
+        data_len = self._extract_xml_attribute(content, "length")
+        if not msg_id or not to_wxid or not data_len:
             return None
-        return {"msg_id": msg_id}
+        return {
+            "msg_id": msg_id,
+            "to_wxid": to_wxid,
+            "data_len": data_len,
+            "start_pos": "0",
+            "section_length": data_len,
+            "compress_type": "0",
+        }
+
+    def _extract_xml_attribute(self, content: str, attribute: str) -> str | None:
+        """从 874 消息 XML 中提取媒体下载字段，属性名按协议原样匹配。"""
+
+        if not content:
+            return None
+        matched = re.search(rf'\b{re.escape(attribute)}=["\']([^"\']+)["\']', content, flags=re.IGNORECASE)
+        return self._clean_string(matched.group(1)) if matched else None
 
     def _pick_value(self, payload: dict[str, Any], *keys: str, **named_paths: tuple[str, ...]) -> Any:
         for key in keys:

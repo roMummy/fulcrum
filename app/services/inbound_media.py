@@ -374,12 +374,20 @@ def _download_wechat_voice_attachment(db: Session, *, attachment: MessageAttachm
     adapter_config = _parse_json(channel.adapter_config_json)
     wxid = str(adapter_config.get("wxid") or "").strip()
     msg_id = str(metadata.get("msg_id") or "").strip()
-    voice_url = str(metadata.get("voice_url") or "").strip()
+    from_user_name = str(metadata.get("from_user_name") or "").strip()
+    bufid = str(metadata.get("bufid") or "").strip()
     length = int(str(metadata.get("length") or "0").strip() or 0)
-    if not wxid or not msg_id or not voice_url or length <= 0:
+    if not wxid or not msg_id or not from_user_name or not bufid or length <= 0:
         raise ValueError("wechat_ipad_voice_metadata_missing")
     client = WechatIpadApiClient()
-    response = client.download_voice(channel, wxid=wxid, msg_id=msg_id, voice_url=voice_url, length=length)
+    response = client.download_voice(
+        channel,
+        wxid=wxid,
+        msg_id=msg_id,
+        from_user_name=from_user_name,
+        bufid=bufid,
+        length=length,
+    )
     resolved = _resolve_binary_response(response, default_mime_type="audio/amr", default_extension=".amr")
     return _persist_attachment_content(db, attachment=attachment, response=response, resolved=resolved, metadata=metadata)
 
@@ -389,10 +397,24 @@ def _download_wechat_video_attachment(db: Session, *, attachment: MessageAttachm
     adapter_config = _parse_json(channel.adapter_config_json)
     wxid = str(adapter_config.get("wxid") or "").strip()
     msg_id = str(metadata.get("msg_id") or "").strip()
-    if not wxid or not msg_id:
+    to_wxid = str(metadata.get("to_wxid") or "").strip()
+    data_len = int(str(metadata.get("data_len") or "0").strip() or 0)
+    start_pos = int(str(metadata.get("start_pos") or "0").strip() or 0)
+    section_length = int(str(metadata.get("section_length") or data_len).strip() or 0)
+    compress_type = int(str(metadata.get("compress_type") or "0").strip() or 0)
+    if not wxid or not msg_id or not to_wxid or data_len <= 0 or section_length <= 0:
         raise ValueError("wechat_ipad_video_metadata_missing")
     client = WechatIpadApiClient()
-    response = client.download_video(channel, wxid=wxid, msg_id=msg_id)
+    response = client.download_video(
+        channel,
+        wxid=wxid,
+        msg_id=msg_id,
+        to_wxid=to_wxid,
+        data_len=data_len,
+        start_pos=start_pos,
+        section_length=section_length,
+        compress_type=compress_type,
+    )
     resolved = _resolve_binary_response(response, default_mime_type="video/mp4", default_extension=".mp4")
     return _persist_attachment_content(db, attachment=attachment, response=response, resolved=resolved, metadata=metadata)
 
