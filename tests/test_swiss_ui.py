@@ -7,6 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STYLE_PATH = PROJECT_ROOT / "app/static/css/style.css"
 FONT_STYLE_PATH = PROJECT_ROOT / "app/static/css/fonts.css"
+MARKETING_SCRIPT_PATH = PROJECT_ROOT / "app/static/js/marketing.js"
 TEMPLATE_ROOT = PROJECT_ROOT / "app/templates"
 
 
@@ -118,11 +119,15 @@ def test_marketing_and_auth_pages_use_swiss_grid_and_preserve_accessibility_cont
     enterprise_login = _read_project_file(TEMPLATE_ROOT / "enterprise_login.html")
     register = _read_project_file(TEMPLATE_ROOT / "register.html")
 
-    assert "/static/images/yaoshu-console.webp" in marketing_home
-    assert 'class="marketing-product-visual"' in marketing_home
     assert 'class="marketing-hero marketing-hero-stage"' in marketing_home
+    assert 'class="marketing-hero-scene"' in marketing_home
+    assert "data-hero-scene" in marketing_home
+    assert 'aria-hidden="true"' in marketing_home
     assert 'class="marketing-hero-signal"' in marketing_home
     assert 'class="marketing-hero-copy"' in marketing_home
+    assert "/static/js/marketing.js" in marketing_base
+    assert "yaoshu-console.webp" not in marketing_home
+    assert "marketing-product-visual" not in marketing_home
     assert marketing_home.count("<h1>") == 1
     assert "<h1>曜枢 AI</h1>" in marketing_home
     assert "marketing-hero-content" not in marketing_home
@@ -134,6 +139,53 @@ def test_marketing_and_auth_pages_use_swiss_grid_and_preserve_accessibility_cont
     assert 'autocomplete="current-password"' in enterprise_login
     for autocomplete in ("organization", "name", "tel", "new-password"):
         assert f'autocomplete="{autocomplete}"' in register
+
+
+def test_pricing_grid_keeps_shared_container_centering() -> None:
+    """套餐网格不得覆盖共享内容容器的自动居中外边距。
+
+    价格页让同一个元素同时承担内容容器与三列网格。如果公共网格规则重置全部
+    外边距，后声明的 `margin: 0` 会让 1200px 容器从视口左侧开始排列，因此这里只
+    允许有序步骤列表单独清理浏览器默认外边距。
+    """
+
+    stylesheet = _read_project_file(STYLE_PATH)
+    pricing_template = _read_project_file(TEMPLATE_ROOT / "pricing.html")
+    grid_rule = re.search(
+        r"\.marketing-feature-grid,\s*\.marketing-steps,\s*\.marketing-plan-grid\s*\{(?P<body>[^}]*)\}",
+        stylesheet,
+    )
+
+    assert grid_rule is not None
+    assert "margin: 0;" not in grid_rule.group("body")
+    assert ".marketing-steps {\n  margin: 0;" in stylesheet
+    assert 'class="marketing-section-inner marketing-plan-grid"' in pricing_template
+
+
+def test_marketing_hero_interaction_respects_motion_and_keyboard_boundaries() -> None:
+    """无截图 Hero 必须提供受限指针反馈，并为键盘与减少动态效果保留静态路径。"""
+
+    stylesheet = _read_project_file(STYLE_PATH)
+    script = _read_project_file(MARKETING_SCRIPT_PATH)
+
+    for required_style in (
+        ".marketing-hero-scene",
+        ".marketing-hero-marker",
+        ".marketing-hero:focus-within .marketing-hero-signal",
+        "--hero-pointer-x",
+        "@media (prefers-reduced-motion: reduce)",
+    ):
+        assert required_style in stylesheet
+
+    for required_script in (
+        'document.querySelector("[data-hero-scene]")',
+        'window.matchMedia("(prefers-reduced-motion: reduce)")',
+        'hero.addEventListener("pointermove"',
+        'hero.addEventListener("pointerleave"',
+        'scene.style.setProperty("--hero-pointer-x"',
+        'scene.style.setProperty("--hero-pointer-y"',
+    ):
+        assert required_script in script
 
 
 def test_dashboards_use_swiss_data_bands_and_single_layer_surfaces() -> None:
