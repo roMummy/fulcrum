@@ -19,6 +19,11 @@ BILLING_ORDER_STATUSES = frozenset(
     {"pending_payment", "payment_submitted", "approved", "rejected", "cancelled"}
 )
 BOT_BINDING_STATUSES = frozenset({"active", "disabled", "released"})
+PROXY_HEALTH_STATUSES = frozenset({"healthy", "unhealthy"})
+LOGIN_PROXY_MODES = frozenset({"direct", "platform_pool", "custom"})
+LOGIN_PROXY_SESSION_STATUSES = frozenset(
+    {"preparing", "qrcode_ready", "completed", "failed", "cancelled", "expired"}
+)
 
 
 class PlatformUser(Base, TimestampMixin):
@@ -75,6 +80,52 @@ class PlatformProtocolService(Base, TimestampMixin):
     api_base: Mapped[str] = mapped_column(String(500), nullable=False)
     # 停用只关闭新的账号接入；已有渠道保留最后一次同步的地址，避免维护动作直接中断业务。
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+
+
+class PlatformProxy(Base, TimestampMixin):
+    """平台统一维护的 SOCKS 登录代理，不归属于任何单个租户。"""
+
+    __tablename__ = "platform_proxies"
+    __table_args__ = (
+        UniqueConstraint("host", "port", "username", name="uq_platform_proxy_endpoint"),
+        CheckConstraint("port >= 1 AND port <= 65535", name="ck_platform_proxies_port"),
+        CheckConstraint("consecutive_failures >= 0", name="ck_platform_proxies_failures"),
+        CheckConstraint(
+            "health_status IN ('healthy', 'unhealthy')",
+            name="ck_platform_proxies_health_status",
+        ),
+        # 分配先按地区和可用状态过滤，再检查租约是否已经到期；该索引覆盖扫码主查询。
+        Index(
+            "ix_platform_proxies_allocation",
+            "province",
+            "city",
+            "is_enabled",
+            "health_status",
+            "lease_expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    province: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    city: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    username: Mapped[str] = mapped_column(String(191), nullable=False, default="")
+    # 密码需要在调用 874 时解密，因此使用项目统一可解密密文，页面和日志不得读取原文。
+    password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    health_status: Mapped[str] = mapped_column(String(20), nullable=False, default="healthy", index=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 租约键由服务端登录会话生成。与会话主键解耦后可以先创建会话再原子占用代理，
+    # 同时避免平台代理表和租户会话表形成互相依赖的循环外键。
+    lease_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    lease_expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_checked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_assigned_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_result_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class Tenant(Base, TimestampMixin):
@@ -351,6 +402,59 @@ class TenantSession(Base, TimestampMixin):
 
     tenant = relationship("Tenant", back_populates="sessions")
     user = relationship("TenantUser", back_populates="sessions")
+
+
+class LoginProxySession(Base, TenantOwnedMixin, TimestampMixin):
+    """一次扫码登录使用的临时代理会话，终态后立即释放平台代理和自有凭证。"""
+
+    __tablename__ = "login_proxy_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('direct', 'platform_pool', 'custom')",
+            name="ck_login_proxy_sessions_mode",
+        ),
+        CheckConstraint(
+            "state IN ('preparing', 'qrcode_ready', 'completed', 'failed', 'cancelled', 'expired')",
+            name="ck_login_proxy_sessions_state",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_login_proxy_sessions_attempt_count"),
+        CheckConstraint(
+            "custom_port IS NULL OR (custom_port >= 1 AND custom_port <= 65535)",
+            name="ck_login_proxy_sessions_custom_port",
+        ),
+        # 页面按渠道读取当前未结束会话；状态和到期时间共同决定记录是否仍能继续扫码。
+        Index(
+            "ix_login_proxy_sessions_channel_state",
+            "tenant_id",
+            "channel_id",
+            "state",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), nullable=False, index=True)
+    session_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    province: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    platform_proxy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platform_proxies.id"),
+        nullable=True,
+        index=True,
+    )
+    custom_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    custom_username: Mapped[str | None] = mapped_column(String(191), nullable=True)
+    # 自有代理密码只在本次登录会话有效；终态处理必须主动将此字段清空。
+    custom_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="preparing", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempted_proxy_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    qrcode_expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class PlatformAuditLog(Base, TimestampMixin):
