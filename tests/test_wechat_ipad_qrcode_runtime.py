@@ -70,9 +70,11 @@ class _LargeQrClient:
     def __init__(self, qr_base64: str, qr_url: str):
         self.qr_base64 = qr_base64
         self.qr_url = qr_url
+        self.last_proxy = None
 
     def get_qr_code(self, channel: Channel, **kwargs):
-        del channel, kwargs
+        del channel
+        self.last_proxy = kwargs.get("proxy")
         return {
             "Success": True,
             "Code": 1,
@@ -145,3 +147,32 @@ def test_wechat_ipad_qrcode_runtime_rejects_base64_only_response(db: Session) ->
     assert len(runtime_json.encode("utf-8")) < 65535
     assert qr_base64 not in runtime_json
     assert resolve_wechat_ipad_qrcode_image(channel) == {"available": False}
+
+
+def test_wechat_ipad_qrcode_runtime_uses_explicit_login_proxy(db: Session) -> None:
+    """874 取码只使用调用方显式传入的临时代理，不再读取渠道适配配置。"""
+
+    tenant, channel = _seed_ipad_channel(db)
+    channel.adapter_config_json = json.dumps(
+        {"proxy": {"host": "old-proxy", "port": "9999", "password": "old-secret"}},
+        ensure_ascii=False,
+    )
+    db.commit()
+    client = _LargeQrClient("", "https://qr.example.com/explicit-proxy")
+    explicit_proxy = {
+        "host": "127.0.0.1",
+        "port": "1080",
+        "username": "login-user",
+        "password": "login-password",
+    }
+
+    with tenant_scope(tenant.id):
+        start_wechat_ipad_login(
+            db,
+            channel,
+            login_profile="ipad",
+            proxy=explicit_proxy,
+            client=client,
+        )
+
+    assert client.last_proxy == explicit_proxy

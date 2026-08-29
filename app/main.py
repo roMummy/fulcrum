@@ -75,6 +75,12 @@ from app.services.plugin_schemas import (
     parse_config_json,
 )
 from app.services.plugin_runtime import execute_binding_action, get_plugin_runtime_meta
+from app.services.wechat_ipad.login_flow import (
+    WechatIpadLoginFlowError,
+    cancel_login_with_proxy_session,
+    poll_login_with_proxy_session,
+    start_login_with_proxy_session,
+)
 from app.services.provider_nodes import (
     ProviderNodeError,
     list_provider_nodes,
@@ -2247,49 +2253,36 @@ async def start_wechat_ipad_login_flow(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        start_wechat_ipad_login(db, channel, login_profile=login_profile)
+        try:
+            start_login_with_proxy_session(db, channel)
+        except WechatIpadLoginFlowError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:
         db.close()
 
 
-@app.post("/channels/{channel_id}/wechat-ipad/login-flow/refresh")
-async def refresh_wechat_ipad_login_flow(request: Request, channel_id: int):
+@app.post("/channels/{channel_id}/wechat-ipad/login-flow/cancel")
+async def cancel_wechat_ipad_login_flow(request: Request, channel_id: int):
+    """取消当前扫码会话；重新开始必须先创建新的服务端代理会话。"""
+
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        refresh_wechat_ipad_qrcode(db, channel, login_profile=login_profile)
-        db.refresh(channel)
-        return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/login-flow/logout")
-async def logout_wechat_ipad_login_flow(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        logout_wechat_ipad(db, channel, login_profile=login_profile)
+        cancel_login_with_proxy_session(db, channel)
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:
@@ -2301,12 +2294,16 @@ async def poll_wechat_ipad_login_flow(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        poll_wechat_ipad_login_status(db, channel)
+        try:
+            poll_login_with_proxy_session(db, channel)
+        except WechatIpadLoginFlowError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:

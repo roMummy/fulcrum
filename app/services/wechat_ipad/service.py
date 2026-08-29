@@ -2502,8 +2502,11 @@ def start_wechat_ipad_login(
     channel: Channel,
     *,
     login_profile: str | None = None,
+    proxy: dict[str, str] | None = None,
     client: WechatIpadApiClient | None = None,
 ) -> dict[str, Any]:
+    """使用调用方已经解析好的单次登录代理获取二维码，不读取渠道长期代理配置。"""
+
     api_client = client or WechatIpadApiClient()
     adapter_config = _parse_json(channel.adapter_config_json)
     runtime_info = _parse_json(getattr(channel, "runtime_info_json", None))
@@ -2549,7 +2552,7 @@ def start_wechat_ipad_login(
         channel=channel,
         device_name=device_name,
         device_id=device_id,
-        proxy=_proxy_from_config(adapter_config),
+        proxy=proxy,
         login_profile=login_profile_key,
     )
     if not response["ok"]:
@@ -2645,9 +2648,18 @@ def refresh_wechat_ipad_qrcode(
     channel: Channel,
     *,
     login_profile: str | None = None,
+    proxy: dict[str, str] | None = None,
     client: WechatIpadApiClient | None = None,
 ) -> dict[str, Any]:
-    overview = start_wechat_ipad_login(db, channel, login_profile=login_profile, client=client)
+    """刷新二维码时继续使用当前登录会话已经锁定的代理。"""
+
+    overview = start_wechat_ipad_login(
+        db,
+        channel,
+        login_profile=login_profile,
+        proxy=proxy,
+        client=client,
+    )
     return _persist_runtime(
         db,
         channel,
@@ -3275,7 +3287,6 @@ def reconnect_wechat_ipad(
         trace_endpoint=IPAD_874_CONTRACT.endpoints.login_awaken,
         channel=channel,
         wxid=wxid,
-        proxy=_proxy_from_config(adapter_config),
     )
     extra = {
         "last_reconnect_response": awaken["payload"],
@@ -6574,11 +6585,6 @@ def resolve_wechat_ipad_qrcode_image(channel: Channel) -> dict[str, Any]:
     if not resolved:
         return {"available": False}
     return {"available": True, "kind": "url", "url": resolved["url"]}
-
-
-def _proxy_from_config(adapter_config: dict[str, Any]) -> dict[str, Any] | None:
-    proxy = adapter_config.get("proxy")
-    return proxy if isinstance(proxy, dict) else None
 
 
 def _extract_contact_items(data: dict[str, Any]) -> list[dict[str, Any]]:
