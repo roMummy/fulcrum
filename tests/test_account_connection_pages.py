@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from sqlalchemy import select
 
 from app.models.entities import Bot, Channel
-from app.models.saas import BotBinding
+from app.models.saas import BotBinding, LoginProxySession
 from test_provider_node_pages import _login, provider_page_context
 
 
@@ -47,12 +47,53 @@ def test_connection_forms_only_show_required_business_fields(provider_page_conte
 
     ipad_page = client.get("/channels/connect?channel_type=wechat_ipad")
     assert ipad_page.status_code == 200
+    for label in ("智能选择", "自有代理", "直接登录"):
+        assert label in ipad_page.text
+    for field_name in (
+        "proxy_mode",
+        "proxy_province",
+        "proxy_city",
+        "custom_proxy_host",
+        "custom_proxy_port",
+        "custom_proxy_username",
+        "custom_proxy_password",
+    ):
+        assert f'name="{field_name}"' in ipad_page.text
     assert 'name="api_base"' not in ipad_page.text
     assert "协议服务地址" not in ipad_page.text
     assert "http://127.0.0.1:9064" not in ipad_page.text
     assert 'name="bot_token"' not in ipad_page.text
     for removed_text in ("Webhook", "私聊策略", "允许名单", "适配配置 JSON"):
         assert removed_text not in ipad_page.text
+
+
+def test_wechat_ipad_connection_creates_one_temporary_network_session(provider_page_context) -> None:
+    """首次接入只创建本次扫码使用的临时网络会话，不把代理写入渠道长期配置。"""
+
+    client, ids = provider_page_context
+    csrf_token = _login(client, "admin")
+    started = client.post(
+        "/channels/connect/start",
+        data={
+            "csrf_token": csrf_token,
+            "channel_type": "wechat_ipad",
+            "display_name": "微信售后账号",
+            "proxy_mode": "direct",
+        },
+    )
+
+    assert started.status_code == 303
+    query = parse_qs(urlparse(started.headers["location"]).query)
+    channel_id = int(query["channel_id"][0])
+    with ids["factory"]() as db:
+        channel = db.get(Channel, channel_id)
+        login_session = db.scalar(
+            select(LoginProxySession).where(LoginProxySession.channel_id == channel_id)
+        )
+        assert channel.adapter_config_json in (None, "")
+        assert login_session is not None
+        assert login_session.mode == "direct"
+        assert login_session.state == "preparing"
 
 
 def test_workwechat_connection_uses_verified_identity_and_atomic_activation(provider_page_context) -> None:

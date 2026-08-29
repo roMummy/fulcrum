@@ -240,6 +240,42 @@ def test_wechat_ipad_edit_removes_retired_token_configuration(provider_page_cont
         assert channel.api_base == "http://ipad.platform.internal:9064"
 
 
+def test_wechat_ipad_detail_only_exposes_business_login_entry(provider_page_context) -> None:
+    """账号详情只提供重新登录业务入口，不再向租户展示协议诊断和登录技术操作。"""
+
+    client, ids = provider_page_context
+    _login(client, "admin")
+    channel_id = _seed_channel(
+        ids,
+        name="微信业务账号",
+        channel_type="wechat_ipad",
+        api_base="http://ipad.platform.internal:9064",
+        with_binding=True,
+        bot_account_id="wxid-business-account",
+    )
+
+    detail = client.get(f"/channels/{channel_id}")
+
+    assert detail.status_code == 200
+    assert "重新登录" in detail.text
+    assert f'href="/channels/{channel_id}/wechat-ipad/login-session"' in detail.text
+    for removed_text in (
+        "健康检查",
+        "高级连接信息",
+        "登录与二维码",
+        "协议地址",
+        "二维码链接",
+        "二维码刷新次数",
+        "CheckQR",
+        "Protocol Responses",
+        "获取二维码登录",
+        "初始化登录",
+        "同步状态",
+        "登录代理",
+    ):
+        assert removed_text not in detail.text
+
+
 def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provider_page_context) -> None:
     """高级页面不能回显代理密码，保存可见字段时也不能清空未展示的服务端配置。"""
 

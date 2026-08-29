@@ -2,27 +2,35 @@
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
+
 {% block hero_actions %}
 <div class="hero-action-cluster">
+  {% if channel.channel_type == 'wechat_ipad' and can_manage_channel %}
+  <a class="btn" href="/channels/{{ channel.id }}/wechat-ipad/login-session">重新登录</a>
+  {% endif %}
   {% if can_manage_channel %}
-  <button class="btn" type="button" data-modal-open="edit-channel-modal">高级设置</button>
+  <button class="btn btn-secondary" type="button" data-modal-open="edit-channel-modal">账号设置</button>
   {% endif %}
   <span class="chip chip-outline">账号 #{{ channel.id }}</span>
   <span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span>
   <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span>
 </div>
 {% endblock %}
+
 {% block content %}
 <section class="work-surface">
   <div class="toolbar">
     <div>
       <p class="section-kicker">Account</p>
-      <h2>账号状态与常用操作</h2>
+      <h2>账号状态</h2>
     </div>
     <div class="actions">
+      {# iPad 登录状态由扫码业务流维护，租户详情页不再提供协议级健康检查。 #}
+      {% if channel.channel_type != 'wechat_ipad' %}
       <form method="post" action="/channels/{{ channel.id }}/health-check">
-        <button class="btn btn-secondary" type="submit">健康检查</button>
+        <button class="btn btn-secondary" type="submit">检查连接</button>
       </form>
+      {% endif %}
       {% if can_manage_channel %}
       <form method="post" action="/channels/{{ channel.id }}/toggle">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -31,238 +39,67 @@
       {% endif %}
     </div>
   </div>
-
-  {# 企业微信客户端专项动作默认折叠，首屏只保留账号状态和常用业务操作。 #}
-  {% if channel.channel_type == 'workwechat' %}
-  <details class="action-disclosure provider-action-panel">
-    <summary>
-      <div class="action-disclosure-copy">
-        <h3>企业微信客户端操作</h3>
-      </div>
-      <span class="action-disclosure-hint"></span>
-    </summary>
-    <div class="action-disclosure-body">
-      <div class="provider-action-grid">
-      {% if channel.channel_type == 'wechat_ipad' %}
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/login-init">
-        <button class="btn btn-secondary" type="submit">初始化登录</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/qrcode-refresh">
-        <button class="btn btn-secondary" type="submit">刷新二维码</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/status-sync">
-        <button class="btn btn-secondary" type="submit">同步状态</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/reconnect">
-        <button class="btn btn-secondary" type="submit">重连</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/pull-messages">
-        <button class="btn btn-secondary" type="submit">拉取消息</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms">
-        <button class="btn btn-secondary" type="submit">同步群资料</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts">
-        <button class="btn btn-secondary" type="submit">同步联系人</button>
-      </form>
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">查看全部群</a>
-      {% elif channel.channel_type == 'wechat_winauto' %}
-      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms">
-        <button class="btn btn-secondary" type="submit">刷新群列表</button>
-      </form>
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
-      {% elif channel.channel_type == 'workwechat' %}
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms">
-        <button class="btn btn-secondary" type="submit">同步企微群列表</button>
-      </form>
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
-        <button class="btn btn-secondary" type="submit">同步企微联系人</button>
-      </form>
-      {% if channel.provider_node %}<a class="btn btn-secondary" href="/provider-nodes/{{ channel.provider_node.id }}">查看企业微信客户端</a>{% endif %}
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
-      {% endif %}
-      </div>
-    </div>
-  </details>
-  {% endif %}
-
-  <div class="stack-panel">
-      <div class="stats-grid compact-grid time-metric-grid">
-        <div class="metric-item ">
-          <span>连接状态</span>
-          <strong>{{ connection.label }}</strong>
-        </div>
-        <div class="metric-item ">
-          <span>平台</span>
-          <strong>{{ channel.channel_type|channel_type_label }}</strong>
-        </div>
-        <div class="metric-item ">
-          <span>机器人</span>
-          <strong>{{ bot_name_map.get(channel.bot_id, '机器人') }}</strong>
-        </div>
-        <div class="metric-item ">
-          <span>额度</span>
-          <strong>{{ '已占用' if binding and binding.status == 'active' else '未占用' }}</strong>
-        </div>
-        <div class="metric-item ">
-          <span>可用余额</span>
-          <strong>{{ quota.remaining if quota else '-' }}</strong>
-        </div>
-        <div class="metric-item metric-item-time ">
-          <span>最近在线</span>
-          <strong class="stat-value stat-value-time">{{ last_online_at|bj_time if last_online_at else '-' }}</strong>
-        </div>
-      </div>
-      {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
-      <details class="action-disclosure">
-        <summary><div class="action-disclosure-copy"><h3>高级连接信息</h3></div><span class="action-disclosure-hint"></span></summary>
-        <div class="action-disclosure-body">
-        <div class="table-scroll">
-        <table class="table table-tight">
-          <tbody>
-            <tr><th>最近成功</th><td>{{ channel_health_timeline.latest_success_at|bj_time if channel_health_timeline.latest_success_at else '-' }}</td></tr>
-            <tr><th>最近失败</th><td>{{ channel_health_timeline.latest_failure_at|bj_time if channel_health_timeline.latest_failure_at else '-' }}</td></tr>
-            {% if not channel_definition.platform_managed_endpoint %}
-            <tr><th>服务地址</th><td>{{ '客户端主动连接' if health_checks.api_base_not_required else (channel.api_base or '-') }}</td></tr>
-            {% endif %}
-            <tr><th>私聊策略</th><td>{{ channel.dm_policy or '-' }}</td></tr>
-            {% if channel.channel_type == 'workwechat' %}
-            <tr><th>连接方式</th><td>企业微信客户端主动连接</td></tr>
-            <tr><th>企业微信客户端</th><td class="cell-break">{% if channel.provider_node %}<a href="/provider-nodes/{{ channel.provider_node.id }}">{{ channel.provider_node.name }}</a>{% else %}未绑定{% endif %}</td></tr>
-            <tr><th>企微账号</th><td>{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}未绑定{% endif %}</td></tr>
-            {% endif %}
-            {% if channel.channel_type == 'wechat_ipad' %}
-            <tr><th>登录代理</th><td>{{ wechat_ipad_proxy_form.proxy_ip or '未配置' }}</td></tr>
-            {% endif %}
-          </tbody>
-        </table>
-        </div>
-        </div>
-      </details>
+  <div class="stats-grid compact-grid time-metric-grid">
+    <div class="metric-item"><span>连接状态</span><strong>{{ connection.label }}</strong></div>
+    <div class="metric-item"><span>平台</span><strong>{{ channel.channel_type|channel_type_label }}</strong></div>
+    <div class="metric-item"><span>机器人</span><strong>{{ bot_name_map.get(channel.bot_id, '机器人') }}</strong></div>
+    <div class="metric-item"><span>额度</span><strong>{{ '已占用' if binding and binding.status == 'active' else '未占用' }}</strong></div>
+    <div class="metric-item"><span>可用余额</span><strong>{{ quota.remaining if quota else '-' }}</strong></div>
+    <div class="metric-item metric-item-time"><span>最近在线</span><strong class="stat-value stat-value-time">{{ last_online_at|bj_time if last_online_at else '-' }}</strong></div>
   </div>
+  {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
 </section>
 
-{% if wechat_ipad_overview %}
-<section class="work-surface" id="wechat-ipad-login-section">
+{% if channel.channel_type == 'wechat_ipad' and wechat_ipad_overview %}
+<section class="work-surface account-business-summary">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Wechat iPad</p>
-      <h2>登录与二维码</h2>
+      <p class="section-kicker">WeChat</p>
+      <h2>微信账号</h2>
     </div>
-    <div class="chip-row">
-      <span class="chip chip-outline" id="wechat-ipad-qrcode-phase">{{ wechat_ipad_overview.qrcode_status_display or '-' }}</span>
-      <span class="chip {% if wechat_ipad_overview.login_flow_polling_active %}chip-success{% else %}chip-muted{% endif %}" id="wechat-ipad-polling-state">{{ '轮询中' if wechat_ipad_overview.login_flow_polling_active else '未轮询' }}</span>
+    {% if can_manage_channel %}<a class="btn btn-secondary" href="/channels/{{ channel.id }}/wechat-ipad/login-session">重新登录</a>{% endif %}
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>登录状态</span><strong>{{ '已登录' if wechat_ipad_overview.login_state == 'online' or wechat_ipad_overview.qrcode_status == 'success' else '未登录' }}</strong></div>
+    <div class="metric-item"><span>账号昵称</span><strong>{{ wechat_ipad_overview.nickname or channel.name }}</strong></div>
+    <div class="metric-item"><span>微信号</span><strong>{{ wechat_ipad_overview.alias or '-' }}</strong></div>
+    <div class="metric-item"><span>绑定手机</span><strong>{{ wechat_ipad_overview.bind_mobile or '-' }}</strong></div>
+  </div>
+  <div class="form-actions-inline top-gap">
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts">
+      <button class="btn btn-secondary" type="submit">同步联系人</button>
+    </form>
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms">
+      <button class="btn btn-secondary" type="submit">同步群聊</button>
+    </form>
+    <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+  </div>
+</section>
+{% endif %}
+
+{% if channel.channel_type == 'workwechat' %}
+<section class="work-surface">
+  <div class="toolbar">
+    <div><p class="section-kicker">Work WeChat</p><h2>企业微信账号</h2></div>
+    <div class="actions">
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts"><button class="btn btn-secondary" type="submit">同步联系人</button></form>
+      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
     </div>
   </div>
-  <div class="stats-grid compact-grid time-metric-grid">
-    <div class="metric-item "><span>登录状态</span><strong id="wechat-ipad-login-state">{{ wechat_ipad_overview.login_state_display or wechat_ipad_overview.login_state }}</strong></div>
-    <div class="metric-item "><span>二维码状态</span><strong id="wechat-ipad-qrcode-status">{{ wechat_ipad_overview.qrcode_status_display }}</strong></div>
-    <div class="metric-item "><span>剩余有效期</span><strong id="wechat-ipad-qrcode-countdown">{{ wechat_ipad_overview.qrcode_countdown_label or '-' }}</strong></div>
-    <div class="metric-item "><span>是否过期</span><strong id="wechat-ipad-qrcode-expired">{{ '已过期' if wechat_ipad_overview.qrcode_is_expired else '有效中' }}</strong></div>
-    <div class="metric-item metric-item-time "><span>最近心跳</span><strong id="wechat-ipad-last-heartbeat-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_heartbeat_at_display or '-' }}</strong></div>
-    <div class="metric-item metric-item-time "><span>最近拉取</span><strong id="wechat-ipad-last-message-sync-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_message_sync_at_display or '-' }}</strong></div>
-    <div class="metric-item metric-item-time "><span>最近接收</span><strong id="wechat-ipad-last-receive-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_receive_at_display or '-' }}</strong></div>
-    <div class="metric-item metric-item-time "><span>最近发送</span><strong id="wechat-ipad-last-send-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.last_send_at_display or '-' }}</strong></div>
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>企业微信客户端</span><strong>{{ channel.provider_node.name if channel.provider_node else '未连接' }}</strong></div>
+    <div class="metric-item"><span>在线账号</span><strong>{{ (channel.provider_account.display_name or channel.provider_account.account_key) if channel.provider_account else '未绑定' }}</strong></div>
   </div>
-  <div class="subsection" style="margin-top:16px;margin-bottom:16px;">
-    <p class="section-kicker">Latest Error</p>
-    <p class="muted-text" id="wechat-ipad-last-error-summary">{{ wechat_ipad_overview.last_error_operator_summary or wechat_ipad_overview.last_error or '-' }}</p>
-    <table class="table table-tight">
-      <tbody>
-        <tr><th>错误信息</th><td id="wechat-ipad-last-error-message">{{ wechat_ipad_overview.last_error or '-' }}</td></tr>
-        <tr><th>错误阶段</th><td id="wechat-ipad-last-error-stage">{{ wechat_ipad_overview.last_error_stage or '-' }}</td></tr>
-        <tr><th>错误接口</th><td id="wechat-ipad-last-error-endpoint">{{ wechat_ipad_overview.last_error_endpoint or '-' }}</td></tr>
-        <tr><th>错误时间</th><td id="wechat-ipad-last-error-at">{{ wechat_ipad_overview.last_error_at_display or '-' }}</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="subsection">
-      <div class="actions wechat-ipad-login-actions" style="margin-bottom:12px;">
-        <label class="wechat-ipad-profile-picker">
-          <span class="muted-text">登录档位</span>
-          <input id="wechat-ipad-login-profile" type="hidden" value="{{ wechat_ipad_overview.selected_login_profile or 'ipad' }}" />
-          <div class="wechat-ipad-profile-switch" id="wechat-ipad-profile-switch">
-            {% for item in wechat_ipad_overview.available_login_profiles %}
-            <button
-              class="wechat-ipad-profile-option{% if item.selected %} is-active{% endif %}"
-              type="button"
-              data-profile-key="{{ item.key }}"
-            >{{ item.label }}</button>
-            {% endfor %}
-          </div>
-        </label>
-        <button class="btn" type="button" id="wechat-ipad-login-start">获取二维码登录</button>
-        <button class="btn btn-secondary" type="button" id="wechat-ipad-login-refresh">刷新二维码</button>
-        <button class="btn btn-secondary" type="button" id="wechat-ipad-login-logout">退出登录</button>
-      </div>
-      <table class="table table-tight" style="margin-bottom:12px;">
-        <tbody>
-          <tr><th>当前档位</th><td id="wechat-ipad-selected-profile">{{ wechat_ipad_overview.selected_login_profile_display or '-' }}</td></tr>
-          <tr><th>共用设备名</th><td id="wechat-ipad-selected-profile-device-name">{{ wechat_ipad_overview.selected_profile_device_name or '-' }}</td></tr>
-          <tr><th>共用设备ID</th><td id="wechat-ipad-selected-profile-device-id">{{ wechat_ipad_overview.selected_profile_device_id or '-' }}</td></tr>
-        </tbody>
-      </table>
-      {% if wechat_ipad_overview.qrcode_image_url %}
-      <img id="wechat-ipad-qrcode-image" src="{{ wechat_ipad_overview.qrcode_image_url }}" alt="Wechat iPad 登录二维码" width="240" height="240" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:{{ 'block' if wechat_ipad_overview.qrcode_visible else 'none' }};" />
-      <p id="wechat-ipad-qrcode-empty" class="muted-text" style="display:{{ 'none' if wechat_ipad_overview.qrcode_visible else 'block' }};margin-top:12px;">{% if wechat_ipad_overview.qrcode_visible %}当前还没有二维码图片。{% else %}当前已登录，二维码已暂时隐藏；需要重新扫码时再获取即可。{% endif %}</p>
-      {% else %}
-      <img id="wechat-ipad-qrcode-image" src="" alt="Wechat iPad 登录二维码" width="240" height="240" style="width:240px;max-width:100%;border-radius:16px;border:1px solid rgba(148,163,184,.25);display:none;" />
-      <p id="wechat-ipad-qrcode-empty" class="muted-text" style="margin-top:12px;">当前还没有二维码图片。</p>
-      {% endif %}
-    </div>
-    <div class="subsection">
-      <table class="table table-tight">
-        <tbody>
-          <tr><th>二维码链接</th><td>{% if wechat_ipad_overview.qrcode_link_url %}<a href="{{ wechat_ipad_overview.qrcode_link_url }}" target="_blank" rel="noreferrer">打开二维码链接</a>{% else %}-{% endif %}</td></tr>
-          <tr><th>登录入口</th><td id="wechat-ipad-login-init-endpoint">{{ wechat_ipad_overview.login_init_endpoint or '-' }}</td></tr>
-          <tr><th>过期时间</th><td id="wechat-ipad-qrcode-expire-at">{{ wechat_ipad_overview.qrcode_expires_at_display or '-' }}</td></tr>
-          <tr><th>最近 CheckQR</th><td id="wechat-ipad-last-check-qr">{{ wechat_ipad_overview.protocol_state.last_check_qr_at_display if wechat_ipad_overview.protocol_state else '-' }}</td></tr>
-          <tr><th>最近状态摘要</th><td id="wechat-ipad-login-message">{{ wechat_ipad_overview.last_status_summary or wechat_ipad_overview.qrcode_message or '-' }}</td></tr>
-          <tr><th>二维码刷新次数</th><td>{{ wechat_ipad_overview.qrcode_refresh_count }}</td></tr>
-          <tr><th>当前 wxid</th><td id="wechat-ipad-account-wxid">{{ wechat_ipad_overview.wxid or '-' }}</td></tr>
-          <tr><th>昵称</th><td id="wechat-ipad-account-nickname">{{ wechat_ipad_overview.nickname or '-' }}</td></tr>
-          <tr><th>微信号</th><td id="wechat-ipad-account-alias">{{ wechat_ipad_overview.alias or '-' }}</td></tr>
-          <tr><th>绑定手机号</th><td id="wechat-ipad-account-mobile">{{ wechat_ipad_overview.bind_mobile or '-' }}</td></tr>
-          <tr><th>设备名称</th><td id="wechat-ipad-account-device-name">{{ wechat_ipad_overview.device_name or '-' }}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <div class="subsection" style="margin-top:16px;">
-    <div class="toolbar">
-      <div>
-        <p class="section-kicker">Protocol Responses</p>
-        <p class="muted-text" style="margin:0;">最近关键 API 的返回内容，会随登录轮询自动刷新。</p>
-      </div>
-    </div>
-    <div class="panel-grid panel-grid-balanced">
-      <details>
-        <summary><strong>GetQR</strong> <span class="muted-text" id="wechat-ipad-last-getqr-meta">{{ wechat_ipad_overview.protocol_state.last_get_qr_result.called_at_display if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_get_qr_result else '-' }}</span></summary>
-        <p class="muted-text" id="wechat-ipad-last-getqr-summary">{{ wechat_ipad_overview.protocol_state.last_get_qr_result.operator_summary if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_get_qr_result else '-' }}</p>
-        <pre><code id="wechat-ipad-last-getqr-payload">{{ wechat_ipad_overview.protocol_state.last_get_qr_result.payload_json if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_get_qr_result else '{}' }}</code></pre>
-      </details>
-      <details>
-        <summary><strong>CheckQR</strong> <span class="muted-text" id="wechat-ipad-last-checkqr-meta">{{ wechat_ipad_overview.protocol_state.last_check_qr_result.called_at_display if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_check_qr_result else '-' }}</span></summary>
-        <p class="muted-text" id="wechat-ipad-last-checkqr-summary">{{ wechat_ipad_overview.protocol_state.last_check_qr_result.operator_summary if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_check_qr_result else '-' }}</p>
-        <pre><code id="wechat-ipad-last-checkqr-payload">{{ wechat_ipad_overview.protocol_state.last_check_qr_result.payload_json if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_check_qr_result else '{}' }}</code></pre>
-      </details>
-      <details>
-        <summary><strong>HeartBeat</strong> <span class="muted-text" id="wechat-ipad-last-heartbeat-meta">{{ wechat_ipad_overview.protocol_state.last_heartbeat_result.called_at_display if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_result else '-' }}</span></summary>
-        <p class="muted-text" id="wechat-ipad-last-heartbeat-summary">{{ wechat_ipad_overview.protocol_state.last_heartbeat_result.operator_summary if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_result else '-' }}</p>
-        <pre><code id="wechat-ipad-last-heartbeat-payload">{{ wechat_ipad_overview.protocol_state.last_heartbeat_result.payload_json if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_result else '{}' }}</code></pre>
-      </details>
-      <details>
-        <summary><strong>HeartBeatLong</strong> <span class="muted-text" id="wechat-ipad-last-heartbeatlong-meta">{{ wechat_ipad_overview.protocol_state.last_heartbeat_long_result.called_at_display if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_long_result else '-' }}</span></summary>
-        <p class="muted-text" id="wechat-ipad-last-heartbeatlong-summary">{{ wechat_ipad_overview.protocol_state.last_heartbeat_long_result.operator_summary if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_long_result else '-' }}</p>
-        <pre><code id="wechat-ipad-last-heartbeatlong-payload">{{ wechat_ipad_overview.protocol_state.last_heartbeat_long_result.payload_json if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_heartbeat_long_result else '{}' }}</code></pre>
-      </details>
-      <details>
-        <summary><strong>UserProfile</strong> <span class="muted-text" id="wechat-ipad-last-userprofile-meta">{{ wechat_ipad_overview.protocol_state.last_user_profile_result.called_at_display if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_user_profile_result else '-' }}</span></summary>
-        <p class="muted-text" id="wechat-ipad-last-userprofile-summary">{{ wechat_ipad_overview.protocol_state.last_user_profile_result.operator_summary if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_user_profile_result else '-' }}</p>
-        <pre><code id="wechat-ipad-last-userprofile-payload">{{ wechat_ipad_overview.protocol_state.last_user_profile_result.payload_json if wechat_ipad_overview.protocol_state and wechat_ipad_overview.protocol_state.last_user_profile_result else '{}' }}</code></pre>
-      </details>
+</section>
+{% elif channel.channel_type == 'wechat_winauto' %}
+<section class="work-surface">
+  <div class="toolbar">
+    <div><p class="section-kicker">Windows WeChat</p><h2>微信客户端</h2></div>
+    <div class="actions">
+      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
     </div>
   </div>
 </section>
@@ -271,86 +108,25 @@
 {% if wechat_ipad_group_summary %}
 <section class="work-surface">
   <div class="toolbar">
-    <div>
-      <p class="section-kicker">Chatrooms</p>
-      <h2>群总览</h2>
-    </div>
-    <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">进入群管理</a>
+    <div><p class="section-kicker">Chatrooms</p><h2>群聊</h2></div>
+    <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">查看全部</a>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="metric-item "><span>群总数</span><strong>{{ wechat_ipad_group_summary.chatroom_count }}</strong></div>
-    <div class="metric-item "><span>已补群资料</span><strong>{{ wechat_ipad_group_summary.active_chatroom_count }}</strong></div>
-    <div class="metric-item "><span>已有成员快照</span><strong>{{ wechat_ipad_group_summary.member_synced_chatroom_count }}</strong></div>
-    <div class="metric-item "><span>仅消息观测群</span><strong>{{ wechat_ipad_group_summary.message_observed_count }}</strong></div>
-    <div class="metric-item "><span>群权限记录</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.total }}</strong></div>
-    <div class="metric-item "><span>存在覆盖的群</span><strong>{{ wechat_ipad_group_summary.persisted_scope_stats.overridden_chatrooms }}</strong></div>
-  </div>
-  <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="subsection">
-      <p class="section-kicker">Summary</p>
-      <p class="muted-text" style="margin:0 0 10px;">{{ wechat_ipad_group_summary.summary_snapshot.operator_summary }}</p>
-      <div class="chip-row">
-        {{ tone_chip(wechat_ipad_group_summary.sync_depth.label, wechat_ipad_group_summary.sync_depth.tone) }}
-        {{ tone_chip(wechat_ipad_group_summary.stage_snapshot.freshness_label, wechat_ipad_group_summary.stage_snapshot.freshness_tone) }}
-      </div>
-      <p class="muted-text" style="margin:10px 0 0;">{{ wechat_ipad_group_summary.empty_state_message }}</p>
-    </div>
-    <div class="subsection">
-      <p class="section-kicker">Coverage</p>
-      <p class="muted-text" style="margin:0 0 10px;">{{ wechat_ipad_group_summary.coverage_snapshot.summary_label }}</p>
-      <div class="chip-row" style="margin-bottom:10px;">
-        {% for item in wechat_ipad_group_summary.coverage_snapshot["items"] %}
-        <span class="chip {% if item.tone == 'muted' %}chip-muted{% elif item.tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">
-          {{ item.label }} {{ item.value_label }} ({{ item.percent_label }})
-        </span>
-        {% endfor %}
-      </div>
-      {% for item in wechat_ipad_group_summary.coverage_snapshot["detail_items"] %}
-      <p class="muted-text" style="margin:0 0 6px;">{{ item.label }}：{{ item.value }}</p>
-      {% endfor %}
-    </div>
-  </div>
-</section>
-
-<section class="work-surface">
-  <div class="toolbar">
-    <div>
-      <p class="section-kicker">Recent Chatrooms</p>
-      <h2>最近同步的群</h2>
-      <p class="muted-text">可以从这些群进入详情页，继续查看成员列表和插件配置。</p>
-    </div>
-    <span class="chip chip-outline">{{ wechat_ipad_group_summary.recent_chatrooms|length }} 个群</span>
+    <div class="metric-item"><span>群总数</span><strong>{{ wechat_ipad_group_summary.chatroom_count }}</strong></div>
+    <div class="metric-item"><span>资料完整</span><strong>{{ wechat_ipad_group_summary.active_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>已有成员</span><strong>{{ wechat_ipad_group_summary.member_synced_chatroom_count }}</strong></div>
   </div>
   {% if wechat_ipad_group_summary.recent_chatrooms %}
-  <table class="table">
-    <thead>
-      <tr>
-        <th>群</th>
-        <th class="col-status">状态</th>
-        <th class="col-count">成员</th>
-        <th class="col-compact">插件权限</th>
-        <th class="col-time">最近同步</th>
-        <th class="col-type">来源</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in wechat_ipad_group_summary.recent_chatrooms %}
-      <tr>
-        <td>
-          <div><a href="/channels/{{ channel.id }}/chatrooms/{{ item.id }}">{{ item.name }}</a></div>
-          <div class="muted-text"><code>{{ item.external_id }}</code></div>
-        </td>
-        <td class="col-status">{{ tone_chip(item.status_label, 'muted' if item.is_message_observed_only else 'success') }}</td>
-        <td class="col-count">{{ item.member_count }}</td>
-        <td class="col-compact">{{ item.scope_total }} / 覆盖 {{ item.scope_overridden }}</td>
-        <td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td>
-        <td class="col-type"><code>{{ item.observed_source }}</code></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="business-list top-gap">
+    {% for item in wechat_ipad_group_summary.recent_chatrooms %}
+    <a class="business-list-row" href="/channels/{{ channel.id }}/chatrooms/{{ item.id }}">
+      <span><strong>{{ item.name }}</strong><small>{{ item.member_count }} 位成员</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+    {% endfor %}
+  </div>
   {% else %}
-  <p class="muted-text">当前还没有已同步的群数据，可以先执行“同步群资料”或等待消息进入。</p>
+  <p class="muted-text top-gap">暂无群聊数据。</p>
   {% endif %}
 </section>
 {% endif %}
@@ -358,863 +134,94 @@
 {% if channel_chatroom_summary %}
 <section class="work-surface">
   <div class="toolbar">
-    <div>
-      <p class="section-kicker">Chatrooms</p>
-      <h2>群总览</h2>
-      <p class="muted-text">{{ channel_chatroom_summary.intro_summary }}</p>
-    </div>
+    <div><p class="section-kicker">Chatrooms</p><h2>群聊</h2></div>
     <div class="actions">
-      {% if channel_chatroom_summary.sync_action %}
-      <form method="post" action="{{ channel_chatroom_summary.sync_action }}">
-        <button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button>
-      </form>
-      {% endif %}
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">进入群管理</a>
+      {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}"><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
+      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">查看全部</a>
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="metric-item "><span>群总数</span><strong>{{ channel_chatroom_summary.total }}</strong></div>
-    <div class="metric-item "><span>已启用管理</span><strong>{{ channel_chatroom_summary.active_chatroom_count }}</strong></div>
-    <div class="metric-item "><span>待启用群</span><strong>{{ channel_chatroom_summary.pending_chatroom_count }}</strong></div>
-    <div class="metric-item "><span>已有成员快照</span><strong>{{ channel_chatroom_summary.member_snapshot_chatroom_count }}</strong></div>
-    <div class="metric-item "><span>插件绑定</span><strong>{{ channel_chatroom_summary.binding_enabled_total }} / {{ channel_chatroom_summary.binding_total }}</strong></div>
-    <div class="metric-item "><span>存在群级覆盖</span><strong>{{ channel_chatroom_summary.overridden_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>群总数</span><strong>{{ channel_chatroom_summary.total }}</strong></div>
+    <div class="metric-item"><span>已启用管理</span><strong>{{ channel_chatroom_summary.active_chatroom_count }}</strong></div>
+    <div class="metric-item"><span>已有成员</span><strong>{{ channel_chatroom_summary.member_snapshot_chatroom_count }}</strong></div>
   </div>
-</section>
-
-<section class="work-surface">
-  <div class="toolbar">
-    <div>
-      <p class="section-kicker">Recent Chatrooms</p>
-      <h2>最近群聊</h2>
-    </div>
-    <span class="chip chip-outline">{{ channel_chatroom_summary.recent_chatrooms|length }} 个群</span>
-  </div>
-  {% if channel_chatroom_summary.recent_chatrooms %}
-  <table class="table">
-    <thead>
-      <tr>
-        <th>群</th>
-        <th class="col-status">状态</th>
-        <th class="col-count">成员</th>
-        <th class="col-compact">插件权限</th>
-        <th class="col-time">最近同步</th>
-        <th class="col-type">来源</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in channel_chatroom_summary.recent_chatrooms %}
-      <tr>
-        <td>
-          <div><a href="/channels/{{ channel.id }}/chatrooms/{{ item.id }}">{{ item.name }}</a></div>
-          <div class="muted-text"><code>{{ item.external_id }}</code></div>
-        </td>
-        <td class="col-status">{{ tone_chip(item.status_label, 'success' if item.member_record_count else 'outline') }}</td>
-        <td class="col-count">{{ item.member_count }} / 记录 {{ item.member_record_count }}</td>
-        <td class="col-compact">{{ item.scope_total }} / 覆盖 {{ item.scope_overridden }}</td>
-        <td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td>
-        <td class="col-type"><code>{{ item.observed_source }}</code></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted-text">{{ channel_chatroom_summary.empty_state_message }}</p>
-  {% endif %}
 </section>
 {% endif %}
 
 {% if workwechat_contact_summary %}
 <section class="work-surface">
   <div class="toolbar">
-    <div>
-      <p class="section-kicker">WorkWechat Contacts</p>
-      <h2>渠道联系人</h2>
-      <p class="muted-text">{{ workwechat_contact_summary.intro_summary }}</p>
-    </div>
-    <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
-        <button class="btn btn-secondary" type="submit">同步联系人</button>
-      </form>
-      <a class="btn btn-secondary" href="{{ workwechat_contact_summary.list_url }}">进入联系人</a>
-      <a class="btn" href="{{ workwechat_contact_summary.create_url }}">新增联系人</a>
-    </div>
+    <div><p class="section-kicker">Contacts</p><h2>联系人</h2></div>
+    <a class="btn btn-secondary" href="{{ workwechat_contact_summary.list_url }}">查看全部</a>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="metric-item "><span>联系人总数</span><strong>{{ workwechat_contact_summary.total }}</strong></div>
-    <div class="metric-item "><span>有效联系人</span><strong>{{ workwechat_contact_summary.active }}</strong></div>
-    <div class="metric-item "><span>已删除标记</span><strong>{{ workwechat_contact_summary.deleted }}</strong></div>
+    <div class="metric-item"><span>联系人总数</span><strong>{{ workwechat_contact_summary.total }}</strong></div>
+    <div class="metric-item"><span>有效联系人</span><strong>{{ workwechat_contact_summary.active }}</strong></div>
   </div>
-  {% if workwechat_contact_summary.recent_contacts %}
-  <table class="table table-tight" style="margin-top:16px;">
-    <thead><tr><th>联系人</th><th>公司</th><th>状态</th></tr></thead>
-    <tbody>
-      {% for item in workwechat_contact_summary.recent_contacts %}
-      <tr>
-        <td><a href="{{ item.detail_url }}">{{ item.name }}</a><div class="muted-text value-break">{{ item.contact_external_id }}</div></td>
-        <td>{{ item.corp_name }}</td>
-        <td><span class="badge badge-{{ item.sync_status }}">{{ item.sync_status_label }}</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="muted-text" style="margin-top:16px;">暂无联系人。</p>
-  {% endif %}
 </section>
 {% endif %}
 
 {% if wechat_ipad_contact_list %}
 <section class="work-surface">
   <div class="toolbar">
-    <div>
-      <p class="section-kicker">Contacts</p>
-      <h2>个人联系人</h2>
-      <p class="muted-text">{{ wechat_ipad_contact_list.summary }}</p>
-    </div>
-    <div class="actions">
-      <span class="chip chip-outline">总计 {{ wechat_ipad_contact_list.total_count }}</span>
-      <span class="chip chip-success">个人 {{ wechat_ipad_contact_list.personal_count }}</span>
-      <span class="chip chip-muted">群/其他 {{ wechat_ipad_contact_list.chatroom_count }}</span>
-    </div>
+    <div><p class="section-kicker">Contacts</p><h2>联系人</h2></div>
+    <span class="chip chip-outline">{{ wechat_ipad_contact_list.total_count }} 人</span>
   </div>
-  <p class="muted-text" style="margin-top:0;">
-    最近同步：{{ wechat_ipad_contact_list.synced_at_display or '-' }}，
-    游标 Wx={{ wechat_ipad_contact_list.seq.current_wxcontact_seq or 0 }} / Chatroom={{ wechat_ipad_contact_list.seq.current_chatroom_contact_seq or 0 }}
-  </p>
   {% if wechat_ipad_contact_list.contacts %}
-  <table class="table">
-    <thead>
-      <tr>
-        <th>联系人</th>
-        <th class="col-type">wxid</th>
-        <th>昵称</th>
-        <th>备注</th>
-        <th>微信号</th>
-        <th class="col-type">性别</th>
-        <th>地区</th>
-        <th>个性签名</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in wechat_ipad_contact_list.contacts %}
-      <tr>
-        <td>{{ item.display_name or '-' }}</td>
-        <td class="col-type"><code>{{ item.wxid or '-' }}</code></td>
-        <td>{{ item.nickname or '-' }}</td>
-        <td>{{ item.remark or '-' }}</td>
-        <td>{{ item.alias or '-' }}</td>
-        <td class="col-type">{{ item.gender or '-' }}</td>
-        <td>{{ item.region or '-' }}</td>
-        <td>{{ item.signature or '-' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="business-list">
+    {% for item in wechat_ipad_contact_list.contacts %}
+    <div class="business-list-row">
+      <span><strong>{{ item.display_name or item.nickname or '未命名联系人' }}</strong><small>{{ item.remark or item.region or '微信联系人' }}</small></span>
+    </div>
+    {% endfor %}
+  </div>
   {% else %}
-  <p class="muted-text">当前没有个人联系人数据，先点击上方“同步联系人”。</p>
+  <p class="muted-text">暂无联系人数据。</p>
   {% endif %}
 </section>
 {% endif %}
 
-{% if wechat_ipad_overview %}
-<section class="work-surface">
+{# 消息记录属于账号业务数据，即使暂时离线也必须可查，不能再由扫码状态控制显隐。 #}
+<section class="work-surface" id="channel-message-section">
   <div class="toolbar">
-    <div>
-      <h2>Wechat iPad 渠道操作</h2>
-    </div>
-    <span class="chip {% if wechat_ipad_overview.action_console.last_action_ok %}chip-success{% else %}chip-muted{% endif %}" id="wechat-ipad-action-last-status">
-      {% if wechat_ipad_overview.action_console.last_action_name %}
-        {{ '最近成功' if wechat_ipad_overview.action_console.last_action_ok else '最近失败' }}
-      {% else %}
-        暂无调用
-      {% endif %}
-    </span>
-  </div>
-  <div class="wechat-action-console">
-    <div class="wechat-action-composer subsection">
-      <div class="wechat-action-meta">
-        <label class="full-row wechat-action-field">
-          <span class="wechat-action-label">动作类型</span>
-          <select id="wechat-ipad-action-select" class="wechat-action-select">
-            {% for item in wechat_ipad_overview.action_console.supported_actions %}
-            <option value="{{ item.key }}">{{ item.label }} / {{ item.key }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <p class="muted-text wechat-action-description" id="wechat-ipad-action-description">
-          {{ wechat_ipad_overview.action_console.supported_actions[0].description if wechat_ipad_overview.action_console.supported_actions else '暂无可用动作。' }}
-        </p>
-      </div>
-      <label class="full-row wechat-action-field">
-        <span class="wechat-action-label">JSON 参数</span>
-        <textarea id="wechat-ipad-action-payload" class="wechat-action-payload" rows="14">{{ (wechat_ipad_overview.action_console.supported_actions[0].sample_payload if wechat_ipad_overview.action_console.supported_actions else {}) | tojson(indent=2) }}</textarea>
-      </label>
-      <div class="actions wechat-action-controls">
-        <button class="btn" type="button" id="wechat-ipad-action-run">执行动作</button>
-        <button class="btn btn-secondary" type="button" id="wechat-ipad-action-reset">恢复示例参数</button>
-      </div>
-      <div class="wechat-action-feedback" id="wechat-ipad-action-feedback">
-        {% if wechat_ipad_overview.action_console.last_action_summary %}
-          {{ wechat_ipad_overview.action_console.last_action_summary }}
-        {% else %}
-          当前还没有最近一次动作调用记录。
-        {% endif %}
-      </div>
-    </div>
-    <div class="wechat-action-result subsection">
-      <div class="wechat-action-result-head">
-        <h3>最近结果</h3>
-      </div>
-      <div class="wechat-action-facts">
-        <div class="metric-item ">
-          <span>最近动作</span>
-          <strong id="wechat-ipad-action-last-name">{{ wechat_ipad_overview.action_console.last_action_name or '-' }}</strong>
-        </div>
-        <div class="metric-item  metric-item-time">
-          <span>最近时间</span>
-          <strong id="wechat-ipad-action-last-at" class="stat-value stat-value-time">{{ wechat_ipad_overview.action_console.last_action_at|bj_time if wechat_ipad_overview.action_console.last_action_at else '-' }}</strong>
-        </div>
-      </div>
-      <div class="wechat-action-result-block">
-        <span class="section-kicker">最近摘要</span>
-        <p id="wechat-ipad-action-last-summary" class="wechat-action-summary">{{ wechat_ipad_overview.action_console.last_action_summary or '-' }}</p>
-      </div>
-      <div class="wechat-action-code-grid">
-        <div class="wechat-action-code-card">
-          <span class="wechat-action-label">最近参数</span>
-          <pre class="wechat-action-json-panel"><code id="wechat-ipad-action-last-params">{{ wechat_ipad_overview.action_console.last_action_params|tojson }}</code></pre>
-        </div>
-        <div class="wechat-action-code-card">
-          <span class="wechat-action-label">结果预览</span>
-          <pre class="wechat-action-json-panel"><code id="wechat-ipad-action-last-preview">{{ wechat_ipad_overview.action_console.last_action_result_preview|tojson }}</code></pre>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="work-surface" id="wechat-ipad-message-section" {% if wechat_ipad_overview.login_state != 'online' and wechat_ipad_overview.qrcode_status != 'success' %}style="display:none;"{% endif %}>
-  <div class="toolbar">
-    <div>
-      <p class="section-kicker">Recent Messages</p>
-      <h2>最近进出站消息</h2>
-    </div>
+    <div><p class="section-kicker">Messages</p><h2>最近消息</h2></div>
     <div class="actions">
-      {% if message_pagination %}
-      <span class="chip chip-outline">第 {{ message_pagination.page }} / {{ message_pagination.total_pages }} 页</span>
       <span class="chip chip-muted">共 {{ message_pagination.total }} 条</span>
-      {% endif %}
-      <a class="btn btn-secondary" href="/messages?channel_id={{ channel.id }}">查看全部消息</a>
+      <a class="btn btn-secondary" href="/messages?channel_id={{ channel.id }}">查看全部</a>
     </div>
   </div>
   {% if recent_channel_messages %}
-  {# 渠道最近消息用于快速排障，采用同一套紧凑消息行，避免会话编号挤在正文预览里。 #}
   <table class="table table-tight message-record-table">
-    <thead>
-      <tr>
-        <th class="col-id">ID</th>
-        <th class="col-compact">会话</th>
-        <th class="col-dir">方向</th>
-        <th class="col-time">时间</th>
-        <th>发送者</th>
-        <th class="col-type">类型</th>
-        <th class="col-status">状态</th>
-        <th>内容</th>
-      </tr>
-    </thead>
+    <thead><tr><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th>内容</th></tr></thead>
     <tbody>
       {% for item in recent_channel_messages %}
       <tr>
-        <td class="col-id">#{{ item.id }}</td>
-        <td class="col-compact"><a class="record-link" href="/conversations/{{ item.conversation_id }}">#{{ item.conversation_id }}</a></td>
         <td class="col-dir">{{ tone_chip('入站' if item.direction == 'in' else '出站', 'success' if item.direction == 'in' else 'outline') }}</td>
         <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
         <td>{{ item.sender_name or item.sender_id or '-' }}</td>
         <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
-        <td class="col-status">{{ item.status or '-' }}</td>
-        <td>
-          {% set message_content = item.content or '' %}
-          {% set message_short = message_content[:100] ~ ('…' if message_content|length > 100 else '') %}
-          {% if message_content|length > 100 %}
-          <details class="message-preview-card">
-            <summary class="message-preview-toggle">
-              <span class="message-preview-short">{{ message_short }}</span>
-              <span class="message-preview-toggle-collapsed">展开全文</span>
-              <span class="message-preview-toggle-expanded">收起</span>
-            </summary>
-            <div class="message-preview message-preview-full">{{ message_content }}</div>
-          </details>
-          {% else %}
-          <div class="message-preview">{{ message_content }}</div>
-          {% endif %}
-        </td>
+        <td><div class="message-preview">{{ (item.content or '')[:120] }}{% if (item.content or '')|length > 120 %}…{% endif %}</div></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  {% if message_pagination %}
   <div class="list-pagination">
-    <div class="list-pagination-summary">
-      当前显示 {{ message_pagination.from_index }} - {{ message_pagination.to_index }} / {{ message_pagination.total }}
-    </div>
+    <div class="list-pagination-summary">当前显示 {{ message_pagination.from_index }} - {{ message_pagination.to_index }} / {{ message_pagination.total }}</div>
     <div class="list-pagination-actions">
-      {% if message_pagination.has_prev %}
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.prev_page }}#wechat-ipad-message-section">上一页</a>
-      {% else %}
-      <span class="btn btn-secondary is-disabled" aria-disabled="true">上一页</span>
-      {% endif %}
-      {% if message_pagination.has_next %}
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.next_page }}#wechat-ipad-message-section">下一页</a>
-      {% else %}
-      <span class="btn btn-secondary is-disabled" aria-disabled="true">下一页</span>
-      {% endif %}
+      {% if message_pagination.has_prev %}<a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.prev_page }}#channel-message-section">上一页</a>{% endif %}
+      {% if message_pagination.has_next %}<a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.next_page }}#channel-message-section">下一页</a>{% endif %}
     </div>
   </div>
-  {% endif %}
   {% else %}
-  <p class="muted-text">当前还没有这个渠道的消息记录。登录成功后继续收发一次消息，这里就会出现最近交互。</p>
+  <p class="muted-text">当前还没有消息记录。</p>
   {% endif %}
 </section>
-
-<div
-  id="wechat-ipad-script-data"
-  data-start-url="/channels/{{ channel.id }}/wechat-ipad/login-flow/start"
-  data-refresh-url="/channels/{{ channel.id }}/wechat-ipad/login-flow/refresh"
-  data-logout-url="/channels/{{ channel.id }}/wechat-ipad/login-flow/logout"
-  data-poll-url="/channels/{{ channel.id }}/wechat-ipad/login-flow/poll"
-  data-action-endpoint-template="{{ wechat_ipad_overview.action_console.endpoint_template }}"
-  data-action-console="{{ wechat_ipad_overview.action_console|tojson|forceescape }}"
-  data-group-summary-version="{{ {
-    'chatroom_count': wechat_ipad_group_summary.chatroom_count if wechat_ipad_group_summary else 0,
-    'member_count': wechat_ipad_group_summary.member_count if wechat_ipad_group_summary else 0,
-    'scope_total': wechat_ipad_group_summary.persisted_scope_stats.total if wechat_ipad_group_summary else 0,
-    'recent_chatrooms_len': wechat_ipad_group_summary.recent_chatrooms|length if wechat_ipad_group_summary else 0,
-  }|tojson|forceescape }}"
-  data-overview="{{ {
-    'login_state': wechat_ipad_overview.login_state,
-    'qrcode_status': wechat_ipad_overview.qrcode_status,
-    'qrcode_status_display': wechat_ipad_overview.qrcode_status_display,
-    'qrcode_image_url': wechat_ipad_overview.qrcode_image_url,
-    'qrcode_visible': wechat_ipad_overview.qrcode_visible,
-    'qrcode_expires_at': wechat_ipad_overview.qrcode_expires_at,
-    'qrcode_expires_at_display': wechat_ipad_overview.qrcode_expires_at_display,
-    'qrcode_countdown_label': wechat_ipad_overview.qrcode_countdown_label,
-    'qrcode_is_expired': wechat_ipad_overview.qrcode_is_expired,
-    'login_flow_polling_active': wechat_ipad_overview.login_flow_polling_active,
-    'selected_login_profile': wechat_ipad_overview.selected_login_profile,
-    'selected_login_profile_display': wechat_ipad_overview.selected_login_profile_display,
-    'selected_profile_device_name': wechat_ipad_overview.selected_profile_device_name,
-    'selected_profile_device_id': wechat_ipad_overview.selected_profile_device_id,
-    'login_init_endpoint': wechat_ipad_overview.login_init_endpoint,
-    'available_login_profiles': wechat_ipad_overview.available_login_profiles,
-    'last_status_summary': wechat_ipad_overview.last_status_summary,
-    'qrcode_message': wechat_ipad_overview.qrcode_message,
-    'last_error': wechat_ipad_overview.last_error,
-    'last_error_stage': wechat_ipad_overview.last_error_stage,
-    'last_error_endpoint': wechat_ipad_overview.last_error_endpoint,
-    'last_error_at_display': wechat_ipad_overview.last_error_at_display,
-    'last_error_operator_summary': wechat_ipad_overview.last_error_operator_summary,
-    'protocol_state': {
-      'last_get_qr_result': wechat_ipad_overview.protocol_state.last_get_qr_result,
-      'last_check_qr_result': wechat_ipad_overview.protocol_state.last_check_qr_result,
-      'last_heartbeat_result': wechat_ipad_overview.protocol_state.last_heartbeat_result,
-      'last_heartbeat_long_result': wechat_ipad_overview.protocol_state.last_heartbeat_long_result,
-      'last_check_qr_at': wechat_ipad_overview.protocol_state.last_check_qr_at,
-      'last_check_qr_at_display': wechat_ipad_overview.protocol_state.last_check_qr_at_display,
-    },
-  }|tojson|forceescape }}"
-  hidden
-></div>
-
-<script>
-(() => {
-  const bootstrapEl = document.getElementById("wechat-ipad-script-data");
-  if (!bootstrapEl) return;
-  const endpoints = {
-    start: bootstrapEl.dataset.startUrl || "",
-    refresh: bootstrapEl.dataset.refreshUrl || "",
-    logout: bootstrapEl.dataset.logoutUrl || "",
-    poll: bootstrapEl.dataset.pollUrl || "",
-    actionTemplate: bootstrapEl.dataset.actionEndpointTemplate || "",
-  };
-  let overview = JSON.parse(bootstrapEl.dataset.overview || "{}");
-  let actionConsole = JSON.parse(bootstrapEl.dataset.actionConsole || "{}");
-  let groupSummaryVersion = JSON.parse(bootstrapEl.dataset.groupSummaryVersion || "{\"chatroom_count\":0,\"member_count\":0,\"scope_total\":0,\"recent_chatrooms_len\":0}");
-  const els = {
-    start: document.getElementById("wechat-ipad-login-start"),
-    refresh: document.getElementById("wechat-ipad-login-refresh"),
-    logout: document.getElementById("wechat-ipad-login-logout"),
-    loginProfile: document.getElementById("wechat-ipad-login-profile"),
-    loginProfileSwitch: document.getElementById("wechat-ipad-profile-switch"),
-    selectedProfile: document.getElementById("wechat-ipad-selected-profile"),
-    selectedProfileDeviceName: document.getElementById("wechat-ipad-selected-profile-device-name"),
-    selectedProfileDeviceId: document.getElementById("wechat-ipad-selected-profile-device-id"),
-    accountWxid: document.getElementById("wechat-ipad-account-wxid"),
-    accountNickname: document.getElementById("wechat-ipad-account-nickname"),
-    accountAlias: document.getElementById("wechat-ipad-account-alias"),
-    accountMobile: document.getElementById("wechat-ipad-account-mobile"),
-    accountDeviceName: document.getElementById("wechat-ipad-account-device-name"),
-    lastHeartbeatAt: document.getElementById("wechat-ipad-last-heartbeat-at"),
-    lastMessageSyncAt: document.getElementById("wechat-ipad-last-message-sync-at"),
-    lastReceiveAt: document.getElementById("wechat-ipad-last-receive-at"),
-    lastSendAt: document.getElementById("wechat-ipad-last-send-at"),
-    loginInitEndpoint: document.getElementById("wechat-ipad-login-init-endpoint"),
-    loginState: document.getElementById("wechat-ipad-login-state"),
-    qrcodeStatus: document.getElementById("wechat-ipad-qrcode-status"),
-    countdown: document.getElementById("wechat-ipad-qrcode-countdown"),
-    expired: document.getElementById("wechat-ipad-qrcode-expired"),
-    polling: document.getElementById("wechat-ipad-polling-state"),
-    message: document.getElementById("wechat-ipad-login-message"),
-    lastErrorSummary: document.getElementById("wechat-ipad-last-error-summary"),
-    lastErrorMessage: document.getElementById("wechat-ipad-last-error-message"),
-    lastErrorStage: document.getElementById("wechat-ipad-last-error-stage"),
-    lastErrorEndpoint: document.getElementById("wechat-ipad-last-error-endpoint"),
-    lastErrorAt: document.getElementById("wechat-ipad-last-error-at"),
-    image: document.getElementById("wechat-ipad-qrcode-image"),
-    imageEmpty: document.getElementById("wechat-ipad-qrcode-empty"),
-    expireAt: document.getElementById("wechat-ipad-qrcode-expire-at"),
-    phase: document.getElementById("wechat-ipad-qrcode-phase"),
-    lastCheckQr: document.getElementById("wechat-ipad-last-check-qr"),
-    lastGetQrMeta: document.getElementById("wechat-ipad-last-getqr-meta"),
-    lastGetQrSummary: document.getElementById("wechat-ipad-last-getqr-summary"),
-    lastGetQrPayload: document.getElementById("wechat-ipad-last-getqr-payload"),
-    lastCheckQrMeta: document.getElementById("wechat-ipad-last-checkqr-meta"),
-    lastCheckQrSummary: document.getElementById("wechat-ipad-last-checkqr-summary"),
-    lastCheckQrPayload: document.getElementById("wechat-ipad-last-checkqr-payload"),
-    lastHeartbeatMeta: document.getElementById("wechat-ipad-last-heartbeat-meta"),
-    lastHeartbeatSummary: document.getElementById("wechat-ipad-last-heartbeat-summary"),
-    lastHeartbeatPayload: document.getElementById("wechat-ipad-last-heartbeat-payload"),
-    lastHeartbeatLongMeta: document.getElementById("wechat-ipad-last-heartbeatlong-meta"),
-    lastHeartbeatLongSummary: document.getElementById("wechat-ipad-last-heartbeatlong-summary"),
-    lastHeartbeatLongPayload: document.getElementById("wechat-ipad-last-heartbeatlong-payload"),
-    lastUserProfileMeta: document.getElementById("wechat-ipad-last-userprofile-meta"),
-    lastUserProfileSummary: document.getElementById("wechat-ipad-last-userprofile-summary"),
-    lastUserProfilePayload: document.getElementById("wechat-ipad-last-userprofile-payload"),
-    loginSection: document.getElementById("wechat-ipad-login-section"),
-    messageSection: document.getElementById("wechat-ipad-message-section"),
-    actionSelect: document.getElementById("wechat-ipad-action-select"),
-    actionDescription: document.getElementById("wechat-ipad-action-description"),
-    actionPayload: document.getElementById("wechat-ipad-action-payload"),
-    actionRun: document.getElementById("wechat-ipad-action-run"),
-    actionReset: document.getElementById("wechat-ipad-action-reset"),
-    actionFeedback: document.getElementById("wechat-ipad-action-feedback"),
-    actionLastStatus: document.getElementById("wechat-ipad-action-last-status"),
-    actionLastName: document.getElementById("wechat-ipad-action-last-name"),
-    actionLastAt: document.getElementById("wechat-ipad-action-last-at"),
-    actionLastSummary: document.getElementById("wechat-ipad-action-last-summary"),
-    actionLastParams: document.getElementById("wechat-ipad-action-last-params"),
-    actionLastPreview: document.getElementById("wechat-ipad-action-last-preview"),
-  };
-  let pollTimer = null;
-  let countdownTimer = null;
-  let pollingBusy = false;
-
-  function setText(node, value) {
-    if (node) node.textContent = value || "-";
-  }
-
-  function formatBeijingTime(value) {
-    if (!value) return "-";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return value;
-    const parts = new Intl.DateTimeFormat("zh-CN", {
-      timeZone: "Asia/Shanghai",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).formatToParts(parsed);
-    const get = (type) => parts.find((item) => item.type === type)?.value || "00";
-    return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
-  }
-
-  function cacheBust(url) {
-    if (!url) return "";
-    return `${url}${url.includes("?") ? "&" : "?"}ts=${Date.now()}`;
-  }
-
-  function stringifyJson(value) {
-    try {
-      return JSON.stringify(value ?? {}, null, 2);
-    } catch (error) {
-      return "{}";
-    }
-  }
-
-  function currentLoginProfile() {
-    return (els.loginProfile && els.loginProfile.value) || overview.selected_login_profile || "ipad";
-  }
-
-  function syncLoginProfileButtons(profileKey) {
-    if (!els.loginProfileSwitch) return;
-    els.loginProfileSwitch.querySelectorAll("[data-profile-key]").forEach((node) => {
-      node.classList.toggle("is-active", node.dataset.profileKey === profileKey);
-    });
-  }
-
-  function renderProtocolCall(metaEl, summaryEl, payloadEl, callState) {
-    const call = callState || {};
-    setText(metaEl, call.called_at_display || "-");
-    setText(summaryEl, call.operator_summary || call.message || "-");
-    if (payloadEl) {
-      payloadEl.textContent = call.payload_json || "{}";
-    }
-  }
-
-  function findSelectedAction() {
-    const supported = actionConsole.supported_actions || [];
-    const selectedKey = els.actionSelect ? els.actionSelect.value : "";
-    return supported.find((item) => item.key === selectedKey) || supported[0] || null;
-  }
-
-  function resetActionPayload() {
-    const selected = findSelectedAction();
-    if (!selected || !els.actionPayload) return;
-    els.actionPayload.value = stringifyJson(selected.sample_payload || {});
-    if (els.actionDescription) {
-      els.actionDescription.textContent = selected.description || "";
-    }
-  }
-
-  function renderActionResult(result) {
-    const runtimeInfo = (result && result.runtime_info) || {};
-    const summary = result && result.summary ? result.summary : "动作执行完成。";
-    const hasAction = Boolean(runtimeInfo.last_action_name || (result && result.action));
-    setText(els.actionFeedback, summary);
-    setText(els.actionLastName, runtimeInfo.last_action_name || result.action || "-");
-    setText(els.actionLastAt, runtimeInfo.last_action_at ? formatBeijingTime(runtimeInfo.last_action_at) : "-");
-    setText(els.actionLastSummary, summary);
-    if (els.actionLastParams) {
-      const params = (() => {
-        try {
-          return els.actionPayload ? JSON.parse(els.actionPayload.value || "{}") : {};
-        } catch (error) {
-          return {};
-        }
-      })();
-      els.actionLastParams.textContent = JSON.stringify(params, null, 2);
-    }
-    if (els.actionLastPreview) {
-      els.actionLastPreview.textContent = JSON.stringify((result && result.preview) || {}, null, 2);
-    }
-    if (els.actionLastStatus) {
-      const ok = runtimeInfo.last_action_ok !== false;
-      els.actionLastStatus.textContent = hasAction ? (ok ? "最近成功" : "最近失败") : "暂无调用";
-      els.actionLastStatus.classList.remove("chip-success", "chip-muted");
-      els.actionLastStatus.classList.add(hasAction && ok ? "chip-success" : "chip-muted");
-    }
-  }
-
-  function stopPolling() {
-    if (pollTimer) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  }
-
-  function stopCountdown() {
-    if (countdownTimer) {
-      window.clearInterval(countdownTimer);
-      countdownTimer = null;
-    }
-  }
-
-  function recomputeCountdown() {
-    if (!overview.qrcode_expires_at) {
-      setText(els.countdown, overview.qrcode_countdown_label || "-");
-      return;
-    }
-    const expiresAt = Date.parse(overview.qrcode_expires_at);
-    if (Number.isNaN(expiresAt)) {
-      setText(els.countdown, overview.qrcode_countdown_label || "-");
-      return;
-    }
-    const remainingMs = expiresAt - Date.now();
-    if (remainingMs <= 0) {
-      overview.qrcode_is_expired = true;
-      overview.login_flow_polling_active = false;
-      if (overview.qrcode_status !== "success") overview.qrcode_status_display = "expired";
-      setText(els.countdown, "已过期");
-      setText(els.expired, "已过期");
-      setText(els.polling, overview.qrcode_status === "success" ? "已登录" : "未轮询");
-      setText(els.phase, overview.qrcode_status_display || overview.qrcode_status || "-");
-      stopPolling();
-      return;
-    }
-    const totalSeconds = Math.floor(remainingMs / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    const label = hours > 0
-      ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
-      : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-    setText(els.countdown, label);
-    setText(els.expired, "有效中");
-  }
-
-  function applyOverview(nextOverview) {
-    if (nextOverview && nextOverview.group_summary_version) {
-      const nextGroupSummaryVersion = nextOverview.group_summary_version;
-      const changed = JSON.stringify(nextGroupSummaryVersion) !== JSON.stringify(groupSummaryVersion);
-      if (changed) {
-        window.location.reload();
-        return;
-      }
-      groupSummaryVersion = nextGroupSummaryVersion;
-    }
-    if (nextOverview && nextOverview.overview) {
-      overview = nextOverview.overview;
-      if (nextOverview.message) {
-        overview.last_status_summary = nextOverview.message;
-      }
-    } else {
-      overview = nextOverview || overview;
-    }
-    const statusDisplay = overview.qrcode_status_display || overview.qrcode_status || "-";
-    if (els.loginProfile) {
-      els.loginProfile.value = overview.selected_login_profile || currentLoginProfile();
-    }
-    syncLoginProfileButtons(overview.selected_login_profile || currentLoginProfile());
-    setText(els.selectedProfile, overview.selected_login_profile_display || overview.selected_login_profile || "-");
-    setText(els.selectedProfileDeviceName, overview.selected_profile_device_name || "-");
-    setText(els.selectedProfileDeviceId, overview.selected_profile_device_id || "-");
-    setText(els.accountWxid, overview.wxid || "-");
-    setText(els.accountNickname, overview.nickname || "-");
-    setText(els.accountAlias, overview.alias || "-");
-    setText(els.accountMobile, overview.bind_mobile || "-");
-    setText(els.accountDeviceName, overview.device_name || "-");
-    setText(els.lastHeartbeatAt, overview.last_heartbeat_at_display || formatBeijingTime(overview.last_heartbeat_at) || "-");
-    setText(els.lastMessageSyncAt, overview.last_message_sync_at_display || formatBeijingTime(overview.last_message_sync_at) || "-");
-    setText(els.lastReceiveAt, overview.last_receive_at_display || formatBeijingTime(overview.last_receive_at) || "-");
-    setText(els.lastSendAt, overview.last_send_at_display || formatBeijingTime(overview.last_send_at) || "-");
-    setText(els.loginInitEndpoint, overview.login_init_endpoint || "-");
-    setText(els.loginState, overview.login_state_display || overview.login_state || "-");
-    setText(els.qrcodeStatus, statusDisplay);
-    setText(els.phase, statusDisplay);
-    setText(els.expireAt, overview.qrcode_expires_at_display || formatBeijingTime(overview.qrcode_expires_at) || "-");
-    setText(
-      els.message,
-      overview.last_error_operator_summary || overview.last_error || overview.last_status_summary || overview.qrcode_message || "-"
-    );
-    setText(els.lastErrorSummary, overview.last_error_operator_summary || overview.last_error || "-");
-    setText(els.lastErrorMessage, overview.last_error || "-");
-    setText(els.lastErrorStage, overview.last_error_stage || "-");
-    setText(els.lastErrorEndpoint, overview.last_error_endpoint || "-");
-    setText(els.lastErrorAt, overview.last_error_at_display || "-");
-    setText(
-      els.lastCheckQr,
-      (overview.protocol_state && (overview.protocol_state.last_check_qr_at_display || formatBeijingTime(overview.protocol_state.last_check_qr_at))) || "-"
-    );
-    renderProtocolCall(els.lastGetQrMeta, els.lastGetQrSummary, els.lastGetQrPayload, overview.protocol_state && overview.protocol_state.last_get_qr_result);
-    renderProtocolCall(els.lastCheckQrMeta, els.lastCheckQrSummary, els.lastCheckQrPayload, overview.protocol_state && overview.protocol_state.last_check_qr_result);
-    renderProtocolCall(els.lastHeartbeatMeta, els.lastHeartbeatSummary, els.lastHeartbeatPayload, overview.protocol_state && overview.protocol_state.last_heartbeat_result);
-    renderProtocolCall(els.lastHeartbeatLongMeta, els.lastHeartbeatLongSummary, els.lastHeartbeatLongPayload, overview.protocol_state && overview.protocol_state.last_heartbeat_long_result);
-    renderProtocolCall(els.lastUserProfileMeta, els.lastUserProfileSummary, els.lastUserProfilePayload, overview.protocol_state && overview.protocol_state.last_user_profile_result);
-    if (overview.login_state === "online" || overview.qrcode_status === "success") {
-      setText(els.polling, "已登录");
-    } else {
-      setText(els.polling, overview.login_flow_polling_active ? "轮询中" : "未轮询");
-    }
-    if (els.loginSection && els.messageSection) {
-      const loggedIn = overview.login_state === "online" || overview.qrcode_status === "success";
-      els.loginSection.style.display = "";
-      els.messageSection.style.display = loggedIn ? "" : "none";
-    }
-    if (els.image) {
-      const shouldShowQr = overview.qrcode_visible !== false;
-      if (overview.qrcode_image_url && shouldShowQr) {
-        els.image.src = cacheBust(overview.qrcode_image_url);
-        els.image.style.display = "block";
-        if (els.imageEmpty) els.imageEmpty.style.display = "none";
-      } else if (overview.qrcode_image_url && !shouldShowQr) {
-        els.image.style.display = "none";
-        if (els.imageEmpty) {
-          els.imageEmpty.style.display = "block";
-          els.imageEmpty.textContent = "当前已登录，二维码已暂时隐藏；需要重新扫码时再获取即可。";
-        }
-      } else {
-        els.image.removeAttribute("src");
-        els.image.style.display = "none";
-        if (els.imageEmpty) {
-          els.imageEmpty.style.display = "block";
-          els.imageEmpty.textContent = "当前还没有二维码图片。";
-        }
-      }
-    }
-    recomputeCountdown();
-    stopCountdown();
-    if (overview.qrcode_expires_at && overview.login_state !== "online" && overview.qrcode_status !== "success") {
-      countdownTimer = window.setInterval(recomputeCountdown, 1000);
-    }
-    stopPolling();
-    if (overview.login_flow_polling_active && overview.login_state !== "online" && endpoints.poll) {
-      pollTimer = window.setTimeout(pollStatus, 5000);
-    }
-  }
-
-  async function postJson(url, payload) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Requested-With": "fetch",
-      },
-      body: JSON.stringify(payload || {}),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
-  }
-
-  async function postAction(url, payload) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Requested-With": "fetch",
-      },
-      body: JSON.stringify(payload || {}),
-    });
-    let data = {};
-    try {
-      data = await response.json();
-    } catch (error) {
-      data = {};
-    }
-    if (!response.ok) {
-      throw new Error(data.detail || `HTTP ${response.status}`);
-    }
-    return data;
-  }
-
-  async function pollStatus() {
-    if (pollingBusy || !endpoints.poll) return;
-    pollingBusy = true;
-    try {
-      const payload = await postJson(endpoints.poll);
-      applyOverview(payload);
-    } catch (error) {
-      setText(els.message, `轮询失败：${error}`);
-      stopPolling();
-    } finally {
-      pollingBusy = false;
-    }
-  }
-
-  if (els.start) {
-    els.start.addEventListener("click", async () => {
-      try {
-        const payload = await postJson(endpoints.start, { login_profile: currentLoginProfile() });
-        applyOverview(payload);
-      } catch (error) {
-        setText(els.message, `获取二维码失败：${error}`);
-      }
-    });
-  }
-
-  if (els.refresh) {
-    els.refresh.addEventListener("click", async () => {
-      try {
-        const payload = await postJson(endpoints.refresh, { login_profile: currentLoginProfile() });
-        applyOverview(payload);
-      } catch (error) {
-        setText(els.message, `刷新二维码失败：${error}`);
-      }
-    });
-  }
-
-  if (els.logout) {
-    els.logout.addEventListener("click", async () => {
-      try {
-        const payload = await postJson(endpoints.logout, { login_profile: currentLoginProfile() });
-        applyOverview(payload);
-      } catch (error) {
-        setText(els.message, `退出登录失败：${error}`);
-      }
-    });
-  }
-
-  if (els.loginProfileSwitch) {
-    els.loginProfileSwitch.addEventListener("click", (event) => {
-      const target = event.target.closest("[data-profile-key]");
-      if (!target || !els.loginProfile) return;
-      els.loginProfile.value = target.dataset.profileKey || "ipad";
-      syncLoginProfileButtons(currentLoginProfile());
-      const selected = (overview.available_login_profiles || []).find((item) => item.key === currentLoginProfile()) || {};
-      setText(els.selectedProfile, selected.label || currentLoginProfile());
-      setText(els.selectedProfileDeviceName, selected.device_name || "-");
-      setText(els.selectedProfileDeviceId, selected.device_id || "-");
-      setText(els.message, `已切换到 ${selected.label || currentLoginProfile()} 登录档位，下一次获取二维码将按该档位执行。`);
-    });
-  }
-
-  if (els.actionSelect) {
-    els.actionSelect.addEventListener("change", () => {
-      resetActionPayload();
-      setText(els.actionFeedback, "已切换动作，请确认 JSON 参数后再执行。");
-    });
-  }
-
-  if (els.actionReset) {
-    els.actionReset.addEventListener("click", () => {
-      resetActionPayload();
-      setText(els.actionFeedback, "已恢复当前动作的示例参数。");
-    });
-  }
-
-  if (els.actionRun) {
-    els.actionRun.addEventListener("click", async () => {
-      const selected = findSelectedAction();
-      if (!selected || !endpoints.actionTemplate) return;
-      let payload = {};
-      try {
-        payload = els.actionPayload ? JSON.parse(els.actionPayload.value || "{}") : {};
-      } catch (error) {
-        setText(els.actionFeedback, `JSON 参数解析失败：${error}`);
-        return;
-      }
-      setText(els.actionFeedback, `正在执行 ${selected.key}…`);
-      try {
-        const result = await postAction(endpoints.actionTemplate.replace("__ACTION__", selected.key), payload);
-        actionConsole.last_action_name = result.runtime_info ? result.runtime_info.last_action_name : selected.key;
-        actionConsole.last_action_at = result.runtime_info ? result.runtime_info.last_action_at : null;
-        actionConsole.last_action_ok = result.runtime_info ? result.runtime_info.last_action_ok : true;
-        actionConsole.last_action_summary = result.summary || "";
-        actionConsole.last_action_result_preview = result.preview || {};
-        renderActionResult(result);
-      } catch (error) {
-        setText(els.actionFeedback, `执行失败：${error}`);
-      }
-    });
-  }
-
-  resetActionPayload();
-  renderActionResult({
-    action: actionConsole.last_action_name || "",
-    summary: actionConsole.last_action_summary || "",
-    preview: actionConsole.last_action_result_preview || {},
-    runtime_info: {
-      last_action_name: actionConsole.last_action_name,
-      last_action_at: actionConsole.last_action_at,
-      last_action_ok: actionConsole.last_action_ok,
-    },
-  });
-  applyOverview(overview);
-})();
-</script>
-{% endif %}
 
 {% if can_manage_channel %}
 <dialog class="app-modal" id="edit-channel-modal">
   <div class="app-modal-card">
     <div class="app-modal-head">
-      <div>
-        <p class="section-kicker">Edit</p>
-        <h2>账号高级设置</h2>
-      </div>
+      <div><p class="section-kicker">Edit</p><h2>账号设置</h2></div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/channels/{{ channel.id }}/edit" class="form-grid">
@@ -1222,29 +229,12 @@
       <label class="full-row"><span>账号名称</span><input name="name" value="{{ channel.name }}" autocomplete="off" required /></label>
       <input type="hidden" name="channel_type" value="{{ channel.channel_type }}" />
       <label><span>平台</span><input value="{{ channel_definition.label }}" autocomplete="off" disabled /></label>
-      {% if channel_config_field_map.get('api_base') %}
-      <label><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ channel.api_base or '' }}" placeholder="{{ channel_config_field_map.api_base.placeholder }}…" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('bot_token') %}
-      <label><span>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" placeholder="留空保持当前凭证…" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('dm_policy') %}
-      <label><span>私聊策略</span><select name="dm_policy" autocomplete="off"><option value="allowlist" {% if channel.dm_policy == 'allowlist' %}selected{% endif %}>仅允许名单</option><option value="allow" {% if channel.dm_policy == 'allow' %}selected{% endif %}>允许全部</option><option value="deny" {% if channel.dm_policy == 'deny' %}selected{% endif %}>拒绝私聊</option></select></label>
-      {% endif %}
-      {% if channel_config_field_map.get('proxy_host') %}
-      <label><span>{{ channel_config_field_map.proxy_host.label }}</span><input name="proxy_host" autocomplete="off" value="{{ wechat_ipad_proxy_form.host }}" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('proxy_port') %}
-      <label><span>{{ channel_config_field_map.proxy_port.label }}</span><input name="proxy_port" type="number" min="1" max="65535" value="{{ wechat_ipad_proxy_form.port }}" inputmode="numeric" autocomplete="off" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('proxy_username') %}
-      <label><span>{{ channel_config_field_map.proxy_username.label }}</span><input name="proxy_username" value="{{ wechat_ipad_proxy_form.username }}" autocomplete="off" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('proxy_password') %}
-      <label><span>{{ channel_config_field_map.proxy_password.label }}</span><input name="proxy_password" type="password" autocomplete="new-password" placeholder="留空保持当前密码…" /></label>
-      {% endif %}
-      {% if channel_config_field_map.get('allow_from') %}
-      <label class="full-row"><span>{{ channel_config_field_map.allow_from.label }}</span><textarea name="allow_from" rows="{{ channel_config_field_map.allow_from.rows or 3 }}">{{ channel.allow_from or '' }}</textarea></label>
+      {# iPad 协议地址和登录网络均由平台与单次会话管理，账号设置只允许修改业务名称。 #}
+      {% if channel.channel_type != 'wechat_ipad' %}
+        {% if channel_config_field_map.get('api_base') %}<label><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ channel.api_base or '' }}" /></label>{% endif %}
+        {% if channel_config_field_map.get('bot_token') %}<label><span>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" placeholder="留空保持当前凭证" /></label>{% endif %}
+        {% if channel_config_field_map.get('dm_policy') %}<label><span>私聊策略</span><select name="dm_policy"><option value="allowlist" {% if channel.dm_policy == 'allowlist' %}selected{% endif %}>仅允许名单</option><option value="allow" {% if channel.dm_policy == 'allow' %}selected{% endif %}>允许全部</option><option value="deny" {% if channel.dm_policy == 'deny' %}selected{% endif %}>拒绝私聊</option></select></label>{% endif %}
+        {% if channel_config_field_map.get('allow_from') %}<label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="3">{{ channel.allow_from or '' }}</textarea></label>{% endif %}
       {% endif %}
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">保存修改</button>

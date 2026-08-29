@@ -540,6 +540,36 @@ def get_active_login_proxy_session(db: Session, *, channel_id: int) -> LoginProx
     return session
 
 
+def build_login_proxy_session_summary(db: Session, *, channel_id: int) -> dict[str, object]:
+    """返回租户页面可展示的最近登录网络摘要，严格排除代理端点和凭证明文。"""
+
+    session = db.scalar(
+        select(LoginProxySession)
+        .where(LoginProxySession.channel_id == int(channel_id))
+        .order_by(LoginProxySession.id.desc())
+    )
+    if session is None:
+        return {
+            "mode": "",
+            "state": "",
+            "network_label": "",
+        }
+    if session.mode == "platform_pool":
+        # 智能选择只向租户回显其主动选择的省市，绝不返回平台代理 ID、IP 或账号。
+        network_label = " ".join(
+            item for item in (str(session.province or "").strip(), str(session.city or "").strip()) if item
+        ) or "智能选择"
+    elif session.mode == "custom":
+        network_label = "自有代理"
+    else:
+        network_label = "直接登录"
+    return {
+        "mode": session.mode,
+        "state": session.state,
+        "network_label": network_label,
+    }
+
+
 def resolve_login_proxy_credentials(
     db: Session,
     session: LoginProxySession,

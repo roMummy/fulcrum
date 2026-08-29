@@ -46,6 +46,12 @@ from app.services.channel_catalog import (
 from app.services.channel_events import ingest_inbound_event
 from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
+from app.services.login_proxy_pool import (
+    LoginProxyPoolError,
+    build_login_proxy_session_summary,
+    create_login_proxy_session,
+    list_available_proxy_regions,
+)
 from app.services.crud import (
     bind_plugin,
     delete_bot,
@@ -850,34 +856,46 @@ def build_dashboard_alert_summary(db: Session) -> dict[str, object]:
         "recent_items": recent_items,
     }
 
-def to_jsonable(value):
-    if isinstance(value, dict):
-        return {key: to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, tuple):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
-
 def build_wechat_ipad_flow_payload(db: Session, channel: Channel) -> dict[str, object]:
-    group_summary = build_wechat_ipad_group_summary(db, channel)
-    overview = build_wechat_ipad_overview(channel, group_summary=group_summary)
+    """把协议运行态收口为扫码页面唯一需要的四类业务状态。"""
+
+    overview = build_wechat_ipad_overview(channel)
+    login_state = str(overview.get("login_state") or "").strip()
+    qrcode_status = str(overview.get("qrcode_status") or "").strip()
+    if login_state == "online" or qrcode_status == "success":
+        status = "success"
+        status_label = "登录成功"
+        message = "账号连接成功，正在进入下一步"
+        should_poll = False
+    elif qrcode_status in {"scanned", "confirmed"}:
+        status = "phone_confirm"
+        status_label = "请在手机确认"
+        message = "已识别扫码，请在手机微信中确认登录"
+        should_poll = True
+    elif qrcode_status == "waiting_scan" and overview.get("qrcode_image_url"):
+        status = "waiting_scan"
+        status_label = "等待扫码"
+        message = "请使用手机微信扫描二维码"
+        should_poll = True
+    elif qrcode_status in {"failed", "expired", "unavailable"}:
+        status = "failed"
+        status_label = "登录未完成"
+        message = "本次登录未完成，请重新开始"
+        should_poll = False
+    else:
+        status = "preparing"
+        status_label = "准备二维码"
+        message = "正在准备安全登录二维码"
+        should_poll = True
+    network = build_login_proxy_session_summary(db, channel_id=int(channel.id))
     return {
         "ok": True,
-        "overview": to_jsonable(overview),
-        "group_summary": to_jsonable(group_summary),
-        "group_summary_version": {
-            "chatroom_count": int(group_summary.get("chatroom_count") or 0),
-            "member_count": int(group_summary.get("member_count") or 0),
-            "scope_total": int((group_summary.get("persisted_scope_stats") or {}).get("total") or 0),
-            "recent_chatrooms_len": len(group_summary.get("recent_chatrooms") or []),
-        },
-        "message": str(overview.get("last_status_summary") or ""),
+        "status": status,
+        "status_label": status_label,
+        "message": message,
+        "qrcode_image_url": str(overview.get("qrcode_image_url") or ""),
+        "should_poll": should_poll,
+        "network_label": str(network.get("network_label") or ""),
     }
 
 
@@ -1817,6 +1835,12 @@ def _account_connection_error_message(code: str) -> str:
         "account_identity_missing": "客户端没有返回可验证的账号身份",
         "platform_protocol_service_missing": "平台尚未配置该协议服务，请联系平台管理员",
         "platform_protocol_service_disabled": "该协议服务已暂停新账号接入，请联系平台管理员",
+        "proxy_mode_invalid": "请选择本次登录使用的网络方式",
+        "proxy_province_required": "请选择代理所在省份",
+        "proxy_city_required": "请选择代理所在城市",
+        "proxy_host_required": "请输入自有代理地址",
+        "proxy_port_invalid": "请输入有效的自有代理端口",
+        "proxy_region_unavailable": "所选地区暂无可用代理，请选择其他地区或直接登录",
     }
     normalized = str(code or "").strip()
     return messages.get(normalized, normalized or "账号连接失败")
@@ -1847,7 +1871,14 @@ async def channel_connect_page(request: Request):
                 raise HTTPException(status_code=404, detail="Connection type not found") from exc
         platform_choice = str(request.query_params.get("platform") or "").strip()
         connection = _channel_connection_state(channel) if channel is not None else {}
-        if channel is not None:
+        network_setup = bool(channel is not None and request.query_params.get("network") == "1")
+        is_relogin = bool(
+            channel is not None
+            and (network_setup or request.query_params.get("relogin") == "1")
+        )
+        if network_setup:
+            stage = "configure"
+        elif channel is not None:
             stage = "confirm" if connection.get("state") == "verified" else "progress"
         elif requested_type:
             stage = "configure"
@@ -1872,6 +1903,13 @@ async def channel_connect_page(request: Request):
             quota=quota,
             quota_error=quota_error,
             provider_nodes=list_provider_nodes(db),
+            proxy_regions=(list_available_proxy_regions(db) if requested_type == "wechat_ipad" else []),
+            is_relogin=is_relogin,
+            login_network=(
+                build_login_proxy_session_summary(db, channel_id=int(channel.id))
+                if channel is not None and channel.channel_type == "wechat_ipad"
+                else {}
+            ),
             wechat_ipad_overview=(build_wechat_ipad_overview(channel) if channel and channel.channel_type == "wechat_ipad" else None),
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
@@ -1889,6 +1927,13 @@ async def channel_connect_start_action(
     bot_token: str = Form(""),
     provider_node_id: int = Form(0),
     provider_account_id: int = Form(0),
+    proxy_mode: str = Form("direct"),
+    proxy_province: str = Form(""),
+    proxy_city: str = Form(""),
+    custom_proxy_host: str = Form(""),
+    custom_proxy_port: str = Form(""),
+    custom_proxy_username: str = Form(""),
+    custom_proxy_password: str = Form(""),
     csrf_token: str = Form(""),
 ):
     """创建连接草稿；可信账号 ID 和设备键绝不从此表单接收。"""
@@ -1911,12 +1956,109 @@ async def channel_connect_start_action(
                     "provider_account_id": provider_account_id,
                 },
             )
-            if channel.channel_type != "wechat_ipad":
+            if channel.channel_type == "wechat_ipad":
+                # 登录网络只保存为本次扫码会话快照；渠道 adapter_config 始终不接收代理字段。
+                create_login_proxy_session(
+                    db,
+                    channel=channel,
+                    mode=proxy_mode,
+                    values={
+                        "province": proxy_province,
+                        "city": proxy_city,
+                        "host": custom_proxy_host,
+                        "port": custom_proxy_port,
+                        "username": custom_proxy_username,
+                        "password": custom_proxy_password,
+                    },
+                )
+            else:
                 verify_account_connection(db, channel_id=channel.id)
-        except (AccountConnectionError, BotEntitlementError, ValueError) as exc:
+        except (AccountConnectionError, BotEntitlementError, LoginProxyPoolError, ValueError) as exc:
             message = quote(_account_connection_error_message(str(exc)))
+            if "channel" in locals() and channel.channel_type == "wechat_ipad":
+                return RedirectResponse(
+                    url=f"/channels/{channel.id}/wechat-ipad/login-session?notice={message}&tone=danger",
+                    status_code=303,
+                )
             return RedirectResponse(url=f"/channels/connect?channel_type={quote(channel_type)}&notice={message}&tone=danger", status_code=303)
         return RedirectResponse(url=f"/channels/connect?channel_id={channel.id}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.get("/channels/{channel_id}/wechat-ipad/login-session")
+async def configure_wechat_ipad_login_session(request: Request, channel_id: int):
+    """进入统一登录网络选择页，首次接入草稿和正式账号共用同一页面。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if channel is None or channel.channel_type != "wechat_ipad":
+            raise HTTPException(status_code=404, detail="Channel not found")
+        query = urlencode(
+            {
+                "channel_id": int(channel.id),
+                "network": "1",
+                "notice": request.query_params.get("notice", ""),
+                "tone": request.query_params.get("tone", ""),
+            }
+        )
+        return RedirectResponse(url=f"/channels/connect?{query}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/wechat-ipad/login-session")
+async def create_wechat_ipad_login_session_action(
+    request: Request,
+    channel_id: int,
+    proxy_mode: str = Form("direct"),
+    proxy_province: str = Form(""),
+    proxy_city: str = Form(""),
+    custom_proxy_host: str = Form(""),
+    custom_proxy_port: str = Form(""),
+    custom_proxy_username: str = Form(""),
+    custom_proxy_password: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """替换当前扫码会话并跳转到业务化二维码页，旧会话租约同步释放。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if channel is None or channel.channel_type != "wechat_ipad":
+            raise HTTPException(status_code=404, detail="Channel not found")
+        try:
+            create_login_proxy_session(
+                db,
+                channel=channel,
+                mode=proxy_mode,
+                values={
+                    "province": proxy_province,
+                    "city": proxy_city,
+                    "host": custom_proxy_host,
+                    "port": custom_proxy_port,
+                    "username": custom_proxy_username,
+                    "password": custom_proxy_password,
+                },
+            )
+        except LoginProxyPoolError as exc:
+            message = quote(_account_connection_error_message(str(exc)))
+            return RedirectResponse(
+                url=f"/channels/{channel.id}/wechat-ipad/login-session?notice={message}&tone=danger",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/channels/connect?channel_id={channel.id}&relogin=1",
+            status_code=303,
+        )
     finally:
         db.close()
 
