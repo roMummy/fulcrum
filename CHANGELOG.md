@@ -16,6 +16,8 @@ All notable changes to this project should be documented in this file.
 - 扫码接口只返回业务状态、二维码地址、轮询标记和脱敏网络标签
 - 微信 iPad 账号详情只保留账号状态、消息、联系人和群聊，不再展示协议诊断信息
 - 协议服务地址继续由平台在“系统运维 > 协议服务”统一维护，租户不填写地址或凭证
+- 消息、会话、插件、平台日志和企微联系人筛选区统一改为紧凑工具栏，筛选条件并入结果区域
+- 820px 以下视口默认折叠未生效的筛选条件，存在有效条件时保持展开，优先展示列表和日志内容
 
 ### Removed
 
@@ -33,6 +35,7 @@ All notable changes to this project should be documented in this file.
 ### Validation
 
 - 已执行代理模型、代理池服务、平台代理页面、渠道页面和 874 登录编排定向测试，共 60 项
+- 已执行 Swiss UI 紧凑筛选结构定向测试，共 16 项，并解析 5 个改造模板
 - 已执行 Python 语法检查、旧路径检索和差异检查
 - 未执行完整历史回归、性能测试或真实微信账号扫码与消息收发验收
 

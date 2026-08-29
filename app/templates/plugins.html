@@ -173,18 +173,25 @@
       <a class="btn btn-secondary" href="/plugins/runtime">运行状态页</a>
     </div>
   </div>
-  <form method="get" action="/plugins" class="form-grid">
-    <label><span>搜索</span><input type="text" name="q" value="{{ plugin_filters.q }}" placeholder="名称 / 编码 / 描述 / 作者" /></label>
-    <label><span>插件类型</span><select name="plugin_type">{% for value, label in plugin_filter_options.plugin_types %}<option value="{{ value }}" {% if plugin_filters.plugin_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label><span>分类</span><select name="category">{% for value, label in plugin_filter_options.categories %}<option value="{{ value }}" {% if plugin_filters.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label><span>执行能力</span><select name="execution_state">{% for value, label in plugin_filter_options.execution_states %}<option value="{{ value }}" {% if plugin_filters.execution_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <label><span>Manifest</span><select name="manifest_state">{% for value, label in plugin_filter_options.manifest_states %}<option value="{{ value }}" {% if plugin_filters.manifest_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <div class="full-row actions">
-      <button class="btn" type="submit">搜索筛选</button>
-      <a class="btn btn-secondary" href="/plugins">清空条件</a>
-    </div>
-  </form>
-  <p class="muted-text">当前显示 {{ filtered_plugin_count }} / {{ total_plugin_count }} 个插件。</p>
+  {# 插件条件较多，但仍共用单一紧凑工具栏；移动端只在条件生效时默认展开。 #}
+  <details class="compact-filter"{% if plugin_filters.q or plugin_filters.plugin_type or plugin_filters.category or plugin_filters.execution_state or plugin_filters.manifest_state %} open{% endif %}>
+    <summary class="compact-filter-summary">
+      <span>筛选插件</span>
+      <span class="compact-filter-summary-text">显示 {{ filtered_plugin_count }} / {{ total_plugin_count }}</span>
+    </summary>
+    <form method="get" action="/plugins" class="compact-filter-form">
+      <label class="compact-filter-field compact-filter-field-query"><span>搜索</span><input type="text" name="q" value="{{ plugin_filters.q }}" placeholder="名称 / 编码 / 描述 / 作者" /></label>
+      <label class="compact-filter-field"><span>插件类型</span><select name="plugin_type">{% for value, label in plugin_filter_options.plugin_types %}<option value="{{ value }}" {% if plugin_filters.plugin_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="compact-filter-field"><span>分类</span><select name="category">{% for value, label in plugin_filter_options.categories %}<option value="{{ value }}" {% if plugin_filters.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="compact-filter-field"><span>执行能力</span><select name="execution_state">{% for value, label in plugin_filter_options.execution_states %}<option value="{{ value }}" {% if plugin_filters.execution_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="compact-filter-field"><span>Manifest</span><select name="manifest_state">{% for value, label in plugin_filter_options.manifest_states %}<option value="{{ value }}" {% if plugin_filters.manifest_state == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <div class="compact-filter-actions">
+        <button class="btn" type="submit">筛选</button>
+        <a class="btn btn-secondary" href="/plugins">重置</a>
+        <span class="compact-filter-count">{{ filtered_plugin_count }} / {{ total_plugin_count }}</span>
+      </div>
+    </form>
+  </details>
   {% if plugins %}
   <div class="plugin-card-grid">
     {% for plugin in plugins %}

@@ -655,10 +655,6 @@ code {
   border-left: 4px solid var(--danger);
 }
 
-.filter-card {
-  background: var(--surface-muted);
-}
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1961,6 +1957,92 @@ code {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/*
+ * 查询筛选与数据录入承担不同任务：筛选需要在有限高度内快速比较多个条件，不能继续
+ * 继承 `.form-grid` 的双列大间距和 44px 控件。这里提供唯一的后台筛选布局，桌面端
+ * 强制展示内容，移动端再交给原生 details 控制展开状态，避免引入额外脚本和双状态。
+ */
+.compact-filter {
+  margin: 0 0 18px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.compact-filter-summary {
+  display: none;
+}
+
+.compact-filter-summary-text,
+.compact-filter-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-filter-form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+/* 关闭的 details 在桌面端仍展示表单；移动端媒体查询会恢复真正的折叠行为。 */
+.compact-filter:not([open]) > .compact-filter-form {
+  display: flex;
+}
+
+.compact-filter-field {
+  display: grid;
+  flex: 0 1 168px;
+  min-width: 132px;
+  gap: 4px;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 520;
+}
+
+.compact-filter-field-query {
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+
+.compact-filter-field input,
+.compact-filter-field select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  font-size: 13px;
+  transition: background-color 300ms ease, border-color 300ms ease, box-shadow 300ms ease;
+}
+
+.compact-filter-field input:hover,
+.compact-filter-field select:hover {
+  border-color: var(--text-soft);
+}
+
+.compact-filter-field input:focus-visible,
+.compact-filter-field select:focus-visible {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.compact-filter-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.compact-filter-actions .btn {
+  min-height: 36px;
+  padding: 0 13px;
 }
 
 .form-actions,
@@ -3668,6 +3750,67 @@ code {
 
   .marketing-auth-context h1 {
     font-size: 38px;
+  }
+
+  /*
+   * 820px 以下包含平板竖屏和窄窗口，此时多条件工具栏容易换成三到五行。默认只保留
+   * 一行筛选摘要，存在有效条件时模板输出 open，用户仍能立即看到当前条件。
+   */
+  .compact-filter {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+  }
+
+  .compact-filter-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 36px;
+    gap: 12px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 560;
+    list-style: none;
+  }
+
+  .compact-filter-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .compact-filter-summary::after {
+    content: "+";
+    color: var(--signal);
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .compact-filter[open] > .compact-filter-summary::after {
+    content: "-";
+  }
+
+  .compact-filter:not([open]) > .compact-filter-form {
+    display: none;
+  }
+
+  .compact-filter[open] > .compact-filter-form {
+    display: grid;
+  }
+
+  .compact-filter-form {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding-top: 10px;
+  }
+
+  .compact-filter-field,
+  .compact-filter-field-query {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .compact-filter-actions {
+    flex-wrap: wrap;
   }
 }
 

@@ -1,27 +1,36 @@
 {% extends 'base.html' %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <span class="chip chip-outline">当前结果 {{ messages|length }}</span>
   <a class="btn btn-secondary" href="/conversations">查看会话</a>
 </div>
 {% endblock %}
 {% block content %}
-{# 消息页是排障高频入口，筛选条件固定在独立卡片中，结果列表保持可扫读。 #}
-<section class="work-surface filter-card">
+<section class="work-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Search console</p>
-      <h2>消息筛选面板</h2>
+      <p class="section-kicker">Result set</p>
+      <h2>消息列表</h2>
     </div>
-    <span class="chip chip-outline">快速筛选</span>
+    <div class="chip-row">
+      <span class="chip chip-outline">匹配 {{ pagination.total if pagination else messages|length }}</span>
+      <span class="chip chip-muted">本页 {{ messages|length }}</span>
+      <span class="chip chip-muted">入站 {{ messages | selectattr('direction', 'equalto', 'in') | list | length }}</span>
+      <span class="chip chip-muted">出站 {{ messages | selectattr('direction', 'equalto', 'out') | list | length }}</span>
+      {% if pagination %}<span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>{% endif %}
+    </div>
   </div>
-  <p class="muted-text">支持按关键词、方向、机器人、渠道和会话类型筛选消息。</p>
-  <form method="get" action="/messages" class="form-grid">
-    <label>
+  {# 关闭状态只影响移动端；桌面由共享样式持续展示，查询参数和服务端筛选路径保持不变。 #}
+  <details class="compact-filter"{% if keyword or direction or bot_id or channel_id or chat_type %} open{% endif %}>
+    <summary class="compact-filter-summary">
+      <span>筛选消息</span>
+      <span class="compact-filter-summary-text">{% if keyword or direction or bot_id or channel_id or chat_type %}已应用条件{% else %}按条件缩小结果{% endif %}</span>
+    </summary>
+    <form method="get" action="/messages" class="compact-filter-form">
+    <label class="compact-filter-field compact-filter-field-query">
       <span>关键词</span>
       <input name="keyword" value="{{ keyword or '' }}" placeholder="搜索内容、发送者或消息 ID" />
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>方向</span>
       <select name="direction">
         <option value="" {% if not direction %}selected{% endif %}>全部</option>
@@ -29,7 +38,7 @@
         <option value="out" {% if direction == 'out' %}selected{% endif %}>出站</option>
       </select>
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>机器人</span>
       <select name="bot_id">
         <option value="0">全部</option>
@@ -38,7 +47,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>渠道</span>
       <select name="channel_id">
         <option value="0">全部</option>
@@ -47,7 +56,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>会话类型</span>
       <select name="chat_type">
         <option value="" {% if not chat_type %}selected{% endif %}>全部</option>
@@ -55,45 +64,12 @@
         <option value="direct" {% if chat_type == 'direct' %}selected{% endif %}>私聊</option>
       </select>
     </label>
-    <div class="full-row form-actions-inline">
+    <div class="compact-filter-actions">
       <button class="btn" type="submit">筛选</button>
       <a class="btn btn-secondary" href="/messages">重置</a>
     </div>
-  </form>
-  <div class="stats-grid compact-grid top-gap">
-    <div class="metric-item ">
-      <span>入站消息</span>
-      <strong>{{ messages | selectattr('direction', 'equalto', 'in') | list | length }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>出站消息</span>
-      <strong>{{ messages | selectattr('direction', 'equalto', 'out') | list | length }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>当前关键词</span>
-      <strong>{{ keyword or '未设置' }}</strong>
-    </div>
-    <div class="metric-item ">
-      <span>总匹配数</span>
-      <strong>{{ pagination.total if pagination else messages|length }}</strong>
-    </div>
-  </div>
-</section>
-
-<section class="work-surface">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Result set</p>
-      <h2>消息列表</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-muted">支持跨机器人 / 渠道筛选</span>
-      {% if pagination %}
-      <span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>
-      <span class="chip chip-muted">共 {{ pagination.total }} 条</span>
-      {% endif %}
-    </div>
-  </div>
+    </form>
+  </details>
   {# 消息结果需要像日志一样快速扫读，因此把会话编号提升为独立窄列，内容列只负责正文预览。 #}
   <table class="table table-tight message-record-table">
     <thead><tr><th class="col-id">ID</th><th class="col-compact">会话</th><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th class="col-status">状态</th><th>内容</th></tr></thead>

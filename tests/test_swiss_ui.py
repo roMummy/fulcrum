@@ -445,3 +445,45 @@ def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
     assert "border-radius:999px" not in template_source
     assert "border-radius: 999px" not in template_source
     assert "{% for work-surface" not in template_source
+
+
+def test_query_pages_share_compact_filter_toolbar_and_mobile_collapse() -> None:
+    """后台查询页必须共享紧凑筛选结构，并在移动端把结果内容放在首屏前部。
+
+    这些页面的筛选字段数量不同，不能继续套用面向数据录入的双列 `form-grid`。
+    测试只约束共享结构和关键尺寸，不绑定具体业务文案，确保后续增加筛选条件时仍沿用
+    同一条紧凑路径，而不会重新创建独立大筛选卡片或页面专用兼容样式。
+    """
+
+    stylesheet = _read_project_file(STYLE_PATH)
+    query_templates = (
+        "messages.html",
+        "conversations.html",
+        "plugins.html",
+        "platform_logs.html",
+        "workwechat_contact_list.html",
+    )
+
+    for template_name in query_templates:
+        template_source = _read_project_file(TEMPLATE_ROOT / template_name)
+        assert 'class="compact-filter' in template_source
+        assert 'class="compact-filter-summary"' in template_source
+        assert 'class="compact-filter-form"' in template_source
+        assert re.search(r'<form[^>]+method="get"[^>]+class="compact-filter-form"', template_source)
+        assert not re.search(r'<form[^>]+method="get"[^>]+class="form-grid"', template_source)
+
+    for template_name in ("messages.html", "conversations.html", "platform_logs.html"):
+        assert "filter-card" not in _read_project_file(TEMPLATE_ROOT / template_name)
+
+    compact_form_rule = _read_css_rule(stylesheet, ".compact-filter-form")
+    compact_control_rule = _read_css_rule(
+        stylesheet,
+        ".compact-filter-field input,\n.compact-filter-field select",
+    )
+    assert "display: flex;" in compact_form_rule
+    assert "flex-wrap: wrap;" in compact_form_rule
+    assert "min-height: 36px;" in compact_control_rule
+    assert ".compact-filter-field-query" in stylesheet
+    assert ".compact-filter:not([open]) > .compact-filter-form" in stylesheet
+    assert "@media (max-width: 820px)" in stylesheet
+    assert ".compact-filter-summary" in stylesheet
