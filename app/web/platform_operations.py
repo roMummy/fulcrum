@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -18,6 +18,15 @@ from app.core.time import format_shanghai_time, now_shanghai
 from app.models.entities import AlertRecord
 from app.models.saas import PlatformAuditLog
 from app.services.ops import build_monitoring_snapshot
+from app.services.login_proxy_pool import (
+    LoginProxyPoolError,
+    build_platform_proxy_summary,
+    check_platform_proxy,
+    import_platform_proxies_csv,
+    list_platform_proxies,
+    save_platform_proxy,
+    set_platform_proxy_enabled,
+)
 from app.services.platform_protocol_services import (
     PlatformProtocolServiceError,
     list_platform_protocol_services,
@@ -98,6 +107,24 @@ def _protocol_service_error_message(error: PlatformProtocolServiceError) -> str:
         "platform_protocol_service_type_not_managed": "该渠道不使用平台托管协议服务",
     }
     return messages.get(str(error), "协议服务配置保存失败")
+
+
+def _proxy_pool_error_message(error: LoginProxyPoolError) -> str:
+    """把代理池内部错误转换为不包含端点和凭证的平台操作提示。"""
+
+    messages = {
+        "proxy_not_found": "代理不存在或已被移除",
+        "proxy_duplicate": "相同主机、端口和用户名的代理已存在",
+        "proxy_name_required": "请输入代理名称",
+        "proxy_province_required": "请选择代理所在省份",
+        "proxy_city_required": "请选择代理所在城市",
+        "proxy_host_required": "请输入代理主机",
+        "proxy_port_invalid": "请输入 1 到 65535 之间的有效端口",
+        "proxy_value_too_long": "代理信息长度超出限制",
+        "proxy_csv_encoding_invalid": "CSV 文件必须使用 UTF-8 编码",
+        "proxy_csv_headers_invalid": "CSV 表头必须为：名称、省、市、主机、端口、用户名、密码",
+    }
+    return messages.get(str(error), "代理池操作失败")
 
 
 def _resolve_tab_log_paths(tab: str) -> list[Path]:
@@ -210,6 +237,164 @@ async def platform_protocol_service_save_action(
                 danger=True,
             )
     return _redirect("/platform/protocol-services", "协议服务配置已更新")
+
+
+@router.get("/proxy-pool", response_class=HTMLResponse)
+async def platform_proxy_pool_page(request: Request):
+    """展示平台代理摘要、脱敏代理清单和受控维护入口。"""
+
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="代理池",
+            active="proxy_pool",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            proxy_summary=build_platform_proxy_summary(db),
+            proxies=list_platform_proxies(db),
+        )
+        return templates.TemplateResponse(request, "platform_proxy_pool.html", context)
+
+
+@router.post("/proxy-pool")
+async def platform_proxy_save_action(
+    request: Request,
+    proxy_id: int = Form(0),
+    name: str = Form(""),
+    province: str = Form(""),
+    city: str = Form(""),
+    host: str = Form(""),
+    port: str = Form(""),
+    username: str = Form(""),
+    password: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """新增或编辑平台代理，审计只记录资源主键和地区。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            proxy = save_platform_proxy(
+                db,
+                proxy_id=int(proxy_id) or None,
+                values={
+                    "name": name,
+                    "province": province,
+                    "city": city,
+                    "host": host,
+                    "port": port,
+                    "username": username,
+                    "password": password,
+                },
+            )
+        except LoginProxyPoolError as exc:
+            return _redirect("/platform/proxy-pool", _proxy_pool_error_message(exc), danger=True)
+        _record_platform_operation(
+            db,
+            actor_user_id=principal.user_id,
+            action="platform.proxy.save",
+            target_type="platform_proxy",
+            target_id=int(proxy.id),
+            target_tenant_id=None,
+            detail=f"province={proxy.province};city={proxy.city};is_new={str(not bool(proxy_id)).lower()}",
+        )
+        db.commit()
+    return _redirect("/platform/proxy-pool", "代理配置已保存")
+
+
+@router.post("/proxy-pool/import")
+async def platform_proxy_import_action(
+    request: Request,
+    csv_file: UploadFile = File(...),
+    csrf_token: str = Form(""),
+):
+    """批量导入固定格式 CSV，上传文件和逐行凭证都不进入审计详情。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            result = import_platform_proxies_csv(db, content=await csv_file.read())
+        except LoginProxyPoolError as exc:
+            return _redirect("/platform/proxy-pool", _proxy_pool_error_message(exc), danger=True)
+        _record_platform_operation(
+            db,
+            actor_user_id=principal.user_id,
+            action="platform.proxy.import",
+            target_type="platform_proxy",
+            target_id=None,
+            target_tenant_id=None,
+            detail=(
+                f"success={int(result['success'])};skipped={int(result['skipped'])};"
+                f"failed={int(result['failed'])}"
+            ),
+        )
+        db.commit()
+    notice = f"导入完成：成功 {result['success']}，跳过 {result['skipped']}，失败 {result['failed']}"
+    return _redirect("/platform/proxy-pool", notice, danger=bool(result["failed"]))
+
+
+@router.post("/proxy-pool/{proxy_id}/toggle")
+async def platform_proxy_toggle_action(
+    proxy_id: int,
+    request: Request,
+    is_enabled: bool = Form(False),
+    csrf_token: str = Form(""),
+):
+    """启停平台代理；当前有效扫码会话保持原租约直到自然结束。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            proxy = set_platform_proxy_enabled(db, proxy_id=proxy_id, is_enabled=is_enabled)
+        except LoginProxyPoolError as exc:
+            return _redirect("/platform/proxy-pool", _proxy_pool_error_message(exc), danger=True)
+        _record_platform_operation(
+            db,
+            actor_user_id=principal.user_id,
+            action="platform.proxy.toggle",
+            target_type="platform_proxy",
+            target_id=int(proxy.id),
+            target_tenant_id=None,
+            detail=f"is_enabled={str(bool(proxy.is_enabled)).lower()}",
+        )
+        db.commit()
+    return _redirect("/platform/proxy-pool", "代理状态已更新")
+
+
+@router.post("/proxy-pool/{proxy_id}/check")
+async def platform_proxy_check_action(
+    proxy_id: int,
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    """由平台员工主动执行 SOCKS 端口检查并更新健康状态。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        try:
+            proxy = check_platform_proxy(db, proxy_id=proxy_id)
+        except LoginProxyPoolError as exc:
+            return _redirect("/platform/proxy-pool", _proxy_pool_error_message(exc), danger=True)
+        _record_platform_operation(
+            db,
+            actor_user_id=principal.user_id,
+            action="platform.proxy.check",
+            target_type="platform_proxy",
+            target_id=int(proxy.id),
+            target_tenant_id=None,
+            detail=f"health_status={proxy.health_status}",
+        )
+        db.commit()
+        # 提交后仍在当前 Session 内读取并固化普通布尔值，离开上下文后不再访问
+        # 已脱离会话的 ORM 对象，避免跳转阶段触发 DetachedInstanceError。
+        is_healthy = proxy.health_status == "healthy"
+    if is_healthy:
+        return _redirect("/platform/proxy-pool", "代理连接正常")
+    return _redirect("/platform/proxy-pool", "代理连接失败，已停止参与分配", danger=True)
 
 
 @router.post("/operations/alerts/{alert_id}/resolve")

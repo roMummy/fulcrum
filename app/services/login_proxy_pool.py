@@ -247,6 +247,8 @@ def list_platform_proxies(db: Session) -> list[dict[str, object]]:
             "name": proxy.name,
             "province": proxy.province,
             "city": proxy.city,
+            # 完整主机只供平台员工编辑弹窗复用；清单主体仍固定使用 masked_host。
+            "host": proxy.host,
             "masked_host": _mask_proxy_host(proxy.host),
             "port": int(proxy.port),
             "username": proxy.username,

@@ -1493,6 +1493,23 @@ code {
   grid-template-columns: minmax(180px, 1.05fr) minmax(0, 2.8fr) 40px;
 }
 
+/* 代理池使用四项连续指标和高密度开放列表，状态变化不会改变记录行结构。 */
+.proxy-metric-band {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.proxy-record-row {
+  grid-template-columns: minmax(170px, 0.9fr) minmax(0, 3.8fr) 40px;
+}
+
+.proxy-record-meta {
+  grid-template-columns: minmax(130px, 1.1fr) minmax(130px, 1fr) repeat(4, minmax(90px, 0.8fr));
+}
+
+.proxy-form-grid {
+  align-items: end;
+}
+
 .account-empty-state {
   display: flex;
   align-items: center;
@@ -3223,6 +3240,10 @@ code {
   }
 
   .account-record-row {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .proxy-record-row {
     grid-template-columns: minmax(0, 1fr) 40px;
   }
 

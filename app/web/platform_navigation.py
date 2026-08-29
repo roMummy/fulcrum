@@ -15,6 +15,7 @@ _PLATFORM_PRIMARY_NAVIGATION = (
 _PLATFORM_OPERATIONS_NAVIGATION = (
     ("operations", "运行监控", "/platform/operations"),
     ("protocol_services", "协议服务", "/platform/protocol-services"),
+    ("proxy_pool", "代理池", "/platform/proxy-pool"),
     ("logs", "全局日志", "/platform/logs"),
 )
 
