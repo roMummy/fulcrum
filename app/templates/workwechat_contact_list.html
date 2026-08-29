@@ -39,11 +39,12 @@
 </section>
 
 <section class="work-surface">
-  {# 联系人筛选直接服务于下方列表，不再单独占用一个业务表面和页面间距。 #}
-  <details class="compact-filter"{% if list_view.filters.query or list_view.filters.contact_kind or list_view.filters.sync_status %} open{% endif %}>
+  {# 联系人筛选直接服务于下方列表，窄屏仅在条件生效时保持展开。 #}
+  {% set filter_active = list_view.filters.query or list_view.filters.contact_kind or list_view.filters.sync_status %}
+  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选联系人</span>
-      <span class="compact-filter-summary-text">{% if list_view.filters.query or list_view.filters.contact_kind or list_view.filters.sync_status %}已应用条件{% else %}姓名 / 类型 / 状态{% endif %}</span>
+      <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}姓名 / 类型 / 状态{% endif %}</span>
     </summary>
     <form method="get" action="/channels/{{ channel.id }}/workwechat/contacts" class="compact-filter-form">
       <label class="compact-filter-field compact-filter-field-query"><span>搜索</span><input name="q" value="{{ list_view.filters.query }}" placeholder="姓名 / 手机 / 邮箱 / 公司 / ID" /></label>

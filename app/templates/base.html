@@ -340,6 +340,29 @@
     })();
 
     (() => {
+      const compactFilters = document.querySelectorAll("details.compact-filter");
+      if (!compactFilters.length) return;
+
+      /*
+       * details 的关闭状态会在浏览器内部直接移除内容布局，桌面 CSS 无法可靠覆盖。
+       * 因此模板默认输出 open，初始化时仅在 820px 以下关闭没有生效条件的筛选区；
+       * 有效条件始终展开，切换回桌面时也恢复完整工具栏，避免条件被无意隐藏。
+       */
+      const compactViewport = window.matchMedia("(max-width: 820px)");
+      const syncCompactFilters = () => {
+        compactFilters.forEach((filter) => {
+          const hasActiveFilter = filter.dataset.filterActive === "true";
+          filter.open = !compactViewport.matches || hasActiveFilter;
+        });
+      };
+
+      syncCompactFilters();
+      if (typeof compactViewport.addEventListener === "function") {
+        compactViewport.addEventListener("change", syncCompactFilters);
+      }
+    })();
+
+    (() => {
       const moreNavs = document.querySelectorAll(".nav-more");
       if (!moreNavs.length) return;
 

@@ -19,11 +19,12 @@
       {% if pagination %}<span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>{% endif %}
     </div>
   </div>
-  {# 关闭状态只影响移动端；桌面由共享样式持续展示，查询参数和服务端筛选路径保持不变。 #}
-  <details class="compact-filter"{% if keyword or direction or bot_id or channel_id or chat_type %} open{% endif %}>
+  {# 模板默认展开供桌面使用，共享初始化逻辑只在窄屏关闭没有生效条件的筛选区。 #}
+  {% set filter_active = keyword or direction or bot_id or channel_id or chat_type %}
+  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选消息</span>
-      <span class="compact-filter-summary-text">{% if keyword or direction or bot_id or channel_id or chat_type %}已应用条件{% else %}按条件缩小结果{% endif %}</span>
+      <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}按条件缩小结果{% endif %}</span>
     </summary>
     <form method="get" action="/messages" class="compact-filter-form">
     <label class="compact-filter-field compact-filter-field-query">

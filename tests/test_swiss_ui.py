@@ -467,6 +467,7 @@ def test_query_pages_share_compact_filter_toolbar_and_mobile_collapse() -> None:
     for template_name in query_templates:
         template_source = _read_project_file(TEMPLATE_ROOT / template_name)
         assert 'class="compact-filter' in template_source
+        assert 'open data-filter-active="' in template_source
         assert 'class="compact-filter-summary"' in template_source
         assert 'class="compact-filter-form"' in template_source
         assert re.search(r'<form[^>]+method="get"[^>]+class="compact-filter-form"', template_source)
@@ -484,6 +485,10 @@ def test_query_pages_share_compact_filter_toolbar_and_mobile_collapse() -> None:
     assert "flex-wrap: wrap;" in compact_form_rule
     assert "min-height: 36px;" in compact_control_rule
     assert ".compact-filter-field-query" in stylesheet
-    assert ".compact-filter:not([open]) > .compact-filter-form" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".compact-filter-summary" in stylesheet
+
+    base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
+    assert 'document.querySelectorAll("details.compact-filter")' in base_template
+    assert 'window.matchMedia("(max-width: 820px)")' in base_template
+    assert 'filter.dataset.filterActive === "true"' in base_template

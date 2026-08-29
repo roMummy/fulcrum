@@ -173,8 +173,9 @@
       <a class="btn btn-secondary" href="/plugins/runtime">运行状态页</a>
     </div>
   </div>
-  {# 插件条件较多，但仍共用单一紧凑工具栏；移动端只在条件生效时默认展开。 #}
-  <details class="compact-filter"{% if plugin_filters.q or plugin_filters.plugin_type or plugin_filters.category or plugin_filters.execution_state or plugin_filters.manifest_state %} open{% endif %}>
+  {# 插件条件较多，但仍共用单一紧凑工具栏；窄屏只在条件生效时保持展开。 #}
+  {% set filter_active = plugin_filters.q or plugin_filters.plugin_type or plugin_filters.category or plugin_filters.execution_state or plugin_filters.manifest_state %}
+  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选插件</span>
       <span class="compact-filter-summary-text">显示 {{ filtered_plugin_count }} / {{ total_plugin_count }}</span>

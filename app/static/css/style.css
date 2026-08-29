@@ -1987,11 +1987,6 @@ code {
   gap: 10px 12px;
 }
 
-/* 关闭的 details 在桌面端仍展示表单；移动端媒体查询会恢复真正的折叠行为。 */
-.compact-filter:not([open]) > .compact-filter-form {
-  display: flex;
-}
-
 .compact-filter-field {
   display: grid;
   flex: 0 1 168px;
