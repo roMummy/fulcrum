@@ -6261,7 +6261,7 @@ consume_policy = "shared"
 
         self.assertEqual(qr_fields["uuid"], "uuid-awaken-001")
         self.assertEqual(qr_fields["qr_url"], "http://weixin.qq.com/x/uuid-awaken-001")
-        self.assertIsNone(qr_fields["qr_base64"])
+        self.assertNotIn("qr_base64", qr_fields)
         self.assertEqual(qr_fields["expires_at"], 120)
         self.assertEqual(account_fields["wxid"], "wxid_runtime_001")
         self.assertEqual(account_fields["nickname"], "运行号")
@@ -6330,10 +6330,10 @@ consume_policy = "shared"
                     body={"Wxid": "wxid_runtime_001", "QID": "room-001@chatroom"},
                 )
 
-    def test_wechat_ipad_qrcode_base64_is_served_as_image_without_exposing_raw_text(self):
+    def test_wechat_ipad_qrcode_url_is_redirected_without_exposing_raw_payload(self):
         self.login("ops", "ops123")
-        qr_bytes = b"fake-qr-image"
-        qr_base64 = base64.b64encode(qr_bytes).decode("ascii")
+        qr_base64 = base64.b64encode(b"fake-qr-image").decode("ascii")
+        qr_url = "https://qr.example.com/uuid-url-001"
         with patch(
             "app.services.wechat_ipad.client.WechatIpadApiClient.request_json",
             return_value={
@@ -6341,6 +6341,7 @@ consume_policy = "shared"
                 "Data": {
                     "QrCodeResponse": {
                         "Uuid": "uuid-base64-001",
+                        "QrUrl": qr_url,
                         "Base64": qr_base64,
                         "expiredTime": 120,
                     },
@@ -6358,14 +6359,12 @@ consume_policy = "shared"
         self.assertNotIn("data:image", page.text)
 
         image = self.client.get("/channels/1/wechat-ipad/qrcode-image", follow_redirects=False)
-        self.assertEqual(image.status_code, 200)
-        self.assertEqual(image.content, qr_bytes)
-        self.assertEqual(image.headers["content-type"], "image/png")
+        self.assertEqual(image.status_code, 307)
+        self.assertEqual(image.headers["location"], qr_url)
 
     def test_wechat_ipad_page_shows_expired_marker_and_countdown_labels_without_base64_text(self):
         self.login("ops", "ops123")
-        qr_bytes = b"expired-qr-image"
-        qr_base64 = base64.b64encode(qr_bytes).decode("ascii")
+        qr_url = "https://qr.example.com/uuid-expired-001"
         with SessionLocal() as db:
             channel = db.get(Channel, 1)
             self.assertIsNotNone(channel)
@@ -6373,8 +6372,7 @@ consume_policy = "shared"
             channel.qrcode_status = "waiting_scan"
             channel.runtime_info_json = json.dumps(
                 {
-                    "qrcode_image_base64": qr_base64,
-                    "qrcode_image_media_type": "image/png",
+                    "qrcode_url": qr_url,
                     "qrcode_expires_at": "2026-03-22T00:00:00+00:00",
                     "last_status_summary": "二维码已过期，请刷新二维码后重新扫码。",
                 },
@@ -6388,7 +6386,11 @@ consume_policy = "shared"
         self.assertIn("二维码是否过期", page.text)
         self.assertIn("已过期", page.text)
         self.assertIn('/channels/1/wechat-ipad/qrcode-image', page.text)
-        self.assertNotIn(qr_base64, page.text)
+        self.assertNotIn(qr_url, page.text)
+
+        image = self.client.get("/channels/1/wechat-ipad/qrcode-image", follow_redirects=False)
+        self.assertEqual(image.status_code, 307)
+        self.assertEqual(image.headers["location"], qr_url)
 
     def test_wechat_ipad_login_flow_polling_advances_to_success_and_persists_runtime(self):
         self.login("ops", "ops123")

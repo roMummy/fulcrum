@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from base64 import b64decode
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -61,6 +60,22 @@ def _summarize_wechat_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _summarize_provider_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """把协议回包压缩为运行诊断所需字段，禁止把大体积业务载荷写入渠道表。"""
+
+    # 已经压缩过的摘要会在后续状态写入中被重复使用；保持原字段清单，避免每次持久化继续丢失信息。
+    if isinstance(payload.get("top_level_keys"), list) and isinstance(payload.get("data_keys"), list):
+        return {
+            "top_level_keys": list(payload.get("top_level_keys") or [])[:20],
+            "data_keys": list(payload.get("data_keys") or [])[:20],
+            "message": str(payload.get("message") or ""),
+            "code": payload.get("code"),
+            "http_status": payload.get("http_status"),
+            "success": (
+                payload.get("success")
+                if isinstance(payload.get("success"), bool)
+                else WechatIpadApiClient.is_success(payload)
+            ),
+        }
     data = WechatIpadApiClient.extract_data(payload)
     return {
         "top_level_keys": sorted(list(payload.keys()))[:20],
@@ -68,7 +83,21 @@ def _summarize_provider_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "message": WechatIpadApiClient.extract_message(payload) or "",
         "code": WechatIpadApiClient.extract_code(payload),
         "http_status": payload.get("http_status"),
+        "success": WechatIpadApiClient.is_success(payload),
     }
+
+
+def _compact_wechat_ipad_runtime_info(runtime_info: dict[str, Any]) -> dict[str, Any]:
+    """清除二维码图片和原始取码回包，只保留可长期写入 MariaDB TEXT 的短运行状态。"""
+
+    compacted = dict(runtime_info)
+    # 二维码图片由 874 返回的短 URL 展示，Base64 与媒体类型不属于渠道长期运行状态。
+    compacted.pop("qrcode_image_base64", None)
+    compacted.pop("qrcode_image_media_type", None)
+    login_init_response = compacted.get("last_login_init_response")
+    if isinstance(login_init_response, dict):
+        compacted["last_login_init_response"] = _summarize_provider_payload(login_init_response)
+    return compacted
 
 
 def build_wechat_ipad_overview(
@@ -2484,6 +2513,7 @@ def start_wechat_ipad_login(
         runtime_info,
         requested_profile=login_profile,
     )
+    runtime_info = _compact_wechat_ipad_runtime_info(runtime_info)
     login_init_endpoint = _login_init_endpoint_for_profile(login_profile_key)
     channel.adapter_config_json = json.dumps(adapter_config, ensure_ascii=False, sort_keys=True)
     channel.runtime_info_json = json.dumps(runtime_info, ensure_ascii=False, sort_keys=True)
@@ -2546,7 +2576,7 @@ def start_wechat_ipad_login(
             error_context=response.get("error_context"),
             extra={
                 "reconnect_status": "idle",
-                "last_login_init_response": response.get("payload"),
+                "last_login_init_response": _summarize_provider_payload(response.get("payload") or {}),
                 "last_login_init_endpoint": login_init_endpoint,
                 "selected_login_profile": login_profile_key,
                 "last_login_profile": login_profile_key,
@@ -2555,17 +2585,31 @@ def start_wechat_ipad_login(
 
     payload = response["payload"]
     qr_fields = WechatIpadApiClient.extract_qr_fields(payload)
+    provider_summary = _summarize_provider_payload(payload)
+    if not qr_fields["qr_url"]:
+        return _persist_runtime(
+            db,
+            channel,
+            login_state="login_init_failed",
+            qrcode_status="failed",
+            summary="协议服务未返回可展示的二维码链接。",
+            error="qrcode_url_missing",
+            extra={
+                "last_login_init_response": provider_summary,
+                "last_login_init_endpoint": login_init_endpoint,
+                "selected_login_profile": login_profile_key,
+                "last_login_profile": login_profile_key,
+            },
+        )
     previous_refresh_count = int(_parse_json(getattr(channel, "runtime_info_json", None)).get("qrcode_refresh_count") or 0)
     runtime_info = {
         "login_qr_uuid": qr_fields["uuid"],
         "qrcode_url": qr_fields["qr_url"],
-        "qrcode_image_base64": qr_fields["qr_base64"],
-        "qrcode_image_media_type": qr_fields["qr_image_media_type"],
         "qrcode_expires_at": _normalize_qrcode_expires_at(qr_fields["expires_at"]),
         "qrcode_refresh_count": previous_refresh_count + 1,
         "login_qr_message": response["message"] or "waiting_scan",
         "last_qrcode_at": _utcnow_iso(),
-        "last_login_init_response": payload,
+        "last_login_init_response": provider_summary,
         "last_login_init_endpoint": login_init_endpoint,
         "last_login_init_request": {"DeviceName": device_name, "DeviceID": device_id},
         "selected_login_profile": login_profile_key,
@@ -2581,7 +2625,6 @@ def start_wechat_ipad_login(
             "login_init_endpoint": login_init_endpoint,
             "qr_uuid": qr_fields["uuid"] or "",
             "has_qr_url": bool(qr_fields["qr_url"]),
-            "has_qr_base64": bool(qr_fields["qr_base64"]),
             "expires_at": str(runtime_info.get("qrcode_expires_at") or ""),
             "provider_message": response.get("message") or "",
         },
@@ -2590,8 +2633,8 @@ def start_wechat_ipad_login(
         db,
         channel,
         login_state="qrcode_ready",
-        qrcode_status="waiting_scan" if qr_fields["qr_url"] or qr_fields["qr_base64"] else "unknown",
-        summary="已按 abot GetQR 获取登录二维码。",
+        qrcode_status="waiting_scan",
+        summary="已获取登录二维码。",
         extra=runtime_info,
         error=None,
     )
@@ -2656,8 +2699,6 @@ def logout_wechat_ipad(
         "active_bind_mobile": "",
         "login_qr_uuid": "",
         "qrcode_url": "",
-        "qrcode_image_base64": "",
-        "qrcode_image_media_type": "",
         "qrcode_expires_at": "",
         "heartbeat_status": "unknown",
         "heartbeat_long_status": "unknown",
@@ -2735,9 +2776,6 @@ def refresh_wechat_ipad_status(
         qr_fields = WechatIpadApiClient.extract_qr_fields(qr_result.get("payload") or {})
         if qr_fields["qr_url"]:
             runtime_info["qrcode_url"] = qr_fields["qr_url"]
-        if qr_fields["qr_base64"]:
-            runtime_info["qrcode_image_base64"] = qr_fields["qr_base64"]
-            runtime_info["qrcode_image_media_type"] = qr_fields["qr_image_media_type"] or runtime_info.get("qrcode_image_media_type")
         if qr_fields["expires_at"] not in (None, ""):
             runtime_info["qrcode_expires_at"] = _normalize_qrcode_expires_at(qr_fields["expires_at"])
         if _qr_login_succeeded(qr_result):
@@ -3144,9 +3182,6 @@ def poll_wechat_ipad_login_status(
     qr_fields = WechatIpadApiClient.extract_qr_fields(qr_result.get("payload") or {})
     if qr_fields["qr_url"]:
         runtime_info["qrcode_url"] = qr_fields["qr_url"]
-    if qr_fields["qr_base64"]:
-        runtime_info["qrcode_image_base64"] = qr_fields["qr_base64"]
-        runtime_info["qrcode_image_media_type"] = qr_fields["qr_image_media_type"] or runtime_info.get("qrcode_image_media_type")
     if qr_fields["expires_at"] not in (None, ""):
         runtime_info["qrcode_expires_at"] = _normalize_qrcode_expires_at(qr_fields["expires_at"])
 
@@ -3889,6 +3924,7 @@ def _persist_runtime(
         runtime_info.pop("last_error_context", None)
     if extra:
         runtime_info.update(extra)
+    runtime_info = _compact_wechat_ipad_runtime_info(runtime_info)
     channel.runtime_info_json = json.dumps(runtime_info, ensure_ascii=False, sort_keys=True)
     if login_state is not None:
         channel.login_state = login_state
@@ -5434,7 +5470,17 @@ def _build_recent_call_view(
     code = WechatIpadApiClient.extract_code(payload)
     http_status = payload.get("http_status")
     has_payload = bool(payload)
-    is_success = has_payload and code in (None, "", 0, "0", 200, "200") and http_status in (None, "", 200, "200")
+    # 874 的成功取码回包是 Success=true、Code=1；结构化成功标记优先于不同接口各自的返回码约定。
+    reported_success = payload.get("success")
+    is_success = (
+        has_payload
+        and (
+            bool(reported_success)
+            if isinstance(reported_success, bool)
+            else WechatIpadApiClient.is_success(payload)
+        )
+        and http_status in (None, "", 200, "200")
+    )
     has_structured_summary = message != "-"
     if is_success and has_structured_summary:
         state = "healthy"
@@ -6521,22 +6567,13 @@ def _resolve_wxid(channel: Channel, runtime_info: dict[str, Any], adapter_config
 
 
 def resolve_wechat_ipad_qrcode_image(channel: Channel) -> dict[str, Any]:
+    """返回当前二维码短链接，图片内容不再从渠道运行状态中解码。"""
+
     runtime_info = _parse_json(getattr(channel, "runtime_info_json", None))
     resolved = _resolve_qrcode_image(runtime_info)
     if not resolved:
         return {"available": False}
-    if resolved["kind"] == "url":
-        return {"available": True, "kind": "url", "url": resolved["url"]}
-    try:
-        content = b64decode(resolved["base64"], validate=True)
-    except Exception:
-        return {"available": False}
-    return {
-        "available": True,
-        "kind": "base64",
-        "content": content,
-        "media_type": resolved["media_type"] or "image/png",
-    }
+    return {"available": True, "kind": "url", "url": resolved["url"]}
 
 
 def _proxy_from_config(adapter_config: dict[str, Any]) -> dict[str, Any] | None:
@@ -6776,17 +6813,9 @@ def _resolve_qrcode_link_url(runtime_info: dict[str, Any]) -> str | None:
 
 
 def _resolve_qrcode_image(runtime_info: dict[str, Any]) -> dict[str, str] | None:
-    direct_base64 = str(runtime_info.get("qrcode_image_base64") or "").strip()
-    direct_media_type = str(runtime_info.get("qrcode_image_media_type") or "").strip() or "image/png"
-    if WechatIpadApiClient.is_base64_payload(direct_base64):
-        return {"kind": "base64", "base64": direct_base64, "media_type": direct_media_type}
+    """只解析 874 当前提供的二维码 URL，不接受历史 Base64 运行字段。"""
+
     normalized = WechatIpadApiClient.normalize_qr_image_source(runtime_info.get("qrcode_url"))
     if normalized["url"]:
         return {"kind": "url", "url": normalized["url"]}
-    if normalized["base64"]:
-        return {
-            "kind": "base64",
-            "base64": normalized["base64"],
-            "media_type": normalized["media_type"] or direct_media_type,
-        }
     return None

@@ -876,25 +876,7 @@ class WechatIpadApiClient:
             ("QrUrl",),
             ("QRCode",),
         )
-        raw_qr_base64 = cls.pick_value(
-            payload,
-            ("Data", "QrCode"),
-            ("Data", "qrcode"),
-            ("Data", "Base64"),
-            ("Data", "base64"),
-            ("Data", "QrCodeBase64"),
-            ("Data", "qrCodeBase64"),
-            ("Data", "QrBase64"),
-            ("Data", "qrBase64"),
-            ("Data", "QrCodeResponse", "Base64"),
-            ("Data", "QrCodeResponse", "base64"),
-            ("Data", "QrCodeResponse", "QrCode"),
-            ("Data", "QrCodeResponse", "qrcode"),
-            ("Base64",),
-            ("base64",),
-        )
         normalized_qr_url = cls.normalize_qr_image_source(raw_qr_url)
-        normalized_qr_base64 = cls.normalize_qr_image_source(raw_qr_base64)
         return {
             "uuid": cls.pick_value(
                 payload,
@@ -905,9 +887,8 @@ class WechatIpadApiClient:
                 ("Uuid",),
                 ("uuid",),
             ),
-            "qr_url": normalized_qr_url["url"] or normalized_qr_base64["url"],
-            "qr_base64": normalized_qr_base64["base64"] or normalized_qr_url["base64"],
-            "qr_image_media_type": normalized_qr_base64["media_type"] or normalized_qr_url["media_type"],
+            # 当前 874 同时返回短链接和 Base64；登录链路只接受短链接，避免图片数据进入渠道运行状态。
+            "qr_url": normalized_qr_url["url"],
             "expires_at": cls.pick_value(
                 payload,
                 ("Data", "expiredTime"),
