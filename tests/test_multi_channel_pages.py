@@ -26,10 +26,6 @@ def _channel_edit_form(ids: dict, csrf_token: str, **overrides) -> dict[str, obj
         "dm_policy": "allowlist",
         "allow_from": "",
         "adapter_config_json": "",
-        "proxy_host": "",
-        "proxy_port": "",
-        "proxy_username": "",
-        "proxy_password": "",
         "provider_node_id": 0,
         "provider_account_id": 0,
         "csrf_token": csrf_token,
@@ -276,8 +272,8 @@ def test_wechat_ipad_detail_only_exposes_business_login_entry(provider_page_cont
         assert removed_text not in detail.text
 
 
-def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provider_page_context) -> None:
-    """高级页面不能回显代理密码，保存可见字段时也不能清空未展示的服务端配置。"""
+def test_wechat_ipad_edit_removes_retired_proxy_config_and_ignores_forged_fields(provider_page_context) -> None:
+    """编辑微信账号时直接清除旧长期代理配置，伪造表单字段也不能重建该路径。"""
 
     client, ids = provider_page_context
     csrf_token = _login(client, "admin")
@@ -296,7 +292,8 @@ def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provid
                     "username": "proxy-user",
                     "password": secret_proxy_password,
                     "proxy_ip": "127.0.0.1:8899",
-                }
+                },
+                "business": {"message_mode": "normal"},
             }
         ),
     )
@@ -316,8 +313,9 @@ def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provid
         proxy_host="127.0.0.1",
         proxy_port="8899",
         proxy_username="proxy-user",
+        proxy_password="forged-new-password",
     )
-    for hidden_field in ("adapter_config_json", "webhook_path", "proxy_password"):
+    for hidden_field in ("adapter_config_json", "webhook_path"):
         edit_payload.pop(hidden_field, None)
     edited = client.post(f"/channels/{channel_id}/edit", data=edit_payload)
     assert edited.status_code == 303
@@ -325,7 +323,11 @@ def test_advanced_page_hides_and_preserves_unexposed_secret_configuration(provid
     with ids["factory"]() as db:
         saved = db.get(Channel, channel_id)
         assert saved.webhook_path == "/private-webhook"
-        assert secret_proxy_password in (saved.adapter_config_json or "")
+        saved_config = json.loads(saved.adapter_config_json or "{}")
+        assert "proxy" not in saved_config
+        assert saved_config["business"] == {"message_mode": "normal"}
+        assert secret_proxy_password not in (saved.adapter_config_json or "")
+        assert "forged-new-password" not in (saved.adapter_config_json or "")
 
 
 def test_incomplete_draft_cannot_be_enabled_by_toggle(provider_page_context) -> None:

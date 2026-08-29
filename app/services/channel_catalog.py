@@ -113,10 +113,6 @@ CHANNEL_TYPE_DEFINITIONS = (
         runtime_mode="platform_polling",
         capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
         config_fields=(
-            ChannelConfigField("proxy_host", "代理地址"),
-            ChannelConfigField("proxy_port", "代理端口"),
-            ChannelConfigField("proxy_username", "代理用户名"),
-            ChannelConfigField("proxy_password", "代理密码", input_type="password", secret=True),
             *COMMON_POLICY_FIELDS,
         ),
         adapter_factory=_build_wechat_ipad_adapter,

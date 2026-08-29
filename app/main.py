@@ -124,18 +124,12 @@ from app.services.wechat_ipad import (
     build_wechat_ipad_contact_list,
     build_wechat_ipad_group_summary,
     build_wechat_ipad_overview,
-    logout_wechat_ipad,
-    poll_wechat_ipad_login_status,
     pull_wechat_ipad_messages,
     record_wechat_ipad_receive_event,
     record_wechat_ipad_send_event,
-    reconnect_wechat_ipad,
     run_wechat_ipad_action,
     reset_wechat_ipad_chatroom_scope,
     resolve_wechat_ipad_qrcode_image,
-    refresh_wechat_ipad_qrcode,
-    refresh_wechat_ipad_status,
-    start_wechat_ipad_login,
     sync_wechat_ipad_chatrooms,
     sync_wechat_ipad_contacts,
     update_wechat_ipad_chatroom_scope_config_override,
@@ -500,62 +494,18 @@ def build_group_scope_effective_config(plugin_code: str | None, binding_config_j
     return deep_merge_config(deep_merge_config(base, binding_config), scope_config)
 
 
-def extract_wechat_ipad_proxy_form(adapter_config_json: str | None) -> dict[str, str]:
-    parsed, _ = parse_json_object(adapter_config_json or "")
-    proxy = parsed.get("proxy")
-    if not isinstance(proxy, dict):
-        return {
-            "host": "",
-            "port": "",
-            "username": "",
-            "password": "",
-            "proxy_ip": "",
-        }
-    proxy_ip = str(proxy.get("proxy_ip") or "").strip()
-    host = str(proxy.get("host") or proxy.get("ip") or "").strip()
-    port = str(proxy.get("port") or "").strip()
-    if (not host or not port) and proxy_ip and ":" in proxy_ip:
-        resolved_host, resolved_port = proxy_ip.rsplit(":", 1)
-        host = host or resolved_host.strip()
-        port = port or resolved_port.strip()
-    return {
-        "host": host,
-        "port": port,
-        "username": str(proxy.get("username") or proxy.get("user") or "").strip(),
-        "password": str(proxy.get("password") or "").strip(),
-        "proxy_ip": proxy_ip,
-    }
-
-
 def merge_channel_adapter_config(
     *,
     channel_type: str,
     adapter_config_json: str,
-    proxy_host: str = "",
-    proxy_port: str = "",
-    proxy_username: str = "",
-    proxy_password: str = "",
 ) -> tuple[str, str]:
+    """规范化渠道运行配置，并直接删除微信 iPad 已废弃的长期代理节点。"""
+
     parsed, error = parse_json_object(adapter_config_json)
     if error:
         return "", error
-    if str(channel_type or "").strip() != "wechat_ipad":
-        return json.dumps(parsed, ensure_ascii=False, sort_keys=True) if parsed else "", ""
-
-    host = str(proxy_host or "").strip()
-    port = str(proxy_port or "").strip()
-    username = str(proxy_username or "").strip()
-    password = str(proxy_password or "").strip()
-    proxy_ip = f"{host}:{port}" if host and port else ""
-    if any([host, port, username, password]):
-        parsed["proxy"] = {
-            "host": host,
-            "port": port,
-            "username": username,
-            "password": password,
-            "proxy_ip": proxy_ip,
-        }
-    else:
+    if str(channel_type or "").strip() == "wechat_ipad":
+        # 当前架构只允许 LoginProxySession 保存单次扫码代理，编辑历史账号时同步清理旧数据。
         parsed.pop("proxy", None)
     return json.dumps(parsed, ensure_ascii=False, sort_keys=True) if parsed else "", ""
 
@@ -897,29 +847,6 @@ def build_wechat_ipad_flow_payload(db: Session, channel: Channel) -> dict[str, o
         "should_poll": should_poll,
         "network_label": str(network.get("network_label") or ""),
     }
-
-
-async def resolve_wechat_ipad_login_profile(request: Request) -> str | None:
-    content_type = str(request.headers.get("content-type") or "").lower()
-    profile = None
-    if "application/json" in content_type:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        if isinstance(payload, dict):
-            profile = payload.get("login_profile")
-    if profile in (None, ""):
-        try:
-            form = await request.form()
-        except Exception:
-            form = None
-        if form is not None:
-            profile = form.get("login_profile")
-    if profile in (None, ""):
-        profile = request.query_params.get("login_profile")
-    normalized = str(profile or "").strip().lower()
-    return normalized or None
 
 
 def get_session() -> Session:
@@ -2123,7 +2050,6 @@ async def channel_detail_page(request: Request, channel_id: int):
         channel = get_channel(db, channel_id)
         if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
-        wechat_ipad_proxy_form = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
@@ -2228,7 +2154,6 @@ async def channel_detail_page(request: Request, channel_id: int):
             workwechat_contact_summary=workwechat_contact_summary,
             workwechat_cloud_poll_config=workwechat_cloud_poll_config,
             wechat_ipad_contact_list=wechat_ipad_contact_list,
-            wechat_ipad_proxy_form=wechat_ipad_proxy_form,
             can_manage_channel=has_tenant_role(require_user(request), "tenant_admin"),
             notice=request.query_params.get("notice", ""),
         )
@@ -2464,10 +2389,6 @@ async def edit_channel_action(
     dm_policy: str = Form("allowlist"),
     allow_from: str = Form(""),
     adapter_config_json: str | None = Form(None),
-    proxy_host: str = Form(""),
-    proxy_port: str = Form(""),
-    proxy_username: str = Form(""),
-    proxy_password: str | None = Form(None),
     csrf_token: str = Form(""),
 ):
     principal = enforce_role(request, "ops")
@@ -2491,19 +2412,13 @@ async def edit_channel_action(
         channel_definition = get_channel_type_definition(channel.channel_type)
         # 平台托管渠道的地址只能由平台后台同步。租户即使手工构造表单字段，保存时也必须保留服务端现值。
         resolved_api_base = channel.api_base if channel_definition.platform_managed_endpoint else api_base
-        # 普通租户页面不再回显原始适配 JSON 和代理密码；没有提交的高级字段必须
-        # 保留服务端现值，避免页面收口后一次普通保存意外清空运行配置。
+        # 普通租户页面不回显原始适配 JSON；没有提交的高级字段保留服务端现值，
+        # 但 merge_channel_adapter_config 会明确删除 iPad 已废弃的长期代理节点。
         adapter_config_source = channel.adapter_config_json if adapter_config_json is None else adapter_config_json
-        existing_proxy = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
-        resolved_proxy_password = str(proxy_password or "").strip() or existing_proxy["password"]
         resolved_webhook_path = channel.webhook_path if webhook_path is None else webhook_path
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
             channel_type=channel.channel_type,
             adapter_config_json=adapter_config_source or "",
-            proxy_host=proxy_host,
-            proxy_port=proxy_port,
-            proxy_username=proxy_username,
-            proxy_password=resolved_proxy_password,
         )
         if adapter_error:
             return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(adapter_error)}", status_code=303)
@@ -2533,10 +2448,6 @@ async def edit_channel_action(
                     "dm_policy": dm_policy,
                     "allow_from": allow_from,
                     "adapter_config_json": merged_adapter_config_json,
-                    "proxy_host": proxy_host,
-                    "proxy_port": proxy_port,
-                    "proxy_username": proxy_username,
-                    "proxy_password": resolved_proxy_password,
                     "provider_node_id": provider_node.id if provider_node else None,
                     "provider_account_id": provider_account.id if provider_account else None,
                 },
@@ -2672,99 +2583,6 @@ async def check_channel_health_action(request: Request, channel_id: int):
         if status != "online":
             create_alert(db, "channel-health", f"渠道 {channel.name} 健康异常", message, related_type="channel", related_id=channel.id)
         record_audit(db, "channel.health-check", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/login-init")
-async def start_wechat_ipad_login_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = start_wechat_ipad_login(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已触发微信 iPad 登录初始化")
-        record_audit(db, "channel.wechat-ipad.login-init", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/status-sync")
-async def refresh_wechat_ipad_status_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        overview = refresh_wechat_ipad_status(db, channel)
-        message = str(overview.get("last_status_summary") or "已同步微信 iPad 状态")
-        record_audit(db, "channel.wechat-ipad.status-sync", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/qrcode-refresh")
-async def refresh_wechat_ipad_qrcode_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = refresh_wechat_ipad_qrcode(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已刷新微信 iPad 二维码")
-        record_audit(db, "channel.wechat-ipad.qrcode-refresh", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/logout")
-async def logout_wechat_ipad_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = logout_wechat_ipad(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已退出微信登录")
-        record_audit(db, "channel.wechat-ipad.logout", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/reconnect")
-async def reconnect_wechat_ipad_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        overview = reconnect_wechat_ipad(db, channel)
-        message = str(overview.get("last_status_summary") or "已触发微信 iPad 重连")
-        record_audit(db, "channel.wechat-ipad.reconnect", "channel", channel.id, message)
         return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
     finally:
         db.close()

@@ -358,10 +358,6 @@ def build_wechat_ipad_overview(
         "sync_diagnostics": sync_diagnostics,
         "recent_message_flow": recent_message_flow,
         "entrypoints": {
-            "login_init": f"/channels/{channel.id}/wechat-ipad/login-init",
-            "qrcode_refresh": f"/channels/{channel.id}/wechat-ipad/qrcode-refresh",
-            "status_sync": f"/channels/{channel.id}/wechat-ipad/status-sync",
-            "reconnect": f"/channels/{channel.id}/wechat-ipad/reconnect",
             "message_pull": f"/channels/{channel.id}/wechat-ipad/pull-messages",
             "inbound_receive": f"/webhooks/{channel.id}/inbound",
             "outbound_send": f"/channels/{channel.id}/outbound",

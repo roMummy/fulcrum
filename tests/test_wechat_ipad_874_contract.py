@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from unittest.mock import patch
 
 from app.models.entities import Channel
@@ -288,3 +289,20 @@ def test_wechat_ipad_catalog_uses_platform_managed_endpoint_without_unused_token
     assert "api_base" not in fields
     assert "bot_token" not in fields
     assert definition.platform_managed_endpoint is True
+
+
+def test_tenant_routes_remove_retired_channel_proxy_and_technical_login_actions() -> None:
+    """租户主路由只保留业务化登录会话，不得继续注册渠道长期代理和旧技术动作。"""
+
+    source = Path("app/main.py").read_text(encoding="utf-8")
+
+    assert "extract_" + "wechat_ipad_proxy_form" not in source
+    assert "\n    proxy_host: str = Form" not in source
+    for retired_route in (
+        "wechat-ipad/" + "login-init",
+        "wechat-ipad/" + "status-sync",
+        "wechat-ipad/" + "qrcode-refresh",
+        "wechat-ipad/" + "logout",
+        "wechat-ipad/" + "reconnect",
+    ):
+        assert retired_route not in source
