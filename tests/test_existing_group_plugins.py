@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -22,7 +23,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import now_shanghai
-from app.models.entities import Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, Plugin
+from app.models.entities import Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, Message, Plugin, TaskJob
 from app.models.saas import Tenant
 from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
@@ -669,3 +670,129 @@ def test_group_auto_invite_uses_current_commands_and_trusted_user(group_plugin_f
     assert "WechatIpadApiClient" not in source
     assert 'payload.get("sender_id")' not in source
     assert 'payload.get("channel_id")' not in source
+
+
+def test_group_virtual_uses_trusted_groups_and_outbound_queue(group_plugin_fixture) -> None:
+    """群桥保存平台群 ID，并通过统一队列完成跨渠道文本转发。"""
+
+    factory, identity = group_plugin_fixture
+    discovered = get_discovered_plugin("group_virtual", force=True)
+    assert discovered is not None
+    assert discovered.manifest.plugin_type == "observer"
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.matcher.commands == (
+        "创建跨群",
+        "添加群",
+        "查看跨群列表",
+        "查看跨群",
+        "退出跨群",
+        "解散跨群",
+    )
+    assert "bridges" not in discovered.runtime_config
+
+    loaded = load_directory_plugin("group_virtual", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        management_message = Message(
+            tenant_id=identity["tenant_id"],
+            conversation_id=identity["primary_conversation_id"],
+            direction="in",
+            sender_id="bridge-admin",
+            sender_name="桥管理员",
+            content="#创建跨群 联盟",
+            message_type="text",
+            status="received",
+        )
+        db.add(management_message)
+        db.flush()
+        admin_context = PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["primary_conversation_id"],
+            message_id=int(management_message.id),
+            sender_id="bridge-admin",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        )
+        created = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config={"admin_user_ids": ["bridge-admin"]},
+                payload={
+                    "command_name": "创建跨群",
+                    "command_args": "联盟",
+                    "conversation_external_id": "group-forged",
+                    "channel_id": 99999,
+                },
+                context=admin_context,
+            ),
+        )
+
+        source_message = Message(
+            tenant_id=identity["tenant_id"],
+            conversation_id=identity["primary_conversation_id"],
+            direction="in",
+            sender_id="member-source",
+            sender_name="张三",
+            content="跨渠道你好",
+            message_type="text",
+            status="received",
+        )
+        db.add(source_message)
+        db.flush()
+        message_context = PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["primary_conversation_id"],
+            message_id=int(source_message.id),
+            sender_id="member-source",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        )
+        forwarded = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config={
+                    "admin_user_ids": ["bridge-admin"],
+                    "bridges": {
+                        "联盟": [identity["primary_chatroom_id"], identity["invite_chatroom_id"]]
+                    },
+                },
+                payload={
+                    "content": "伪造正文",
+                    "conversation_external_id": "group-forged",
+                    "sender_name": "伪造昵称",
+                },
+                context=message_context,
+            ),
+        )
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+
+    assert created.ok is True
+    assert created.output["config_patch"] == {
+        "bridges": {"联盟": [identity["primary_chatroom_id"]]}
+    }
+    assert forwarded.ok is True
+    assert forwarded.output["provider_status"] == "forward_queued"
+    assert forwarded.output["target_count"] == 1
+    assert len(jobs) == 1
+    job_payload = json.loads(jobs[0].payload_json)
+    assert job_payload["conversation_id"] == identity["invite_group_conversation_id"]
+    assert job_payload["payload"]["content"] == "[群桥] 张三 来自 主测试群：跨渠道你好"
+    assert job_payload["payload"]["receiver_id"] == "invite-room@chatroom"
+
+    source = (PROJECT_ROOT / "plugins/group_virtual/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "WechatIpadApiClient" not in source
+    assert 'payload.get("channel_id")' not in source
+    assert 'payload.get("conversation_external_id")' not in source
+    assert 'payload.get("sender_id")' not in source
