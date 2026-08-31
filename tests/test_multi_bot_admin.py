@@ -3311,7 +3311,13 @@ consume_policy = "shared"
             binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
             self.assertIsNotNone(binding)
             binding.status = "enabled"
-            binding.config_json = json.dumps({"download_mode": "card", "default_timeout": 10})
+            binding.config_json = json.dumps(
+                {
+                    "api_url": "https://parser.example.test/v1/douyin",
+                    "timeout_seconds": 20,
+                    "max_media_items": 5,
+                }
+            )
             db.commit()
             binding_id = binding.id
 
@@ -3329,10 +3335,17 @@ consume_policy = "shared"
                                 lambda request: {
                                     "ok": True,
                                     "status": "completed",
-                                    "message": "抖音解析完成，类型为 video。",
+                                    "message": "已解析抖音视频。",
                                     "output": {
-                                        "provider_status": "parsed",
-                                        "video_xml": "<appmsg><title>测试作者</title></appmsg>",
+                                        "provider_status": "completed",
+                                        "media_type": "video",
+                                        "replies": [
+                                            {
+                                                "type": "file",
+                                                "file_name": "测试作者 - 测试视频.mp4",
+                                                "file_url": "https://media.example.test/douyin-001.mp4",
+                                            }
+                                        ],
                                     },
                                 }
                             )
@@ -3350,8 +3363,8 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "douyin_parser")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "parsed")
-        self.assertIn("<appmsg", data["output"]["video_xml"])
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["replies"][0]["type"], "file")
 
     def test_guess_song_directory_plugin_executes_start_and_answer_flow(self):
         loaded = load_directory_plugin("guess_song", force=True)

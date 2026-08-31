@@ -2,9 +2,9 @@
 code = "douyin_parser"
 display_name = "抖音解析"
 plugin_type = "rule"
-version = "1.0.0"
+version = "2.0.0"
 author = "abot"
-description = "解析抖音分享链接并生成卡片或媒体结果，迁移自 abot"
+description = "通过租户解析服务提取抖音视频或图集"
 default_enabled = false
 
 [capability]
@@ -14,19 +14,18 @@ chat_types = ["direct", "group"]
 message_types = ["text", "app"]
 priority = 105
 consume_policy = "continue"
-timeout_ms = 12000
+timeout_ms = 30000
 
 [matcher]
-keywords = ["https://v.douyin.com/"]
+keywords = ["douyin.com", "iesdouyin.com"]
 require_mention = false
 
 [secrets]
-fields = ["external_api_key"]
+fields = ["api_key"]
 
 [runtime]
-internal_api_url = "http://192.168.2.32:8999/api/hybrid/video_data"
-external_api_url = "https://api.pearktrue.cn/api/video/api.php"
-external_api_key = ""
-download_mode = "card"
-default_timeout = 10
-http_proxy = ""
+enabled = true
+api_url = ""
+api_key = ""
+timeout_seconds = 20
+max_media_items = 5
