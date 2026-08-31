@@ -63,6 +63,39 @@ class DirectoryRuntimeExecutor:
         result = loaded.instance.execute_action(merged_request)
         return self._normalize_result(result)
 
+    def execute_message(self, db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+        """执行消息类动作，并只向显式声明数据库感知入口的插件传递会话。"""
+
+        loaded = load_directory_plugin(self.plugin_code, force=request.action == "reload")
+        if not loaded or not loaded.instance:
+            return PluginExecutionResult(
+                ok=False,
+                status="error",
+                message=f"{self.plugin_code} 目录运行时不可用。",
+            )
+        merged_request = PluginExecutionRequest(
+            action=request.action,
+            config={
+                **get_plugin_default_config(self.plugin_code, force=request.action == "reload"),
+                **dict(request.config),
+            },
+            payload=request.payload,
+            context=request.context,
+        )
+        message_handler = getattr(loaded.instance, "execute_message_action", None)
+        if callable(message_handler):
+            # 数据库会话只进入显式消息入口。普通目录插件仍调用 execute_action，
+            # 因此无法因为平台新增通用能力而获得任意数据库访问权限。
+            return self._normalize_result(message_handler(db, merged_request))
+        action_handler = getattr(loaded.instance, "execute_action", None)
+        if callable(action_handler):
+            return self._normalize_result(action_handler(merged_request))
+        return PluginExecutionResult(
+            ok=False,
+            status="error",
+            message=f"{self.plugin_code} 未提供可执行的消息动作入口。",
+        )
+
     def execute_scheduled(self, db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
         """调用目录插件显式声明的定时动作入口。"""
 

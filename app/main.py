@@ -3,7 +3,7 @@ import subprocess
 import time as time_module
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -80,7 +80,12 @@ from app.services.plugin_schemas import (
     merge_schema_config,
     parse_config_json,
 )
-from app.services.plugin_runtime import execute_binding_action, get_plugin_runtime_meta
+from app.services.plugin_runtime import (
+    PluginExecutionContext,
+    execute_binding_action,
+    execute_binding_message_action,
+    get_plugin_runtime_meta,
+)
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.wechat_ipad.login_flow import (
     WechatIpadLoginFlowError,
@@ -1132,32 +1137,6 @@ def build_channel_health_timeline(db: Session, channel_id: int) -> dict[str, obj
         "latest_failure_at": getattr(latest_failure, "created_at", None),
         "latest_failure_summary": getattr(latest_failure, "summary", None),
     }
-
-
-def build_execution_payload(db: Session, binding: BotPlugin, payload: dict[str, object]) -> dict[str, object]:
-    plugin_code = binding.plugin.code if binding.plugin else None
-    if plugin_code != "message_summary":
-        return payload
-
-    conversation_id_raw = payload.get("conversation_id")
-    try:
-        conversation_id = int(conversation_id_raw) if conversation_id_raw is not None else 0
-    except (TypeError, ValueError):
-        conversation_id = 0
-    if not conversation_id:
-        return payload
-
-    config = parse_config_json(binding.config_json)
-    limit = int(config.get("max_messages", 100) or 100)
-    messages = db.scalars(
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.id.desc())
-        .limit(limit)
-    ).all()
-    enriched = dict(payload)
-    enriched["messages"] = [item.content for item in reversed(messages) if (item.content or "").strip()]
-    return enriched
 
 
 @app.middleware("http")
@@ -3923,7 +3902,14 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
         payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-        result = execute_binding_action(binding, "execute", payload=build_execution_payload(db, binding, payload))
+        context = _build_manual_plugin_execution_context(db, binding, payload)
+        result = execute_binding_message_action(
+            db,
+            binding,
+            "execute",
+            payload=payload,
+            context=context,
+        )
         if result is None:
             raise HTTPException(status_code=400, detail="Plugin execution not supported")
         persist_binding_execution(db, binding, result, action="execute")
@@ -3940,6 +3926,34 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         )
     finally:
         db.close()
+
+
+def _build_manual_plugin_execution_context(
+    db: Session,
+    binding: BotPlugin,
+    payload: Mapping[str, object],
+) -> PluginExecutionContext | None:
+    """把员工手工选择的会话校验为当前绑定资源，再构造可信插件上下文。"""
+
+    raw_conversation_id = payload.get("conversation_id")
+    if raw_conversation_id in (None, ""):
+        return None
+    try:
+        conversation_id = int(raw_conversation_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="会话编号不合法") from exc
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None or int(conversation.bot_id) != int(binding.bot_id):
+        raise HTTPException(status_code=400, detail="会话不属于当前插件机器人")
+    return PluginExecutionContext(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        bot_id=int(binding.bot_id),
+        channel_id=int(conversation.channel_id) if conversation.channel_id else None,
+        conversation_id=int(conversation.id),
+        channel_type=str(conversation.channel_type or "").strip() or None,
+        chat_type=str(conversation.chat_type or "").strip() or None,
+    )
 
 
 @app.get("/conversations", response_class=HTMLResponse)

@@ -59,6 +59,35 @@ def execute_binding_action(
     )
 
 
+def execute_binding_message_action(
+    db: Session,
+    binding: BotPlugin,
+    action: str,
+    *,
+    payload: Mapping[str, Any] | None = None,
+    context: PluginExecutionContext | None = None,
+) -> PluginExecutionResult | None:
+    """在当前租户会话中执行消息动作，并复用绑定密钥与可信上下文边界。"""
+
+    plugin_code, request = _build_binding_request(
+        binding,
+        action,
+        payload=payload,
+        context=context,
+    )
+    definition = get_plugin_runtime_definition(plugin_code)
+    executor = definition.executor if definition else None
+    message_handler = getattr(executor, "execute_message", None)
+    if not callable(message_handler):
+        logger.warning(
+            "message plugin action skipped because runtime executor is unavailable",
+            extra={"plugin_code": plugin_code or "", "action": action},
+        )
+        return None
+    logger.info("executing message plugin action", extra={"plugin_code": plugin_code or "", "action": action})
+    return message_handler(db, request)
+
+
 def execute_binding_scheduled_action(
     db: Session,
     binding: BotPlugin,
@@ -95,7 +124,7 @@ def _build_binding_request(
     payload: Mapping[str, Any] | None,
     context: PluginExecutionContext | None,
 ) -> tuple[str | None, PluginExecutionRequest]:
-    """从可信绑定统一构造普通和定时执行请求，确保两条链路使用同一密钥边界。"""
+    """从可信绑定统一构造普通、消息和定时请求，确保三条链路使用同一密钥边界。"""
 
     plugin_code = binding.plugin.code if binding.plugin else None
     runtime_payload = dict(payload or {})

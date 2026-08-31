@@ -36,7 +36,8 @@ from app.services.plugin_directory import (
     discover_plugins,
 )
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionResult
-from app.services.plugin_runtime.service import execute_binding_action
+from app.services.plugin_runtime.executors import DirectoryRuntimeExecutor
+from app.services.plugin_runtime.service import execute_binding_action, execute_binding_message_action
 from app.services.plugin_secret_cleanup import scrub_tenant_plugin_plaintext_secrets
 from app.services.plugin_secrets import encrypt_plugin_secret_config
 
@@ -167,6 +168,113 @@ def test_payload_identity_fields_are_not_promoted_to_trusted_context() -> None:
     assert request.context.channel_id is None
     assert request.context.conversation_id is None
     assert request.context.sender_id is None
+
+
+def test_binding_message_runtime_passes_db_without_weakening_identity_or_secret_boundary() -> None:
+    """消息入口只增加数据库会话，绑定身份和密钥仍由平台重新构造。"""
+
+    plugin = Plugin(id=7, code="message_summary", display_name="群聊总结", plugin_type="command")
+    binding = BotPlugin(
+        id=10,
+        tenant_id=1,
+        bot_id=20,
+        plugin_id=7,
+        status="enabled",
+        config_json=json.dumps({"api_base": "https://tenant.example/v1", "api_key": "legacy-plain"}),
+    )
+    binding.plugin = plugin
+    binding.secret_config_encrypted = encrypt_plugin_secret_config(
+        tenant_id=1,
+        binding_id=10,
+        config={"api_key": "tenant-secret"},
+    )
+    captured = {}
+    expected_db = object()
+
+    class CaptureExecutor:
+        def execute_message(self, db, request):
+            captured["db"] = db
+            captured["request"] = request
+            return PluginExecutionResult(ok=True, status="completed", message="ok", output={})
+
+    with patch(
+        "app.services.plugin_runtime.service.get_plugin_runtime_definition",
+        return_value=SimpleNamespace(executor=CaptureExecutor()),
+    ):
+        result = execute_binding_message_action(
+            expected_db,  # type: ignore[arg-type]
+            binding,
+            "execute",
+            payload={"tenant_id": 999, "conversation_id": 999},
+            context=PluginExecutionContext(
+                tenant_id=999,
+                binding_id=999,
+                bot_id=999,
+                channel_id=30,
+                conversation_id=40,
+                chat_type="group",
+            ),
+        )
+
+    request = captured["request"]
+    assert result is not None and result.ok is True
+    assert captured["db"] is expected_db
+    assert request.config["api_key"] == "tenant-secret"
+    assert request.context.tenant_id == 1
+    assert request.context.binding_id == 10
+    assert request.context.bot_id == 20
+    assert request.context.conversation_id == 40
+    assert "tenant-secret" not in json.dumps(request.payload, ensure_ascii=False)
+
+
+def test_directory_runtime_only_passes_db_to_explicit_message_handler() -> None:
+    """目录执行器优先调用数据库感知入口，普通插件仍只收到原动作请求。"""
+
+    expected_db = object()
+    request = SimpleNamespace(action="execute", config={}, payload={}, context=None)
+    captured = {}
+
+    class MessageAwareInstance:
+        def execute_message_action(self, db, merged_request):
+            captured["message_db"] = db
+            captured["message_request"] = merged_request
+            return PluginExecutionResult(ok=True, status="completed", message="message", output={})
+
+    with (
+        patch(
+            "app.services.plugin_runtime.executors.load_directory_plugin",
+            return_value=SimpleNamespace(instance=MessageAwareInstance()),
+        ),
+        patch("app.services.plugin_runtime.executors.get_plugin_default_config", return_value={}),
+    ):
+        result = DirectoryRuntimeExecutor("message_summary").execute_message(  # type: ignore[arg-type]
+            expected_db,  # type: ignore[arg-type]
+            request,  # type: ignore[arg-type]
+        )
+
+    assert result.ok is True
+    assert captured["message_db"] is expected_db
+
+    class OrdinaryInstance:
+        def execute_action(self, merged_request):
+            captured["ordinary_request"] = merged_request
+            return PluginExecutionResult(ok=True, status="completed", message="ordinary", output={})
+
+    with (
+        patch(
+            "app.services.plugin_runtime.executors.load_directory_plugin",
+            return_value=SimpleNamespace(instance=OrdinaryInstance()),
+        ),
+        patch("app.services.plugin_runtime.executors.get_plugin_default_config", return_value={}),
+    ):
+        result = DirectoryRuntimeExecutor("weather").execute_message(  # type: ignore[arg-type]
+            expected_db,  # type: ignore[arg-type]
+            request,  # type: ignore[arg-type]
+        )
+
+    assert result.ok is True
+    assert result.message == "ordinary"
+    assert "ordinary_request" in captured
 
 
 def test_group_scope_cannot_override_binding_secret() -> None:

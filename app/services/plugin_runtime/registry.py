@@ -163,7 +163,14 @@ def _supports_runtime_execution(discovered: DiscoveredPlugin) -> bool:
     if not discovered.is_valid:
         return False
     loaded = load_directory_plugin(discovered.manifest.code)
-    return bool(loaded and loaded.instance and hasattr(loaded.instance, "execute_action"))
+    return bool(
+        loaded
+        and loaded.instance
+        and (
+            hasattr(loaded.instance, "execute_action")
+            or hasattr(loaded.instance, "execute_message_action")
+        )
+    )
 
 
 def _derive_plugin_category(discovered: DiscoveredPlugin) -> str:

@@ -19,7 +19,12 @@ from app.services.plugin_runtime.messages import (
 from app.services.plugin_runtime.rate_limit import PluginRateLimitDecision, PluginRateLimiter
 from app.services.plugin_runtime.replies import file_reply, image_reply, standard_replies, text_reply, video_reply
 from app.services.plugin_runtime.scheduler import enqueue_plugin_scheduled_action
-from app.services.plugin_runtime.service import execute_binding_action, execute_binding_scheduled_action, execute_plugin_action
+from app.services.plugin_runtime.service import (
+    execute_binding_action,
+    execute_binding_message_action,
+    execute_binding_scheduled_action,
+    execute_plugin_action,
+)
 from app.services.plugin_runtime.state_store import PluginStateStore
 
 __all__ = [
@@ -38,6 +43,7 @@ __all__ = [
     "PluginRuntimeDefinition",
     "PluginStateStore",
     "execute_binding_action",
+    "execute_binding_message_action",
     "execute_binding_scheduled_action",
     "execute_plugin_action",
     "enqueue_plugin_scheduled_action",

@@ -320,7 +320,11 @@ def load_directory_plugin(plugin_code: str | None, *, force: bool = False) -> Lo
     instance = getattr(module, "plugin", None) or getattr(module, "PLUGIN", None)
     module_supports_matcher = bool(hasattr(module, "matches_event"))
     module_supports_handler = bool(hasattr(module, "handle_event"))
-    if instance is None and (module_supports_handler or hasattr(module, "execute_action")):
+    if instance is None and (
+        module_supports_handler
+        or hasattr(module, "execute_action")
+        or hasattr(module, "execute_message_action")
+    ):
         instance = _ModuleFunctionAdapter(module)
 
     loaded = LoadedDirectoryPlugin(
@@ -786,6 +790,14 @@ class _ModuleFunctionAdapter:
         handler = getattr(self._module, "execute_action")
         return handler(request)
 
+    def execute_message_action(self, db: Session, request: Any) -> Any:
+        """把消息动作交给插件显式入口；普通插件继续走原动作函数。"""
+
+        handler = getattr(self._module, "execute_message_action", None)
+        if callable(handler):
+            return handler(db, request)
+        return self.execute_action(request)
+
     def execute_scheduled_action(self, db: Session, request: Any) -> Any:
         """把统一调度请求转给插件模块；未声明入口时返回明确不支持。"""
 
@@ -942,7 +954,7 @@ def _execute_candidate(
     )
     loaded = load_directory_plugin(candidate.plugin_code)
     from app.services.plugin_runtime.registry import get_plugin_runtime_definition
-    from app.services.plugin_runtime.service import execute_binding_action
+    from app.services.plugin_runtime.service import execute_binding_message_action
 
     runtime_definition = get_plugin_runtime_definition(candidate.plugin_code)
     timeout_debug = _build_timeout_debug(candidate.timeout_ms)
@@ -1046,7 +1058,8 @@ def _execute_candidate(
                 runtime_payload["channel_adapter_config"] = _parse_config_json(channel.adapter_config_json)
             try:
                 runtime_result = _run_with_timeout(
-                    lambda: execute_binding_action(
+                    lambda: execute_binding_message_action(
+                        db,
                         binding,
                         "execute",
                         payload=runtime_payload,
