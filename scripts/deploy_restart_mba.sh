@@ -53,10 +53,11 @@ echo "[3/10] installing dependencies"
 .venv/bin/python -m pip install -r requirements.txt
 
 # 部署前先证明当前分支包含完整插件集合，并通过一次纯内存加密验证主密钥。
-# 该探针不会读取数据库、保存密文或把主密钥打印到部署日志。
+# 同时导入敏感字段清理模块，提前发现日志目录权限或运行依赖错误。两个探针都不会
+# 读取数据库、保存密文或把主密钥打印到部署日志。
 echo "[4/10] verifying plugin migration and secret key"
 .venv/bin/python scripts/verify_plugin_migration.py
-.venv/bin/python -c 'from app.services.plugin_secrets import encrypt_plugin_secret_config; encrypt_plugin_secret_config(tenant_id=1, binding_id=1, config={"deployment_probe": "ok"})'
+.venv/bin/python -c 'from app.services.plugin_secret_cleanup import scrub_tenant_plugin_plaintext_secrets; from app.services.plugin_secrets import encrypt_plugin_secret_config; encrypt_plugin_secret_config(tenant_id=1, binding_id=1, config={"deployment_probe": "ok"})'
 
 # Alembic 和敏感字段清理必须在停止旧进程前成功。这样依赖安装、完整性校验、
 # 密钥校验或数据库处理失败时，旧服务仍会保持运行，不扩大部署前置错误。

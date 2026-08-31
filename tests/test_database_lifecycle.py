@@ -138,6 +138,7 @@ def test_deploy_script_migrates_before_stopping_old_process() -> None:
 
     script = (PROJECT_ROOT / "scripts" / "deploy_restart_mba.sh").read_text(encoding="utf-8")
     catalog_index = script.index("scripts/verify_plugin_migration.py")
+    cleanup_import_index = script.index("from app.services.plugin_secret_cleanup")
     secret_key_index = script.index("encrypt_plugin_secret_config")
     migration_index = script.index("alembic upgrade head")
     scrub_index = script.index("scripts/scrub_plugin_plaintext_secrets.py")
@@ -145,6 +146,7 @@ def test_deploy_script_migrates_before_stopping_old_process() -> None:
     ready_index = script.index("/readyz")
 
     assert catalog_index < migration_index
+    assert cleanup_import_index < migration_index
     assert secret_key_index < migration_index
     assert migration_index < scrub_index < stop_index < ready_index
     assert "MBS_DB_BACKUP_COMMAND" not in script
