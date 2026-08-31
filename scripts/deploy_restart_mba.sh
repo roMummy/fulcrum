@@ -22,10 +22,12 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-dirty_status="$(git status --porcelain -- . ':(exclude)scripts/deploy_restart_mba.sh' ':(exclude).run' || true)"
+# `.run/` 保存部署运行文件，`.rcodex/` 保存本机研发工具状态；二者都不属于
+# 应用发布差异，不能让它们阻断已经提交完成的正式部署。
+dirty_status="$(git status --porcelain -- . ':(exclude)scripts/deploy_restart_mba.sh' ':(exclude).run' ':(exclude).rcodex' || true)"
 if [ -n "${dirty_status}" ] && [ "${ALLOW_DIRTY}" != "1" ]; then
   echo "working tree is not clean; please commit or stash local changes before deploy restart"
-  echo "ignored paths: scripts/deploy_restart_mba.sh, .run/"
+  echo "ignored paths: scripts/deploy_restart_mba.sh, .run/, .rcodex/"
   printf '%s\n' "${dirty_status}"
   echo "set MBS_ALLOW_DIRTY=1 to bypass this check temporarily"
   exit 1

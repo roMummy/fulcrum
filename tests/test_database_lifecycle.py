@@ -149,3 +149,4 @@ def test_deploy_script_migrates_before_stopping_old_process() -> None:
     assert migration_index < scrub_index < stop_index < ready_index
     assert "MBS_DB_BACKUP_COMMAND" not in script
     assert "MBS_INITIAL_DEPLOY" not in script
+    assert "':(exclude).rcodex'" in script
