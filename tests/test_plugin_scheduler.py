@@ -127,14 +127,14 @@ def test_scheduled_action_enqueue_is_idempotent_and_omits_tenant_payload(schedul
         first, first_created = enqueue_plugin_scheduled_action(
             db,
             binding,
-            action_key="push_daily",
+            action_key="baidu_news_daily_push",
             scheduled_for=scheduled_for,
             high_side_effect=True,
         )
         second, second_created = enqueue_plugin_scheduled_action(
             db,
             binding,
-            action_key="push_daily",
+            action_key="baidu_news_daily_push",
             scheduled_for=scheduled_for,
             high_side_effect=True,
         )
@@ -166,7 +166,7 @@ def test_scheduler_allows_same_dedupe_shape_in_different_tenants(scheduler_fixtu
             job, created = enqueue_plugin_scheduled_action(
                 db,
                 binding,
-                action_key="push_daily",
+                action_key="baidu_news_daily_push",
                 scheduled_for=scheduled_for,
             )
             db.commit()
@@ -185,7 +185,7 @@ def test_scheduler_rejects_identity_and_secret_parameters(scheduler_fixture) -> 
             enqueue_plugin_scheduled_action(
                 db,
                 binding,
-                action_key="push_daily",
+                action_key="baidu_news_daily_push",
                 scheduled_for=now_shanghai(),
                 parameters={"tenant_id": identity["beta_tenant_id"]},
             )
@@ -193,7 +193,7 @@ def test_scheduler_rejects_identity_and_secret_parameters(scheduler_fixture) -> 
             enqueue_plugin_scheduled_action(
                 db,
                 binding,
-                action_key="push_daily",
+                action_key="baidu_news_daily_push",
                 scheduled_for=now_shanghai(),
                 parameters={"provider": {"api_key": "forbidden"}},
             )
@@ -210,8 +210,8 @@ def test_due_schedule_scanner_creates_daily_and_douyu_jobs_once(scheduler_fixtur
         db.commit()
 
         assert sorted(job.related_type for job in first) == [
+            "plugin_action:baidu_news_daily_push",
             "plugin_action:poll_subscriptions",
-            "plugin_action:push_daily",
         ]
         assert second == []
         assert all(job.max_attempts == 1 for job in first)
@@ -228,7 +228,7 @@ def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(sched
         job, _ = enqueue_plugin_scheduled_action(
             db,
             binding,
-            action_key="push_daily",
+            action_key="baidu_news_daily_push",
             scheduled_for=now_shanghai(),
             conversation_id=identity["alpha_conversation_id"],
         )
@@ -259,7 +259,7 @@ def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(sched
 
         assert captured["db"] is db
         assert captured["binding_id"] == identity["alpha_daily_binding_id"]
-        assert captured["action"] == "push_daily"
+        assert captured["action"] == "baidu_news_daily_push"
         assert captured["payload"] == {}
         assert captured["context"].tenant_id == identity["alpha_tenant_id"]
         assert captured["context"].bot_id == identity["alpha_bot_id"]

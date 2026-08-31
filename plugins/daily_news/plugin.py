@@ -2,164 +2,158 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
-from html import unescape
 from typing import Any
-from urllib import request as urlrequest
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.core.time import now_shanghai
-from app.models.entities import BotPlugin, Channel, Conversation, Plugin
+from app.models.entities import BotPlugin, Channel, Conversation
 from app.services.outbound_batch import enqueue_outbound_jobs_by_conversation
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpResponse
 
 
-DEFAULT_USER_AGENT = "multi-bot-admin/1.0"
-CHINESE_WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+SCHEDULE_ACTION_KEY = "baidu_news_daily_push"
+DEFAULT_USER_AGENT = "multi-bot-saas/1.0"
+CHINESE_WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
 @dataclass(frozen=True)
 class DailyNewsConfig:
+    """每日新闻只保留抓取、推送时刻和去重日期等当前业务配置。"""
+
     baidu_api_url: str
-    important_news_api_url: str
     news60s_api_url: str
     default_timeout: int
     baidu_limit: int
     push_time: str
-    push_all_channels: bool
     last_push_date: str
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
+    """每日新闻不再处理聊天命令，只保留运行时重载检查。"""
+
     config = _load_config(request.config)
     if request.action == "reload":
         return PluginExecutionResult(
             ok=True,
             status="running",
-            message="daily_news runtime is ready",
-            output={"push_time": config.push_time, "push_all_channels": config.push_all_channels},
+            message="每日新闻定时任务已就绪。",
+            output={"push_time": config.push_time},
         )
-    if request.action != "execute":
-        return PluginExecutionResult(ok=False, status="unsupported", message=f"unsupported action: {request.action}")
+    return PluginExecutionResult(
+        ok=False,
+        status="unsupported",
+        message="每日新闻仅支持平台定时调度。",
+    )
 
-    operation = _resolve_operation(request.payload)
+
+def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+    """在 Worker 已绑定的租户会话中执行每日新闻群推送。"""
+
+    if request.action != SCHEDULE_ACTION_KEY:
+        return PluginExecutionResult(
+            ok=False,
+            status="unsupported",
+            message=f"不支持的每日新闻动作: {request.action}",
+        )
+    if request.context is None:
+        return PluginExecutionResult(ok=False, status="error", message="每日新闻缺少可信运行上下文。")
+
+    binding = db.get(BotPlugin, int(request.context.binding_id))
+    if (
+        binding is None
+        or int(binding.tenant_id) != int(request.context.tenant_id)
+        or int(binding.bot_id) != int(request.context.bot_id)
+    ):
+        return PluginExecutionResult(ok=False, status="error", message="每日新闻插件绑定不存在。")
+
+    current = now_shanghai()
+    config = _load_config(request.config)
+    today = current.strftime("%Y-%m-%d")
+    if config.last_push_date == today:
+        return PluginExecutionResult(
+            ok=True,
+            status="skipped",
+            message="今日新闻已经推送。",
+            output={"reason": "already_pushed"},
+        )
+
     try:
-        if operation == "baidu":
-            text = _get_baidu_news(config)
-            return _result("fetched", text, image_base64=None)
-        if operation == "important":
-            text = _get_important_news(config)
-            return _result("fetched", text, image_base64=None)
-        if operation == "60s":
-            image_base64 = _get_60s_image_base64(config)
-            text = _build_digest_title("60秒新闻速览")
-            return _result("fetched", text, image_base64=image_base64)
-        payload = _build_daily_digest(config)
-        return _result("fetched", payload["text"], image_base64=payload.get("image_base64"))
+        digest = _build_daily_digest(config, current=current)
     except Exception as exc:
-        return PluginExecutionResult(ok=False, status="error", message=f"daily_news failed: {exc}")
+        return PluginExecutionResult(ok=False, status="error", message=f"每日新闻抓取失败: {exc}")
 
-
-def run_daily_news_push(binding_id: int) -> dict[str, Any]:
-    now = datetime.now().astimezone()
-    with SessionLocal() as db:
-        binding = db.get(BotPlugin, int(binding_id or 0))
-        if binding is None or binding.status != "enabled" or binding.bot is None or not binding.bot.is_enabled:
-            return {"skipped": True}
-        plugin = binding.plugin or db.scalar(select(Plugin).where(Plugin.id == binding.plugin_id).limit(1))
-        if plugin is None or plugin.code != "daily_news":
-            return {"skipped": True}
-        config = _load_config(_parse_json(binding.config_json))
-        if not _should_push_now(now, config.push_time, config.last_push_date):
-            return {"skipped": True, "reason": "not_due"}
-
-        digest = _build_daily_digest(config)
-        conversations = _resolve_target_conversations(db, binding.bot_id, config.push_all_channels)
-        batch_result = enqueue_outbound_jobs_by_conversation(
-            db,
-            conversations=conversations,
-            plugin_code="daily_news",
-            related_type="daily_news_binding",
-            related_id=binding.id,
-            priority=70,
-            payload_builder=lambda conversation, channel: _build_push_payloads(conversation, digest),
-            log_context={"binding_id": binding.id},
+    conversations = _resolve_target_conversations(db, binding.bot_id)
+    if not conversations:
+        return PluginExecutionResult(
+            ok=False,
+            status="error",
+            message="每日新闻没有可推送的启用群聊。",
+            output={"target_count": 0},
         )
-        job_ids = list(batch_result["job_ids"])
-        failed_targets = list(batch_result["failed_targets"])
-        pushed_conversation_count = int(batch_result["pushed_conversation_count"] or 0)
 
-        updated = _load_config(_parse_json(binding.config_json))
-        binding.config_json = json.dumps(_dump_config(updated, last_push_date=now.strftime("%Y-%m-%d")), ensure_ascii=False, sort_keys=True)
-        binding.last_execution_at = now_shanghai()
-        binding.last_execution_status = "completed"
-        summary = f"daily_news pushed to {pushed_conversation_count} conversations"
-        if failed_targets:
-            summary += f", skipped {len(failed_targets)} failed conversations"
-        binding.last_execution_summary = summary
-        db.commit()
-        return {
-            "ok": True,
-            "conversation_count": pushed_conversation_count,
+    batch_result = enqueue_outbound_jobs_by_conversation(
+        db,
+        conversations=conversations,
+        plugin_code="daily_news",
+        related_type="daily_news_binding",
+        related_id=binding.id,
+        priority=70,
+        payload_builder=lambda conversation, channel: _build_push_payloads(conversation, digest),
+        log_context={"binding_id": binding.id},
+    )
+    job_ids = list(batch_result["job_ids"])
+    failed_targets = list(batch_result["failed_targets"])
+    pushed_count = int(batch_result["pushed_conversation_count"] or 0)
+
+    # 只更新绑定已有普通配置中的业务状态，不把目录默认值或任何敏感配置写回。
+    ordinary_config = _parse_json_object(binding.config_json)
+    ordinary_config["last_push_date"] = today
+    binding.config_json = json.dumps(ordinary_config, ensure_ascii=False, sort_keys=True)
+    summary = f"每日新闻已向 {pushed_count} 个群聊创建推送任务。"
+    if failed_targets:
+        summary += f" {len(failed_targets)} 个群聊创建失败。"
+    return PluginExecutionResult(
+        ok=not failed_targets,
+        status="completed" if not failed_targets else "partial",
+        message=summary,
+        output={
+            "target_count": len(conversations),
+            "queued_conversation_count": pushed_count,
             "outbound_job_ids": job_ids,
             "failed_targets": failed_targets,
-        }
-
-
-def _result(provider_status: str, text: str, *, image_base64: str | None) -> PluginExecutionResult:
-    replies: list[dict[str, str]] = []
-    if image_base64:
-        replies.append({"type": "image", "base64": image_base64})
-    if text.strip():
-        replies.append({"type": "text", "content": text.strip()})
-    return PluginExecutionResult(
-        ok=True,
-        status="completed",
-        message="daily news generated",
-        output={"provider_status": provider_status, "reply_text": text.strip(), "image_base64": image_base64 or "", "replies": replies},
+        },
     )
 
 
-def _build_daily_digest(config: DailyNewsConfig) -> dict[str, str]:
-    headline = _build_digest_title("每日新闻")
-    important = _get_important_news(config)
-    baidu = _get_baidu_news(config)
+def _build_daily_digest(config: DailyNewsConfig, *, current: datetime) -> dict[str, str]:
+    """生成与最新来源一致的百度热榜文本和 60 秒新闻图片。"""
+
+    text = _get_baidu_news(config, current=current)
     image_base64 = _get_60s_image_base64(config)
-    parts = [headline]
-    if important:
-        parts.append(important)
-    if baidu:
-        parts.append(baidu)
-    return {"text": "\n\n".join(part for part in parts if part.strip()), "image_base64": image_base64 or ""}
+    return {"text": text, "image_base64": image_base64 or ""}
 
 
-def _get_important_news(config: DailyNewsConfig) -> str:
-    body = _post_form(
-        config.important_news_api_url,
-        {"type": "telegram", "keyword": "你需要知道的隔夜全球要闻", "page": 0, "rn": 1, "os": "web", "sv": "7.7.5", "app": "CailianpressWeb"},
-        timeout=config.default_timeout,
+def _get_baidu_news(config: DailyNewsConfig, *, current: datetime) -> str:
+    response = PluginHttpClient().request(
+        "GET",
+        config.baidu_api_url,
+        headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"},
+        connect_timeout_seconds=config.default_timeout,
+        total_timeout_seconds=config.default_timeout,
+        max_response_bytes=2 * 1024 * 1024,
+        retry_count=1,
     )
-    item = ((((body.get("data") or {}).get("telegram") or {}).get("data") or [None])[0]) or {}
-    descr = str(item.get("descr") or "").strip()
-    timestamp = int(item.get("time") or 0)
-    if not descr or not timestamp:
-        return ""
-    dt = datetime.fromtimestamp(timestamp)
-    clean = re.sub(r"<[^>]+>", "", descr)
-    clean = unescape(clean).replace("\xa0", " ")
-    clean = re.sub(r"(\d{1,2}[、\.])", r"\n\1", clean)
-    clean = re.sub(r"\n{2,}", "\n", clean).strip()
-    return f"隔夜要闻 {dt.strftime('%Y-%m-%d')} {CHINESE_WEEKDAYS[dt.weekday()]}\n{clean}"
-
-
-def _get_baidu_news(config: DailyNewsConfig) -> str:
-    body = _get_json(config.baidu_api_url, timeout=config.default_timeout)
+    body = _require_json_object(response)
     cards = ((body.get("data") or {}) if isinstance(body.get("data"), dict) else {}).get("cards") or []
-    lines = ["百度热搜"]
+    lines = [
+        f"当前日期：{current.strftime('%Y年%m月%d日')}  {CHINESE_WEEKDAYS[current.weekday()]}",
+        "",
+    ]
     index = 1
     for card in cards:
         contents = card.get("content") if isinstance(card, dict) else []
@@ -168,159 +162,119 @@ def _get_baidu_news(config: DailyNewsConfig) -> str:
             for article in articles or []:
                 if not isinstance(article, dict):
                     continue
-                word = str(article.get("word") or "").strip()
-                if not word:
+                title = str(article.get("word") or "").strip().replace(" ", "_")
+                if not title:
                     continue
-                lines.append(f"{index}. {word}")
+                lines.append(f"{index} :#{title}")
                 index += 1
                 if index > config.baidu_limit:
-                    return "\n".join(lines)
-    return "\n".join(lines[: max(1, config.baidu_limit + 1)])
+                    return "\n".join(lines).strip()
+    return "\n".join(lines).strip()
 
 
 def _get_60s_image_base64(config: DailyNewsConfig) -> str | None:
-    body = _get_json(config.news60s_api_url, timeout=config.default_timeout)
+    client = PluginHttpClient()
+    response = client.request(
+        "GET",
+        config.news60s_api_url,
+        headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"},
+        connect_timeout_seconds=config.default_timeout,
+        total_timeout_seconds=config.default_timeout,
+        max_response_bytes=2 * 1024 * 1024,
+        retry_count=1,
+    )
+    body = _require_json_object(response)
     image_url = str(((body.get("data") or {}) if isinstance(body.get("data"), dict) else {}).get("image") or "").strip()
     if not image_url:
         return None
-    raw = _download_binary(image_url, timeout=config.default_timeout)
-    return base64.b64encode(raw).decode("ascii") if raw else None
+    image_response = client.request(
+        "GET",
+        image_url,
+        headers={"User-Agent": DEFAULT_USER_AGENT},
+        connect_timeout_seconds=config.default_timeout,
+        total_timeout_seconds=config.default_timeout,
+        max_response_bytes=8 * 1024 * 1024,
+        retry_count=1,
+    )
+    _require_success(image_response)
+    return base64.b64encode(image_response.body).decode("ascii") if image_response.body else None
 
 
-def _resolve_operation(payload: dict[str, Any]) -> str:
-    explicit = str(payload.get("operation") or payload.get("mode") or "").strip().lower()
-    if explicit:
-        return explicit
-    first = str(payload.get("command_name") or payload.get("matched_keyword") or "").strip()
-    if not first:
-        first = str(payload.get("content") or "").strip().split(" ")[0]
-    mapping = {
-        "今日新闻": "daily",
-        "百度新闻": "baidu",
-        "隔夜要闻": "important",
-        "60s新闻": "60s",
-    }
-    return mapping.get(first, "daily")
+def _resolve_target_conversations(db: Session, bot_id: int) -> list[Conversation]:
+    """最新来源只向已启用群聊推送，不再把私聊作为无群时的隐式降级目标。"""
 
-
-def _build_digest_title(title: str) -> str:
-    now = datetime.now()
-    return f"{title}\n{now.strftime('%Y-%m-%d')} {CHINESE_WEEKDAYS[now.weekday()]}"
-
-
-def _should_push_now(now: datetime, push_time: str, last_push_date: str) -> bool:
-    today = now.strftime("%Y-%m-%d")
-    if last_push_date == today:
-        return False
-    hour, minute = _parse_push_time(push_time)
-    return (now.hour, now.minute) >= (hour, minute)
-
-
-def _parse_push_time(value: str) -> tuple[int, int]:
-    text = str(value or "08:30").strip()
-    if ":" not in text:
-        return 8, 30
-    hour_text, minute_text = text.split(":", 1)
-    try:
-        return max(0, min(23, int(hour_text))), max(0, min(59, int(minute_text)))
-    except ValueError:
-        return 8, 30
-
-
-def _resolve_target_conversations(db, bot_id: int, push_all_channels: bool) -> list[Conversation]:
-    group_items = db.scalars(
-        select(Conversation)
-        .join(Channel, Channel.id == Conversation.channel_id)
-        .where(Conversation.bot_id == bot_id, Conversation.chat_type == "group", Channel.is_enabled.is_(True))
-        .order_by(Conversation.id.asc())
-    ).all()
-    if group_items:
-        return group_items
-    if not push_all_channels:
-        return []
     return db.scalars(
         select(Conversation)
         .join(Channel, Channel.id == Conversation.channel_id)
-        .where(Conversation.bot_id == bot_id, Channel.is_enabled.is_(True))
+        .where(
+            Conversation.bot_id == bot_id,
+            Conversation.chat_type == "group",
+            Channel.is_enabled.is_(True),
+        )
         .order_by(Conversation.id.asc())
     ).all()
 
 
 def _build_push_payloads(conversation: Conversation, digest: dict[str, str]) -> list[dict[str, str]]:
+    """输出通用图片和文本消息，由具体渠道适配器负责最终发送。"""
+
     payloads: list[dict[str, str]] = []
-    image_base64 = str(digest.get("image_base64") or "").strip()
     text = str(digest.get("text") or "").strip()
-    if image_base64:
-        payloads.append({"external_id": conversation.external_id, "receiver_id": conversation.external_id, "chat_type": conversation.chat_type, "message_type": "image", "base64": image_base64})
+    image_base64 = str(digest.get("image_base64") or "").strip()
     if text:
-        payloads.append({"external_id": conversation.external_id, "receiver_id": conversation.external_id, "chat_type": conversation.chat_type, "message_type": "text", "content": text})
+        payloads.append(
+            {
+                "external_id": conversation.external_id,
+                "receiver_id": conversation.external_id,
+                "chat_type": conversation.chat_type,
+                "message_type": "text",
+                "content": text,
+            }
+        )
+    if image_base64:
+        payloads.append(
+            {
+                "external_id": conversation.external_id,
+                "receiver_id": conversation.external_id,
+                "chat_type": conversation.chat_type,
+                "message_type": "image",
+                "base64": image_base64,
+            }
+        )
     return payloads
 
 
-def _get_json(url: str, *, timeout: int) -> dict[str, Any]:
-    req = urlrequest.Request(url, method="GET", headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        parsed = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError("provider returned non-object json")
+def _require_json_object(response: PluginHttpResponse) -> dict[str, Any]:
+    _require_success(response)
+    parsed = response.json()
+    if not isinstance(parsed, dict):
+        raise ValueError("新闻接口返回的 JSON 不是对象")
+    return parsed
 
 
-def _post_form(url: str, data: dict[str, Any], *, timeout: int) -> dict[str, Any]:
-    encoded = "&".join(f"{key}={_quote_plus(value)}" for key, value in data.items()).encode("utf-8")
-    req = urlrequest.Request(url, data=encoded, method="POST", headers={"User-Agent": DEFAULT_USER_AGENT, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        parsed = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError("provider returned non-object json")
+def _require_success(response: PluginHttpResponse) -> None:
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"新闻接口返回 HTTP {response.status_code}")
 
 
-def _download_binary(url: str, *, timeout: int) -> bytes:
-    req = urlrequest.Request(url, method="GET", headers={"User-Agent": DEFAULT_USER_AGENT})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        return response.read()
-
-
-def _quote_plus(value: Any) -> str:
-    from urllib.parse import quote_plus
-
-    return quote_plus(str(value))
-
-
-def _load_config(raw: dict[str, Any] | Any) -> DailyNewsConfig:
+def _load_config(raw: Any) -> DailyNewsConfig:
     data = dict(raw) if isinstance(raw, dict) else {}
     return DailyNewsConfig(
-        baidu_api_url=str(data.get("baidu_api_url") or "https://top.baidu.com/api/board?platform=wise&tab=realtime").strip(),
-        important_news_api_url=str(data.get("important_news_api_url") or "https://www.cls.cn/api/sw?app=CailianpressWeb&os=web&sv=7.7.5").strip(),
+        baidu_api_url=str(
+            data.get("baidu_api_url")
+            or "https://top.baidu.com/api/board?platform=wise&tab=realtime"
+        ).strip(),
         news60s_api_url=str(data.get("news60s_api_url") or "http://192.168.2.32:4399/v2/60s").strip(),
-        default_timeout=max(5, _coerce_int(data.get("default_timeout"), 15)),
-        baidu_limit=max(5, _coerce_int(data.get("baidu_limit"), 15)),
+        default_timeout=max(5, min(_coerce_int(data.get("default_timeout"), 15), 60)),
+        baidu_limit=max(5, min(_coerce_int(data.get("baidu_limit"), 30), 50)),
         push_time=str(data.get("push_time") or "08:30").strip() or "08:30",
-        push_all_channels=bool(data.get("push_all_channels", True)),
         last_push_date=str(data.get("last_push_date") or "").strip(),
     )
 
 
-def _dump_config(config: DailyNewsConfig, *, last_push_date: str) -> dict[str, Any]:
-    return {
-        "baidu_api_url": config.baidu_api_url,
-        "important_news_api_url": config.important_news_api_url,
-        "news60s_api_url": config.news60s_api_url,
-        "default_timeout": config.default_timeout,
-        "baidu_limit": config.baidu_limit,
-        "push_time": config.push_time,
-        "push_all_channels": config.push_all_channels,
-        "last_push_date": last_push_date,
-    }
-
-
-def _parse_json(raw: str | None) -> dict[str, Any]:
-    normalized = str(raw or "").strip()
-    if not normalized:
-        return {}
+def _parse_json_object(raw: str | None) -> dict[str, Any]:
     try:
-        parsed = json.loads(normalized)
+        parsed = json.loads(str(raw or "").strip() or "{}")
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}

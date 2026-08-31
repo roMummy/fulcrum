@@ -286,7 +286,7 @@ def _build_plugin_schedule_specs(
             return ()
         return (
             PluginScheduledActionSpec(
-                action_key="push_daily",
+                action_key="baidu_news_daily_push",
                 scheduled_for=scheduled_for,
                 parameters={},
                 high_side_effect=True,
