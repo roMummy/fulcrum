@@ -26,6 +26,11 @@ from app.services.plugin_runtime.service import (
     execute_plugin_action,
 )
 from app.services.plugin_runtime.state_store import PluginStateStore
+from app.services.plugin_runtime.text_generation import (
+    PluginTextGenerationClient,
+    PluginTextGenerationError,
+    PluginTextGenerationResult,
+)
 
 __all__ = [
     "PluginConfigField",
@@ -42,6 +47,9 @@ __all__ = [
     "PluginRateLimiter",
     "PluginRuntimeDefinition",
     "PluginStateStore",
+    "PluginTextGenerationClient",
+    "PluginTextGenerationError",
+    "PluginTextGenerationResult",
     "execute_binding_action",
     "execute_binding_message_action",
     "execute_binding_scheduled_action",

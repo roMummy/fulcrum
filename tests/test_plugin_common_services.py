@@ -31,6 +31,7 @@ from app.models.saas import Tenant
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.http_client import (
     PluginHttpClient,
+    PluginHttpResponse,
     PluginHttpRedirectError,
     PluginHttpResponseTooLarge,
     PluginHttpTimeoutError,
@@ -48,6 +49,10 @@ from app.services.plugin_runtime.replies import (
     video_reply,
 )
 from app.services.plugin_runtime.state_store import PluginStateError, PluginStateStore
+from app.services.plugin_runtime.text_generation import (
+    PluginTextGenerationClient,
+    PluginTextGenerationError,
+)
 
 
 @pytest.fixture()
@@ -102,6 +107,69 @@ def _context(identity: dict[str, int], prefix: str) -> PluginExecutionContext:
         binding_id=identity[f"{prefix}_binding_id"],
         bot_id=identity[f"{prefix}_bot_id"],
     )
+
+
+def test_text_generation_client_uses_openai_compatible_contract_without_raw_response() -> None:
+    """通用文本生成只返回文本和 token，不向插件暴露供应商 trace。"""
+
+    captured: dict[str, object] = {}
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=(
+            '{"choices":[{"message":{"role":"assistant","content":"生成结果"}}],'
+            '"usage":{"total_tokens":321},"trace_id":"provider-sensitive-trace"}'
+        ).encode("utf-8"),
+        url="https://llm.example.test/v1/chat/completions",
+    )
+
+    class FakeHttpClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "kwargs": kwargs})
+            return response
+
+    client = PluginTextGenerationClient(
+        api_base="https://llm.example.test/v1",
+        model="tenant-model",
+        api_key="tenant-secret",
+        http_client=FakeHttpClient(),
+    )
+    result = client.generate(
+        system_prompt="只输出结论",
+        user_prompt="请总结新闻",
+        user_id="tenant-1:binding-2",
+        timeout_seconds=30,
+    )
+
+    assert result.text == "生成结果"
+    assert result.token_usage == 321
+    assert captured["url"] == "https://llm.example.test/v1/chat/completions"
+    assert captured["payload"]["model"] == "tenant-model"
+    assert captured["payload"]["messages"] == [
+        {"role": "system", "content": "只输出结论"},
+        {"role": "user", "content": "请总结新闻"},
+    ]
+    assert captured["kwargs"]["headers"] == {"Authorization": "Bearer tenant-secret"}
+    assert "provider-sensitive-trace" not in repr(result)
+
+
+def test_text_generation_client_rejects_nonstandard_response() -> None:
+    """缺少标准 choices.message.content 时直接失败，不解析供应商私有字段。"""
+
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=b'{"answer":"private-provider-shape"}',
+        url="https://llm.example.test/v1/chat/completions",
+    )
+    fake_http = type("FakeHttp", (), {"post_json": lambda self, *args, **kwargs: response})()
+    client = PluginTextGenerationClient(
+        api_base="https://llm.example.test/v1",
+        model="tenant-model",
+        http_client=fake_http,
+    )
+    with pytest.raises(PluginTextGenerationError, match="choices"):
+        client.generate(user_prompt="test")
 
 
 def test_plugin_state_store_isolates_tenants_and_expires_records(common_service_fixture) -> None:
