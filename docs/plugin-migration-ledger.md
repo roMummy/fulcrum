@@ -58,7 +58,7 @@
 | `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌、SMTP 密码 | 已迁移 | `eaf31db` | `.venv/bin/python -m pytest -q tests/test_plugin_newapi_coupon.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（8 passed）；临时 SQLite 空库升级到 `20260901_0017` |
 | `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 已迁移 | `e543fc5` | `.venv/bin/python -m pytest -q tests/test_plugin_daily_ranking.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（12 passed）；定向语法检查与 `git diff --check` 通过 |
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 已迁移 | `d3ea0b2` | `.venv/bin/python -m pytest -q tests/test_plugin_dota2_stats.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty tests/test_plugin_common_services.py`（20 passed）；定向语法检查与 `git diff --check` 通过 |
-| `member_context` | 群成员画像与增量摘要 | 视画像服务而定 | 可选 API Key | 待迁移 | - | - |
+| `member_context` | 群成员画像与增量摘要 | 租户承担可选 Dify 成本 | API Key | 已迁移 | `b439d24` | `.venv/bin/python -m pytest -q tests/test_plugin_member_context.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（13 passed）；定向语法检查与 `git diff --check` 通过 |
 | `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 待迁移 | - | - |
 | `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 待迁移 | - | - |
@@ -162,3 +162,11 @@ NewAPI 领券只保留群聊中的 `领券 邮箱` 单一入口。插件从可�
 `coupon_account_bindings` 使用租户、插件绑定、渠道用户、邮箱和 NewAPI 用户唯一约束保存不可自行更换的领取关系。首次请求在访问 NewAPI 前先提交 `pending` 预留，确定性用户名使任务重试复用同一账号；同一用户换邮箱、同一邮箱换用户、同一上游账号重复发放都在外部写入前拒绝。已有 `active` 记录直接返回幂等结果，不再次查询或绑定套餐。NewAPI 只使用当前确认的用户查询、用户创建、套餐列表、用户订阅、套餐绑定、登录和订阅扣费偏好接口，响应必须符合固定 `success/message/data` 信封，不解析旧分页或嵌套替代结构。
 
 自动开户只有在租户配置完整 SMTP 且通知模式为邮件时才允许执行。初始密码使用安全随机数在内存生成，只进入 NewAPI 创建请求和租户邮件发送器，不写数据库、不进标准回复、不进执行输出，也不会在邮件失败时回退到群聊；邮件失败后领取仍保持已发放状态，并提示用户联系管理员重置密码。数据库迁移使用 `20260901_0017`，已从临时空库完整升级验证。
+
+## 群成员画像迁移边界
+
+群成员画像是纯后台定时插件，不注册聊天命令。租户必须明确选择需要画像的群会话，统一调度器才会按会话创建日、周、月刷新任务；任务载荷只保存插件绑定和会话主键，租户、机器人、渠道、群成员、消息和密钥均在执行时通过可信数据库归属链重建。插件只读取平台标准 `Message`、`Conversation`、`Chatroom` 和 `ChatroomMember`，不访问微信、企业微信、Telegram 或其他 Provider 的联系人和消息接口。
+
+每个成员的画像使用可信渠道、群主键和成员标识哈希生成状态键，保存到当前绑定的 `PluginStateRecord`。首次建档读取有限历史样本，后续只处理 `last_message_id` 水位之后的新入站文本；重复调度在没有新消息时直接跳过。状态只保存结构化画像、聚合统计和增量水位，不保存完整聊天输入、Dify 请求正文、API Key 或第三方原始响应。
+
+Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，平台不提供共享模型或共享密钥。每个群每次刷新最多批量调用一次工作流，输入限制成员数量、群消息数量和单条文本长度；外部服务未配置、超时、失败或返回无效 JSON 时仍保存本地基础画像。Dify 返回结果只能覆盖本次候选成员白名单内的画像字段，返回其他群或未知成员会被丢弃，成员身份、水位和来源统计始终由平台保留。
