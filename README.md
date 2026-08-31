@@ -286,29 +286,35 @@ DATABASE_URL=sqlite:////app/data/app.db
 
 插件位于 `plugins/<plugin_code>/` 目录下，当前项目已接入的目录插件包括：
 
-- `dify`
-- `message_summary`
-- `daily_news`
-- `douyu`
-- `weather`
-- `music`
-- `guess_song`
-- `group_member_change`
-- `inactive_rank`
-- `message_push_task`
 - `ai_auto_response`
-- `group_auto_invite`
-- `group_virtual`
+- `customer_operations`
+- `daily_news`
+- `dify`
+- `douyin_parser`
+- `douyu`
+- `duanju_search`
 - `game_task`
+- `global_news`
+- `group_auto_invite`
+- `group_member_change`
+- `group_virtual`
+- `guess_song`
+- `inactive_rank`
 - `jd_sign_token`
 - `lucky_pot`
+- `message_push_task`
 - `message_sign`
+- `message_summary`
+- `music`
 - `point_trade`
-- `douyin_parser`
-- `duanju_search`
-- `global_news`
+- `supplier_order_flow`
+- `weather`
 
 插件由后台启动时自动扫描并同步到数据库。
+
+A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录在
+[`docs/plugin-migration-ledger.md`](docs/plugin-migration-ledger.md)。迁移只复用业务规则，
+不加载 A-BOT 的插件接口、数据库、全局 Redis 或微信客户端。
 
 ## 渠道与适配边界
 
