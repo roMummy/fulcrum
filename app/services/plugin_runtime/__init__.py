@@ -10,6 +10,12 @@ from app.services.plugin_runtime.registry import (
 )
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpResponse
+from app.services.plugin_runtime.messages import (
+    PluginMessageAccessError,
+    PluginMessageBatch,
+    PluginMessageReader,
+    PluginMessageRecord,
+)
 from app.services.plugin_runtime.rate_limit import PluginRateLimitDecision, PluginRateLimiter
 from app.services.plugin_runtime.replies import file_reply, image_reply, standard_replies, text_reply, video_reply
 from app.services.plugin_runtime.scheduler import enqueue_plugin_scheduled_action
@@ -23,6 +29,10 @@ __all__ = [
     "PluginExecutionContext",
     "PluginHttpClient",
     "PluginHttpResponse",
+    "PluginMessageAccessError",
+    "PluginMessageBatch",
+    "PluginMessageReader",
+    "PluginMessageRecord",
     "PluginRateLimitDecision",
     "PluginRateLimiter",
     "PluginRuntimeDefinition",
