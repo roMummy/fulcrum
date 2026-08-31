@@ -51,7 +51,7 @@
 | `epic_free` | 免费游戏查询与定时推送 | 无固定外部成本 | 无 | 已迁移 | `20d5cbd` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_epic_free.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（11 passed） |
 | `github_opengraph` | GitHub 链接图片预览 | 无固定外部成本 | 散列盐 | 已迁移 | `84a255d` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_github_opengraph.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（13 passed） |
 | `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 已迁移 | `e0c6535` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_robot_menu.py tests/test_plugin_migration_catalog.py`（4 passed） |
-| `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
+| `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 已迁移 | `88890a7` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_gscore_adapter.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（14 passed） |
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 待迁移 | - | - |
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
 | `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 待迁移 | - | - |
@@ -128,3 +128,9 @@ GitHub 链接预览只接受 `github.com` 下至少包含 owner/repository 的�
 功能菜单只响应群聊中的 `菜单` 和 `功能菜单`，并从可信入站消息确定当前租户、机器人、渠道和群会话。执行载荷不能伪造身份、机器人或目标群，运维执行入口也不能生成业务菜单。
 
 菜单只展示当前机器人已经启用、当前渠道支持、当前群未停用且具有命令或关键词触发方式的目录插件。定时插件、系统插件、停用插件、群级关闭插件和无用户触发方式的插件不会展示；旧状态查询、群列表、插件启停、管理员管理、图片模板和自动撤回链路均已删除。菜单只生成标准文本回复，不依赖微信、企业微信或 Telegram Provider。
+
+## GScore 适配迁移边界
+
+GScore 只保留 `早柚` 业务查询命令，服务地址和 API Key 由当前租户插件绑定维护，平台不提供共享服务或密钥。旧全局 WebSocket 单例、自动重连、`重连早柚` 管理命令、微信联系人查询和管理员判断链路均已删除；插件禁用或租户配置不完整时不会创建外部 HTTP 客户端。
+
+查询内容、发送人、机器人、渠道和会话只从可信入站消息及数据库归属链生成，执行载荷中的同名字段不能覆盖。GScore 响应只读取固定 `content` 数组并转换为标准文本、纯文本 Markdown 和 base64 图片；远程图片 URL、文件路径及不支持的媒体类型不会触发额外下载。响应中的 `target_id`、`bot_id`、`tenant_id` 和 `channel_id` 全部丢弃，结果始终由当前执行链路投递回原会话。
