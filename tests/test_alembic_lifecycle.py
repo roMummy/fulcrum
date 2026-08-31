@@ -75,13 +75,14 @@ def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) 
     actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
 
     assert _current_revision(database_path) == expected_database_revision()
-    assert expected_database_revision() == "20260831_0016"
+    assert expected_database_revision() == "20260901_0018"
     assert actual_tables == set(Base.metadata.tables)
     assert DELETED_TABLES.isdisjoint(actual_tables)
     assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})
     bot_plugin_columns = {column["name"] for column in inspector.get_columns("bot_plugins")}
     assert {"secret_config_encrypted", "secret_config_version"} <= bot_plugin_columns
     assert "plugin_state_records" in actual_tables
+    assert "fun_command_rules" in actual_tables
     task_job_columns = {column["name"] for column in inspector.get_columns("task_jobs")}
     assert "dedupe_key" in task_job_columns
     # 平台大盘的跨租户查询必须命中明确的组合索引，不能依赖数据量小时的全表扫描表现。

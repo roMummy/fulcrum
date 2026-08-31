@@ -1,5 +1,5 @@
 from app.models.entities import Bot, BotPlugin, Channel, Conversation, ErrorLog, Message, Plugin, PluginStateRecord, TaskJob
-from app.models.plugin_business import CouponAccountBinding
+from app.models.plugin_business import CouponAccountBinding, FunCommandRule
 from app.models.saas import (
     BillingOrder,
     BotBinding,
@@ -33,6 +33,7 @@ __all__ = [
     "TaskJob",
     "ErrorLog",
     "CouponAccountBinding",
+    "FunCommandRule",
     "PlatformUser",
     "PlatformSession",
     "PlatformProtocolService",

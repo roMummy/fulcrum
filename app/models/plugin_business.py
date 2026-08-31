@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
@@ -68,3 +68,46 @@ class CouponAccountBinding(Base, TenantOwnedMixin, TimestampMixin):
     channel = relationship("Channel")
     conversation = relationship("Conversation")
     last_message = relationship("Message")
+
+
+class FunCommandRule(Base, TenantOwnedMixin, TimestampMixin):
+    """保存一个租户机器人绑定内可直接触发的趣味命令及标准回复动作。"""
+
+    __tablename__ = "fun_command_rules"
+    __table_args__ = (
+        # 一个机器人只允许维护一条同名触发规则，避免 exact、prefix 等不同匹配方式
+        # 对同一文本形成不透明的执行顺序；需要调整行为时应直接修改现有规则。
+        UniqueConstraint(
+            "tenant_id",
+            "bot_plugin_id",
+            "trigger_text",
+            name="uq_fun_command_rules_binding_trigger",
+        ),
+        CheckConstraint(
+            "match_type IN ('exact', 'prefix', 'contains')",
+            name="ck_fun_command_rules_match_type",
+        ),
+        CheckConstraint(
+            "cooldown_seconds >= 0 AND cooldown_seconds <= 86400",
+            name="ck_fun_command_rules_cooldown",
+        ),
+        Index(
+            "ix_fun_command_rules_binding_enabled_priority",
+            "tenant_id",
+            "bot_plugin_id",
+            "is_enabled",
+            "priority",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bot_plugin_id: Mapped[int] = mapped_column(ForeignKey("bot_plugins.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    trigger_text: Mapped[str] = mapped_column(String(255), nullable=False)
+    match_type: Mapped[str] = mapped_column(String(20), nullable=False, default="exact")
+    replies_json: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    bot_plugin = relationship("BotPlugin")
