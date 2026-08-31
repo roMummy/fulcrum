@@ -24,7 +24,7 @@
 | `daily_news` | 无固定外部成本 | 无 | 已审核 | `4a8ec15` | `pytest -q tests/test_existing_ai_content_plugins.py -k daily_news`（3 passed）；调度测试 6 passed |
 | `dify` | 租户承担 Dify 成本 | API Key | 已审核 | `6b21339` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k dify`（3 passed） |
 | `douyin_parser` | 租户承担抖音解析服务成本 | 可选 API Key | 已审核 | `3bbd653` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k douyin_parser`（2 passed）；插件相关组合验证 27 passed |
-| `douyu` | 无固定外部成本 | 无 | 待审核 | - | - |
+| `douyu` | 无固定外部成本 | 无 | 已审核 | `227b646` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py`（12 passed）；斗鱼统一调度 1 passed；调度、迁移和目录契约组合验证 10 passed |
 | `duanju_search` | 视租户短剧搜索服务而定 | 可选 API Key | 已审核 | `fc02305` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k duanju_search`（2 passed）；插件相关组合验证 29 passed |
 | `game_task` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `global_news` | 租户承担 LLM 成本 | API Key | 已审核 | `88839bb` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k global_news`（3 passed）；插件相关组合验证 37 passed |
@@ -86,3 +86,9 @@
 ## SaaS 自有插件
 
 `customer_operations` 和 `supplier_order_flow` 是当前 SaaS 自有能力，不属于 A-BOT 迁移范围，继续遵守现有租户、渠道和 Open API 边界。
+
+## 斗鱼审核边界
+
+当前 SaaS 已实现斗鱼房间开播/下播提醒、鱼吧动态、成员提醒名单、官方高能增量推送和统一定时轮询。订阅定义保存在插件绑定普通配置中，房间状态、鱼吧最新动态、高能房间基线和会话投递基线保存在 `PluginStateRecord`，聊天命令只使用可信租户、机器人、会话和发送人上下文。
+
+A-BOT 的斗鱼弹幕日报和粉丝日报依赖独立弹幕采集、直播会话、观众统计、图片渲染与模型生成链路。当前 SaaS 尚未具备这些真实数据源，因此本次不注册日报命令、不生成替代文本，也不把官方高能摘要伪装成弹幕日报。后续若建设跨渠道弹幕采集域，应以独立业务表和统一调度能力重新设计，不把大型日报素材塞入插件小型状态表。
