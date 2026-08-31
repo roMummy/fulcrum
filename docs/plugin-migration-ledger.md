@@ -52,7 +52,7 @@
 | `github_opengraph` | GitHub 链接图片预览 | 无固定外部成本 | 散列盐 | 已迁移 | `84a255d` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_github_opengraph.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（13 passed） |
 | `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 已迁移 | `e0c6535` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_robot_menu.py tests/test_plugin_migration_catalog.py`（4 passed） |
 | `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 已迁移 | `88890a7` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_gscore_adapter.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（14 passed） |
-| `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 待迁移 | - | - |
+| `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 已迁移 | `a8de7e4` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_ai_gen_image.py tests/test_plugin_common_services.py tests/test_plugin_runtime_secrets.py tests/test_plugin_migration_catalog.py`（22 passed） |
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
 | `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 待迁移 | - | - |
 | `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌 | 待迁移 | - | - |
@@ -134,3 +134,9 @@ GitHub 链接预览只接受 `github.com` 下至少包含 owner/repository 的�
 GScore 只保留 `早柚` 业务查询命令，服务地址和 API Key 由当前租户插件绑定维护，平台不提供共享服务或密钥。旧全局 WebSocket 单例、自动重连、`重连早柚` 管理命令、微信联系人查询和管理员判断链路均已删除；插件禁用或租户配置不完整时不会创建外部 HTTP 客户端。
 
 查询内容、发送人、机器人、渠道和会话只从可信入站消息及数据库归属链生成，执行载荷中的同名字段不能覆盖。GScore 响应只读取固定 `content` 数组并转换为标准文本、纯文本 Markdown 和 base64 图片；远程图片 URL、文件路径及不支持的媒体类型不会触发额外下载。响应中的 `target_id`、`bot_id`、`tenant_id` 和 `channel_id` 全部丢弃，结果始终由当前执行链路投递回原会话。
+
+## AI 绘图迁移边界
+
+AI 绘图保留 `AI绘图`、`绘图`、`画图` 和 `生成图片` 四个业务命令。API Base、模型和请求超时由当前租户普通配置维护，API Key 保存到当前插件绑定密文；平台不提供共享模型、共享密钥、全局 LLM 场景或旧图片接口回退。
+
+文本生图固定调用 OpenAI 兼容 `/images/generations`，当前消息存在已下载的可信图片附件时固定调用 `/images/edits`。提示词只从落库入站消息解析，参考图只从当前租户、渠道、会话和消息关联的附件记录读取；执行载荷不能覆盖提示词、模型、地址或附件路径。请求在平台已有异步插件分发任务中执行，图片结果只接受受限 JSON 中的有效 `b64_json`，经内存校验后生成标准图片回复，不保存临时文件，也不调用微信、企业微信或 Telegram 专用发送接口。
