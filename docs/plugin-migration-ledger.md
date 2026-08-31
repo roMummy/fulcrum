@@ -18,7 +18,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `ai_auto_response` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | `b2a2a0e` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k ai_auto_response`（3 passed） |
 | `daily_news` | 无固定外部成本 | 无 | 已审核 | `4a8ec15` | `pytest -q tests/test_existing_ai_content_plugins.py -k daily_news`（3 passed）；调度测试 6 passed |
-| `dify` | 租户承担 Dify 成本 | API Key | 已审核 | 待统一回填 | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k dify`（3 passed） |
+| `dify` | 租户承担 Dify 成本 | API Key | 已审核 | `6b21339` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k dify`（3 passed） |
 | `douyin_parser` | 视租户解析服务而定 | 外部 API Key | 待审核 | - | - |
 | `douyu` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `duanju_search` | 无固定外部成本 | 无 | 待审核 | - | - |
@@ -33,7 +33,7 @@
 | `lucky_pot` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `message_push_task` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `message_sign` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `message_summary` | 租户承担 LLM/Dify 成本 | API Key | 待审核 | - | - |
+| `message_summary` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | `12bab98`、`89e9efb` | 群总结定向 4 passed；统一调度 6 passed；消息读取 7 passed |
 | `music` | 视租户音乐服务而定 | 可选凭证 | 待审核 | - | - |
 | `point_trade` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `weather` | 视租户天气服务而定 | API Key | 待审核 | - | - |
