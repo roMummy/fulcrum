@@ -992,11 +992,19 @@ def build_plugin_toggle_matrix(
     plugin_runtime_map: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     binding_map = {(binding.bot_id, binding.plugin_id): binding for binding in bindings}
+    # 插件开关是实际业务入口，只展示已经验证可执行的目录插件。损坏 manifest
+    # 或缺少真实入口的镜像仍留在下方诊断清单，但不能被租户绑定或启用。
+    executable_plugins = [
+        plugin
+        for plugin in plugins
+        if plugin_runtime_map.get(plugin.code, {}).get("migration_state") == "migrated"
+        and bool(plugin_runtime_map.get(plugin.code, {}).get("supports_execution"))
+    ]
     rows: list[dict[str, object]] = []
     for bot in bots:
         plugin_items: list[dict[str, object]] = []
         enabled_count = 0
-        for plugin in plugins:
+        for plugin in executable_plugins:
             runtime_info = plugin_runtime_map.get(plugin.code, {})
             binding = binding_map.get((bot.id, plugin.id))
             is_enabled = str(binding.status or "").strip() == "enabled" if binding else bool(plugin.default_enabled)

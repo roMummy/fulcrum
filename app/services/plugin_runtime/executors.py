@@ -8,40 +8,6 @@ from app.services.plugin_directory import get_plugin_default_config, load_direct
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
 
 
-class PlaceholderExecutor:
-    def __init__(self, plugin_code: str):
-        self.plugin_code = plugin_code
-
-    def execute(self, request: PluginExecutionRequest) -> PluginExecutionResult:
-        if request.action == "reload":
-            return PluginExecutionResult(
-                ok=True,
-                status="running",
-                message=f"{self.plugin_code} 已接入当前项目插件目录，等待继续补齐执行逻辑。",
-                output={
-                    "plugin_code": self.plugin_code,
-                    "migration_state": "scaffolded",
-                    "config_keys": sorted(request.config.keys()),
-                },
-            )
-
-        if request.action != "execute":
-            return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-
-        return PluginExecutionResult(
-            ok=True,
-            status="stub",
-            message=f"{self.plugin_code} 已完成迁移骨架接入，当前执行链路已接管，但具体业务逻辑仍待继续补齐。",
-            output={
-                "plugin_code": self.plugin_code,
-                "migration_state": "scaffolded",
-                "content": str(request.payload.get("content") or ""),
-                "command_name": request.payload.get("command_name"),
-                "conversation_id": request.payload.get("conversation_id"),
-            },
-        )
-
-
 class DirectoryRuntimeExecutor:
     def __init__(self, plugin_code: str):
         self.plugin_code = plugin_code

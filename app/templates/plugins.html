@@ -206,8 +206,8 @@
           <p><code>{{ plugin.code }}</code></p>
         </div>
         <div class="plugin-overview-badges">
-          <span class="badge {% if runtime_info.manifest_valid %}badge-enabled{% else %}badge-error{% endif %}">
-            {{ 'Manifest 正常' if runtime_info.manifest_valid else 'Manifest 异常' }}
+          <span class="badge {% if runtime_info.migration_state == 'migrated' %}badge-enabled{% else %}badge-error{% endif %}">
+            {{ '状态正常' if runtime_info.migration_state == 'migrated' else '需要处理' }}
           </span>
           <span class="badge {% if runtime_info.supports_execution %}badge-info{% else %}badge-disabled{% endif %}">
             {{ '可执行' if runtime_info.supports_execution else '不可执行' }}

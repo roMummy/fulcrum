@@ -4,7 +4,9 @@
   {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
   <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">进入业务后台</a>
   {% endif %}
+  {% if plugin_runtime_info.supports_execution %}
   <button class="btn" type="button" data-modal-open="create-plugin-binding-modal">绑定到机器人</button>
+  {% endif %}
   <a class="btn btn-secondary" href="/plugins/runtime">查看全部运行状态</a>
 </div>
 {% endblock %}
@@ -14,11 +16,11 @@
     <div>
       <div class="chip-row">
         <span class="chip chip-outline">{{ plugin.plugin_type or '插件' }}</span>
-        <span class="chip {% if plugin_runtime_info.manifest_valid %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '状态正常' if plugin_runtime_info.manifest_valid else '需要处理' }}
+        <span class="chip {% if plugin_runtime_info.migration_state == 'migrated' %}chip-success{% else %}chip-muted{% endif %}">
+          {{ '状态正常' if plugin_runtime_info.migration_state == 'migrated' else '需要处理' }}
         </span>
         <span class="chip {% if plugin_runtime_info.supports_execution %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '可执行' if plugin_runtime_info.supports_execution else '仅配置型' }}
+          {{ '可执行' if plugin_runtime_info.supports_execution else '不可执行' }}
         </span>
       </div>
       <h2 class="plugin-detail-title">{{ plugin.display_name }}</h2>

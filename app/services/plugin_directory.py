@@ -1138,13 +1138,12 @@ def _execute_candidate(
             candidate=candidate,
             attempted=False,
             ok=False,
-            status="deferred",
-            message="目录插件处理器未实现，runtime executor 也不可用。",
+            status="invalid",
+            message="插件缺少真实执行入口，已拒绝执行。",
             debug={
-                "execution_source": "deferred",
+                "execution_source": "invalid_plugin",
                 "duration_ms": int((time.perf_counter() - started_at) * 1000),
                 **timeout_debug,
-                "legacy_runtime_available": bool(runtime_definition and runtime_definition.supports_execution),
                 "entrypoint_name": candidate.entrypoint_name,
             },
         )

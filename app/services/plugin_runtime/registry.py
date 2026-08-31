@@ -44,11 +44,11 @@ class PluginConfigSchema:
 class PluginRuntimeDefinition:
     plugin_code: str
     architecture_source: str
-    plugin_category: str = "functional"
-    migration_state: str = "planned"
+    plugin_category: str
+    migration_state: str
+    execution_capability: str
     schema: PluginConfigSchema | None = None
     executor: PluginExecutor | None = None
-    execution_capability: str = "schema-only"
     capabilities: tuple[str, ...] = field(default_factory=tuple)
     admin_surfaces: tuple[str, ...] = field(default_factory=tuple)
     admin_extension: Mapping[str, Any] = field(default_factory=dict)
@@ -108,10 +108,10 @@ def get_plugin_runtime_meta(plugin_code: str | None) -> Mapping[str, Any]:
         }
     return {
         "plugin_code": discovered.manifest.code,
-        "architecture_source": definition.architecture_source if definition else "directory",
+        "architecture_source": definition.architecture_source if definition else "invalid",
         "plugin_category": definition.plugin_category if definition else _derive_plugin_category(discovered),
-        "migration_state": definition.migration_state if definition else "discovered",
-        "execution_capability": definition.execution_capability if definition else "manifest-only",
+        "migration_state": definition.migration_state if definition else "invalid",
+        "execution_capability": definition.execution_capability if definition else "invalid",
         "capabilities": definition.capabilities if definition else (),
         "admin_surfaces": definition.admin_surfaces if definition else (),
         "admin_extension": dict(definition.admin_extension) if definition else {},
@@ -144,25 +144,33 @@ def _build_runtime_definition(discovered: DiscoveredPlugin | None) -> PluginRunt
     if not discovered:
         return None
     supports_execution = _supports_runtime_execution(discovered)
-    schema = _build_plugin_schema(discovered)
+    # 无真实入口的目录不能继续生成可保存配置的表单，否则租户会看到一个能够
+    # 绑定却永远不会执行的插件。只有完成 manifest 校验并成功加载入口后才
+    # 提供 schema 和执行器，迁移状态也只保留 migrated/invalid 两种产品结果。
+    schema = _build_plugin_schema(discovered) if supports_execution else None
     return PluginRuntimeDefinition(
         plugin_code=discovered.manifest.code,
-        architecture_source="plugin_runtime" if supports_execution else "directory",
+        architecture_source="plugin_runtime" if supports_execution else "invalid",
         plugin_category=_derive_plugin_category(discovered),
         migration_state=_derive_migration_state(discovered, supports_execution),
         schema=schema,
         executor=DirectoryRuntimeExecutor(discovered.manifest.code) if supports_execution else None,
-        execution_capability="reload,execute" if supports_execution else "schema-only",
+        execution_capability="reload,execute" if supports_execution else "invalid",
         capabilities=_derive_capabilities(discovered, supports_execution),
-        admin_surfaces=_derive_admin_surfaces(discovered),
-        admin_extension=_derive_admin_extension(discovered),
+        admin_surfaces=_derive_admin_surfaces(discovered) if supports_execution else (),
+        admin_extension=_derive_admin_extension(discovered) if supports_execution else {"enabled": False},
     )
 
 
 def _supports_runtime_execution(discovered: DiscoveredPlugin) -> bool:
     if not discovered.is_valid:
         return False
-    loaded = load_directory_plugin(discovered.manifest.code)
+    try:
+        loaded = load_directory_plugin(discovered.manifest.code)
+    except Exception:
+        # 模块导入错误属于插件本身无可执行入口，运行定义必须标记 invalid，
+        # 不能让插件管理页面因为单个目录损坏而整体返回 500。
+        return False
     return bool(
         loaded
         and loaded.instance
@@ -181,19 +189,14 @@ def _derive_plugin_category(discovered: DiscoveredPlugin) -> str:
 
 
 def _derive_migration_state(discovered: DiscoveredPlugin, supports_execution: bool) -> str:
-    if not discovered.is_valid:
-        return "invalid"
-    if supports_execution:
-        return "migrated"
-    return "discovered"
+    return "migrated" if discovered.is_valid and supports_execution else "invalid"
 
 
 def _derive_capabilities(discovered: DiscoveredPlugin, supports_execution: bool) -> tuple[str, ...]:
+    if not supports_execution:
+        return ("invalid",)
     items: list[str] = []
-    if supports_execution:
-        items.extend(["reload", "execute", "schema-form"])
-    else:
-        items.append("schema-form")
+    items.extend(["reload", "execute", "schema-form"])
     plugin_type = (discovered.manifest.plugin_type or "").strip().lower()
     if plugin_type:
         items.append(plugin_type)
