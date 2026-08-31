@@ -326,3 +326,110 @@ def test_weather_subscription_uses_trusted_context_and_unified_daily_push(weathe
         assert unsubscribed.ok is True
         assert first.status == "cancelled"
         assert second.status == "active"
+
+
+def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
+    """点歌删除固定内网地址和微信 XML，改用租户服务与标准文件回复。"""
+
+    discovered = get_discovered_plugin("music", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌")
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["api_base"] == ""
+    assert discovered.runtime_config["quality"] == "exhigh"
+    assert "music_api_url" not in discovered.runtime_config
+    assert "song_api_url" not in discovered.runtime_config
+
+    loaded = load_directory_plugin("music", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    captured: list[dict[str, object]] = []
+
+    class FakeHttpClient:
+        def request(self, method, url, **kwargs):  # noqa: ANN001
+            captured.append({"method": method, "url": url, "kwargs": kwargs})
+            if "/Search?" in url:
+                payload = {
+                    "success": True,
+                    "status": 200,
+                    "data": [
+                        {
+                            "id": "song-001",
+                            "name": "夜空中最亮的星",
+                            "artist_string": "逃跑计划",
+                            "provider_trace": "must-not-persist",
+                        }
+                    ],
+                }
+            else:
+                payload = {
+                    "success": True,
+                    "status": 200,
+                    "data": {
+                        "name": "夜空中最亮的星",
+                        "ar_name": "逃跑计划",
+                        "url": "https://media.example.test/song-001",
+                        "pic": "https://media.example.test/song-001.jpg",
+                        "provider_trace": "must-not-persist",
+                    },
+                }
+            return PluginHttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                url=url,
+            )
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "api_base": "https://music.example.test",
+            "api_key": "tenant-music-key",
+            "quality": "lossless",
+        },
+        payload={"content": "/点歌 夜空中最亮的星", "command_args": "夜空中最亮的星"},
+    )
+    with patch.object(module, "PluginHttpClient", return_value=FakeHttpClient()):
+        result = module.execute_action(request)
+
+    assert result.ok is True
+    assert len(captured) == 2
+    assert "/Search?" in str(captured[0]["url"])
+    assert "/Song_V1?" in str(captured[1]["url"])
+    assert captured[0]["kwargs"]["headers"]["Authorization"] == "Bearer tenant-music-key"
+    assert result.output["replies"][0]["type"] == "text"
+    assert result.output["replies"][1] == {
+        "type": "file",
+        "file_name": "逃跑计划 - 夜空中最亮的星.mp3",
+        "file_url": "https://media.example.test/song-001",
+    }
+    serialized = json.dumps(result.output, ensure_ascii=False)
+    assert "tenant-music-key" not in serialized
+    assert "provider_trace" not in serialized
+    assert "music_xml" not in serialized
+
+    source = (PROJECT_ROOT / "plugins/music/plugin.py").read_text(encoding="utf-8")
+    assert "urlrequest" not in source
+    assert "MUSIC_XML" not in source
+    assert "192.168.2.240" not in source
+
+
+def test_music_rejects_missing_service_and_invalid_play_url() -> None:
+    """未配置租户服务时直接返回业务错误，非 HTTP 播放地址不能进入出站任务。"""
+
+    loaded = load_directory_plugin("music", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    missing = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={"enabled": True, "api_base": ""},
+            payload={"content": "点歌 测试歌曲"},
+        )
+    )
+    assert missing.ok is False
+    assert missing.output["provider_status"] == "music_not_configured"
+
+    assert module._public_http_url("file:///tmp/song.mp3") == ""
+    assert module._public_http_url("https://user:pass@media.example.test/song.mp3") == ""

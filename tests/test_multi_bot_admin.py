@@ -2009,9 +2009,9 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "music_api_url": "http://music.example/search?keywords={keywords}&limit=10",
-                    "default_timeout": 10,
-                    "detail_level": "exhigh",
+                    "api_base": "https://music.example.test",
+                    "quality": "exhigh",
+                    "timeout_seconds": 15,
                 }
             )
             db.commit()
@@ -2033,8 +2033,16 @@ consume_policy = "shared"
                                     "status": "completed",
                                     "message": "音乐点播完成。",
                                     "output": {
-                                        "provider_status": "found",
-                                        "music_xml": "<appmsg><title>夜空中最亮的星</title></appmsg>",
+                                        "provider_status": "completed",
+                                        "song_name": "夜空中最亮的星",
+                                        "artist_name": "逃跑计划",
+                                        "replies": [
+                                            {
+                                                "type": "file",
+                                                "file_name": "逃跑计划 - 夜空中最亮的星.mp3",
+                                                "file_url": "https://media.example.test/song-001",
+                                            }
+                                        ],
                                     },
                                 }
                             )
@@ -2049,8 +2057,8 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "music")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "found")
-        self.assertIn("<appmsg", data["output"]["music_xml"])
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["replies"][0]["type"], "file")
 
     def test_message_sign_plugin_execution_endpoint_persists_sign_state(self):
         self.login("ops", "ops123")
