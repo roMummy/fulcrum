@@ -38,7 +38,7 @@
 | `message_push_task` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `message_sign` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `message_summary` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | `12bab98`、`89e9efb` | 群总结定向 4 passed；统一调度 6 passed；消息读取 7 passed |
-| `music` | 视租户音乐服务而定 | 可选凭证 | 待审核 | - | - |
+| `music` | 租户承担音乐聚合服务成本 | 可选 API Key | 已审核 | `6bac843` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k music`（2 passed）；插件相关组合验证 25 passed |
 | `point_trade` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `weather` | 租户承担和风天气 API 成本 | API Key | 已审核 | `051575b` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k weather`（3 passed）；统一调度 6 passed；插件相关组合验证 31 passed |
 
