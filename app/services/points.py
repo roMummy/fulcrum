@@ -256,6 +256,226 @@ class PointsService:
         ).all()
         return [self._serialize_account(item) for item in rows]
 
+    def settle_robbery_success(
+        self,
+        robber_user_id: str,
+        target_user_id: str,
+        group_id: str,
+        *,
+        robbed_points: int,
+        tax_points: int,
+        robber_user_name: str | None = None,
+        target_user_name: str | None = None,
+        idempotency_key: str,
+    ) -> PointsResult:
+        """在一个事务中完成目标扣款、打劫者入账和系统抽成。"""
+
+        normalized_key = self._normalize_idempotency_key(idempotency_key, max_length=175)
+        if normalized_key is None:
+            raise ValueError("打劫结算必须提供幂等键")
+        if robber_user_id == target_user_id:
+            return PointsResult(ok=False, message="不能打劫自己。")
+        total_points = int(robbed_points)
+        tax_amount = int(tax_points)
+        actual_amount = total_points - tax_amount
+        if total_points <= 0 or tax_amount <= 0 or actual_amount <= 0:
+            return PointsResult(ok=False, message="打劫结算金额不合法。")
+
+        final_key = f"{normalized_key}:tax"
+        existing = self._find_idempotent_transaction(final_key)
+        if existing is not None:
+            return self._robbery_result(
+                robber_user_id,
+                target_user_id,
+                group_id,
+                actual_amount=actual_amount,
+                tax_amount=tax_amount,
+                idempotent=True,
+                transaction_id=int(existing.id),
+            )
+
+        robber = self.ensure_account(robber_user_id, group_id, robber_user_name)
+        target = self.ensure_account(target_user_id, group_id, target_user_name)
+        system = self.ensure_account(SYSTEM_USER_ID, group_id, "系统")
+        if int(target.total_points or 0) < total_points:
+            return PointsResult(
+                ok=False,
+                message=f"目标积分不足，当前仅有 {int(target.total_points or 0)} 积分。",
+                account=self._serialize_account(target),
+            )
+
+        target.total_points = int(target.total_points or 0) - total_points
+        robber.total_points = int(robber.total_points or 0) + actual_amount
+        system.total_points = int(system.total_points or 0) + tax_amount
+        # 三条流水使用同一个业务键的固定后缀，最终 tax 键承担整个事务的并发仲裁。
+        self._create_transaction(
+            user_id=target_user_id,
+            group_id=group_id,
+            points_delta=-total_points,
+            balance_after=target.total_points,
+            source="rob",
+            description=f"被 {robber_user_name or robber_user_id} 打劫",
+            counterparty_user_id=robber_user_id,
+            metadata={"robbed_points": total_points, "tax_points": tax_amount},
+            idempotency_key=f"{normalized_key}:target",
+        )
+        self._create_transaction(
+            user_id=robber_user_id,
+            group_id=group_id,
+            points_delta=actual_amount,
+            balance_after=robber.total_points,
+            source="rob",
+            description=f"打劫 {target_user_name or target_user_id} 成功",
+            counterparty_user_id=target_user_id,
+            metadata={"robbed_points": total_points, "tax_points": tax_amount},
+            idempotency_key=f"{normalized_key}:robber",
+        )
+        self._create_transaction(
+            user_id=SYSTEM_USER_ID,
+            group_id=group_id,
+            points_delta=tax_amount,
+            balance_after=system.total_points,
+            source="rob_tax",
+            description="打劫系统结算",
+            counterparty_user_id=target_user_id,
+            metadata={"robber_user_id": robber_user_id, "robbed_points": total_points},
+            idempotency_key=final_key,
+        )
+        duplicate = self._commit_or_load_duplicate(final_key)
+        if duplicate is not None:
+            return self._robbery_result(
+                robber_user_id,
+                target_user_id,
+                group_id,
+                actual_amount=actual_amount,
+                tax_amount=tax_amount,
+                idempotent=True,
+                transaction_id=int(duplicate.id),
+            )
+        return self._robbery_result(
+            robber_user_id,
+            target_user_id,
+            group_id,
+            actual_amount=actual_amount,
+            tax_amount=tax_amount,
+        )
+
+    def settle_robbery_failure(
+        self,
+        robber_user_id: str,
+        target_user_id: str,
+        group_id: str,
+        *,
+        penalty_points: int,
+        prison_hours: int,
+        robber_user_name: str | None = None,
+        target_user_name: str | None = None,
+        idempotency_key: str,
+    ) -> PointsResult:
+        """在一个事务中完成失败罚款、目标入账和打劫者入狱。"""
+
+        normalized_key = self._normalize_idempotency_key(idempotency_key, max_length=175)
+        if normalized_key is None:
+            raise ValueError("打劫失败结算必须提供幂等键")
+        penalty = int(penalty_points)
+        if penalty <= 0:
+            return PointsResult(ok=False, message="打劫罚款必须大于 0。")
+        final_key = f"{normalized_key}:target"
+        existing = self._find_idempotent_transaction(final_key)
+        if existing is not None:
+            robber = self.ensure_account(robber_user_id, group_id, robber_user_name)
+            target = self.ensure_account(target_user_id, group_id, target_user_name)
+            return PointsResult(
+                ok=True,
+                message="打劫失败结算已处理。",
+                extra={
+                    "idempotent": True,
+                    "transaction_id": int(existing.id),
+                    "robber": self._serialize_account(robber),
+                    "target": self._serialize_account(target),
+                    "penalty_points": penalty,
+                },
+            )
+
+        robber = self.ensure_account(robber_user_id, group_id, robber_user_name)
+        target = self.ensure_account(target_user_id, group_id, target_user_name)
+        if int(robber.total_points or 0) < penalty:
+            return PointsResult(
+                ok=False,
+                message=f"积分不足，当前仅有 {int(robber.total_points or 0)} 积分。",
+                account=self._serialize_account(robber),
+            )
+        robber.total_points = int(robber.total_points or 0) - penalty
+        target.total_points = int(target.total_points or 0) + penalty
+        self._create_transaction(
+            user_id=robber_user_id,
+            group_id=group_id,
+            points_delta=-penalty,
+            balance_after=robber.total_points,
+            source="rob_penalty",
+            description=f"打劫 {target_user_name or target_user_id} 失败罚款",
+            counterparty_user_id=target_user_id,
+            metadata={"prison_hours": int(prison_hours)},
+            idempotency_key=f"{normalized_key}:robber",
+        )
+        self._create_transaction(
+            user_id=target_user_id,
+            group_id=group_id,
+            points_delta=penalty,
+            balance_after=target.total_points,
+            source="rob_penalty",
+            description=f"收到 {robber_user_name or robber_user_id} 的打劫失败罚款",
+            counterparty_user_id=robber_user_id,
+            metadata={"prison_hours": int(prison_hours)},
+            idempotency_key=final_key,
+        )
+
+        current_time = now_shanghai()
+        active_prisons = self.db.scalars(
+            select(PointsPrisonRecord).where(
+                PointsPrisonRecord.user_id == robber_user_id,
+                PointsPrisonRecord.group_id == group_id,
+                PointsPrisonRecord.status == "imprisoned",
+            )
+        ).all()
+        for item in active_prisons:
+            item.status = "expired"
+            item.end_at = current_time
+        self.db.add(
+            PointsPrisonRecord(
+                user_id=robber_user_id,
+                group_id=group_id,
+                status="imprisoned",
+                reason=f"打劫 {target_user_name or target_user_id} 失败",
+                start_at=current_time,
+                end_at=current_time + timedelta(hours=max(1, int(prison_hours))),
+            )
+        )
+        duplicate = self._commit_or_load_duplicate(final_key)
+        if duplicate is not None:
+            robber = self.ensure_account(robber_user_id, group_id, robber_user_name)
+            target = self.ensure_account(target_user_id, group_id, target_user_name)
+            return PointsResult(
+                ok=True,
+                message="打劫失败结算已处理。",
+                extra={
+                    "idempotent": True,
+                    "transaction_id": int(duplicate.id),
+                    "robber": self._serialize_account(robber),
+                    "target": self._serialize_account(target),
+                    "penalty_points": penalty,
+                },
+            )
+        return PointsResult(
+            ok=True,
+            message="打劫失败结算成功。",
+            extra={
+                "robber": self._serialize_account(robber),
+                "target": self._serialize_account(target),
+                "penalty_points": penalty,
+            },
+        )
+
     def check_prison_status(self, user_id: str, group_id: str) -> dict[str, object] | None:
         now = now_shanghai()
         record = self.db.scalar(
@@ -304,7 +524,30 @@ class PointsService:
         self.db.commit()
         return PointsResult(ok=True, message="已关押用户。")
 
-    def bailout_user(self, prisoner_user_id: str, bailout_user_id: str, group_id: str) -> PointsResult:
+    def bailout_user(
+        self,
+        prisoner_user_id: str,
+        bailout_user_id: str,
+        group_id: str,
+        *,
+        prisoner_user_name: str | None = None,
+        bailout_user_name: str | None = None,
+        idempotency_key: str,
+    ) -> PointsResult:
+        """在一个事务中扣除保释费用并释放目标用户。"""
+
+        normalized_key = self._normalize_idempotency_key(idempotency_key)
+        if normalized_key is None:
+            raise ValueError("保释必须提供幂等键")
+        existing = self._find_idempotent_transaction(normalized_key)
+        if existing is not None:
+            account = self.ensure_account(bailout_user_id, group_id, bailout_user_name)
+            return PointsResult(
+                ok=True,
+                message="保释已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(existing.id)},
+            )
         prison = self.db.scalar(
             select(PointsPrisonRecord)
             .where(
@@ -318,22 +561,68 @@ class PointsService:
         if prison is None:
             return PointsResult(ok=False, message="目标当前未在服刑。")
 
-        deduct_result = self.deduct_points(
-            bailout_user_id,
-            group_id,
-            BAILOUT_COST,
+        account = self.ensure_account(bailout_user_id, group_id, bailout_user_name)
+        if int(account.total_points or 0) < BAILOUT_COST:
+            return PointsResult(
+                ok=False,
+                message=f"积分不足，当前仅有 {int(account.total_points or 0)} 积分。",
+                account=self._serialize_account(account),
+            )
+        account.total_points = int(account.total_points or 0) - BAILOUT_COST
+        self._create_transaction(
+            user_id=bailout_user_id,
+            group_id=group_id,
+            points_delta=-BAILOUT_COST,
+            balance_after=account.total_points,
             source="bailout",
-            description=f"保释 {prisoner_user_id}",
+            description=f"保释 {prisoner_user_name or prisoner_user_id}",
             counterparty_user_id=prisoner_user_id,
+            metadata={"prison_record_id": int(prison.id)},
+            idempotency_key=normalized_key,
         )
-        if not deduct_result.ok:
-            return deduct_result
 
         prison.status = "bailed_out"
         prison.bailed_out_by = bailout_user_id
         prison.end_at = now_shanghai()
-        self.db.commit()
-        return PointsResult(ok=True, message="保释成功。")
+        duplicate = self._commit_or_load_duplicate(normalized_key)
+        if duplicate is not None:
+            account = self.ensure_account(bailout_user_id, group_id, bailout_user_name)
+            return PointsResult(
+                ok=True,
+                message="保释已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(duplicate.id)},
+            )
+        return PointsResult(ok=True, message="保释成功。", account=self._serialize_account(account))
+
+    def _robbery_result(
+        self,
+        robber_user_id: str,
+        target_user_id: str,
+        group_id: str,
+        *,
+        actual_amount: int,
+        tax_amount: int,
+        idempotent: bool = False,
+        transaction_id: int | None = None,
+    ) -> PointsResult:
+        """统一序列化打劫成功后的三个积分账户。"""
+
+        robber = self.ensure_account(robber_user_id, group_id)
+        target = self.ensure_account(target_user_id, group_id)
+        system = self.ensure_account(SYSTEM_USER_ID, group_id, "系统")
+        extra: dict[str, object] = {
+            "robber": self._serialize_account(robber),
+            "target": self._serialize_account(target),
+            "system": self._serialize_account(system),
+            "actual_amount": int(actual_amount),
+            "tax_amount": int(tax_amount),
+        }
+        if idempotent:
+            extra["idempotent"] = True
+        if transaction_id is not None:
+            extra["transaction_id"] = int(transaction_id)
+        return PointsResult(ok=True, message="打劫成功结算完成。", extra=extra)
 
     def _find_account(self, user_id: str, group_id: str) -> PointsAccount | None:
         return self.db.scalar(select(PointsAccount).where(PointsAccount.user_id == user_id, PointsAccount.group_id == group_id))

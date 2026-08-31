@@ -27,17 +27,21 @@ from app.models.entities import (
     Bot,
     BotPlugin,
     Channel,
+    Chatroom,
+    ChatroomMember,
     Conversation,
     Message,
     Plugin,
     PointsAccount,
+    PointsPrisonRecord,
     PointsTransaction,
+    PluginStateRecord,
     SignInHistory,
     SignInRecord,
     TaskJob,
 )
 from app.models.saas import Tenant
-from app.services.points import PointsService
+from app.services.points import BAILOUT_COST, PointsService
 from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
 from app.services.plugin_runtime.http_client import PluginHttpResponse
@@ -364,6 +368,103 @@ def message_sign_fixture(tmp_path: Path):
         engine.dispose()
 
 
+@pytest.fixture()
+def point_trade_fixture(tmp_path: Path):
+    """建立积分交易群和标准群成员，验证跨渠道统一目标解析与原子结算。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'point-trade.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="point-trade", name="积分交易租户", status="active")
+        plugin = Plugin(code="point_trade", display_name="积分交易", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="积分机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="积分 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="trade-room",
+            title="积分群",
+            chat_type="group",
+        )
+        other_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="other-trade-room",
+            title="其他积分群",
+            chat_type="group",
+        )
+        db.add_all([conversation, other_conversation])
+        db.flush()
+        chatroom = Chatroom(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            external_id="trade-room",
+            name="积分群",
+            status="active",
+            is_active=True,
+        )
+        db.add(chatroom)
+        db.flush()
+        for user_id, name in (
+            ("trade-alpha", "甲"),
+            ("trade-beta", "乙"),
+            ("trade-gamma", "丙"),
+            ("trade-delta", "丁"),
+        ):
+            db.add(
+                ChatroomMember(
+                    tenant_id=tenant.id,
+                    chatroom_id=chatroom.id,
+                    bot_id=bot.id,
+                    channel_id=channel.id,
+                    member_external_id=user_id,
+                    nickname=name,
+                    display_name=name,
+                    status="active",
+                )
+            )
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "other_conversation_id": int(other_conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
 def _game_message_request(
     db,
     identity: dict[str, int],
@@ -578,6 +679,60 @@ def _message_sign_request(
             "max_streak_point": 50,
             "makeup_cost": 10,
         },
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id=sender_id,
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+
+
+def _point_trade_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    sender_id: str,
+    sender_name: str,
+    config: dict[str, object] | None = None,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """创建真实积分群消息，并允许用 payload 伪造字段验证身份隔离。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id=sender_id,
+        sender_name=sender_name,
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    effective_config: dict[str, object] = {
+        "enabled": True,
+        "ranking_limit": 10,
+        "rob_success_rate": 0.4,
+        "rob_min_percent": 0.2,
+        "rob_max_percent": 0.4,
+        "rob_penalty_percent": 0.1,
+        "rob_cooldown": 300,
+        "rob_min_points": 30,
+    }
+    effective_config.update(config or {})
+    return PluginExecutionRequest(
+        action="execute",
+        config=effective_config,
         payload=payload or {},
         context=PluginExecutionContext(
             tenant_id=identity["tenant_id"],
@@ -1137,6 +1292,286 @@ def test_message_sign_makeup_restores_full_streak_and_deducts_once(message_sign_
         f":{request.context.message_id}:makeup"
     )
     assert account is not None and account.total_points == 18
+
+
+def test_point_trade_uses_trusted_group_target_and_idempotent_transfer(point_trade_fixture) -> None:
+    """转账目标从当前群成员解析，载荷伪造字段和重复消息不能改变交易结果。"""
+
+    factory, identity = point_trade_fixture
+    discovered = get_discovered_plugin("point_trade", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("积分转账", "我的积分", "积分排行", "打劫", "保释")
+    assert "telegram" in discovered.capability.channel_types
+
+    loaded = load_directory_plugin("point_trade", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        service = PointsService(db)
+        service.add_points(
+            "trade-alpha",
+            "trade-room",
+            50,
+            user_name="甲",
+            source="test_seed",
+            idempotency_key="test-seed:point-trade:alpha",
+        )
+        service.add_points(
+            "trade-beta",
+            "trade-room",
+            5,
+            user_name="乙",
+            source="test_seed",
+            idempotency_key="test-seed:point-trade:beta",
+        )
+        request = _point_trade_request(
+            db,
+            identity,
+            content="/积分转账 12 @乙",
+            sender_id="trade-alpha",
+            sender_name="甲",
+            payload={
+                "amount": 999,
+                "target_user_id": "trade-gamma",
+                "target_user_name": "伪造目标",
+                "sender_id": "forged-user",
+                "conversation_external_id": "other-trade-room",
+            },
+        )
+        first = module.execute_message_action(db, request)
+        repeated = module.execute_message_action(db, request)
+        detail = module.execute_message_action(
+            db,
+            _point_trade_request(
+                db,
+                identity,
+                content="我的积分",
+                sender_id="trade-alpha",
+                sender_name="甲",
+            ),
+        )
+        ranking = module.execute_message_action(
+            db,
+            _point_trade_request(
+                db,
+                identity,
+                content="积分排行",
+                sender_id="trade-alpha",
+                sender_name="甲",
+            ),
+        )
+        alpha = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "trade-alpha",
+                PointsAccount.group_id == "trade-room",
+            )
+        )
+        beta = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "trade-beta",
+                PointsAccount.group_id == "trade-room",
+            )
+        )
+        trade_transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.group_id == "trade-room",
+                PointsTransaction.source == "trade",
+            )
+        ).all()
+        forged = db.scalar(
+            select(PointsAccount).where(
+                (PointsAccount.user_id == "trade-gamma")
+                | (PointsAccount.group_id == "other-trade-room")
+            )
+        )
+
+    assert first.ok is True and first.output["provider_status"] == "transfer_completed"
+    assert repeated.ok is True and repeated.output["provider_status"] == "transfer_completed"
+    assert first.output["amount"] == 12
+    assert detail.output["provider_status"] == "points_detail"
+    assert detail.output["account"]["total_points"] == 38
+    assert ranking.output["provider_status"] == "ranking"
+    assert [item["user_id"] for item in ranking.output["ranking"]] == ["trade-alpha", "trade-beta"]
+    assert alpha is not None and alpha.total_points == 38
+    assert beta is not None and beta.total_points == 17
+    assert len(trade_transactions) == 2
+    assert {item.points_delta for item in trade_transactions} == {-12, 12}
+    assert all(item.idempotency_key and f":{request.context.message_id}:transfer:" in item.idempotency_key for item in trade_transactions)
+    assert forged is None
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={},
+            payload={
+                "sender_id": "trade-alpha",
+                "target_user_id": "trade-beta",
+                "amount": 12,
+                "content": "积分转账 12 @乙",
+            },
+        )
+    )
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+    source = (PROJECT_ROOT / "plugins/point_trade/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "request.payload.get" not in source
+    assert 'payload.get("target_user_id")' not in source
+    assert "random.random" not in source
+
+
+def test_point_trade_robbery_success_is_atomic_stable_and_cooled_down(point_trade_fixture) -> None:
+    """打劫成功一次性结算目标、打劫者和系统账户，并使用持久冷却阻止重复消息。"""
+
+    factory, identity = point_trade_fixture
+    loaded = load_directory_plugin("point_trade", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        service = PointsService(db)
+        service.add_points(
+            "trade-alpha",
+            "trade-room",
+            100,
+            user_name="甲",
+            source="test_seed",
+            idempotency_key="test-seed:point-trade:robber-success",
+        )
+        service.add_points(
+            "trade-beta",
+            "trade-room",
+            100,
+            user_name="乙",
+            source="test_seed",
+            idempotency_key="test-seed:point-trade:target-success",
+        )
+        request = _point_trade_request(
+            db,
+            identity,
+            content="打劫 @乙",
+            sender_id="trade-alpha",
+            sender_name="甲",
+            config={
+                "rob_success_rate": 1.0,
+                "rob_min_percent": 0.2,
+                "rob_max_percent": 0.2,
+                "rob_cooldown": 300,
+            },
+        )
+        first = module.execute_message_action(db, request)
+        repeated = module.execute_message_action(db, request)
+        accounts = {
+            item.user_id: item
+            for item in db.scalars(
+                select(PointsAccount).where(PointsAccount.group_id == "trade-room")
+            ).all()
+        }
+        robbery_transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.group_id == "trade-room",
+                PointsTransaction.source.in_(("rob", "rob_tax")),
+            )
+        ).all()
+        cooldown_states = db.scalars(
+            select(PluginStateRecord).where(
+                PluginStateRecord.bot_plugin_id == identity["binding_id"],
+                PluginStateRecord.namespace == "point_trade",
+            )
+        ).all()
+
+    assert first.ok is True and first.output["provider_status"] == "rob_success"
+    assert first.output["robbed_points"] == 20
+    assert first.output["amount"] == 16
+    assert first.output["tax_amount"] == 4
+    assert repeated.ok is False and repeated.output["provider_status"] == "rob_cooldown"
+    assert accounts["trade-alpha"].total_points == 116
+    assert accounts["trade-beta"].total_points == 80
+    assert accounts["SYSTEM"].total_points == 4
+    assert len(robbery_transactions) == 3
+    assert sorted(item.points_delta for item in robbery_transactions) == [-20, 4, 16]
+    assert len(cooldown_states) == 1
+
+
+def test_point_trade_robbery_failure_and_bailout_are_atomic(point_trade_fixture) -> None:
+    """打劫失败罚款与入狱同事务提交，保释重复执行只扣一次费用。"""
+
+    factory, identity = point_trade_fixture
+    loaded = load_directory_plugin("point_trade", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        service = PointsService(db)
+        for user_id, name, points in (
+            ("trade-gamma", "丙", 100),
+            ("trade-beta", "乙", 100),
+            ("trade-delta", "丁", 50),
+        ):
+            service.add_points(
+                user_id,
+                "trade-room",
+                points,
+                user_name=name,
+                source="test_seed",
+                idempotency_key=f"test-seed:point-trade:{user_id}",
+            )
+        failed = module.execute_message_action(
+            db,
+            _point_trade_request(
+                db,
+                identity,
+                content="打劫 @乙",
+                sender_id="trade-gamma",
+                sender_name="丙",
+                config={"rob_success_rate": 0.0, "rob_penalty_percent": 0.1, "rob_cooldown": 0},
+            ),
+        )
+        bailout_request = _point_trade_request(
+            db,
+            identity,
+            content="保释 @丙",
+            sender_id="trade-delta",
+            sender_name="丁",
+        )
+        bailed = module.execute_message_action(db, bailout_request)
+        repeated_bailout = module.execute_message_action(db, bailout_request)
+        accounts = {
+            item.user_id: item
+            for item in db.scalars(
+                select(PointsAccount).where(PointsAccount.group_id == "trade-room")
+            ).all()
+        }
+        prison = db.scalar(
+            select(PointsPrisonRecord).where(
+                PointsPrisonRecord.user_id == "trade-gamma",
+                PointsPrisonRecord.group_id == "trade-room",
+            )
+        )
+        penalty_transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.group_id == "trade-room",
+                PointsTransaction.source == "rob_penalty",
+            )
+        ).all()
+        bailout_transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.group_id == "trade-room",
+                PointsTransaction.source == "bailout",
+            )
+        ).all()
+
+    assert failed.ok is True and failed.output["provider_status"] == "rob_failed"
+    assert failed.output["penalty_amount"] == 10
+    assert bailed.ok is True and bailed.output["provider_status"] == "bailout_success"
+    assert repeated_bailout.ok is True and repeated_bailout.output["provider_status"] == "bailout_success"
+    assert accounts["trade-gamma"].total_points == 90
+    assert accounts["trade-beta"].total_points == 110
+    assert accounts["trade-delta"].total_points == 20
+    assert prison is not None and prison.status == "bailed_out" and prison.bailed_out_by == "trade-delta"
+    assert len(penalty_transactions) == 2
+    assert sorted(item.points_delta for item in penalty_transactions) == [-10, 10]
+    assert len(bailout_transactions) == 1 and bailout_transactions[0].points_delta == -BAILOUT_COST
+    assert bailout_transactions[0].idempotency_key and bailout_transactions[0].idempotency_key.endswith(
+        f":{bailout_request.context.message_id}:bailout"
+    )
 
 
 def test_game_task_scheduled_assignment_queues_one_trusted_outbound_job(game_task_fixture, monkeypatch) -> None:
