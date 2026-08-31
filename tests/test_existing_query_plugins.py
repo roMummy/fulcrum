@@ -22,7 +22,16 @@ os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
-from app.models.entities import Bot, Channel, Conversation, TaskJob, WeatherSubscription
+from app.models.entities import (
+    Bot,
+    BotPlugin,
+    Channel,
+    Conversation,
+    Plugin,
+    PluginStateRecord,
+    TaskJob,
+    WeatherSubscription,
+)
 from app.models.saas import Tenant
 from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
@@ -110,6 +119,84 @@ def weather_fixture(tmp_path: Path):
             "alpha_channel_id": int(alpha_channel.id),
             "alpha_conversation_id": int(alpha_conversation.id),
             "beta_conversation_id": int(beta_conversation.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+@pytest.fixture()
+def douyu_fixture(tmp_path: Path):
+    """准备斗鱼绑定及两个群会话，用来验证身份边界、状态隔离和定时投递。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'douyu.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="douyu-query", name="斗鱼查询租户", status="active")
+        plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="斗鱼机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="斗鱼 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        primary = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="douyu-primary",
+            chat_type="group",
+        )
+        forged = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="douyu-forged",
+            chat_type="group",
+        )
+        db.add_all([primary, forged])
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "admin_user_ids": ["admin-1"],
+                    "room_subscriptions": {str(primary.id): ["100"]},
+                    "yuba_subscriptions": {str(primary.id): ["yuba-100"]},
+                    "reminder_subscribers": {str(primary.id): ["admin-1"]},
+                    "highlight_push_conversation_ids": [str(primary.id)],
+                    "highlight_enabled": True,
+                    "highlight_interval_seconds": 60,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "binding_id": int(binding.id),
+            "channel_id": int(channel.id),
+            "primary_conversation_id": int(primary.id),
+            "forged_conversation_id": int(forged.id),
         }
     try:
         yield factory, identity
@@ -667,3 +754,374 @@ def test_duanju_search_limits_results_and_filters_invalid_links() -> None:
     assert module._public_http_url("file:///tmp/drama") == ""
     assert module._public_http_url("https://user:pass@drama.example.test/1") == ""
     assert module._clean_title("短剧《雪中来信》免费观看") == "雪中来信"
+
+
+def test_douyu_uses_official_http_endpoints_and_standard_text_replies() -> None:
+    """斗鱼查询、鱼吧和官方高能全部经过受控 HTTP，并且不再返回微信 XML。"""
+
+    discovered = get_discovered_plugin("douyu", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == (
+        "斗鱼订阅",
+        "取消斗鱼订阅",
+        "斗鱼订阅列表",
+        "斗鱼订阅提醒",
+        "取消斗鱼订阅提醒",
+        "开启斗鱼高能推送",
+        "关闭斗鱼高能推送",
+        "斗鱼高能推送状态",
+        "订阅鱼吧",
+        "取消订阅鱼吧",
+        "鱼吧订阅列表",
+    )
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["highlight_enabled"] is True
+    assert discovered.runtime_config["highlight_interval_seconds"] == 600
+    for removed_key in ("push_all_channels", "room_states", "yuba_last_feed_ids"):
+        assert removed_key not in discovered.runtime_config
+
+    loaded = load_directory_plugin("douyu", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    captured: list[dict[str, object]] = []
+
+    class FakeHttpClient:
+        def request(self, method, url, **kwargs):  # noqa: ANN001
+            captured.append({"method": method, "url": url, "kwargs": kwargs})
+            if method == "POST":
+                payload = {
+                    "error": 0,
+                    "data": {
+                        "highlightList": [
+                            {
+                                "globalHighlightId": "highlight-1",
+                                "highlightId": "local-1",
+                                "title": "关键团战",
+                                "describe": "主播完成关键反打",
+                                "heat": 999,
+                            }
+                        ]
+                    },
+                }
+            elif "feed/getUserFeedList" in url:
+                payload = {
+                    "error": 0,
+                    "data": {
+                        "feed_list": [
+                            {
+                                "feed_id": "feed-1",
+                                "home_feed_top": 0,
+                                "text": "今天晚上八点开播",
+                                "publisher": {"nickname": "主播甲"},
+                            }
+                        ]
+                    },
+                }
+            else:
+                payload = {
+                    "room": {
+                        "show_status": 1,
+                        "videoLoop": 0,
+                        "nickname": "主播甲",
+                        "room_name": "测试直播",
+                        "avatar": {"small": "https://img.example.test/room.jpg"},
+                    }
+                }
+            return PluginHttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                url=url,
+            )
+
+    config = {
+        "api_url_template": "https://www.douyu.com/betard/{room_id}",
+        "yuba_api_url": "https://yuba.douyu.com/wgapi/yubanc/api/feed/getUserFeedList",
+        "highlight_api_url": "https://www.douyu.com/wgapi/vodnc/center/ailive/getHighlightDetail",
+        "timeout_seconds": 10,
+        "feed_limit": 3,
+    }
+    with patch.object(module, "PluginHttpClient", return_value=FakeHttpClient()):
+        room_result = module.execute_action(
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"operation": "room_status", "room_id": "100"},
+            )
+        )
+        yuba_result = module.execute_action(
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"operation": "yuba_feed", "hash_id": "yuba-100"},
+            )
+        )
+        highlights = module._fetch_highlights("100", module._load_config(config))
+
+    assert room_result.ok is True
+    assert room_result.output["provider_status"] == "live"
+    assert room_result.output["replies"][0]["type"] == "text"
+    assert "https://www.douyu.com/100" in room_result.output["replies"][0]["content"]
+    assert "douyu_xml" not in room_result.output
+    assert yuba_result.ok is True
+    assert yuba_result.output["result_count"] == 1
+    assert "items" not in yuba_result.output
+    assert highlights[0]["global_highlight_id"] == "highlight-1"
+    assert [item["method"] for item in captured] == ["GET", "GET", "POST"]
+    assert captured[2]["kwargs"]["json_body"] == {"rid": 100}
+
+    source = (PROJECT_ROOT / "plugins/douyu/plugin.py").read_text(encoding="utf-8")
+    assert "DOUYU_XML" not in source
+    assert "room_states" not in source
+    assert "yuba_last_feed_ids" not in source
+    assert "_target_key" not in source
+
+
+def test_douyu_subscription_commands_use_trusted_conversation_and_sender(douyu_fixture) -> None:
+    """订阅、高能开关和提醒名单只能使用可信上下文，伪造载荷不能改到其他群。"""
+
+    factory, identity = douyu_fixture
+    loaded = load_directory_plugin("douyu", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    primary_key = str(identity["primary_conversation_id"])
+    config = {
+        "admin_user_ids": ["admin-1"],
+        "room_subscriptions": {primary_key: ["100"]},
+        "reminder_subscribers": {},
+        "highlight_push_conversation_ids": [],
+    }
+    trusted_context = PluginExecutionContext(
+        tenant_id=identity["tenant_id"],
+        binding_id=identity["binding_id"],
+        bot_id=identity["bot_id"],
+        channel_id=identity["channel_id"],
+        conversation_id=identity["primary_conversation_id"],
+        sender_id="admin-1",
+        channel_type="telegram",
+        chat_type="group",
+        message_type="text",
+    )
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        db.add(
+            PluginStateRecord(
+                tenant_id=identity["tenant_id"],
+                bot_plugin_id=identity["binding_id"],
+                namespace="douyu_highlight_room",
+                state_key="100",
+                payload_json=json.dumps({"initialized": True, "known_ids": ["old-1"]}),
+            )
+        )
+        db.flush()
+        subscribed = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={
+                    "content": "斗鱼订阅 200",
+                    "command_name": "斗鱼订阅",
+                    "command_args": "200",
+                    "conversation_id": identity["forged_conversation_id"],
+                },
+                context=trusted_context,
+            ),
+        )
+        assert subscribed.ok is True
+        assert subscribed.output["config_patch"]["room_subscriptions"] == {primary_key: ["100", "200"]}
+
+        reminded = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={
+                    "content": "斗鱼订阅提醒",
+                    "command_name": "斗鱼订阅提醒",
+                    "sender_id": "forged-sender",
+                },
+                context=trusted_context,
+            ),
+        )
+        assert reminded.output["config_patch"]["reminder_subscribers"] == {primary_key: ["admin-1"]}
+
+        enabled = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"content": "开启斗鱼高能推送", "command_name": "开启斗鱼高能推送"},
+                context=trusted_context,
+            ),
+        )
+        assert enabled.ok is True
+        assert enabled.output["config_patch"]["highlight_push_conversation_ids"] == [primary_key]
+        delivery_state = db.scalar(
+            select(PluginStateRecord).where(
+                PluginStateRecord.bot_plugin_id == identity["binding_id"],
+                PluginStateRecord.namespace == "douyu_highlight_delivery",
+                PluginStateRecord.state_key == f"{primary_key}:100",
+            )
+        )
+        assert delivery_state is not None
+        assert json.loads(delivery_state.payload_json)["delivered_ids"] == ["old-1"]
+
+        forbidden = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"content": "开启斗鱼高能推送", "command_name": "开启斗鱼高能推送"},
+                context=PluginExecutionContext(
+                    tenant_id=identity["tenant_id"],
+                    binding_id=identity["binding_id"],
+                    bot_id=identity["bot_id"],
+                    channel_id=identity["channel_id"],
+                    conversation_id=identity["primary_conversation_id"],
+                    sender_id="member-2",
+                    channel_type="telegram",
+                    chat_type="group",
+                    message_type="text",
+                ),
+            ),
+        )
+        assert forbidden.ok is False
+        assert forbidden.status == "forbidden"
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config=config,
+            payload={"content": "斗鱼订阅 300", "command_name": "斗鱼订阅", "conversation_id": 999},
+        )
+    )
+    assert untrusted.ok is False
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+
+def test_douyu_scheduler_persists_yuba_and_highlight_state_outside_binding(douyu_fixture) -> None:
+    """鱼吧和高能轮询状态进入独立状态表，成功入队后只记录小型去重信息。"""
+
+    factory, identity = douyu_fixture
+    loaded = load_directory_plugin("douyu", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    primary_key = str(identity["primary_conversation_id"])
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        binding = db.get(BotPlugin, identity["binding_id"])
+        assert binding is not None
+        db.add_all(
+            [
+                PluginStateRecord(
+                    tenant_id=identity["tenant_id"],
+                    bot_plugin_id=identity["binding_id"],
+                    namespace="douyu_room",
+                    state_key="100",
+                    payload_json=json.dumps({"provider_status": "live"}),
+                ),
+                PluginStateRecord(
+                    tenant_id=identity["tenant_id"],
+                    bot_plugin_id=identity["binding_id"],
+                    namespace="douyu_yuba",
+                    state_key="yuba-100",
+                    payload_json=json.dumps({"latest_feed_id": "feed-old"}),
+                ),
+                PluginStateRecord(
+                    tenant_id=identity["tenant_id"],
+                    bot_plugin_id=identity["binding_id"],
+                    namespace="douyu_highlight_room",
+                    state_key="100",
+                    payload_json=json.dumps(
+                        {
+                            "initialized": True,
+                            "known_ids": ["highlight-old"],
+                            "last_fetch_at": "2026-08-30T00:00:00+08:00",
+                        }
+                    ),
+                ),
+                PluginStateRecord(
+                    tenant_id=identity["tenant_id"],
+                    bot_plugin_id=identity["binding_id"],
+                    namespace="douyu_highlight_delivery",
+                    state_key=f"{primary_key}:100",
+                    payload_json=json.dumps({"delivered_ids": ["highlight-old"]}),
+                ),
+            ]
+        )
+        db.flush()
+        request = PluginExecutionRequest(
+            action="poll_subscriptions",
+            config=json.loads(binding.config_json or "{}"),
+            context=PluginExecutionContext(
+                tenant_id=identity["tenant_id"],
+                binding_id=identity["binding_id"],
+                bot_id=identity["bot_id"],
+            ),
+        )
+        live_room = {
+            "provider_status": "live",
+            "room_id": "100",
+            "nickname": "主播甲",
+            "room_name": "测试直播",
+            "room_url": "https://www.douyu.com/100",
+        }
+        feed_items = [
+            {
+                "feed_id": "feed-new",
+                "nickname": "主播甲",
+                "text": "新动态",
+                "url": "https://yuba.douyu.com/feed/feed-new",
+            }
+        ]
+        highlights = [
+            {
+                "global_highlight_id": "highlight-old",
+                "title": "旧高能",
+                "description": "旧内容",
+                "heat": 100,
+            },
+            {
+                "global_highlight_id": "highlight-new",
+                "title": "新高能",
+                "description": "关键反打",
+                "heat": 999,
+            },
+        ]
+        with (
+            patch.object(module, "_fetch_room_status_output", return_value=live_room),
+            patch.object(module, "_fetch_yuba_feed", return_value=feed_items),
+            patch.object(module, "_fetch_highlights", return_value=highlights),
+        ):
+            result = module.execute_scheduled_action(db, request)
+
+        assert result.ok is True
+        assert result.output["event_count"] == 2
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+        assert len(jobs) == 2
+        contents = [json.loads(job.payload_json)["payload"]["content"] for job in jobs]
+        assert any("鱼吧更新提醒" in content for content in contents)
+        assert any("斗鱼官方高能" in content and "关键反打" in content for content in contents)
+
+        yuba_state = db.scalar(
+            select(PluginStateRecord).where(
+                PluginStateRecord.bot_plugin_id == identity["binding_id"],
+                PluginStateRecord.namespace == "douyu_yuba",
+                PluginStateRecord.state_key == "yuba-100",
+            )
+        )
+        delivery_state = db.scalar(
+            select(PluginStateRecord).where(
+                PluginStateRecord.bot_plugin_id == identity["binding_id"],
+                PluginStateRecord.namespace == "douyu_highlight_delivery",
+                PluginStateRecord.state_key == f"{primary_key}:100",
+            )
+        )
+        assert yuba_state is not None
+        assert json.loads(yuba_state.payload_json)["latest_feed_id"] == "feed-new"
+        assert delivery_state is not None
+        assert json.loads(delivery_state.payload_json)["delivered_ids"] == ["highlight-new", "highlight-old"]
+        stored_config = json.loads(binding.config_json or "{}")
+        assert "room_states" not in stored_config
+        assert "yuba_last_feed_ids" not in stored_config

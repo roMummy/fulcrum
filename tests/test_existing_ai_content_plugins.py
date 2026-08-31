@@ -26,7 +26,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import SHANGHAI_TZ
-from app.models.entities import Bot, BotPlugin, Channel, Conversation, Plugin, TaskJob
+from app.models.entities import Bot, BotPlugin, Channel, Conversation, Plugin, PluginStateRecord, TaskJob
 from app.models.saas import Tenant
 from app.services.plugin_directory import (
     _extract_command_args,
@@ -1109,6 +1109,8 @@ def douyu_schedule_fixture(tmp_path: Path):
             external_id="room-douyu",
             chat_type="group",
         )
+        db.add(conversation)
+        db.flush()
         binding = BotPlugin(
             tenant_id=tenant.id,
             bot_id=bot.id,
@@ -1116,13 +1118,23 @@ def douyu_schedule_fixture(tmp_path: Path):
             status="enabled",
             config_json=json.dumps(
                 {
-                    "room_subscriptions": {"room-douyu": ["100"]},
-                    "room_states": {"100": {"provider_status": "offline"}},
+                    "room_subscriptions": {str(conversation.id): ["100"]},
+                    "highlight_enabled": False,
                     "poll_interval_seconds": 60,
                 }
             ),
         )
-        db.add_all([conversation, binding])
+        db.add(binding)
+        db.flush()
+        db.add(
+            PluginStateRecord(
+                tenant_id=tenant.id,
+                bot_plugin_id=binding.id,
+                namespace="douyu_room",
+                state_key="100",
+                payload_json=json.dumps({"provider_status": "offline"}, ensure_ascii=False),
+            )
+        )
         db.commit()
         identity = {
             "tenant_id": int(tenant.id),
@@ -1181,4 +1193,13 @@ def test_douyu_scheduled_poll_uses_tenant_session_and_generic_text(douyu_schedul
         assert payload["payload"]["message_type"] == "text"
         assert "douyu.com/100" in payload["payload"]["content"]
         stored = json.loads(binding.config_json or "{}")
-        assert stored["room_states"]["100"]["provider_status"] == "live"
+        assert "room_states" not in stored
+        room_state = db.scalar(
+            select(PluginStateRecord).where(
+                PluginStateRecord.bot_plugin_id == identity["binding_id"],
+                PluginStateRecord.namespace == "douyu_room",
+                PluginStateRecord.state_key == "100",
+            )
+        )
+        assert room_state is not None
+        assert json.loads(room_state.payload_json)["provider_status"] == "live"

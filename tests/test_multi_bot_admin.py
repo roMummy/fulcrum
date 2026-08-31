@@ -64,6 +64,7 @@ from app.services.plugin_directory import (
 )
 from app.services.plugin_runtime import get_plugin_runtime_definition, get_plugin_runtime_meta, list_plugin_runtime_definitions
 from app.services.plugin_runtime.contracts import PluginExecutionRequest
+from app.services.plugin_runtime.http_client import PluginHttpResponse
 from app.services.plugin_schemas import build_plugin_config_view, get_plugin_config_schema
 from app.services.task_queue import enqueue_job
 from app.services.seed import seed_auth_users
@@ -3455,39 +3456,35 @@ consume_policy = "shared"
         loaded = load_directory_plugin("douyu", force=True)
         self.assertIsNotNone(loaded)
         self.assertIsNotNone(loaded.instance)
+        module = loaded.instance._module
 
-        class FakeResponse:
-            def __init__(self, payload, url="http://example.test/final"):
-                self.payload = payload
-                self.url = url
-
-            def read(self):
-                return json.dumps(self.payload).encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        def fake_urlopen(req, timeout=0):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-            if "betard" in url:
-                return FakeResponse(
-                    {
-                        "room": {
-                            "show_status": 1,
-                            "videoLoop": 0,
-                            "nickname": "Streamer A",
-                            "room_name": "Test Live",
-                            "avatar": {"small": "http://img.example/cover.jpg"},
+        class FakeHttpClient:
+            def request(self, method, url, **kwargs):
+                self.assert_request(method, url, kwargs)
+                return PluginHttpResponse(
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    body=json.dumps(
+                        {
+                            "room": {
+                                "show_status": 1,
+                                "videoLoop": 0,
+                                "nickname": "Streamer A",
+                                "room_name": "Test Live",
+                            }
                         }
-                    },
+                    ).encode("utf-8"),
                     url=url,
                 )
-            raise AssertionError(f"unexpected url: {url}")
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            @staticmethod
+            def assert_request(method, url, kwargs):
+                if method != "GET" or "betard" not in url:
+                    raise AssertionError(f"unexpected request: {method} {url}")
+                if kwargs["max_response_bytes"] != 2 * 1024 * 1024:
+                    raise AssertionError("missing response size limit")
+
+        with patch.object(module, "PluginHttpClient", return_value=FakeHttpClient()):
             status_result = loaded.instance.execute_action(
                 PluginExecutionRequest(
                     action="execute",
@@ -3498,18 +3495,19 @@ consume_policy = "shared"
         status_output = status_result["output"] if isinstance(status_result, dict) else status_result.output
         self.assertEqual(status_output["provider_status"], "live")
         self.assertEqual(status_output["room_id"], "12345")
-        self.assertIn("<appmsg", status_output["douyu_xml"])
+        self.assertEqual(status_output["replies"][0]["type"], "text")
+        self.assertIn("https://www.douyu.com/12345", status_output["replies"][0]["content"])
+        self.assertNotIn("douyu_xml", status_output)
 
         plan_result = loaded.instance.execute_action(
             PluginExecutionRequest(
                 action="execute",
                 config={},
-                payload={"operation": "subscribe_plan", "room_id": "12345", "subscriptions": ["99999"]},
+                payload={"operation": "subscribe_room", "room_id": "12345", "conversation_id": 999},
             )
         )
         plan_output = plan_result["output"] if isinstance(plan_result, dict) else plan_result.output
-        self.assertEqual(plan_output["provider_status"], "planned")
-        self.assertEqual(plan_output["subscriptions"], ["12345", "99999"])
+        self.assertEqual(plan_output["provider_status"], "trusted_context_required")
 
     def test_plugin_reload_uses_new_runtime_for_migrated_plugins(self):
         self.login("ops", "ops123")
