@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
+from app.core.time import now_shanghai
 from app.models.entities import (
     Bot,
     BotPlugin,
@@ -224,6 +226,74 @@ def lucky_pot_fixture(tmp_path: Path):
         engine.dispose()
 
 
+@pytest.fixture()
+def message_push_fixture(tmp_path: Path):
+    """建立两个群会话和一个定时推送绑定，验证任务始终锁定当前群。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'message-push.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="message-push", name="定时推送租户", status="active")
+        plugin = Plugin(code="message_push_task", display_name="定时推送", plugin_type="scheduled")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="推送机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="推送 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="push-room",
+            title="推送群",
+            chat_type="group",
+        )
+        other_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="other-room",
+            title="其他群",
+            chat_type="group",
+        )
+        db.add_all([conversation, other_conversation])
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "other_conversation_id": int(other_conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
 def _game_message_request(
     db,
     identity: dict[str, int],
@@ -358,6 +428,46 @@ def _lucky_message_request(
             conversation_id=identity["conversation_id"],
             message_id=int(message.id),
             sender_id=sender_id,
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+
+
+def _message_push_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """创建真实群文本消息，测试载荷中的伪造定位字段不会被插件读取。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id="push-admin",
+        sender_name="群管理员",
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    return PluginExecutionRequest(
+        action="execute",
+        config={},
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id="push-admin",
             channel_type="telegram",
             chat_type="group",
             message_type="text",
@@ -566,6 +676,163 @@ def test_game_task_uses_trusted_group_state_and_idempotent_points(game_task_fixt
     assert "request.payload.get" not in source
     assert 'payload.get("sender_id")' not in source
     assert 'payload.get("conversation_external_id")' not in source
+
+
+def test_message_push_task_creates_idempotent_text_job_from_trusted_group(message_push_fixture) -> None:
+    """定时推送只采用真实群消息的时间和内容，同一消息重复执行只创建一个任务。"""
+
+    factory, identity = message_push_fixture
+    discovered = get_discovered_plugin("message_push_task", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("定时推送",)
+    assert "telegram" in discovered.capability.channel_types
+
+    loaded = load_directory_plugin("message_push_task", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    schedule_at = (now_shanghai() + timedelta(days=1)).replace(microsecond=0)
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        request = _message_push_request(
+            db,
+            identity,
+            content=f"/定时推送 创建 {schedule_at.isoformat()} 明天上午开会",
+            payload={
+                "conversation_id": identity["other_conversation_id"],
+                "content": "伪造内容",
+                "message_type": "image",
+                "xml": "<forged />",
+                "image_path": "/tmp/forged.png",
+            },
+        )
+        first = module.execute_message_action(db, request)
+        repeated = module.execute_message_action(db, request)
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+
+    assert first.ok is True and repeated.ok is True
+    assert first.output["provider_status"] == "scheduled"
+    assert repeated.output["job_id"] == first.output["job_id"]
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.related_type == "message_push_task_binding"
+    assert job.related_id == identity["binding_id"]
+    assert job.max_attempts == 1
+    assert job.dedupe_key and f":{identity['conversation_id']}:" in job.dedupe_key
+    payload = json.loads(job.payload_json)
+    assert payload["plugin_code"] == "message_push_task"
+    assert payload["conversation_id"] == identity["conversation_id"]
+    assert payload["payload"] == {
+        "external_id": "push-room",
+        "receiver_id": "push-room",
+        "chat_type": "group",
+        "message_type": "text",
+        "content": "明天上午开会",
+    }
+    assert "forged" not in job.payload_json
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={},
+            payload={
+                "conversation_id": identity["conversation_id"],
+                "schedule_at": schedule_at.isoformat(),
+                "content": "伪造推送",
+            },
+        )
+    )
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/message_push_task/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "request.payload.get" not in source
+    assert 'payload.get("external_id")' not in source
+    assert 'payload.get("channel_id")' not in source
+
+
+def test_message_push_task_lists_and_cancels_only_current_conversation(message_push_fixture) -> None:
+    """列表和取消同时校验当前插件绑定、插件代码与群会话，拒绝跨群任务。"""
+
+    factory, identity = message_push_fixture
+    loaded = load_directory_plugin("message_push_task", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    schedule_at = (now_shanghai() + timedelta(days=1)).replace(microsecond=0)
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        created = module.execute_message_action(
+            db,
+            _message_push_request(
+                db,
+                identity,
+                content=f"定时推送 创建 {schedule_at.isoformat()} 当前群提醒",
+            ),
+        )
+        current_job_id = int(created.output["job_id"])
+        # 构造同一绑定下的其他群任务和同群其他插件任务，验证查询不会因为
+        # related_id 相同而越过会话及 plugin_code 边界。
+        other_conversation_job = TaskJob(
+            tenant_id=identity["tenant_id"],
+            job_type="outbound_dispatch",
+            status="pending",
+            priority=80,
+            max_attempts=1,
+            available_at=schedule_at,
+            related_type="message_push_task_binding",
+            related_id=identity["binding_id"],
+            payload_json=json.dumps(
+                {
+                    "channel_id": identity["channel_id"],
+                    "conversation_id": identity["other_conversation_id"],
+                    "plugin_code": "message_push_task",
+                    "payload": {"message_type": "text", "content": "其他群提醒"},
+                },
+                ensure_ascii=False,
+            ),
+        )
+        other_plugin_job = TaskJob(
+            tenant_id=identity["tenant_id"],
+            job_type="outbound_dispatch",
+            status="pending",
+            priority=80,
+            max_attempts=1,
+            available_at=schedule_at,
+            related_type="message_push_task_binding",
+            related_id=identity["binding_id"],
+            payload_json=json.dumps(
+                {
+                    "channel_id": identity["channel_id"],
+                    "conversation_id": identity["conversation_id"],
+                    "plugin_code": "other_plugin",
+                    "payload": {"message_type": "text", "content": "其他插件提醒"},
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add_all([other_conversation_job, other_plugin_job])
+        db.commit()
+
+        listed = module.execute_message_action(
+            db,
+            _message_push_request(db, identity, content="定时推送 列表"),
+        )
+        denied = module.execute_message_action(
+            db,
+            _message_push_request(db, identity, content=f"定时推送 取消 {other_conversation_job.id}"),
+        )
+        cancelled = module.execute_message_action(
+            db,
+            _message_push_request(db, identity, content=f"定时推送 取消 {current_job_id}"),
+        )
+        current_job = db.get(TaskJob, current_job_id)
+        foreign_job = db.get(TaskJob, other_conversation_job.id)
+
+    assert listed.output["provider_status"] == "listed"
+    assert [item["job_id"] for item in listed.output["tasks"]] == [current_job_id]
+    assert denied.ok is False and denied.output["provider_status"] == "task_not_found"
+    assert cancelled.ok is True and cancelled.output["provider_status"] == "cancelled"
+    assert current_job is not None and current_job.status == "cancelled"
+    assert foreign_job is not None and foreign_job.status == "pending"
 
 
 def test_game_task_scheduled_assignment_queues_one_trusted_outbound_job(game_task_fixture, monkeypatch) -> None:

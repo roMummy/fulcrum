@@ -2978,47 +2978,6 @@ consume_policy = "shared"
         )
         self.assertEqual(group_ids, ["room-a@chatroom", "room-b@chatroom"])
 
-    def test_message_push_task_plugin_execution_endpoint_enqueues_outbound_job(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_push_task"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"enable": True})
-            conversation = db.scalar(select(Conversation).where(Conversation.external_id == "room_001"))
-            self.assertIsNotNone(conversation)
-            db.commit()
-            binding_id = binding.id
-            conversation_id = conversation.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "conversation_id": conversation_id,
-                "schedule_at": "2026-03-26T10:00:00+08:00",
-                "content": "明早群提醒",
-                "message_type": "text",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "message_push_task")
-        self.assertEqual(data["output"]["provider_status"], "scheduled")
-        job_id = data["output"]["job_id"]
-
-        with SessionLocal() as db:
-            job = db.get(TaskJob, job_id)
-            self.assertIsNotNone(job)
-            self.assertEqual(job.job_type, "outbound_dispatch")
-            self.assertEqual(job.status, "pending")
-            payload = json.loads(job.payload_json)
-            self.assertEqual(payload["plugin_code"], "message_push_task")
-            self.assertEqual(payload["conversation_id"], conversation_id)
-            self.assertEqual(payload["payload"]["content"], "明早群提醒")
-
     def test_douyin_parser_plugin_execution_endpoint_uses_directory_runtime_logic(self):
         self.login("ops", "ops123")
         with SessionLocal() as db:
