@@ -1,4 +1,4 @@
-from app.models.entities import Bot, BotPlugin, Channel, Conversation, ErrorLog, Message, Plugin, TaskJob
+from app.models.entities import Bot, BotPlugin, Channel, Conversation, ErrorLog, Message, Plugin, PluginStateRecord, TaskJob
 from app.models.saas import (
     BillingOrder,
     BotBinding,
@@ -26,6 +26,7 @@ __all__ = [
     "Channel",
     "Plugin",
     "BotPlugin",
+    "PluginStateRecord",
     "Conversation",
     "Message",
     "TaskJob",

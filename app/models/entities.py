@@ -104,6 +104,38 @@ class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):
 
     bot = relationship("Bot", back_populates="plugin_bindings")
     plugin = relationship("Plugin", back_populates="bot_bindings")
+    state_records = relationship("PluginStateRecord", back_populates="binding", cascade="all, delete-orphan")
+
+
+class PluginStateRecord(Base, TenantOwnedMixin, TimestampMixin):
+    """保存租户插件的小型运行状态，不承载独立业务域的事务数据。"""
+
+    __tablename__ = "plugin_state_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "bot_plugin_id",
+            "namespace",
+            "state_key",
+            name="uq_plugin_state_records_locator",
+        ),
+        Index(
+            "ix_plugin_state_records_binding_namespace",
+            "tenant_id",
+            "bot_plugin_id",
+            "namespace",
+        ),
+        Index("ix_plugin_state_records_expiry", "tenant_id", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bot_plugin_id: Mapped[int] = mapped_column(ForeignKey("bot_plugins.id"), nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(80), nullable=False)
+    state_key: Mapped[str] = mapped_column(String(191), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    binding = relationship("BotPlugin", back_populates="state_records")
 
 
 class Conversation(Base, TenantOwnedMixin, TimestampMixin):
