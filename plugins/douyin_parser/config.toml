@@ -26,7 +26,7 @@ fields = ["external_api_key"]
 [runtime]
 internal_api_url = "http://192.168.2.32:8999/api/hybrid/video_data"
 external_api_url = "https://api.pearktrue.cn/api/video/api.php"
-external_api_key = "f56c1fed0c6e64e7"
+external_api_key = ""
 download_mode = "card"
 default_timeout = 10
 http_proxy = ""

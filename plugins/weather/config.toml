@@ -25,7 +25,7 @@ fields = ["api_key"]
 
 [runtime]
 api_base = "https://mx564thnfv.re.qweatherapi.com"
-api_key = "32e692f94e364105808ea2c0302ef162"
+api_key = ""
 default_city = "Beijing"
 units = "metric"
 default_timeout = 10

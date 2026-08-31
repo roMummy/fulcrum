@@ -8,12 +8,14 @@ from app.services.plugin_runtime.registry import (
     get_plugin_schema,
     list_plugin_runtime_definitions,
 )
+from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.service import execute_binding_action, execute_plugin_action
 
 __all__ = [
     "PluginConfigField",
     "PluginConfigOption",
     "PluginConfigSchema",
+    "PluginExecutionContext",
     "PluginRuntimeDefinition",
     "execute_binding_action",
     "execute_plugin_action",

@@ -26,7 +26,7 @@ fields = ["api_key"]
 [runtime]
 enabled = true
 api_base = "http://192.168.2.240/v1"
-api_key = "app-u5EnYq3ill19bm6pWJwGkY4D"
+api_key = ""
 app_mode = "workflow"
 workflow_input_key = "query"
 workflow_session_key = "conversation_id"

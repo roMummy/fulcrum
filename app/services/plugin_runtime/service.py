@@ -5,8 +5,9 @@ from typing import Any, Mapping
 
 from app.models.entities import BotPlugin
 from app.core.logging import get_logger
-from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest, PluginExecutionResult
 from app.services.plugin_runtime.registry import get_plugin_runtime_definition
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 
 logger = get_logger(__name__)
 
@@ -15,8 +16,9 @@ def execute_plugin_action(
     plugin_code: str | None,
     action: str,
     *,
-    config_json: str | None,
+    config: Mapping[str, Any] | None = None,
     payload: Mapping[str, Any] | None = None,
+    context: PluginExecutionContext | None = None,
 ) -> PluginExecutionResult | None:
     definition = get_plugin_runtime_definition(plugin_code)
     if not definition or not definition.executor:
@@ -26,8 +28,9 @@ def execute_plugin_action(
     return definition.executor.execute(
         PluginExecutionRequest(
             action=action,
-            config=_parse_config_json(config_json),
+            config=dict(config or {}),
             payload=payload or {},
+            context=context,
         )
     )
 
@@ -37,29 +40,39 @@ def execute_binding_action(
     action: str,
     *,
     payload: Mapping[str, Any] | None = None,
+    context: PluginExecutionContext | None = None,
 ) -> PluginExecutionResult | None:
     plugin_code = binding.plugin.code if binding.plugin else None
-    return execute_plugin_action(plugin_code, action, config_json=binding.config_json, payload=payload)
-
-
-def execute_configured_plugin_action(
-    plugin_code: str | None,
-    action: str,
-    *,
-    config: Mapping[str, Any] | None = None,
-    payload: Mapping[str, Any] | None = None,
-) -> PluginExecutionResult | None:
-    definition = get_plugin_runtime_definition(plugin_code)
-    if not definition or not definition.executor:
-        logger.warning("configured plugin action skipped because runtime executor is unavailable", extra={"plugin_code": plugin_code or "", "action": action})
-        return None
-    logger.info("executing configured plugin action", extra={"plugin_code": plugin_code or "", "action": action})
-    return definition.executor.execute(
-        PluginExecutionRequest(
-            action=action,
-            config=dict(config or {}),
-            payload=payload or {},
-        )
+    runtime_payload = dict(payload or {})
+    ordinary_config = _parse_config_json(binding.config_json)
+    secret_config = decrypt_plugin_secret_config(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        encrypted=binding.secret_config_encrypted,
+    )
+    # 敏感配置最后合并，确保普通 JSON 中的历史同名字段不能覆盖租户密文。
+    effective_config = {**ordinary_config, **secret_config}
+    trusted_context = PluginExecutionContext(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        bot_id=int(binding.bot_id),
+        # 下列消息定位字段只能由平台内部调用链显式提供。即使业务载荷含有同名键，
+        # 也不能自动提升为可信身份，避免手工执行或后续入站接口伪造运行上下文。
+        channel_id=_coerce_optional_int(context.channel_id) if context else None,
+        conversation_id=_coerce_optional_int(context.conversation_id) if context else None,
+        message_id=_coerce_optional_int(context.message_id) if context else None,
+        raw_event_id=_coerce_optional_int(context.raw_event_id) if context else None,
+        sender_id=_coerce_optional_text(context.sender_id) if context else None,
+        channel_type=_coerce_optional_text(context.channel_type) if context else None,
+        chat_type=_coerce_optional_text(context.chat_type) if context else None,
+        message_type=_coerce_optional_text(context.message_type) if context else None,
+    )
+    return execute_plugin_action(
+        plugin_code,
+        action,
+        config=effective_config,
+        payload=runtime_payload,
+        context=trusted_context,
     )
 
 
@@ -72,3 +85,20 @@ def _parse_config_json(raw_config: str | None) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    """把服务端构造的可选主键转换为正整数，非法值不进入可信上下文。"""
+
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
+def _coerce_optional_text(value: Any) -> str | None:
+    """规范化可信执行载荷中的可选文本定位字段。"""
+
+    normalized = str(value or "").strip()
+    return normalized or None

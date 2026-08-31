@@ -56,6 +56,7 @@ class DirectoryRuntimeExecutor:
             action=request.action,
             config={**get_plugin_default_config(self.plugin_code, force=request.action == "reload"), **dict(request.config)},
             payload=request.payload,
+            context=request.context,
         )
         result = loaded.instance.execute_action(merged_request)
         return self._normalize_result(result)

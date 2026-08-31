@@ -28,4 +28,4 @@ sources = ["nbc", "cnn", "abc", "fox", "bbc"]
 per_source_limit = 5
 default_timeout = 10
 dify_api_url = "http://192.168.2.240/v1/chat-messages"
-authorization = "Bearer app-rhhKkbvHd2IAQoGX7xTzXZJj"
+authorization = ""

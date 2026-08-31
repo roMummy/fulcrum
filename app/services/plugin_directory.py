@@ -24,6 +24,7 @@ from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 
 
 ENTRYPOINT_CANDIDATES = ("plugin.py", "main.py", "plugin_main.py")
@@ -929,7 +930,7 @@ def _execute_candidate(
     )
     loaded = load_directory_plugin(candidate.plugin_code)
     from app.services.plugin_runtime.registry import get_plugin_runtime_definition
-    from app.services.plugin_runtime.service import execute_configured_plugin_action
+    from app.services.plugin_runtime.service import execute_binding_action
 
     runtime_definition = get_plugin_runtime_definition(candidate.plugin_code)
     timeout_debug = _build_timeout_debug(candidate.timeout_ms)
@@ -1033,11 +1034,11 @@ def _execute_candidate(
                 runtime_payload["channel_adapter_config"] = _parse_config_json(channel.adapter_config_json)
             try:
                 runtime_result = _run_with_timeout(
-                    lambda: execute_configured_plugin_action(
-                        candidate.plugin_code,
+                    lambda: execute_binding_action(
+                        binding,
                         "execute",
-                        config=context.binding_config,
                         payload=runtime_payload,
+                        context=_build_runtime_execution_context(static_context, context),
                     ),
                     candidate.timeout_ms,
                 )
@@ -1485,6 +1486,19 @@ def _build_directory_context(
     default_config = dict(discovered.runtime_config) if discovered else {}
     binding_config = _parse_config_json(binding.config_json)
     scope_config = _parse_config_json(candidate.scope_config_override_json)
+    secret_fields = set(discovered.secret_fields) if discovered else set()
+    # 群作用域和历史普通 JSON 都不能覆盖绑定密文。敏感字段先从非密文配置中删除，
+    # 再把当前租户绑定的解密结果放到最终配置末尾。
+    for field_name in secret_fields:
+        binding_config.pop(field_name, None)
+        scope_config.pop(field_name, None)
+    secret_config = decrypt_plugin_secret_config(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        encrypted=binding.secret_config_encrypted,
+    )
+    effective_config = _deep_merge_config(_deep_merge_config(default_config, binding_config), scope_config)
+    effective_config.update(secret_config)
     return DirectoryPluginContext(
         plugin_code=candidate.plugin_code,
         binding_id=candidate.binding_id,
@@ -1499,7 +1513,7 @@ def _build_directory_context(
         conversation_external_id=static_context.conversation_external_id,
         mentioned_self=static_context.mentioned_self,
         attachments=static_context.attachments,
-        binding_config=_deep_merge_config(_deep_merge_config(default_config, binding_config), scope_config),
+        binding_config=effective_config,
         normalized_event=normalized_event,
         raw_event_id=raw_event_id,
         conversation_id=conversation_id,
@@ -1541,6 +1555,35 @@ def _build_runtime_bridge_payload(context: DirectoryPluginContext) -> dict[str, 
     if messages:
         payload["messages"] = messages
     return payload
+
+
+def _build_runtime_execution_context(
+    static_context: PluginDispatchContext,
+    directory_context: DirectoryPluginContext,
+) -> "PluginExecutionContext":
+    """把已落库的入站消息定位信息转换为插件可信运行上下文。
+
+    插件 payload 仍保留现有业务字段，供插件读取命令和消息内容；权限判断和后续
+    通用能力只能依赖这里显式构造的上下文，不能信任 payload 中的同名字段。
+    """
+
+    # 运行时包的注册表会反向读取目录插件。这里延迟导入契约类，避免模块初始化
+    # 阶段形成 plugin_directory -> plugin_runtime -> registry -> plugin_directory 环路。
+    from app.services.plugin_runtime.contracts import PluginExecutionContext
+
+    return PluginExecutionContext(
+        tenant_id=static_context.tenant_id,
+        binding_id=directory_context.binding_id,
+        bot_id=directory_context.bot_id,
+        channel_id=directory_context.channel_id,
+        conversation_id=directory_context.conversation_id,
+        message_id=directory_context.message_id,
+        raw_event_id=directory_context.raw_event_id,
+        sender_id=directory_context.sender_id,
+        channel_type=directory_context.channel_type,
+        chat_type=directory_context.chat_type,
+        message_type=directory_context.message_type,
+    )
 
 
 def _extract_event_attachments(normalized_event: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
