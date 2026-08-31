@@ -1,4 +1,11 @@
 from app.models.entities import Bot, BotPlugin, Channel, Conversation, ErrorLog, Message, Plugin, PluginStateRecord, TaskJob
+from app.models.cultivation import (
+    CultivationClan,
+    CultivationCooldown,
+    CultivationInventory,
+    CultivationPlayer,
+    CultivationTransaction,
+)
 from app.models.plugin_business import CouponAccountBinding, FunCommandRule
 from app.models.saas import (
     BillingOrder,
@@ -34,6 +41,11 @@ __all__ = [
     "ErrorLog",
     "CouponAccountBinding",
     "FunCommandRule",
+    "CultivationClan",
+    "CultivationCooldown",
+    "CultivationInventory",
+    "CultivationPlayer",
+    "CultivationTransaction",
     "PlatformUser",
     "PlatformSession",
     "PlatformProtocolService",
