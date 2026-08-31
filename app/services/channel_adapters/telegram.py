@@ -198,6 +198,18 @@ class TelegramAdapter(BaseChannelAdapter):
         external_message_id = self._extract_external_message_id(event_type, event_payload)
         event_key = update_id or external_message_id
 
+        details: dict[str, Any] = {
+            "headers_used": sorted((headers or {}).keys()),
+            "update_id": update_id,
+            "telegram_chat_type": self._clean_string(chat_payload.get("type")),
+            "telegram_chat_id": self._clean_string(chat_payload.get("id")),
+        }
+        member_change = self._extract_member_change(event_type, event_payload)
+        if member_change is not None:
+            # Telegram 的 chat_member 是渠道私有结构。进入平台后只保留通用成员
+            # 变更语义，插件不需要了解 old_chat_member/new_chat_member 字段。
+            details["member_change"] = member_change
+
         return {
             "adapter_type": self.adapter_type,
             "event_key": event_key,
@@ -215,13 +227,56 @@ class TelegramAdapter(BaseChannelAdapter):
                 "message_type": self._resolve_message_type(event_type, event_payload),
                 "external_message_id": external_message_id,
             },
-            "details": {
-                "headers_used": sorted((headers or {}).keys()),
-                "update_id": update_id,
-                "telegram_chat_type": self._clean_string(chat_payload.get("type")),
-                "telegram_chat_id": self._clean_string(chat_payload.get("id")),
-            },
+            "details": details,
         }
+
+    def _extract_member_change(self, event_type: str, event_payload: dict[str, Any]) -> dict[str, Any] | None:
+        """把 Telegram 成员状态机转换为平台统一的 join/left/removed 事件。"""
+
+        if event_type != "chat_member":
+            return None
+        old_state = event_payload.get("old_chat_member")
+        new_state = event_payload.get("new_chat_member")
+        if not isinstance(old_state, dict) or not isinstance(new_state, dict):
+            return None
+        old_active = self._telegram_member_is_active(old_state)
+        new_active = self._telegram_member_is_active(new_state)
+        new_status = self._clean_string(new_state.get("status")) or ""
+        if not old_active and new_active:
+            change_type = "join"
+        elif old_active and new_status == "kicked":
+            change_type = "removed"
+        elif old_active and not new_active:
+            change_type = "left"
+        else:
+            # 管理员升降级、禁言和其他仍在群内的状态变化不是成员增减。
+            return None
+
+        user_payload = new_state.get("user") if isinstance(new_state.get("user"), dict) else old_state.get("user")
+        if not isinstance(user_payload, dict):
+            return None
+        external_id = self._clean_string(user_payload.get("id"))
+        if not external_id:
+            return None
+        return {
+            "change_type": change_type,
+            "members": [
+                {
+                    "external_id": external_id,
+                    "display_name": self._resolve_sender_name(user_payload) or external_id,
+                }
+            ],
+        }
+
+    def _telegram_member_is_active(self, member_state: dict[str, Any]) -> bool:
+        """判断成员状态是否仍属于群，restricted 需要同时检查 is_member。"""
+
+        status = self._clean_string(member_state.get("status")) or ""
+        if status in {"creator", "administrator", "member"}:
+            return True
+        if status == "restricted":
+            return bool(member_state.get("is_member"))
+        return False
 
     def health_check(self, channel: Channel) -> dict[str, Any]:
         token = decrypt_secret(channel.bot_token_encrypted)

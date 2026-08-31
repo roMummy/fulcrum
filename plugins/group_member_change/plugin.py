@@ -1,252 +1,288 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.core.time import now_shanghai
-from app.models.entities import Chatroom, ChatroomMember
-from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from app.models.entities import Chatroom, ChatroomMember, Conversation
+from app.services.plugin_runtime.contracts import (
+    PluginExecutionContext,
+    PluginExecutionRequest,
+    PluginExecutionResult,
+)
+from app.services.plugin_runtime.replies import standard_replies, text_reply
 
 
 JOIN_PATTERNS = (
-    '"$names$"\u52a0\u5165\u4e86\u7fa4\u804a',
-    '"$username$"\u9080\u8bf7"$names$"\u52a0\u5165\u4e86\u7fa4\u804a',
-    '\u4f60\u9080\u8bf7"$names$"\u52a0\u5165\u4e86\u7fa4\u804a',
-    '"$adder$"\u901a\u8fc7\u626b\u63cf"$from$"\u5206\u4eab\u7684\u4e8c\u7ef4\u7801\u52a0\u5165\u7fa4\u804a',
-    '"$adder$"\u901a\u8fc7"$from$"\u7684\u9080\u8bf7\u4e8c\u7ef4\u7801\u52a0\u5165\u7fa4\u804a',
+    '"$names$"加入了群聊',
+    '"$username$"邀请"$names$"加入了群聊',
+    '你邀请"$names$"加入了群聊',
+    '"$adder$"通过扫描"$from$"分享的二维码加入群聊',
+    '"$adder$"通过"$from$"的邀请二维码加入群聊',
     "joined the group",
     "joined the group chat",
 )
 LEAVE_PATTERNS = (
-    '"$username$"\u9000\u51fa\u4e86\u7fa4\u804a',
-    '"$username$"\u79bb\u5f00\u4e86\u7fa4\u804a',
-    '"$names$"\u9000\u51fa\u4e86\u7fa4\u804a',
-    '"$names$"\u79bb\u5f00\u4e86\u7fa4\u804a',
+    '"$username$"退出了群聊',
+    '"$username$"离开了群聊',
+    '"$names$"退出了群聊',
+    '"$names$"离开了群聊',
     "left the group",
     "left the group chat",
 )
 REMOVED_PATTERNS = (
-    '"$username$"\u5c06"$names$"\u79fb\u51fa\u4e86\u7fa4\u804a',
-    '\u4f60\u5c06"$names$"\u79fb\u51fa\u4e86\u7fa4\u804a',
-    '"$username$"\u79fb\u51fa\u4e86"$names$"',
-    '"$username$"\u8e22\u51fa\u4e86"$names$"',
+    '"$username$"将"$names$"移出了群聊',
+    '你将"$names$"移出了群聊',
+    '"$username$"移出了"$names$"',
+    '"$username$"踢出了"$names$"',
     "removed from the group",
     "removed from the group chat",
 )
+VALID_CHANGE_TYPES = {"join", "left", "removed"}
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
+    """普通入口只汇报运行状态，成员数据更新必须经过可信数据库入口。"""
+
     if request.action == "reload":
-        return PluginExecutionResult(ok=True, status="running", message="group_member_change runtime is ready", output={})
+        return PluginExecutionResult(
+            ok=True,
+            status="running",
+            message="群成员变更插件已就绪。",
+            output={},
+        )
     if request.action != "execute":
-        return PluginExecutionResult(ok=False, status="unsupported", message=f"unsupported action: {request.action}")
+        return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
+    return _error_result("群成员变更只能由真实群聊事件触发。", "trusted_context_required")
 
-    content = str(request.payload.get("content") or "").strip()
-    if "<sysmsg" not in content:
+
+def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+    """使用可信群会话更新成员状态，并对加入事件生成标准欢迎回复。"""
+
+    if request.action != "execute":
+        return execute_action(request)
+    context, chatroom, error = _require_group_context(db, request.context)
+    if error is not None or context is None or chatroom is None:
+        return error or _error_result("群成员变更缺少可信群聊上下文。", "trusted_context_required")
+
+    parsed = _parse_structured_member_change(request.payload)
+    if parsed is None:
+        parsed = _parse_wechat_member_change(str(request.payload.get("content") or "").strip())
+    if parsed is None:
         return PluginExecutionResult(
             ok=True,
             status="completed",
-            message="not a system member-change message",
+            message="当前事件不包含成员增减。",
             output={"provider_status": "ignored"},
         )
 
-    try:
-        root = ET.fromstring(content)
-    except ET.ParseError as exc:
-        return PluginExecutionResult(ok=False, status="error", message=f"group member change XML parse failed: {exc}")
-
-    if root.tag != "sysmsg":
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="not a sysmsg payload",
-            output={"provider_status": "ignored"},
-        )
-    if str(root.attrib.get("type") or "").strip() != "sysmsgtemplate":
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="sysmsg type is not sysmsgtemplate",
-            output={"provider_status": "ignored"},
-        )
-
-    template_text = _extract_template_text(root)
-    parsed = _parse_member_change(root, template_text)
-    if not parsed:
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="no actionable group member change detected",
-            output={"provider_status": "ignored", "template_text": template_text},
-        )
-
-    change_type = parsed["change_type"]
-    members = parsed["members"]
-    room_id = _resolve_room_id(request)
-    updated_count = _apply_member_change(room_id, request.payload, change_type=change_type, members=members)
+    change_type = str(parsed["change_type"])
+    members = list(parsed["members"])
+    updated_count = _apply_member_change(
+        db,
+        context=context,
+        chatroom=chatroom,
+        change_type=change_type,
+        members=members,
+    )
     reply_text = _build_reply_text(change_type, members)
-
     output: dict[str, Any] = {
-        "provider_status": f"member_{change_type}_detected",
+        "provider_status": f"member_{change_type}",
         "change_type": change_type,
-        "template_text": template_text,
-        "members": members,
-        "room_id": room_id,
+        "member_count": len(members),
         "db_updated_member_count": updated_count,
     }
     if reply_text:
         output["reply_text"] = reply_text
-        output["replies"] = [{"type": "text", "content": reply_text}]
-
+        output["replies"] = standard_replies([text_reply(reply_text)])
     return PluginExecutionResult(
         ok=True,
         status="completed",
-        message="group member change detected",
+        message="群成员状态已更新。",
         output=output,
     )
 
 
-def _extract_template_text(root: ET.Element) -> str:
-    template_node = root.find(".//content_template/template")
-    if template_node is None or not template_node.text:
-        return ""
-    return str(template_node.text).strip()
+def _require_group_context(
+    db: Session,
+    context: PluginExecutionContext | None,
+) -> tuple[PluginExecutionContext | None, Chatroom | None, PluginExecutionResult | None]:
+    """从平台注入的会话主键解析群，不读取载荷中的渠道号或群号。"""
+
+    if (
+        context is None
+        or context.conversation_id is None
+        or context.channel_id is None
+        or context.chat_type != "group"
+    ):
+        return None, None, _error_result("请在群聊事件中使用群成员变更插件。", "trusted_context_required")
+    conversation = db.get(Conversation, int(context.conversation_id))
+    if (
+        conversation is None
+        or int(conversation.tenant_id) != int(context.tenant_id)
+        or int(conversation.bot_id) != int(context.bot_id)
+        or int(conversation.channel_id or 0) != int(context.channel_id)
+        or conversation.chat_type != "group"
+    ):
+        return None, None, _error_result("当前群聊上下文无效。", "trusted_context_required")
+    chatroom = db.scalar(
+        select(Chatroom).where(
+            Chatroom.tenant_id == int(context.tenant_id),
+            Chatroom.bot_id == int(context.bot_id),
+            Chatroom.channel_id == int(context.channel_id),
+            Chatroom.external_id == str(conversation.external_id),
+        )
+    )
+    if chatroom is None:
+        return None, None, _error_result("当前群还没有建立成员资料。", "chatroom_not_found")
+    return context, chatroom, None
 
 
-def _parse_member_change(root: ET.Element, template_text: str) -> dict[str, Any] | None:
-    normalized = template_text.strip()
-    if not normalized:
+def _parse_structured_member_change(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """读取渠道适配器生成的通用成员事件，不直接解析 Telegram 私有字段。"""
+
+    normalized_event = payload.get("normalized_event")
+    if not isinstance(normalized_event, Mapping):
         return None
+    details = normalized_event.get("details")
+    if not isinstance(details, Mapping):
+        return None
+    member_change = details.get("member_change")
+    if not isinstance(member_change, Mapping):
+        return None
+    change_type = str(member_change.get("change_type") or "").strip().lower()
+    if change_type not in VALID_CHANGE_TYPES:
+        return None
+    members = _normalize_members(member_change.get("members"))
+    return {"change_type": change_type, "members": members} if members else None
 
-    if any(pattern in normalized for pattern in JOIN_PATTERNS):
-        members = _parse_member_info(root, ("names", "adder"))
+
+def _parse_wechat_member_change(content: str) -> dict[str, Any] | None:
+    """把微信协议系统消息转换为与通用渠道一致的成员事件。"""
+
+    if "<sysmsg" not in content:
+        return None
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return None
+    if root.tag != "sysmsg" or str(root.attrib.get("type") or "").strip() != "sysmsgtemplate":
+        return None
+    template_node = root.find(".//content_template/template")
+    template_text = str(template_node.text or "").strip() if template_node is not None else ""
+    if any(pattern in template_text for pattern in JOIN_PATTERNS):
+        link_names = ("names", "adder")
+        change_type = "join"
+    elif any(pattern in template_text for pattern in REMOVED_PATTERNS):
+        link_names = ("names", "username")
+        change_type = "removed"
+    elif any(pattern in template_text for pattern in LEAVE_PATTERNS):
+        link_names = ("username", "names")
+        change_type = "left"
+    else:
+        return None
+    for link_name in link_names:
+        members = _parse_wechat_link_members(root, link_name)
         if members:
-            return {"change_type": "join", "members": members}
-    if any(pattern in normalized for pattern in REMOVED_PATTERNS):
-        members = _parse_member_info(root, ("names", "username"))
-        if members:
-            return {"change_type": "removed", "members": members}
-    if any(pattern in normalized for pattern in LEAVE_PATTERNS):
-        members = _parse_member_info(root, ("username", "names"))
-        if members:
-            return {"change_type": "left", "members": members}
+            return {"change_type": change_type, "members": members}
     return None
 
 
-def _parse_member_info(root: ET.Element, link_names: tuple[str, ...]) -> list[dict[str, str]]:
-    for link_name in link_names:
-        result = _parse_link_members(root, link_name)
-        if result:
-            return result
-    return []
+def _parse_wechat_link_members(root: ET.Element, link_name: str) -> list[dict[str, str]]:
+    """读取微信系统消息中的 memberlist 或单 member 结构。"""
 
-
-def _parse_link_members(root: ET.Element, link_name: str) -> list[dict[str, str]]:
     link = root.find(f".//link[@name='{link_name}']")
     if link is None:
         return []
-
-    memberlist = link.find("memberlist")
-    if memberlist is not None:
-        members: list[dict[str, str]] = []
-        for member in memberlist.findall("member"):
-            user_id = (member.findtext("username") or "").strip()
-            nickname = (member.findtext("nickname") or "").strip() or user_id
-            if not user_id:
-                continue
-            members.append({"wxid": user_id, "nickname": nickname})
-        if members:
-            return members
-
-    user_id = (link.findtext("member/username") or link.findtext("username") or "").strip()
-    nickname = (link.findtext("member/nickname") or link.findtext("nickname") or "").strip() or user_id
-    if user_id:
-        return [{"wxid": user_id, "nickname": nickname}]
-    return []
+    nodes = link.findall("memberlist/member") or link.findall("member")
+    members: list[dict[str, str]] = []
+    for node in nodes:
+        external_id = str(node.findtext("username") or "").strip()
+        if not external_id:
+            continue
+        display_name = str(node.findtext("nickname") or "").strip() or external_id
+        members.append({"external_id": external_id, "display_name": display_name})
+    return members
 
 
-def _resolve_room_id(request: PluginExecutionRequest) -> str:
-    normalized_event = request.payload.get("normalized_event")
-    if isinstance(normalized_event, dict):
-        conversation = normalized_event.get("conversation")
-        if isinstance(conversation, dict):
-            room_id = str(conversation.get("external_id") or "").strip()
-            if room_id.endswith("@chatroom"):
-                return room_id
-    room_id = str(request.payload.get("conversation_external_id") or "").strip()
-    return room_id if room_id.endswith("@chatroom") else ""
+def _normalize_members(value: Any) -> list[dict[str, str]]:
+    """校验通用成员列表，只保留平台定义的公开字段。"""
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    members: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        external_id = str(item.get("external_id") or "").strip()
+        if not external_id or external_id in seen:
+            continue
+        seen.add(external_id)
+        display_name = str(item.get("display_name") or "").strip() or external_id
+        members.append({"external_id": external_id, "display_name": display_name})
+    return members
 
 
 def _apply_member_change(
-    room_id: str,
-    payload: dict[str, Any],
+    db: Session,
     *,
+    context: PluginExecutionContext,
+    chatroom: Chatroom,
     change_type: str,
     members: list[dict[str, str]],
 ) -> int:
-    if not room_id or not members:
-        return 0
+    """在当前租户和当前群内更新成员，退出与移除统一进入 left 状态。"""
 
-    channel_id = _coerce_int(payload.get("channel_id"))
-    now = now_shanghai()
+    current = now_shanghai()
     updated_count = 0
-
-    with SessionLocal() as db:
-        query = select(Chatroom).where(Chatroom.external_id == room_id)
-        if channel_id is not None:
-            query = query.where(Chatroom.channel_id == channel_id)
-        chatroom = db.scalar(query.order_by(Chatroom.id.desc()))
-        if chatroom is None:
-            return 0
-
-        for item in members:
-            wxid = str(item.get("wxid") or "").strip()
-            nickname = str(item.get("nickname") or "").strip() or wxid
-            if not wxid:
-                continue
-            member = db.scalar(
-                select(ChatroomMember).where(
-                    ChatroomMember.chatroom_id == chatroom.id,
-                    ChatroomMember.member_external_id == wxid,
-                )
+    for item in members:
+        external_id = item["external_id"]
+        display_name = item["display_name"]
+        member = db.scalar(
+            select(ChatroomMember).where(
+                ChatroomMember.tenant_id == int(context.tenant_id),
+                ChatroomMember.bot_id == int(context.bot_id),
+                ChatroomMember.channel_id == int(context.channel_id or 0),
+                ChatroomMember.chatroom_id == int(chatroom.id),
+                ChatroomMember.member_external_id == external_id,
             )
-            if member is None:
-                member = ChatroomMember(
-                    chatroom_id=chatroom.id,
-                    bot_id=chatroom.bot_id,
-                    channel_id=chatroom.channel_id,
-                    member_external_id=wxid,
-                )
-                db.add(member)
-            member.nickname = nickname
-            member.last_synced_at = now
-            member.status = "active" if change_type == "join" else "left"
-            updated_count += 1
-
-        if updated_count:
-            db.commit()
-        else:
-            db.rollback()
-
+        )
+        if member is None:
+            member = ChatroomMember(
+                tenant_id=int(context.tenant_id),
+                chatroom_id=int(chatroom.id),
+                bot_id=int(context.bot_id),
+                channel_id=int(context.channel_id or 0),
+                member_external_id=external_id,
+            )
+            db.add(member)
+        member.nickname = display_name
+        member.display_name = display_name
+        member.last_synced_at = current
+        member.status = "active" if change_type == "join" else "left"
+        updated_count += 1
+    if updated_count:
+        db.flush()
     return updated_count
 
 
 def _build_reply_text(change_type: str, members: list[dict[str, str]]) -> str:
-    names = "、".join((item.get("nickname") or item.get("wxid") or "").strip() for item in members).strip("、")
-    if not names:
+    """当前业务只对新成员发送欢迎语，离开和移除保持静默。"""
+
+    if change_type != "join":
         return ""
-    if change_type == "join":
-        return f"欢迎 {names} 加入群聊。"
-    return ""
+    names = "、".join(item["display_name"] for item in members if item.get("display_name"))
+    return f"欢迎 {names} 加入群聊。" if names else ""
 
 
-def _coerce_int(value: Any) -> int | None:
-    try:
-        if value in (None, ""):
-            return None
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+def _error_result(message: str, provider_status: str) -> PluginExecutionResult:
+    return PluginExecutionResult(
+        ok=False,
+        status="error",
+        message=message,
+        output={"provider_status": provider_status},
+    )
