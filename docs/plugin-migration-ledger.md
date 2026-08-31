@@ -54,7 +54,7 @@
 | `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 已迁移 | `88890a7` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_gscore_adapter.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（14 passed） |
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 已迁移 | `a8de7e4` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_ai_gen_image.py tests/test_plugin_common_services.py tests/test_plugin_runtime_secrets.py tests/test_plugin_migration_catalog.py`（22 passed） |
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 已迁移 | `5fb4219` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_maibot_adapter.py tests/test_plugin_runtime_secrets.py tests/test_plugin_secret_forms.py tests/test_plugin_migration_catalog.py tests/test_plugin_scheduler.py`（24 passed） |
-| `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 待迁移 | - | - |
+| `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 已迁移 | `ba8806e` | `.venv/bin/python -m pytest -q tests/test_plugin_codex_quota_allocator.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（9 passed） |
 | `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌 | 待迁移 | - | - |
 | `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 待迁移 | - | - |
@@ -146,3 +146,11 @@ AI 绘图保留 `AI绘图`、`绘图`、`画图` 和 `生成图片` 四个业务
 MaiBot 作为旁路观察者采集群聊和私聊消息，不注册聊天命令，也不阻断其他插件。WebSocket 地址、采集开关、回复开关和连接参数由当前租户普通配置维护，API Key 保存到当前绑定密文；每个 `(tenant_id, binding_id)` 使用独立线程、事件循环、发送队列和 WebSocket，不共享跨租户连接。绑定停用、配置保存、机器人删除和应用关闭都会停止对应旧连接。
 
 入站消息维度只从可信绑定、渠道、会话和消息构造，群成员与群会话使用平台内部令牌，不向 MaiBot 暴露可直接改选的原始出站目标。客户端只接受当前连接最近 24 小时实际发送过的内部会话回复，并限制最近会话数量；回包进入平台后再次验证租户、绑定、机器人、渠道、会话、群级停用和回复开关，只提取文本或文本片段列表并写入标准出站任务。MaiBot 回包中的其他路由、媒体和任意对象不能指定租户、渠道或目标会话。
+
+## Codex 额度管理迁移边界
+
+Codex 额度管理只保留 `额度查询`、`额度调整` 和 `周额重置` 三个业务命令。CPA 服务根地址、认证文件名、Sub2API 服务根地址、目标分组和额度策略由当前租户普通配置维护，CPA Management Key 与 Sub2API Admin API Key 保存到当前绑定密文；平台不提供共享账户、共享凭证或环境变量回退。
+
+CPA 只调用已经验证的 `v0/management/auth-files` 和 `v0/management/api-call`，由 CPA 代理读取 Codex 七天主额度窗口，平台不接触 OAuth Token。Sub2API 只调用已经验证的 v1 分组、有效订阅、分组更新和订阅周额重置接口；目标必须是租户配置的 OpenAI 订阅分组，响应混入其他分组、非有效订阅、未知信封或未知接口版本时直接拒绝，不探测备用路由，也不解析私有替代字段。
+
+查询按真实发送人限流，订阅邮箱只返回脱敏标识。调整和重置还要求租户配置管理员用户 ID、用户级写限流以及同一管理员在同一会话中发送第二条新消息确认；同一消息的任务重试不能充当确认。最终快照与首次预览不一致时旧确认失效，确认状态在外部写入前持久化为已消费，避免外部成功后任务重试造成重复写入。额度调整按有效订阅原生周用量和 CPA 已用比例反推统一周限额并向下截断；周额重置只清零 `weekly`，明确保留 `daily` 和 `monthly`。
