@@ -4,7 +4,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from sqlalchemy import select
@@ -147,6 +147,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
                     "douyu",
                     "epic_free",
                     "game_task",
+                    "member_context",
                     "message_summary",
                     "weather",
                 )
@@ -519,6 +520,53 @@ def _build_plugin_schedule_specs(
                         conversation_id=conversation_id,
                         high_side_effect=True,
                         priority=70,
+                    )
+                )
+        return tuple(specs)
+    if plugin_code == "member_context":
+        # 成员画像只针对租户明确选择的群会话执行。日、周、月任务分别入队，
+        # 任务中只保存会话主键；成员列表、消息水位和 Dify 密钥均在执行时重建。
+        if not _coerce_bool(config.get("enabled"), True):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("member_context_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        schedule_definitions = [
+            (
+                "member_context_daily_refresh",
+                str(config.get("daily_refresh_time") or "04:20"),
+                True,
+            ),
+            (
+                "member_context_weekly_refresh",
+                str(config.get("weekly_refresh_time") or "04:40"),
+                current.weekday() == 6,
+            ),
+            (
+                "member_context_monthly_refresh",
+                str(config.get("monthly_refresh_time") or "04:50"),
+                (current + timedelta(days=1)).month != current.month,
+            ),
+        ]
+        specs: list[PluginScheduledActionSpec] = []
+        for action_key, time_text, date_matches in schedule_definitions:
+            if not date_matches:
+                continue
+            hour, minute = _parse_clock_time(time_text)
+            scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if current < scheduled_for:
+                continue
+            for conversation_id in conversation_ids:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key=action_key,
+                        scheduled_for=scheduled_for,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        # Dify 工作流可能产生租户计费，同一计划失败后不自动重放；
+                        # 下一周期会从数据库水位继续处理尚未成功保存的新消息。
+                        high_side_effect=True,
+                        priority=65,
                     )
                 )
         return tuple(specs)

@@ -52,6 +52,7 @@ def scheduler_fixture(tmp_path: Path):
         game_plugin = Plugin(code="game_task", display_name="游戏任务", plugin_type="command")
         summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
         ranking_plugin = Plugin(code="daily_ranking", display_name="群聊每日排行", plugin_type="scheduled")
+        member_context_plugin = Plugin(code="member_context", display_name="群成员画像", plugin_type="scheduled")
         weather_plugin = Plugin(code="weather", display_name="天气", plugin_type="rule")
         db.add_all(
             [
@@ -63,6 +64,7 @@ def scheduler_fixture(tmp_path: Path):
                 game_plugin,
                 summary_plugin,
                 ranking_plugin,
+                member_context_plugin,
                 weather_plugin,
             ]
         )
@@ -170,6 +172,20 @@ def scheduler_fixture(tmp_path: Path):
                 }
             ),
         )
+        alpha_member_context = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=member_context_plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "member_context_conversation_ids": [conversation.id],
+                    "daily_refresh_time": "04:20",
+                    "weekly_refresh_time": "04:40",
+                    "monthly_refresh_time": "04:50",
+                }
+            ),
+        )
         alpha_weather = BotPlugin(
             tenant_id=alpha.id,
             bot_id=alpha_bot.id,
@@ -206,6 +222,7 @@ def scheduler_fixture(tmp_path: Path):
                 alpha_game,
                 alpha_summary,
                 alpha_ranking,
+                alpha_member_context,
                 alpha_weather,
                 beta_daily,
                 weather_subscription,
@@ -221,6 +238,7 @@ def scheduler_fixture(tmp_path: Path):
             "alpha_game_binding_id": int(alpha_game.id),
             "alpha_summary_binding_id": int(alpha_summary.id),
             "alpha_ranking_binding_id": int(alpha_ranking.id),
+            "alpha_member_context_binding_id": int(alpha_member_context.id),
             "alpha_weather_binding_id": int(alpha_weather.id),
             "alpha_conversation_id": int(conversation.id),
             "alpha_second_conversation_id": int(second_conversation.id),
@@ -335,6 +353,7 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
             "plugin_action:daily_summary_prepare",
             "plugin_action:dota2_group_ranking_prepare",
             "plugin_action:dota2_group_ranking_push",
+            "plugin_action:member_context_daily_refresh",
             "plugin_action:poll_subscriptions",
             "plugin_action:random_task_assignment",
             "plugin_action:random_task_assignment",
@@ -348,6 +367,7 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
         assert attempts["plugin_action:daily_ranking_push"] == 1
         assert attempts["plugin_action:dota2_group_ranking_prepare"] == 3
         assert attempts["plugin_action:dota2_group_ranking_push"] == 1
+        assert attempts["plugin_action:member_context_daily_refresh"] == 1
         assert attempts["plugin_action:random_task_assignment"] == 1
         game_jobs = [job for job in first if job.related_type == "plugin_action:random_task_assignment"]
         assert len(game_jobs) == 2
@@ -374,6 +394,64 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
             parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"]
             for job in dota_jobs
         )
+        member_context_jobs = [job for job in first if "member_context" in str(job.related_type)]
+        assert len(member_context_jobs) == 1
+        assert parse_job_payload(member_context_jobs[0])["conversation_id"] == identity["alpha_conversation_id"]
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "day", "expected_actions"),
+    [
+        (
+            2026,
+            9,
+            6,
+            {
+                "plugin_action:member_context_daily_refresh",
+                "plugin_action:member_context_weekly_refresh",
+            },
+        ),
+        (
+            2026,
+            9,
+            30,
+            {
+                "plugin_action:member_context_daily_refresh",
+                "plugin_action:member_context_monthly_refresh",
+            },
+        ),
+    ],
+)
+def test_member_context_weekly_and_monthly_schedules(
+    scheduler_fixture,
+    year: int,
+    month: int,
+    day: int,
+    expected_actions: set[str],
+) -> None:
+    """成员画像在周日和月末追加对应任务，并继续按会话独立幂等。"""
+
+    factory, identity = scheduler_fixture
+    current = now_shanghai().replace(
+        year=year,
+        month=month,
+        day=day,
+        hour=10,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    with tenant_scope(identity["alpha_tenant_id"]), tenant_session(factory) as db:
+        jobs = schedule_due_plugin_actions(db, now=current)
+        db.commit()
+
+        member_jobs = [job for job in jobs if "member_context" in str(job.related_type)]
+        assert {str(job.related_type) for job in member_jobs} == expected_actions
+        assert all(
+            parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"]
+            for job in member_jobs
+        )
+        assert all(job.max_attempts == 1 for job in member_jobs)
 
 
 def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(scheduler_fixture) -> None:
