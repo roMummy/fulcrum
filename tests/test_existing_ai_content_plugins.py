@@ -31,6 +31,208 @@ from app.services.plugin_runtime.contracts import PluginExecutionContext, Plugin
 from app.services.plugin_runtime.http_client import PluginHttpResponse
 
 
+def test_ai_auto_response_is_group_only_without_manual_command() -> None:
+    """AI 自动参与只进入群聊文本候选，不再暴露旧命令和私聊入口。"""
+
+    discovered = get_discovered_plugin("ai_auto_response", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ()
+    assert discovered.capability.chat_types == ("group",)
+    assert "telegram" in discovered.capability.channel_types
+
+    loaded = load_directory_plugin("ai_auto_response", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    group_context = type(
+        "GroupContext",
+        (),
+        {
+            "chat_type": "group",
+            "message_type": "text",
+            "content": "这个方案怎么样？",
+            "command_name": "",
+        },
+    )()
+    command_context = type(
+        "CommandContext",
+        (),
+        {
+            "chat_type": "group",
+            "message_type": "text",
+            "content": "/ai_auto_response 测试",
+            "command_name": "ai_auto_response",
+        },
+    )()
+
+    assert module.matches_event(group_context)["matched"] is True
+    assert module.matches_event(command_context)["matched"] is False
+
+
+def test_ai_auto_response_uses_controlled_http_and_only_returns_safe_decision() -> None:
+    """群聊模型决策使用统一 HTTP，执行结果不持久化完整上游响应或租户密钥。"""
+
+    loaded = load_directory_plugin("ai_auto_response", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    captured: dict[str, object] = {}
+    decision_text = json.dumps(
+        {
+            "should_reply": True,
+            "reply_mode": "qa_fast",
+            "reply": "先把主流程跑通。",
+            "topic_summary": "研发方案",
+        },
+        ensure_ascii=False,
+    )
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json; charset=utf-8"},
+        body=json.dumps(
+            {"data": {"outputs": {"result_json": decision_text}}, "trace_id": "sensitive-provider-trace"},
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        url="https://llm.example.test/v1/workflows/run",
+    )
+
+    class FakeClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "kwargs": kwargs})
+            return response
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "api_base": "https://llm.example.test/v1",
+            "api_key": "tenant-secret-key",
+            "app_mode": "workflow",
+            "persona_name": "小牛",
+            "persona_style": "自然、简短、像群友",
+            "max_reply_chars": 80,
+        },
+        payload={
+            "content": "今天这个方案怎么样？",
+            "messages": ["张三: 先做核心流程", "李四: 测试后面集中补"],
+            "conversation_external_id": "group-room-1",
+        },
+        context=PluginExecutionContext(
+            tenant_id=1,
+            binding_id=2,
+            bot_id=3,
+            channel_id=4,
+            conversation_id=5,
+            message_id=6,
+            sender_id="member-7",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+    with patch.object(module, "PluginHttpClient", return_value=FakeClient()):
+        result = module.execute_action(request)
+
+    assert result.ok is True
+    assert result.output == {
+        "provider_status": "generated",
+        "should_reply": True,
+        "reply_mode": "qa_fast",
+        "topic_summary": "研发方案",
+        "history_size": 2,
+        "reply_text": "先把主流程跑通。",
+        "replies": [{"type": "text", "content": "先把主流程跑通。"}],
+    }
+    assert captured["url"] == "https://llm.example.test/v1/workflows/run"
+    request_body = captured["payload"]
+    assert isinstance(request_body, dict)
+    workflow_inputs = request_body["inputs"]
+    assert set(workflow_inputs) == {
+        "persona",
+        "group_profile",
+        "context",
+        "memory",
+        "current_message",
+        "control",
+        "images",
+    }
+    assert "张三: 先做核心流程" in workflow_inputs["context"]
+    assert "今天这个方案怎么样？" in workflow_inputs["current_message"]
+    assert "model_decides_should_reply=true" in workflow_inputs["control"]
+    assert "tenant-secret-key" not in json.dumps(result.output, ensure_ascii=False)
+    assert "sensitive-provider-trace" not in json.dumps(result.output, ensure_ascii=False)
+
+
+def test_ai_auto_response_honors_model_silence_and_rejects_direct_chat() -> None:
+    """模型决定沉默时不生成回复，可信上下文不是群聊时不调用上游。"""
+
+    loaded = load_directory_plugin("ai_auto_response", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=json.dumps(
+            {"answer": '{"should_reply": false, "reply": "", "reply_mode": "social_short"}'},
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        url="https://llm.example.test/v1/chat-messages",
+    )
+
+    class FakeClient:
+        call_count = 0
+
+        def post_json(self, *args, **kwargs):
+            self.call_count += 1
+            return response
+
+    fake_client = FakeClient()
+    base_request = {
+        "action": "execute",
+        "config": {
+            "enabled": True,
+            "api_base": "https://llm.example.test/v1",
+            "api_key": "tenant-key",
+            "app_mode": "chat",
+        },
+        "payload": {"content": "路过说一句", "messages": ["成员: 路过说一句"]},
+    }
+    with patch.object(module, "PluginHttpClient", return_value=fake_client):
+        group_result = module.execute_action(
+            PluginExecutionRequest(
+                **base_request,
+                context=PluginExecutionContext(
+                    tenant_id=1,
+                    binding_id=2,
+                    bot_id=3,
+                    chat_type="group",
+                    message_type="text",
+                ),
+            )
+        )
+        direct_result = module.execute_action(
+            PluginExecutionRequest(
+                **base_request,
+                context=PluginExecutionContext(
+                    tenant_id=1,
+                    binding_id=2,
+                    bot_id=3,
+                    chat_type="direct",
+                    message_type="text",
+                ),
+            )
+        )
+
+    assert group_result.ok is True
+    assert group_result.output["provider_status"] == "declined"
+    assert group_result.output["replies"] == []
+    assert direct_result.status == "ignored"
+    assert fake_client.call_count == 1
+
+    source = (PROJECT_ROOT / "plugins/ai_auto_response/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "urlrequest" not in source
+    assert "provider_response" not in source
+
+
 @pytest.fixture()
 def daily_news_fixture(tmp_path: Path):
     """建立一个群聊和一个私聊，验证日报只向群聊创建任务。"""
