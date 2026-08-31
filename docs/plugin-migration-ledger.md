@@ -61,7 +61,7 @@
 | `member_context` | 群成员画像与增量摘要 | 租户承担可选 Dify 成本 | API Key | 已迁移 | `b439d24` | `.venv/bin/python -m pytest -q tests/test_plugin_member_context.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（13 passed）；定向语法检查与 `git diff --check` 通过 |
 | `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 已迁移 | `880a314` | `.venv/bin/python -m pytest -q tests/test_plugin_member_roast.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（6 passed）；定向语法检查与 `git diff --check` 通过 |
 | `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 已迁移 | `283d2c7` | `.venv/bin/python -m pytest -q tests/test_plugin_value_rank.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（21 passed）；定向语法检查与 `git diff --check` 通过 |
-| `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 待迁移 | - | - |
+| `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 已迁移 | `9a03136`、`27e40d7`、`6831cd5` | `.venv/bin/python -m pytest -q tests/test_plugin_fun_command_play.py tests/test_plugin_migration_catalog.py`（8 passed）；通用链接回复 3 passed；Alembic 生命周期 2 passed；目录发现无错误或警告；定向语法检查与 `git diff --check` 通过 |
 | `xiuxian` | 多租户修仙玩法 | 无固定外部成本 | 无 | 待迁移 | - | - |
 
 ## 平台原生替代
@@ -186,3 +186,9 @@ Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，�
 社交关系只识别标准文本中对当前活跃群成员唯一账号、昵称或展示名的明确 `@`，重名不会建立关系边，也不解析微信 XML、Provider 提及字段或联系人缓存。社交热度、搭子、桥梁和关系摘要与身价排行共享同一每日结构化快照，快照和周报保存到当前绑定的 `PluginStateRecord`；趋势只扫描当前绑定、当前会话和有限日期窗口内的快照。
 
 “我的身价”和“我的趋势”固定查询真实消息发送人，执行载荷不能替换用户或会话。“重算身价”只允许租户普通配置中的渠道成员账号执行。统一调度器只为租户明确选择的群会话创建每日重算、周一周报预生成和周报推送任务；周报推送通过标准出站队列并使用绑定、会话和周日期稳定幂等，不调用任何具体渠道 Provider。
+
+## 趣味命令迁移边界
+
+趣味命令作为 `observer` 只观察标准群聊或私聊文本，具体规则必须通过可信租户、机器人绑定、渠道、会话和落库入站消息查询。规则独立保存在 `fun_command_rules`，同一机器人插件绑定内触发文本唯一；当前只支持 `exact`、`prefix` 和 `contains` 三种明确匹配方式，不执行租户可编辑正则，也不保留 A-BOT 全局作用域、事件触发或拍一拍解析。规则按优先级执行首条命中结果，冷却使用当前绑定的跨进程状态限流，不维护 Redis 或进程内规则缓存。
+
+规则回复只支持文本、图片、视频和链接卡片。文本模板只开放发送人、发送人名称、会话名称和原消息四个固定占位符；图片和视频必须使用 `DATA_DIR/tenants/<tenant_id>/fun_command` 下的相对路径，并在读取前完成目录归属和文件体积校验。链接先经过 HTTP/HTTPS URL 校验，再进入平台通用回复链；Telegram 当前降级为标题、描述和链接文本，微信 iPad 由渠道适配器转换为 874 `SendApp(Type=5)`，其他渠道接收同一通用链接载荷。插件不拼微信 XML，不直接调用企业微信、微信、Telegram 或其他 Provider，也不迁移旧语音、App 消息、延时连发和媒体 LRU 缓存。
