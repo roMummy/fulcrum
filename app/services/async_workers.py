@@ -60,6 +60,11 @@ def stop_background_workers() -> None:
     _stop_event.set()
     if _worker_thread and _worker_thread.is_alive():
         _worker_thread.join(timeout=5)
+    # MaiBot 每个租户绑定都有自己的 WebSocket 线程。应用退出时集中停止，避免
+    # 进程重载期间保留旧连接或让远端继续向已经关闭的实例推送回复。
+    from app.services.plugin_runtime.maibot_client import stop_all_maibot_connections
+
+    stop_all_maibot_connections()
     logger.info("background worker stopped")
 
 

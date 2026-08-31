@@ -151,6 +151,10 @@ def get_channel(db: Session, channel_id: int) -> Channel | None:
 
 
 def delete_bot(db: Session, bot: Bot) -> None:
+    # MaiBot 长连接按插件绑定独立运行。删除机器人前先停止这些连接，避免级联删除
+    # 数据库记录后后台线程仍持有已经失效的租户绑定。
+    for binding in list(bot.plugin_bindings):
+        _stop_binding_connection_if_needed(binding)
     db.delete(bot)
     db.commit()
 
@@ -176,6 +180,9 @@ def bind_plugin(
         existing.runtime_status = compute_binding_runtime(existing)
         db.commit()
         db.refresh(existing)
+        # 保存配置可能更换 WebSocket 地址、密钥或连接参数。旧连接必须立即停止，
+        # 下一条消息会按刚提交的配置建立新连接，不做双连接兼容或隐式降级。
+        _stop_binding_connection_if_needed(existing)
         return existing
 
     binding = BotPlugin(
@@ -196,6 +203,7 @@ def bind_plugin(
     )
     db.commit()
     db.refresh(binding)
+    _stop_binding_connection_if_needed(binding)
     return binding
 
 
@@ -208,7 +216,19 @@ def toggle_binding(db: Session, binding: BotPlugin) -> BotPlugin:
     binding.runtime_status = compute_binding_runtime(binding)
     db.commit()
     db.refresh(binding)
+    _stop_binding_connection_if_needed(binding)
     return binding
+
+
+def _stop_binding_connection_if_needed(binding: BotPlugin) -> None:
+    """停止具有独立长连接生命周期的插件绑定。"""
+
+    plugin_code = str(binding.plugin.code or "").strip() if binding.plugin is not None else ""
+    if plugin_code != "maibot_adapter":
+        return
+    from app.services.plugin_runtime.maibot_client import stop_maibot_connection
+
+    stop_maibot_connection(int(binding.tenant_id), int(binding.id))
 
 
 def update_binding_config(
@@ -230,6 +250,7 @@ def update_binding_config(
     )
     db.commit()
     db.refresh(binding)
+    _stop_binding_connection_if_needed(binding)
     return binding
 
 

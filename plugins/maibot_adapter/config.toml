@@ -1,0 +1,43 @@
+[plugin]
+code = "maibot_adapter"
+display_name = "MaiBot 适配器"
+plugin_type = "observer"
+version = "3.0.0"
+author = "abot"
+description = "把租户消息旁路发送到自己的 MaiBot，并按开关接收文本回复。"
+default_enabled = false
+
+[capability]
+# MaiBot 使用平台标准消息维度，连接和回复不依赖微信、企微或 Telegram Provider。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text", "image", "file", "video", "voice", "location", "app", "emoji", "system"]
+priority = 145
+consume_policy = "continue"
+timeout_ms = 10000
+
+[matcher]
+commands = []
+require_mention = false
+
+[secrets]
+# MaiBot API Key 只属于当前租户绑定，不进入目录配置或共享连接。
+fields = ["api_key"]
+
+[runtime]
+enabled = false
+collect_group_messages = true
+collect_private_messages = true
+enable_reply_output = false
+reply_group_messages = true
+reply_private_messages = true
+api_server_ws_url = ""
+api_key = ""
+platform_name = "multi-bot-saas"
+verify_ssl = true
+connect_timeout_seconds = 15
+receive_timeout_seconds = 120
+heartbeat_interval_seconds = 20
+reconnect_delay_seconds = 5
+queue_maxsize = 200
+max_send_retries = 2
