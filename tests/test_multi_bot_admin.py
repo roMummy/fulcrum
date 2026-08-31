@@ -1940,9 +1940,9 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "api_url": "https://api.uuuka.com/api/search",
+                    "api_url": "https://search.example.test/v1/drama",
                     "result_limit": 3,
-                    "default_timeout": 10,
+                    "timeout_seconds": 15,
                     "commands": ["短剧", "短剧搜索", "搜索短剧", "短剧查询"],
                 }
             )
@@ -1965,11 +1965,17 @@ consume_policy = "shared"
                                     "status": "completed",
                                     "message": "短剧搜索完成，共返回 2 条结果。",
                                     "output": {
-                                        "provider_status": "found",
+                                        "provider_status": "completed",
                                         "result_count": 2,
-                                        "items": [
-                                            {"title": "雪中来信", "source_link": "https://example.com/drama/1"},
-                                            {"title": "城市边缘", "source_link": "https://example.com/drama/2"},
+                                        "replies": [
+                                            {
+                                                "type": "text",
+                                                "content": (
+                                                    "短剧搜索：雪\n\n"
+                                                    "1. 雪中来信\n链接：https://example.com/drama/1\n\n"
+                                                    "2. 城市边缘\n链接：https://example.com/drama/2"
+                                                ),
+                                            }
                                         ],
                                     },
                                 }
@@ -1988,16 +1994,16 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "duanju_search")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "found")
+        self.assertEqual(data["output"]["provider_status"], "completed")
         self.assertEqual(data["output"]["result_count"], 2)
-        self.assertEqual(data["output"]["items"][0]["title"], "雪中来信")
+        self.assertIn("雪中来信", data["output"]["replies"][0]["content"])
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
             self.assertIsNotNone(binding)
             self.assertEqual(binding.last_execution_status, "completed")
             self.assertIn("雪中来信", binding.runtime_details_json or "")
-            self.assertIn("\"provider_status\": \"found\"", binding.runtime_details_json or "")
+            self.assertIn("\"provider_status\": \"completed\"", binding.runtime_details_json or "")
 
     def test_music_plugin_execution_endpoint_uses_directory_runtime_logic(self):
         self.login("ops", "ops123")

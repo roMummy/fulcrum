@@ -567,3 +567,103 @@ def test_douyin_parser_limits_image_results_and_rejects_untrusted_urls() -> None
         "https://media.example.test/1.jpg",
         "https://media.example.test/4.jpg",
     )
+
+
+def test_duanju_search_uses_tenant_api_and_persists_only_reply_summary() -> None:
+    """短剧搜索通过租户接口返回业务文本，不把完整 items 数组写入执行结果。"""
+
+    discovered = get_discovered_plugin("duanju_search", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("短剧", "短剧搜索", "搜索短剧", "短剧查询")
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["api_url"] == ""
+    assert discovered.runtime_config["result_limit"] == 3
+    assert "default_timeout" not in discovered.runtime_config
+
+    loaded = load_directory_plugin("duanju_search", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    captured: dict[str, object] = {}
+
+    class FakeHttpClient:
+        def request(self, method, url, **kwargs):  # noqa: ANN001
+            captured.update({"method": method, "url": url, "kwargs": kwargs})
+            return PluginHttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "items": [
+                                {
+                                    "title": "短剧《雪中来信》免费观看",
+                                    "source_link": "https://drama.example.test/1",
+                                    "update_time": "2026-08-31",
+                                    "view_count": 1200,
+                                    "provider_trace": "must-not-persist",
+                                },
+                                {
+                                    "title": "城市边缘",
+                                    "source_link": "https://drama.example.test/2",
+                                    "update_time": "",
+                                    "view_count": 0,
+                                },
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                url=url,
+            )
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "api_url": "https://search.example.test/v1/drama",
+            "api_key": "tenant-drama-key",
+            "result_limit": 3,
+        },
+        payload={"content": "/短剧 雪", "command_args": "雪"},
+    )
+    with patch.object(module, "PluginHttpClient", return_value=FakeHttpClient()):
+        result = module.execute_action(request)
+
+    assert result.ok is True
+    assert captured["method"] == "GET"
+    assert "keyword=%E9%9B%AA" in str(captured["url"])
+    assert captured["kwargs"]["headers"]["Authorization"] == "Bearer tenant-drama-key"
+    assert result.output["provider_status"] == "completed"
+    assert result.output["result_count"] == 2
+    assert "items" not in result.output
+    reply_text = result.output["replies"][0]["content"]
+    assert "1. 雪中来信" in reply_text
+    assert "https://drama.example.test/1" in reply_text
+    assert "观看：1200" in reply_text
+    serialized = json.dumps(result.output, ensure_ascii=False)
+    assert "tenant-drama-key" not in serialized
+    assert "provider_trace" not in serialized
+
+    source = (PROJECT_ROOT / "plugins/duanju_search/plugin.py").read_text(encoding="utf-8")
+    assert "urlrequest" not in source
+    assert "api.uuuka.com" not in source
+
+
+def test_duanju_search_limits_results_and_filters_invalid_links() -> None:
+    """搜索数量最多五条，非法观看地址只隐藏链接，不阻断有效标题展示。"""
+
+    loaded = load_directory_plugin("duanju_search", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    config = module._load_config(
+        {
+            "enabled": True,
+            "api_url": "https://search.example.test/v1/drama",
+            "result_limit": 99,
+        }
+    )
+    assert config.result_limit == 5
+    assert module._public_http_url("file:///tmp/drama") == ""
+    assert module._public_http_url("https://user:pass@drama.example.test/1") == ""
+    assert module._clean_title("短剧《雪中来信》免费观看") == "雪中来信"
