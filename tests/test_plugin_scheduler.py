@@ -48,9 +48,10 @@ def scheduler_fixture(tmp_path: Path):
         beta = Tenant(code="beta", name="乙租户", status="active")
         daily_plugin = Plugin(code="daily_news", display_name="每日新闻", plugin_type="command")
         douyu_plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
+        game_plugin = Plugin(code="game_task", display_name="游戏任务", plugin_type="command")
         summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
         weather_plugin = Plugin(code="weather", display_name="天气", plugin_type="rule")
-        db.add_all([alpha, beta, daily_plugin, douyu_plugin, summary_plugin, weather_plugin])
+        db.add_all([alpha, beta, daily_plugin, douyu_plugin, game_plugin, summary_plugin, weather_plugin])
         db.flush()
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人", status="running", is_enabled=True)
         beta_bot = Bot(tenant_id=beta.id, name="乙机器人", status="running", is_enabled=True)
@@ -74,7 +75,15 @@ def scheduler_fixture(tmp_path: Path):
             external_id="room-alpha",
             chat_type="group",
         )
-        db.add(conversation)
+        second_conversation = Conversation(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            channel_id=alpha_channel.id,
+            channel_type="telegram",
+            external_id="room-alpha-second",
+            chat_type="group",
+        )
+        db.add_all([conversation, second_conversation])
         db.flush()
         alpha_daily = BotPlugin(
             tenant_id=alpha.id,
@@ -92,6 +101,19 @@ def scheduler_fixture(tmp_path: Path):
                 {
                     "poll_interval_seconds": 60,
                     "room_subscriptions": {"room-alpha": ["100"]},
+                }
+            ),
+        )
+        alpha_game = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=game_plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "random_task_enabled": True,
+                    "random_task_time": "08:45",
+                    "random_task_conversation_ids": [conversation.id, second_conversation.id],
                 }
             ),
         )
@@ -136,16 +158,28 @@ def scheduler_fixture(tmp_path: Path):
             schedule_hour=8,
             status="active",
         )
-        db.add_all([alpha_daily, alpha_douyu, alpha_summary, alpha_weather, beta_daily, weather_subscription])
+        db.add_all(
+            [
+                alpha_daily,
+                alpha_douyu,
+                alpha_game,
+                alpha_summary,
+                alpha_weather,
+                beta_daily,
+                weather_subscription,
+            ]
+        )
         db.commit()
         identity = {
             "alpha_tenant_id": int(alpha.id),
             "alpha_bot_id": int(alpha_bot.id),
             "alpha_daily_binding_id": int(alpha_daily.id),
             "alpha_douyu_binding_id": int(alpha_douyu.id),
+            "alpha_game_binding_id": int(alpha_game.id),
             "alpha_summary_binding_id": int(alpha_summary.id),
             "alpha_weather_binding_id": int(alpha_weather.id),
             "alpha_conversation_id": int(conversation.id),
+            "alpha_second_conversation_id": int(second_conversation.id),
             "beta_tenant_id": int(beta.id),
             "beta_daily_binding_id": int(beta_daily.id),
         }
@@ -254,12 +288,24 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
             "plugin_action:daily_summary",
             "plugin_action:daily_summary_prepare",
             "plugin_action:poll_subscriptions",
+            "plugin_action:random_task_assignment",
+            "plugin_action:random_task_assignment",
             "plugin_action:weather_daily_push",
         ]
         assert second == []
         attempts = {job.related_type: job.max_attempts for job in first}
         assert attempts["plugin_action:daily_summary_prepare"] == 3
         assert attempts["plugin_action:daily_summary"] == 1
+        assert attempts["plugin_action:random_task_assignment"] == 1
+        game_jobs = [job for job in first if job.related_type == "plugin_action:random_task_assignment"]
+        assert len(game_jobs) == 2
+        assert {
+            parse_job_payload(job)["conversation_id"] for job in game_jobs
+        } == {
+            identity["alpha_conversation_id"],
+            identity["alpha_second_conversation_id"],
+        }
+        assert len({job.dedupe_key for job in game_jobs}) == 2
         summary_jobs = [job for job in first if "daily_summary" in str(job.related_type)]
         assert all(parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"] for job in summary_jobs)
         assert all("messages" not in json.dumps(parse_job_payload(job), ensure_ascii=False) for job in summary_jobs)

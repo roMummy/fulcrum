@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -18,9 +20,133 @@ os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
-from app.core.tenant_db import tenant_session
-from app.models.entities import PointsAccount, PointsTransaction
+from app.core.tenant_db import platform_session, tenant_session
+from app.models.entities import (
+    Bot,
+    BotPlugin,
+    Channel,
+    Conversation,
+    Message,
+    Plugin,
+    PointsAccount,
+    PointsTransaction,
+    TaskJob,
+)
+from app.models.saas import Tenant
 from app.services.points import PointsService
+from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
+from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
+from app.services.plugin_runtime.state_store import PluginStateStore
+
+
+@pytest.fixture()
+def game_task_fixture(tmp_path: Path):
+    """建立一个租户、两个群会话和游戏绑定，供可信状态与积分链路验证。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'game-task.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="game-task", name="游戏任务租户", status="active")
+        plugin = Plugin(code="game_task", display_name="游戏任务", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="游戏机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="游戏 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="game-room",
+            title="游戏群",
+            chat_type="group",
+        )
+        forged_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="forged-room",
+            title="伪造群",
+            chat_type="group",
+        )
+        db.add_all([conversation, forged_conversation])
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "forged_conversation_id": int(forged_conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def _game_message_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    sender_id: str,
+    sender_name: str,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """创建已落库入站消息，并用其主键构造平台可信执行上下文。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id=sender_id,
+        sender_name=sender_name,
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    return PluginExecutionRequest(
+        action="execute",
+        config={"score_multiplier": 2, "ranking_limit": 10, "max_active_tasks": 10},
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id=sender_id,
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
 
 
 def test_points_service_idempotency_prevents_duplicate_balance_changes(tmp_path: Path) -> None:
@@ -58,3 +184,229 @@ def test_points_service_idempotency_prevents_duplicate_balance_changes(tmp_path:
     finally:
         Base.metadata.drop_all(bind=engine)
         engine.dispose()
+
+
+def test_game_task_uses_trusted_group_state_and_idempotent_points(game_task_fixture, monkeypatch) -> None:
+    """游戏命令只读取真实消息，任务答案留在状态表，积分奖励和错答扣分保持幂等。"""
+
+    factory, identity = game_task_fixture
+    discovered = get_discovered_plugin("game_task", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("s", "t", "a", "r", "l", "h")
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["random_task_enabled"] is False
+
+    loaded = load_directory_plugin("game_task", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    monkeypatch.setattr(module.random, "choice", lambda items: items[0])
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        join_alpha = module.execute_message_action(
+            db,
+            _game_message_request(
+                db,
+                identity,
+                content="/s",
+                sender_id="player-alpha",
+                sender_name="甲玩家",
+                payload={
+                    "command_name": "r",
+                    "sender_id": "forged-user",
+                    "sender_name": "伪造昵称",
+                    "conversation_id": identity["forged_conversation_id"],
+                },
+            ),
+        )
+        join_beta = module.execute_message_action(
+            db,
+            _game_message_request(
+                db,
+                identity,
+                content="#s",
+                sender_id="player-beta",
+                sender_name="乙玩家",
+            ),
+        )
+        # 错答扣分需要已有余额；这笔种子积分使用其他来源，排行榜仍读取统一积分账本。
+        PointsService(db).add_points(
+            "player-beta",
+            "game-room",
+            2,
+            user_name="乙玩家",
+            source="test_seed",
+            idempotency_key="test-seed:game-task:player-beta",
+        )
+        created = module.execute_message_action(
+            db,
+            _game_message_request(
+                db,
+                identity,
+                content="/t",
+                sender_id="player-alpha",
+                sender_name="甲玩家",
+            ),
+        )
+
+        store = PluginStateStore(db, PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            channel_type="telegram",
+            chat_type="group",
+        ))
+        state_key = f"conversation:{identity['conversation_id']}"
+        created_state = store.get("game_task", state_key)
+        assert created_state is not None
+        assert created_state["players"] == {"player-alpha": "甲玩家", "player-beta": "乙玩家"}
+        assert created_state["active_tasks"]["1"]["answer"] == "北京"
+
+        wrong_request = _game_message_request(
+            db,
+            identity,
+            content="/a 1 上海",
+            sender_id="player-beta",
+            sender_name="乙玩家",
+            payload={"command_name": "a", "command_args": "999 北京"},
+        )
+        wrong = module.execute_message_action(db, wrong_request)
+        repeated_wrong = module.execute_message_action(db, wrong_request)
+
+        correct_request = _game_message_request(
+            db,
+            identity,
+            content="/a 1 北京",
+            sender_id="player-alpha",
+            sender_name="甲玩家",
+        )
+        correct = module.execute_message_action(db, correct_request)
+        repeated_correct = module.execute_message_action(db, correct_request)
+        ranking = module.execute_message_action(
+            db,
+            _game_message_request(
+                db,
+                identity,
+                content="/r",
+                sender_id="player-alpha",
+                sender_name="甲玩家",
+            ),
+        )
+
+        final_state = store.get("game_task", state_key)
+        forged_state = store.get("game_task", f"conversation:{identity['forged_conversation_id']}")
+        game_transactions = db.scalars(
+            select(PointsTransaction)
+            .where(PointsTransaction.source == "game_task")
+            .order_by(PointsTransaction.id.asc())
+        ).all()
+        alpha_account = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "player-alpha",
+                PointsAccount.group_id == "game-room",
+            )
+        )
+        beta_account = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "player-beta",
+                PointsAccount.group_id == "game-room",
+            )
+        )
+
+    assert join_alpha.output["provider_status"] == "joined"
+    assert join_beta.output["provider_status"] == "joined"
+    assert created.output["provider_status"] == "task_created"
+    assert created.output["task_id"] == 1
+    assert "answer" not in created.output
+    assert "北京" not in created.output["replies"][0]["content"]
+    assert wrong.output["provider_status"] == "answered_incorrect"
+    assert wrong.output["total_points"] == 1
+    assert repeated_wrong.output["provider_status"] == "answered_incorrect_repeated"
+    assert repeated_wrong.output["total_points"] == 1
+    assert correct.output["provider_status"] == "answered_correct"
+    # 题目基础分 3 只在创建时乘以 2，回答时不会再次重复乘倍数。
+    assert correct.output["awarded_points"] == 6
+    assert correct.output["total_points"] == 6
+    assert repeated_correct.output["provider_status"] == "task_not_found"
+    assert ranking.output["ranking"] == [
+        {"user_id": "player-alpha", "user_name": "甲玩家", "points": 6},
+        {"user_id": "player-beta", "user_name": "乙玩家", "points": 1},
+    ]
+    assert final_state is not None and final_state["active_tasks"] == {}
+    assert forged_state is None
+    assert alpha_account is not None and alpha_account.total_points == 6
+    assert beta_account is not None and beta_account.total_points == 1
+    assert [item.points_delta for item in game_transactions] == [-1, 6]
+    assert game_transactions[0].idempotency_key.endswith(f":wrong:{wrong_request.context.message_id}")
+    assert game_transactions[1].idempotency_key.endswith(":1:reward")
+
+    untrusted = module.execute_action(PluginExecutionRequest(action="execute", config={}, payload={"content": "/s"}))
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/game_task/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "ROOM_STATES" not in source
+    assert "request.payload.get" not in source
+    assert 'payload.get("sender_id")' not in source
+    assert 'payload.get("conversation_external_id")' not in source
+
+
+def test_game_task_scheduled_assignment_queues_one_trusted_outbound_job(game_task_fixture, monkeypatch) -> None:
+    """随机发题只使用配置会话和已报名玩家，并通过通用出站队列发送。"""
+
+    factory, identity = game_task_fixture
+    loaded = load_directory_plugin("game_task", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    monkeypatch.setattr(module.random, "choice", lambda items: items[0])
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        module.execute_message_action(
+            db,
+            _game_message_request(
+                db,
+                identity,
+                content="/s",
+                sender_id="scheduled-player",
+                sender_name="定时玩家",
+            ),
+        )
+        context = PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            channel_type="telegram",
+            chat_type="group",
+        )
+        result = module.execute_scheduled_action(
+            db,
+            PluginExecutionRequest(
+                action="random_task_assignment",
+                config={
+                    "random_task_enabled": True,
+                    "random_task_conversation_ids": [identity["conversation_id"]],
+                },
+                payload={"conversation_id": identity["forged_conversation_id"]},
+                context=context,
+            ),
+        )
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+        state = PluginStateStore(db, context).get(
+            "game_task",
+            f"conversation:{identity['conversation_id']}",
+        )
+
+    assert result.ok is True
+    assert result.output["provider_status"] == "task_assigned"
+    assert result.output["conversation_id"] == identity["conversation_id"]
+    assert len(jobs) == 1
+    assert jobs[0].related_type == "game_task_binding"
+    job_payload = json.loads(jobs[0].payload_json)
+    assert job_payload["conversation_id"] == identity["conversation_id"]
+    assert job_payload["payload"]["receiver_id"] == "game-room"
+    assert "forged-room" not in jobs[0].payload_json
+    assert state is not None
+    assert state["active_tasks"]["1"]["holder_id"] == "scheduled-player"

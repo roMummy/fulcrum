@@ -84,6 +84,7 @@ def enqueue_plugin_scheduled_action(
         binding_id=int(binding.id),
         action_key=normalized_action,
         scheduled_for=normalized_time,
+        conversation_id=normalized_conversation_id,
     )
     existing = db.scalar(
         select(TaskJob)
@@ -138,7 +139,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
         .where(
             BotPlugin.status == "enabled",
-            Plugin.code.in_(("daily_news", "douyu", "message_summary", "weather")),
+            Plugin.code.in_(("daily_news", "douyu", "game_task", "message_summary", "weather")),
         )
         .order_by(BotPlugin.id.asc())
     ).all()
@@ -323,6 +324,29 @@ def _build_plugin_schedule_specs(
                 priority=65,
             ),
         )
+    if plugin_code == "game_task":
+        # 随机发题只针对租户在绑定配置中明确选中的群会话。每个会话独立入队，
+        # 失败、重试和幂等都不会影响同一绑定下的其他群。
+        if not _coerce_bool(config.get("random_task_enabled"), False):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("random_task_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        hour, minute = _parse_clock_time(str(config.get("random_task_time") or "17:58"))
+        scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if current < scheduled_for:
+            return ()
+        return tuple(
+            PluginScheduledActionSpec(
+                action_key="random_task_assignment",
+                scheduled_for=scheduled_for,
+                parameters={},
+                conversation_id=conversation_id,
+                high_side_effect=True,
+                priority=60,
+            )
+            for conversation_id in conversation_ids
+        )
     if plugin_code == "message_summary":
         conversation_ids = _normalize_positive_ids(config.get("daily_summary_conversation_ids"))
         if not conversation_ids:
@@ -387,11 +411,18 @@ def _build_plugin_schedule_specs(
     return ()
 
 
-def _build_schedule_dedupe_key(*, binding_id: int, action_key: str, scheduled_for: datetime) -> str:
-    """生成租户内稳定且可排查的计划任务幂等键。"""
+def _build_schedule_dedupe_key(
+    *,
+    binding_id: int,
+    action_key: str,
+    scheduled_for: datetime,
+    conversation_id: int | None,
+) -> str:
+    """生成租户内稳定幂等键，同一动作的不同目标会话必须分别入队。"""
 
     timestamp = int(ensure_shanghai_datetime(scheduled_for).timestamp())
-    return f"plugin:{binding_id}:{action_key}:{timestamp}"
+    target = int(conversation_id or 0)
+    return f"plugin:{binding_id}:{action_key}:conversation:{target}:{timestamp}"
 
 
 def _validate_parameter_tree(value: Any, *, key_name: str = "") -> None:
@@ -481,3 +512,18 @@ def _coerce_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """严格读取计划开关，未知字符串不隐式开启后台任务。"""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
