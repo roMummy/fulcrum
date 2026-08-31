@@ -55,7 +55,7 @@
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 已迁移 | `a8de7e4` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_ai_gen_image.py tests/test_plugin_common_services.py tests/test_plugin_runtime_secrets.py tests/test_plugin_migration_catalog.py`（22 passed） |
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 已迁移 | `5fb4219` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_maibot_adapter.py tests/test_plugin_runtime_secrets.py tests/test_plugin_secret_forms.py tests/test_plugin_migration_catalog.py tests/test_plugin_scheduler.py`（24 passed） |
 | `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 已迁移 | `ba8806e` | `.venv/bin/python -m pytest -q tests/test_plugin_codex_quota_allocator.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（9 passed） |
-| `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌 | 待迁移 | - | - |
+| `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌、SMTP 密码 | 已迁移 | `eaf31db` | `.venv/bin/python -m pytest -q tests/test_plugin_newapi_coupon.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（8 passed）；临时 SQLite 空库升级到 `20260901_0017` |
 | `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 待迁移 | - | - |
 | `member_context` | 群成员画像与增量摘要 | 视画像服务而定 | 可选 API Key | 待迁移 | - | - |
@@ -154,3 +154,11 @@ Codex 额度管理只保留 `额度查询`、`额度调整` 和 `周额重置` �
 CPA 只调用已经验证的 `v0/management/auth-files` 和 `v0/management/api-call`，由 CPA 代理读取 Codex 七天主额度窗口，平台不接触 OAuth Token。Sub2API 只调用已经验证的 v1 分组、有效订阅、分组更新和订阅周额重置接口；目标必须是租户配置的 OpenAI 订阅分组，响应混入其他分组、非有效订阅、未知信封或未知接口版本时直接拒绝，不探测备用路由，也不解析私有替代字段。
 
 查询按真实发送人限流，订阅邮箱只返回脱敏标识。调整和重置还要求租户配置管理员用户 ID、用户级写限流以及同一管理员在同一会话中发送第二条新消息确认；同一消息的任务重试不能充当确认。最终快照与首次预览不一致时旧确认失效，确认状态在外部写入前持久化为已消费，避免外部成功后任务重试造成重复写入。额度调整按有效订阅原生周用量和 CPA 已用比例反推统一周限额并向下截断；周额重置只清零 `weekly`，明确保留 `daily` 和 `monthly`。
+
+## NewAPI 领券迁移边界
+
+NewAPI 领券只保留群聊中的 `领券 邮箱` 单一入口。插件从可信绑定、渠道、群会话、落库消息、当前群记录和活跃群成员记录确认领取人，不读取消息载荷中的用户、邮箱、地址或套餐字段，也不通过渠道 API 临时补查成员。NewAPI 地址、管理员用户 ID、明确套餐 ID、开户策略、限流和邮件配置由当前租户维护，管理员访问令牌与 SMTP 密码保存到当前插件绑定密文。
+
+`coupon_account_bindings` 使用租户、插件绑定、渠道用户、邮箱和 NewAPI 用户唯一约束保存不可自行更换的领取关系。首次请求在访问 NewAPI 前先提交 `pending` 预留，确定性用户名使任务重试复用同一账号；同一用户换邮箱、同一邮箱换用户、同一上游账号重复发放都在外部写入前拒绝。已有 `active` 记录直接返回幂等结果，不再次查询或绑定套餐。NewAPI 只使用当前确认的用户查询、用户创建、套餐列表、用户订阅、套餐绑定、登录和订阅扣费偏好接口，响应必须符合固定 `success/message/data` 信封，不解析旧分页或嵌套替代结构。
+
+自动开户只有在租户配置完整 SMTP 且通知模式为邮件时才允许执行。初始密码使用安全随机数在内存生成，只进入 NewAPI 创建请求和租户邮件发送器，不写数据库、不进标准回复、不进执行输出，也不会在邮件失败时回退到群聊；邮件失败后领取仍保持已发放状态，并提示用户联系管理员重置密码。数据库迁移使用 `20260901_0017`，已从临时空库完整升级验证。
