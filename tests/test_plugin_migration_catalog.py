@@ -1,4 +1,11 @@
+import subprocess
+import sys
 from pathlib import Path
+
+from scripts.verify_plugin_migration import (
+    SAAS_OWN_PLUGIN_CODES as VERIFIED_SAAS_OWN_PLUGIN_CODES,
+    TARGET_PLUGIN_CODES as VERIFIED_TARGET_PLUGIN_CODES,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -97,3 +104,24 @@ def test_existing_plugin_directories_have_single_saas_entrypoint() -> None:
         assert (plugin_dir / "config.toml").is_file()
         assert (plugin_dir / "plugin.py").is_file()
         assert not (plugin_dir / "main.py").exists()
+
+
+def test_delivery_verifier_accepts_the_complete_confirmed_catalog() -> None:
+    """最终交付工具必须覆盖完整迁移集合，并能在干净目录上独立返回成功。"""
+
+    assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES
+    assert VERIFIED_SAAS_OWN_PLUGIN_CODES == SAAS_OWN_PLUGIN_CODES
+
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_plugin_migration.py"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "目录插件总数: 38" in result.stdout
+    assert "A-BOT 目标插件数: 36" in result.stdout
+    assert "SaaS 自有插件数: 2" in result.stdout
+    assert "错误数量: 0" in result.stdout
