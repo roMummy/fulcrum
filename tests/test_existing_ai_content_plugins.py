@@ -405,6 +405,152 @@ def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
     ]
 
 
+def test_global_news_matches_latest_commands_and_uses_clean_tenant_config() -> None:
+    """全球新闻补齐来源最新命令和 Telegram，并删除固定 Dify/Authorization 配置。"""
+
+    discovered = get_discovered_plugin("global_news", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == (
+        "全球新闻",
+        "国际新闻",
+        "环球新闻",
+        "政经新闻",
+        "政治经济新闻",
+    )
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["llm_api_base"] == ""
+    assert discovered.runtime_config["llm_model"] == ""
+    assert "dify_api_url" not in discovered.runtime_config
+    assert "authorization" not in discovered.runtime_config
+
+    loaded = load_directory_plugin("global_news", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    group_context = type(
+        "GroupContext",
+        (),
+        {"chat_type": "group", "message_type": "text", "content": "#政治经济新闻"},
+    )()
+    assert module.matches_event(group_context)["matched"] is True
+
+    source = (PROJECT_ROOT / "plugins/global_news/plugin.py").read_text(encoding="utf-8")
+    assert "urlrequest" not in source
+    assert "UnifiedLLMClient" not in source
+    assert "WechatAPIClient" not in source
+    assert "threading.Thread" not in source
+    assert "192.168.2.240" not in source
+
+
+def test_global_news_parses_rss_and_atom_with_structured_xml() -> None:
+    """固定新闻源同时支持 RSS item 和 Atom entry，不使用字符串切割。"""
+
+    loaded = load_directory_plugin("global_news", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    rss = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/rss+xml"},
+        body=(
+            "<rss><channel><item><title> RSS  Headline </title>"
+            "<link>https://news.example/rss</link><pubDate>Mon</pubDate></item></channel></rss>"
+        ).encode("utf-8"),
+        url="https://news.example/rss.xml",
+    )
+    atom = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/atom+xml"},
+        body=(
+            '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Atom Headline</title>'
+            '<link href="https://news.example/atom"/><updated>2026-08-31</updated></entry></feed>'
+        ).encode("utf-8"),
+        url="https://news.example/atom.xml",
+    )
+
+    rss_items = module._parse_feed_items("bbc", rss, limit=5)
+    atom_items = module._parse_feed_items("cnn", atom, limit=5)
+    assert rss_items[0].title == "RSS Headline"
+    assert rss_items[0].link == "https://news.example/rss"
+    assert atom_items[0].title == "Atom Headline"
+    assert atom_items[0].link == "https://news.example/atom"
+
+
+def test_global_news_uses_generic_text_generation_and_drops_full_headlines() -> None:
+    """新闻分析复用通用模型接口，执行结果不保存标题列表、密钥或上游 trace。"""
+
+    loaded = load_directory_plugin("global_news", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    fetched = module.NewsFetchResult(
+        items=(
+            module.NewsItem("bbc", "Global market update", "https://news.example/1", "2026-08-31"),
+            module.NewsItem("cnn", "Election policy update", "https://news.example/2", "2026-08-31"),
+        ),
+        successful_sources=("bbc", "cnn"),
+        failed_sources=("fox",),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeGenerator:
+        def __init__(self, **kwargs):
+            captured["client_config"] = kwargs
+
+        def generate(self, **kwargs):
+            captured["generate_args"] = kwargs
+            return SimpleNamespace(text="# 全球简报\n\n- 市场与政策风险上升", token_usage=234)
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "sources": ["bbc", "cnn", "fox"],
+            "llm_api_base": "https://llm.example.test/v1",
+            "llm_api_key": "tenant-news-key",
+            "llm_model": "tenant-news-model",
+            "render_as_image": False,
+        },
+        payload={"content": "全球新闻"},
+        context=PluginExecutionContext(
+            tenant_id=1,
+            binding_id=2,
+            bot_id=3,
+            channel_id=4,
+            conversation_id=5,
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+    with (
+        patch.object(module, "_fetch_sources", return_value=fetched),
+        patch.object(module, "PluginTextGenerationClient", FakeGenerator),
+    ):
+        result = module.execute_action(request)
+
+    assert result.ok is True
+    assert result.output == {
+        "provider_status": "completed",
+        "headline_count": 2,
+        "successful_source_count": 2,
+        "failed_source_count": 1,
+        "successful_sources": ["bbc", "cnn"],
+        "failed_sources": ["fox"],
+        "summary": "# 全球简报\n\n- 市场与政策风险上升",
+        "token_usage": 234,
+        "reply_type": "text",
+        "replies": [{"type": "text", "content": "# 全球简报\n\n- 市场与政策风险上升"}],
+    }
+    assert captured["client_config"] == {
+        "api_base": "https://llm.example.test/v1",
+        "model": "tenant-news-model",
+        "api_key": "tenant-news-key",
+    }
+    assert "Global market update" in captured["generate_args"]["user_prompt"]
+    serialized = json.dumps(result.output, ensure_ascii=False)
+    assert "Global market update" not in serialized
+    assert "tenant-news-key" not in serialized
+    assert "trace" not in serialized.lower()
+
+
 def test_ai_auto_response_is_group_only_without_manual_command() -> None:
     """AI 自动参与只进入群聊文本候选，不再暴露旧命令和私聊入口。"""
 

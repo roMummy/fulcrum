@@ -3263,57 +3263,6 @@ consume_policy = "shared"
             self.assertEqual(payload["conversation_id"], conversation_id)
             self.assertEqual(payload["payload"]["content"], "明早群提醒")
 
-    def test_global_news_plugin_execution_endpoint_uses_directory_runtime_logic(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "global_news"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"sources": ["bbc", "cnn"], "per_source_limit": 3, "default_timeout": 10})
-            db.commit()
-            binding_id = binding.id
-
-        with patch(
-            "app.services.plugin_runtime.executors.load_directory_plugin",
-            return_value=type(
-                "LoadedPlugin",
-                (),
-                {
-                    "instance": type(
-                        "PluginInstance",
-                        (),
-                        {
-                            "execute_action": staticmethod(
-                                lambda request: {
-                                    "ok": True,
-                                    "status": "completed",
-                                    "message": "全球新闻抓取完成，共 2 条新闻。",
-                                    "output": {
-                                        "provider_status": "fetched",
-                                        "count": 2,
-                                        "items": [
-                                            {"source": "bbc", "title": "headline-1"},
-                                            {"source": "cnn", "title": "headline-2"},
-                                        ],
-                                    },
-                                }
-                            )
-                        },
-                    )()
-                },
-            )(),
-        ):
-            response = self.client.post(f"/plugins/{binding_id}/execute", json={})
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "global_news")
-        self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["count"], 2)
-        self.assertEqual(data["output"]["provider_status"], "fetched")
-
     def test_douyin_parser_plugin_execution_endpoint_uses_directory_runtime_logic(self):
         self.login("ops", "ops123")
         with SessionLocal() as db:

@@ -2,30 +2,33 @@
 code = "global_news"
 display_name = "全球新闻"
 plugin_type = "command"
-version = "1.0.0"
+version = "2.0.0"
 author = "abot"
-description = "抓取全球新闻并可选执行 Dify 摘要，迁移自 abot"
-default_enabled = false
+description = "聚合全球新闻并生成中文政治经济简报"
+default_enabled = true
 
 [capability]
-# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 100
 consume_policy = "continue"
-timeout_ms = 12000
+timeout_ms = 90000
 
 [matcher]
-commands = ["全球新闻", "国际新闻", "环球新闻", "政经新闻"]
+commands = ["全球新闻", "国际新闻", "环球新闻", "政经新闻", "政治经济新闻"]
 require_mention = false
 
 [secrets]
-fields = ["authorization"]
+fields = ["llm_api_key"]
 
 [runtime]
+enabled = true
 sources = ["nbc", "cnn", "abc", "fox", "bbc"]
 per_source_limit = 5
-default_timeout = 10
-dify_api_url = "http://192.168.2.240/v1/chat-messages"
-authorization = ""
+fetch_timeout_seconds = 15
+llm_api_base = ""
+llm_api_key = ""
+llm_model = ""
+llm_timeout_seconds = 60
+render_as_image = true
