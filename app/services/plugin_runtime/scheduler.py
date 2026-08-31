@@ -139,7 +139,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
         .where(
             BotPlugin.status == "enabled",
-            Plugin.code.in_(("daily_news", "douyu", "game_task", "message_summary", "weather")),
+            Plugin.code.in_(("daily_news", "douyu", "epic_free", "game_task", "message_summary", "weather")),
         )
         .order_by(BotPlugin.id.asc())
     ).all()
@@ -322,6 +322,23 @@ def _build_plugin_schedule_specs(
                 parameters={},
                 high_side_effect=True,
                 priority=65,
+            ),
+        )
+    if plugin_code == "epic_free":
+        if not _coerce_bool(config.get("enabled"), True):
+            return ()
+        interval = max(300, min(_coerce_int(config.get("poll_interval_seconds"), 3600), 86400))
+        timestamp = math.floor(current.timestamp() / interval) * interval
+        scheduled_for = datetime.fromtimestamp(timestamp, tz=current.tzinfo)
+        return (
+            PluginScheduledActionSpec(
+                action_key="poll_free_games",
+                scheduled_for=scheduled_for,
+                parameters={},
+                # 定时动作会创建真实出站任务，同一计划任务失败后不自动重放；
+                # 下一时间桶仍会由摘要状态继续补发尚未成功入队的群聊。
+                high_side_effect=True,
+                priority=70,
             ),
         )
     if plugin_code == "game_task":
