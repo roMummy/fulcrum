@@ -1,0 +1,32 @@
+[plugin]
+code = "ai_gen_image"
+display_name = "AI 绘图"
+plugin_type = "command"
+version = "2.0.0"
+author = "abot"
+description = "使用租户自己的 OpenAI 兼容图片模型生成或编辑图片。"
+default_enabled = false
+
+[capability]
+# 生图请求在平台已有的异步插件分发任务中执行，回复统一进入渠道出站队列。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 110
+consume_policy = "stop"
+timeout_ms = 120000
+
+[matcher]
+commands = ["AI绘图", "绘图", "画图", "生成图片"]
+require_mention = false
+
+[secrets]
+# 模型调用成本和密钥由当前租户承担，平台不提供共享密钥回退。
+fields = ["api_key"]
+
+[runtime]
+enabled = true
+api_base = ""
+api_key = ""
+model = ""
+request_timeout_seconds = 90
