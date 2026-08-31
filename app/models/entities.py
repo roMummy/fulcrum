@@ -560,6 +560,13 @@ class PointsAccount(Base, TenantOwnedMixin, TimestampMixin):
 
 class PointsTransaction(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "points_transactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_points_transactions_tenant_idempotency",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     group_id: Mapped[str] = mapped_column(String(128), default="", index=True)
@@ -568,6 +575,7 @@ class PointsTransaction(Base, TenantOwnedMixin, TimestampMixin):
     points_delta: Mapped[int] = mapped_column(Integer, default=0)
     balance_after: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(50), default="other", index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(191), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 

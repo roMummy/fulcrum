@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
@@ -54,9 +55,20 @@ class PointsService:
         description: str | None = None,
         counterparty_user_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        idempotency_key: str | None = None,
     ) -> PointsResult:
         if points <= 0:
             return PointsResult(ok=False, message="积分必须大于 0。")
+        normalized_key = self._normalize_idempotency_key(idempotency_key)
+        existing = self._find_idempotent_transaction(normalized_key)
+        if existing is not None:
+            account = self.ensure_account(user_id, group_id, user_name)
+            return PointsResult(
+                ok=True,
+                message="积分已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(existing.id)},
+            )
         account = self.ensure_account(user_id, group_id, user_name)
         account.total_points = int(account.total_points or 0) + points
         self._create_transaction(
@@ -68,8 +80,17 @@ class PointsService:
             description=description,
             counterparty_user_id=counterparty_user_id,
             metadata=metadata,
+            idempotency_key=normalized_key,
         )
-        self.db.commit()
+        duplicate = self._commit_or_load_duplicate(normalized_key)
+        if duplicate is not None:
+            account = self.ensure_account(user_id, group_id, user_name)
+            return PointsResult(
+                ok=True,
+                message="积分已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(duplicate.id)},
+            )
         return PointsResult(ok=True, message="积分增加成功。", account=self._serialize_account(account))
 
     def deduct_points(
@@ -83,9 +104,20 @@ class PointsService:
         description: str | None = None,
         counterparty_user_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        idempotency_key: str | None = None,
     ) -> PointsResult:
         if points <= 0:
             return PointsResult(ok=False, message="积分必须大于 0。")
+        normalized_key = self._normalize_idempotency_key(idempotency_key)
+        existing = self._find_idempotent_transaction(normalized_key)
+        if existing is not None:
+            account = self.ensure_account(user_id, group_id, user_name)
+            return PointsResult(
+                ok=True,
+                message="积分已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(existing.id)},
+            )
         account = self.ensure_account(user_id, group_id, user_name)
         if int(account.total_points or 0) < points:
             return PointsResult(
@@ -103,8 +135,17 @@ class PointsService:
             description=description,
             counterparty_user_id=counterparty_user_id,
             metadata=metadata,
+            idempotency_key=normalized_key,
         )
-        self.db.commit()
+        duplicate = self._commit_or_load_duplicate(normalized_key)
+        if duplicate is not None:
+            account = self.ensure_account(user_id, group_id, user_name)
+            return PointsResult(
+                ok=True,
+                message="积分已处理。",
+                account=self._serialize_account(account),
+                extra={"idempotent": True, "transaction_id": int(duplicate.id)},
+            )
         return PointsResult(ok=True, message="积分扣除成功。", account=self._serialize_account(account))
 
     def transfer_points(
@@ -119,11 +160,29 @@ class PointsService:
         description: str | None = None,
         source: str = "trade",
         metadata: dict[str, object] | None = None,
+        idempotency_key: str | None = None,
     ) -> PointsResult:
         if points <= 0:
             return PointsResult(ok=False, message="积分必须大于 0。")
         if from_user_id == to_user_id:
             return PointsResult(ok=False, message="不能给自己转账。")
+
+        normalized_key = self._normalize_idempotency_key(idempotency_key, max_length=170)
+        credit_key = f"{normalized_key}:credit" if normalized_key else None
+        existing = self._find_idempotent_transaction(credit_key)
+        if existing is not None:
+            from_account = self.ensure_account(from_user_id, group_id, from_user_name)
+            to_account = self.ensure_account(to_user_id, group_id, to_user_name)
+            return PointsResult(
+                ok=True,
+                message="积分转账已处理。",
+                extra={
+                    "idempotent": True,
+                    "transaction_id": int(existing.id),
+                    "from_user": self._serialize_account(from_account),
+                    "to_user": self._serialize_account(to_account),
+                },
+            )
 
         from_account = self.ensure_account(from_user_id, group_id, from_user_name)
         if from_user_id != SYSTEM_USER_ID and int(from_account.total_points or 0) < points:
@@ -145,6 +204,7 @@ class PointsService:
                 description=description,
                 counterparty_user_id=to_user_id,
                 metadata=metadata,
+                idempotency_key=f"{normalized_key}:debit" if normalized_key else None,
             )
         to_account.total_points = int(to_account.total_points or 0) + points
         self._create_transaction(
@@ -156,8 +216,22 @@ class PointsService:
             description=description,
             counterparty_user_id=from_user_id,
             metadata=metadata,
+            idempotency_key=credit_key,
         )
-        self.db.commit()
+        duplicate = self._commit_or_load_duplicate(credit_key)
+        if duplicate is not None:
+            from_account = self.ensure_account(from_user_id, group_id, from_user_name)
+            to_account = self.ensure_account(to_user_id, group_id, to_user_name)
+            return PointsResult(
+                ok=True,
+                message="积分转账已处理。",
+                extra={
+                    "idempotent": True,
+                    "transaction_id": int(duplicate.id),
+                    "from_user": self._serialize_account(from_account),
+                    "to_user": self._serialize_account(to_account),
+                },
+            )
         return PointsResult(
             ok=True,
             message="积分转账成功。",
@@ -275,6 +349,7 @@ class PointsService:
         description: str | None,
         counterparty_user_id: str | None,
         metadata: dict[str, object] | None,
+        idempotency_key: str | None,
     ) -> None:
         self.db.add(
             PointsTransaction(
@@ -284,10 +359,45 @@ class PointsService:
                 points_delta=points_delta,
                 balance_after=balance_after,
                 source=source,
+                idempotency_key=idempotency_key,
                 description=description,
                 metadata_json=json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
             )
         )
+
+    def _find_idempotent_transaction(self, idempotency_key: str | None) -> PointsTransaction | None:
+        """在当前租户会话内查找已完成流水，空键保持普通非幂等行为。"""
+
+        if not idempotency_key:
+            return None
+        return self.db.scalar(
+            select(PointsTransaction).where(PointsTransaction.idempotency_key == idempotency_key)
+        )
+
+    def _commit_or_load_duplicate(self, idempotency_key: str | None) -> PointsTransaction | None:
+        """提交积分事务；并发命中唯一键时回滚本次变更并返回既有流水。"""
+
+        try:
+            self.db.commit()
+            return None
+        except IntegrityError:
+            self.db.rollback()
+            existing = self._find_idempotent_transaction(idempotency_key)
+            if existing is None:
+                # 非幂等键冲突或数据库约束异常不能伪装成成功，交给上层记录失败。
+                raise
+            return existing
+
+    @staticmethod
+    def _normalize_idempotency_key(value: str | None, *, max_length: int = 191) -> str | None:
+        """限制业务幂等键长度；过长键直接拒绝，不能静默截断造成碰撞。"""
+
+        normalized = str(value or "").strip()
+        if not normalized:
+            return None
+        if len(normalized) > max_length:
+            raise ValueError("积分流水幂等键超过长度限制")
+        return normalized
 
     @staticmethod
     def _serialize_account(account: PointsAccount) -> dict[str, object]:
@@ -318,6 +428,7 @@ class PointsService:
             "points": int(item.points_delta or 0),
             "balance_after": int(item.balance_after or 0),
             "source": item.source,
+            "idempotency_key": item.idempotency_key,
             "description": item.description,
             "metadata": metadata,
             "created_at": item.created_at,
