@@ -4,13 +4,15 @@
 
 - 来源仓库：`/data/abot`
 - 来源分支：`feature-855`
-- 来源提交：`9efa1739748e0e8fa2506b80b9670e77080f001a`
+- 来源提交：`a842271986b1e50ab62daa30b5be73a65d872d0d`
 - 核对日期：`2026-08-31`
 - 迁移方式：SaaS 原生重构，不加载 A-BOT 运行时，不保留兼容调用链
 
-本次从 `ad5147b03b590bfad3a8932924b049f7c2198d2a` 核对到
-`9efa1739748e0e8fa2506b80b9670e77080f001a`，新增内容仅为语义 Skill 的设计与实施计划，
-未修改插件目录、命令、外部接口、数据表或定时动作。
+本次从 `9efa1739748e0e8fa2506b80b9670e77080f001a` 核对到
+`a842271986b1e50ab62daa30b5be73a65d872d0d`，新增了语义 Skill 注册、路由、会话、执行和观测链路，
+并修改了 `ai_auto_response`、`codex_quota_allocator`、`dify`、`dota2_stats`、`douyu`、
+`message_summary`、`robot_menu`、`stats_collector`、`weather`。本轮 Task 10 的六个积分与任务插件
+没有来源变更；受影响的后续插件仍按当前基线重新核对，不直接复用旧审核结论。
 
 每次开始新的插件迁移前都要确认来源分支是否更新。来源提交发生变化时，先更新本台账，再核对新增提交影响的命令、外部接口、数据表和定时动作。
 
@@ -26,20 +28,20 @@
 | `douyin_parser` | 租户承担抖音解析服务成本 | 可选 API Key | 已审核 | `3bbd653` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k douyin_parser`（2 passed）；插件相关组合验证 27 passed |
 | `douyu` | 无固定外部成本 | 无 | 已审核 | `227b646` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py`（12 passed）；斗鱼统一调度 1 passed；调度、迁移和目录契约组合验证 10 passed |
 | `duanju_search` | 视租户短剧搜索服务而定 | 可选 API Key | 已审核 | `fc02305` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k duanju_search`（2 passed）；插件相关组合验证 29 passed |
-| `game_task` | 无固定外部成本 | 无 | 待审核 | - | - |
+| `game_task` | 无固定外部成本 | 无 | 已审核 | `d6beb3c` | 状态插件与目录组合验证 15 passed |
 | `global_news` | 租户承担 LLM 成本 | API Key | 已审核 | `88839bb` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k global_news`（3 passed）；插件相关组合验证 37 passed |
 | `group_auto_invite` | 无固定外部成本 | 无 | 已审核 | `c039963` | 群插件定向验证 6 passed |
 | `group_member_change` | 无固定外部成本 | 无 | 已审核 | `6c730dd` | 群插件定向验证 3 passed |
 | `group_virtual` | 无固定外部成本 | 无 | 已审核 | `7a04bb1` | 群插件定向验证 7 passed |
 | `guess_song` | 租户承担音乐聚合服务成本 | 可选 API Key | 已审核 | `a751040` | 群插件定向验证 8 passed |
 | `inactive_rank` | 无固定外部成本 | 无 | 已审核 | `f7e2b83` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_group_plugins.py -k inactive_rank`（1 passed） |
-| `jd_sign_token` | 租户自行维护京东令牌 | Token | 待审核 | - | - |
-| `lucky_pot` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `message_push_task` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `message_sign` | 无固定外部成本 | 无 | 待审核 | - | - |
+| `jd_sign_token` | 租户自行维护京东令牌 | Token | 已审核 | `2506b03` | 状态插件与目录组合验证 15 passed |
+| `lucky_pot` | 无固定外部成本 | 无 | 已审核 | `d84a5cb` | 状态插件与目录组合验证 15 passed |
+| `message_push_task` | 无固定外部成本 | 无 | 已审核 | `6ce75c4` | 状态插件与目录组合验证 15 passed |
+| `message_sign` | 无固定外部成本 | 无 | 已审核 | `415f74e` | 状态插件与目录组合验证 15 passed |
 | `message_summary` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | `12bab98`、`89e9efb` | 群总结定向 4 passed；统一调度 6 passed；消息读取 7 passed |
 | `music` | 租户承担音乐聚合服务成本 | 可选 API Key | 已审核 | `6bac843` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k music`（2 passed）；插件相关组合验证 25 passed |
-| `point_trade` | 无固定外部成本 | 无 | 待审核 | - | - |
+| `point_trade` | 无固定外部成本 | 无 | 已审核 | `cd282fc` | 状态插件与目录组合验证 15 passed |
 | `weather` | 租户承担和风天气 API 成本 | API Key | 已审核 | `051575b` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k weather`（3 passed）；统一调度 6 passed；插件相关组合验证 31 passed |
 
 ## 新插件迁移
@@ -100,3 +102,11 @@ A-BOT 的斗鱼弹幕日报和粉丝日报依赖独立弹幕采集、直播会�
 群桥配置只保存平台 `Chatroom.id`，管理员只能让当前群创建、加入或退出群桥。普通文本根据可信 `Message`、`Conversation` 和 `Chatroom` 定位来源，再通过统一出站任务队列发送，因此 Telegram、微信、企微等已接入渠道可以共用一条跨渠道转发路径。
 
 猜歌名只保留 A-BOT 当前 `猜歌名` 命令，音乐服务地址和可选 API Key 由租户维护。游戏答案和时限状态保存在当前绑定的 `PluginStateRecord`，不再写入插件配置；歌曲通过标准文件回复发送，不生成微信音乐 XML 或协议专用语音载荷。
+
+## 积分与任务插件审核边界
+
+游戏任务、幸运池、签到补签和积分交易只从可信入站消息读取租户、机器人、渠道、群会话和发送人，不接受运维执行接口或消息载荷伪造身份、目标、金额和群编号。随机发题、开奖和打劫结果都由可信业务主键稳定派生，任务状态、奖池状态、打劫冷却和定时投递基线统一保存到当前插件绑定的 `PluginStateRecord`。
+
+所有积分奖励、扣款、转账、开奖、失败罚款和保释都使用租户内唯一业务键；多方结算在一个数据库事务内提交，并发重复消息通过积分流水唯一键回滚后读取既有结果。京东令牌只写入租户敏感配置存储，聊天回复、普通插件配置和日志均不返回令牌原文。
+
+定时推送只保存当前租户可访问的会话编号，由统一调度器创建标准出站任务。插件不持有 Provider 地址、凭证或协议载荷，也不直接调用企业微信、微信或 Telegram 发送接口。
