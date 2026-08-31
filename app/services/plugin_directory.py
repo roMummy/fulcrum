@@ -822,7 +822,8 @@ def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) 
         channel_type=channel.channel_type,
         chat_type=str(conversation.get("chat_type") or "direct"),
         message_type=str(message.get("message_type") or "text"),
-        # SaaS 只提供统一的斜杠命令语法，避免每个机器人维护一套难以解释的前缀配置。
+        # SaaS 在目录层统一解析斜杠和井号命令，插件只声明业务命令名称，不能各自
+        # 维护一套前缀或把“#命令”伪装成第二个兼容命令。
         command_prefix="/",
         sender_id=_coerce_optional_text(message.get("sender_id")),
         conversation_external_id=_coerce_optional_text(conversation.get("external_id")),
@@ -1750,11 +1751,7 @@ def _await_if_needed(value: Any, timeout_seconds: float | None) -> Any:
 
 
 def _extract_command_name(message_text: str, prefix: str) -> str | None:
-    normalized = message_text.strip()
-    if not normalized:
-        return None
-    if prefix and normalized.startswith(prefix):
-        normalized = normalized[len(prefix) :].lstrip()
+    normalized = _strip_supported_command_prefix(message_text, prefix)
     if not normalized:
         return None
     first = normalized.split()[0].strip()
@@ -1762,11 +1759,7 @@ def _extract_command_name(message_text: str, prefix: str) -> str | None:
 
 
 def _extract_command_args(message_text: str, prefix: str, command_name: str | None) -> str:
-    normalized = message_text.strip()
-    if not normalized:
-        return ""
-    if prefix and normalized.startswith(prefix):
-        normalized = normalized[len(prefix) :].lstrip()
+    normalized = _strip_supported_command_prefix(message_text, prefix)
     if not normalized:
         return ""
     if command_name:
@@ -1788,11 +1781,31 @@ def _command_matches(commands: tuple[str, ...], command_name: str | None, messag
         return True
     normalized_text = message_text.strip().lower()
     for command in normalized_commands:
-        if prefix and normalized_text.startswith(f"{prefix}{command}"):
+        if any(normalized_text.startswith(f"{item}{command}") for item in _supported_command_prefixes(prefix)):
             return True
         if normalized_text == command:
             return True
     return False
+
+
+def _strip_supported_command_prefix(message_text: str, configured_prefix: str) -> str:
+    """统一移除平台允许的命令前缀，并保留无前缀命令的现有业务语义。"""
+
+    normalized = str(message_text or "").strip()
+    for prefix in _supported_command_prefixes(configured_prefix):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].lstrip()
+    return normalized
+
+
+def _supported_command_prefixes(configured_prefix: str) -> tuple[str, ...]:
+    """返回去重后的平台命令前缀；当前产品只提供斜杠和井号两种入口。"""
+
+    ordered: list[str] = []
+    for item in (str(configured_prefix or "").strip(), "/", "#"):
+        if item and item not in ordered:
+            ordered.append(item)
+    return tuple(ordered)
 
 
 def _find_keyword(keywords: tuple[str, ...], message_text: str) -> str | None:

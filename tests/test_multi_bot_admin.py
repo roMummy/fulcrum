@@ -881,13 +881,13 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertIn("message_summary", discovered)
         self.assertIn("weather", discovered)
         self.assertEqual(discovered["dify"].entrypoint_name, "plugin.py")
-        self.assertEqual(discovered["message_summary"].entrypoint_name, "main.py")
+        self.assertEqual(discovered["message_summary"].entrypoint_name, "plugin.py")
         self.assertEqual(discovered["weather"].entrypoint_name, "plugin.py")
         self.assertEqual(
             discovered["dify"].capability.channel_types,
             ("wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"),
         )
-        self.assertEqual(discovered["message_summary"].matcher.commands, ("总结", "日报"))
+        self.assertEqual(discovered["message_summary"].matcher.commands, ("总结", "summary"))
 
         runtime_info = get_plugin_runtime_meta("dify")
         self.assertEqual(runtime_info["catalog_source"], "directory")
@@ -896,8 +896,9 @@ class MultiBotAdminTestCase(unittest.TestCase):
 
         loaded = load_directory_plugin("message_summary", force=True)
         self.assertIsNotNone(loaded)
-        self.assertTrue(loaded.supports_handler)
-        self.assertFalse(loaded.supports_matcher)
+        self.assertFalse(loaded.supports_handler)
+        self.assertTrue(loaded.supports_matcher)
+        self.assertTrue(hasattr(loaded.instance, "execute_message_action"))
 
     def test_runtime_only_plugins_do_not_claim_directory_handler_support(self):
         for plugin_code in ("weather", "dify", "guess_song", "douyu"):
@@ -1061,78 +1062,6 @@ consume_policy = "continue"
         skipped = dict(plan.skipped)
         self.assertEqual(skipped["dify"], "group_chatroom_inactive")
         self.assertEqual(skipped["message_summary"], "group_chatroom_inactive")
-
-    def test_dynamic_dispatch_report_matches_command_and_executes_directory_handler(self):
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            report = build_dispatch_report(
-                db,
-                channel,
-                {
-                    "conversation": {"external_id": "room_dispatch", "chat_type": "group"},
-                    "message": {"content": "/总结 昨天群里说了什么", "sender_id": "wxid_sender", "message_type": "text"},
-                    "details": {"mentioned_self": False},
-                },
-                raw_event_id=101,
-                conversation_id=202,
-                message_id=303,
-            )
-
-        self.assertEqual(report.static_plan.candidate_plugin_codes, ("dify", "message_summary"))
-        self.assertEqual(report.matched_plugin_codes, ("message_summary",))
-        decision_map = {item.candidate.plugin_code: item for item in report.decisions}
-        self.assertEqual(decision_map["dify"].reason, "dify_no_trigger")
-        self.assertEqual(decision_map["message_summary"].reason, "command_hit")
-        execution_map = {item.candidate.plugin_code: item for item in report.executions}
-        self.assertEqual(execution_map["message_summary"].status, "completed")
-        self.assertTrue(execution_map["message_summary"].ok)
-        self.assertEqual(execution_map["message_summary"].debug["execution_source"], "directory_handler_executed")
-        self.assertEqual(execution_map["message_summary"].debug["output"]["command_name"], "总结")
-
-    def test_dynamic_dispatch_report_bridges_to_runtime_executor_when_directory_handler_missing(self):
-        original_loader = load_directory_plugin
-
-        def fake_loader(plugin_code: str | None, *, force: bool = False):
-            if plugin_code == "message_summary":
-                discovered = discover_plugins(force=force)
-                entrypoint = next(item.entrypoint_path for item in discovered if item.manifest.code == "message_summary")
-                return LoadedDirectoryPlugin(
-                    plugin_code="message_summary",
-                    module_name="test_message_summary_no_handler",
-                    entrypoint_path=entrypoint,
-                    instance=None,
-                    supports_matcher=False,
-                    supports_handler=False,
-                )
-            return original_loader(plugin_code, force=force)
-
-        with patch("app.services.plugin_directory.load_directory_plugin", side_effect=fake_loader):
-            with SessionLocal() as db:
-                channel = db.get(Channel, 1)
-                self.assertIsNotNone(channel)
-                report = build_dispatch_report(
-                    db,
-                    channel,
-                    {
-                        "conversation": {"external_id": "room_dispatch_runtime", "chat_type": "group"},
-                        "message": {"content": "/总结 最近情况", "sender_id": "wxid_sender", "message_type": "text"},
-                        "details": {"mentioned_self": False, "recent_messages": ["第一条", "第二条", "@第三条"]},
-                    },
-                    raw_event_id=111,
-                    conversation_id=222,
-                    message_id=333,
-                )
-
-        execution_map = {item.candidate.plugin_code: item for item in report.executions}
-        self.assertEqual(execution_map["message_summary"].status, "completed")
-        self.assertTrue(execution_map["message_summary"].ok)
-        self.assertEqual(execution_map["message_summary"].debug["execution_source"], "runtime_executor_executed")
-        self.assertEqual(execution_map["message_summary"].debug["output"]["count"], 3)
-        self.assertEqual(
-            execution_map["message_summary"].debug["runtime_payload"]["messages"],
-            ["第一条", "第二条", "@第三条"],
-        )
 
     def test_run_single_job_executes_claimed_plugin_dispatch_job(self):
         with SessionLocal() as db:
@@ -1865,34 +1794,6 @@ consume_policy = "shared"
             saved = json.loads(binding.config_json or "{}")
             self.assertEqual(saved["custom_timeout"], 30)
             self.assertEqual(saved["api_key"], "app-secret-001")
-
-    def test_message_summary_plugin_execution_reads_conversation_messages(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_summary"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.config_json = json.dumps(
-                {
-                    "commands": ["总结"],
-                    "max_messages": 10,
-                    "include_mentions": True,
-                }
-            )
-            db.commit()
-            binding_id = binding.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={"conversation_id": 1},
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "completed")
-        self.assertIn("目录插件运行层", data["summary"])
-        self.assertGreaterEqual(data["output"]["count"], 2)
-        self.assertTrue(data["output"]["messages"])
 
     def test_weather_plugin_execution_endpoint_returns_real_runtime_result(self):
         self.login("ops", "ops123")

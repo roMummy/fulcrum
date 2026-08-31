@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,11 +24,236 @@ os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
+from app.core.time import SHANGHAI_TZ
 from app.models.entities import Bot, BotPlugin, Channel, Conversation, Plugin, TaskJob
 from app.models.saas import Tenant
-from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
+from app.services.plugin_directory import (
+    _extract_command_args,
+    _extract_command_name,
+    get_discovered_plugin,
+    load_directory_plugin,
+)
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
 from app.services.plugin_runtime.http_client import PluginHttpResponse
+from app.services.plugin_runtime.messages import PluginMessageBatch, PluginMessageRecord
+
+
+def test_message_summary_uses_group_date_commands_and_clean_runtime_config() -> None:
+    """群总结只声明当前两个命令，并由平台统一识别斜杠和井号前缀。"""
+
+    discovered = get_discovered_plugin("message_summary", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("总结", "summary")
+    assert discovered.capability.chat_types == ("group",)
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["api_base"] == ""
+    assert discovered.runtime_config["min_messages"] == 100
+    assert "app_mode" not in discovered.runtime_config
+    assert "workflow_input_key" not in discovered.runtime_config
+    assert "workflow_session_key" not in discovered.runtime_config
+
+    assert _extract_command_name("#总结 2026-08-30", "/") == "总结"
+    assert _extract_command_args("#总结 2026-08-30", "/", "总结") == "2026-08-30"
+
+    loaded = load_directory_plugin("message_summary", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    group_context = type(
+        "GroupContext",
+        (),
+        {"chat_type": "group", "message_type": "text", "content": "#总结 2026-08-30"},
+    )()
+    direct_context = type(
+        "DirectContext",
+        (),
+        {"chat_type": "direct", "message_type": "text", "content": "/summary"},
+    )()
+    assert module.matches_event(group_context)["matched"] is True
+    assert module.matches_event(direct_context)["matched"] is False
+
+    source = (PROJECT_ROOT / "plugins/message_summary/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "urlrequest" not in source
+    assert "workflow_input_key" not in source
+    assert "workflow_session_key" not in source
+    assert "192.168.2.240" not in source
+
+
+def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> None:
+    """指定日期总结使用平台消息批次和固定 Dify workflow 契约。"""
+
+    loaded = load_directory_plugin("message_summary", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    current = datetime(2026, 8, 31, 12, 0, tzinfo=SHANGHAI_TZ)
+    messages = tuple(
+        PluginMessageRecord(
+            message_id=index + 1,
+            created_at=current - timedelta(hours=20) + timedelta(minutes=index),
+            direction="in",
+            sender_id=f"member-{index % 4}",
+            sender_name=f"成员{index % 4}",
+            content=f"第{index + 1}条业务消息",
+            formatted_text=f"成员{index % 4}: 第{index + 1}条业务消息",
+        )
+        for index in range(100)
+    )
+    batch = PluginMessageBatch(
+        conversation_id=50,
+        conversation_title="产品研发群",
+        channel_type="telegram",
+        start_at=datetime(2026, 8, 30, 0, 0, tzinfo=SHANGHAI_TZ),
+        end_at=datetime(2026, 8, 31, 0, 0, tzinfo=SHANGHAI_TZ),
+        messages=messages,
+    )
+    captured: dict[str, object] = {}
+
+    class FakeReader:
+        def __init__(self, db, context):
+            captured["reader_db"] = db
+            captured["reader_context"] = context
+
+        def read(self, **kwargs):
+            captured["reader_kwargs"] = kwargs
+            return batch
+
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=json.dumps(
+            {
+                "data": {
+                    "outputs": {"text": "# 群聊摘要\n\n- 已确认主流程\n- 明确下一步负责人"},
+                    "total_tokens": 456,
+                },
+                "trace_id": "provider-sensitive-trace",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        url="https://dify.example.test/v1/workflows/run",
+    )
+
+    class FakeClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "http_kwargs": kwargs})
+            return response
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "api_base": "https://dify.example.test/v1",
+            "api_key": "tenant-summary-key",
+            "min_messages": 100,
+            "max_messages": 1000,
+            "render_as_image": False,
+        },
+        payload={"content": "#总结 2026-08-30", "command_name": "总结"},
+        context=PluginExecutionContext(
+            tenant_id=1,
+            binding_id=2,
+            bot_id=3,
+            channel_id=4,
+            conversation_id=50,
+            message_id=60,
+            sender_id="member-operator",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+    expected_db = object()
+    with (
+        patch.object(module, "now_shanghai", return_value=current),
+        patch.object(module, "PluginMessageReader", FakeReader),
+        patch.object(module, "PluginHttpClient", return_value=FakeClient()),
+    ):
+        result = module.execute_message_action(expected_db, request)
+
+    assert result.ok is True
+    assert result.output["provider_status"] == "completed"
+    assert result.output["message_count"] == 100
+    assert result.output["participant_count"] == 4
+    assert result.output["period_label"] == "2026-08-30"
+    assert result.output["token_usage"] == 456
+    assert result.output["reply_type"] == "text"
+    assert result.output["replies"] == [
+        {"type": "text", "content": "# 群聊摘要\n\n- 已确认主流程\n- 明确下一步负责人"}
+    ]
+    assert captured["reader_db"] is expected_db
+    reader_kwargs = captured["reader_kwargs"]
+    assert reader_kwargs["start_at"] == datetime(2026, 8, 30, 0, 0, tzinfo=SHANGHAI_TZ)
+    assert reader_kwargs["end_at"] == datetime(2026, 8, 31, 0, 0, tzinfo=SHANGHAI_TZ)
+    assert captured["url"] == "https://dify.example.test/v1/workflows/run"
+    request_body = captured["payload"]
+    assert set(request_body["inputs"]) == {"query", "group_name", "chat_content", "summary_mode"}
+    assert request_body["inputs"]["summary_mode"] == "markdown"
+    assert "第100条业务消息" in request_body["inputs"]["chat_content"]
+    serialized_output = json.dumps(result.output, ensure_ascii=False)
+    assert "第100条业务消息" not in serialized_output
+    assert "tenant-summary-key" not in serialized_output
+    assert "provider-sensitive-trace" not in serialized_output
+
+
+def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
+    """未指定日期时读取昨天零点到现在，低于 100 条不调用 Dify。"""
+
+    loaded = load_directory_plugin("message_summary", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    current = datetime(2026, 8, 31, 12, 30, tzinfo=SHANGHAI_TZ)
+    captured: dict[str, object] = {}
+
+    class FakeReader:
+        def __init__(self, db, context):
+            del db, context
+
+        def read(self, **kwargs):
+            captured.update(kwargs)
+            return PluginMessageBatch(
+                conversation_id=50,
+                conversation_title="安静群",
+                channel_type="telegram",
+                start_at=kwargs["start_at"],
+                end_at=kwargs["end_at"],
+                messages=(),
+            )
+
+    class ForbiddenClient:
+        def post_json(self, *args, **kwargs):
+            raise AssertionError("消息不足时不应调用 Dify")
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "api_base": "https://dify.example.test/v1",
+            "api_key": "tenant-key",
+            "render_as_image": False,
+        },
+        payload={"content": "/summary"},
+        context=PluginExecutionContext(
+            tenant_id=1,
+            binding_id=2,
+            bot_id=3,
+            channel_id=4,
+            conversation_id=50,
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+    with (
+        patch.object(module, "now_shanghai", return_value=current),
+        patch.object(module, "PluginMessageReader", FakeReader),
+        patch.object(module, "PluginHttpClient", return_value=ForbiddenClient()),
+    ):
+        result = module.execute_message_action(object(), request)
+
+    assert result.ok is True
+    assert result.output["provider_status"] == "insufficient_messages"
+    assert result.output["message_count"] == 0
+    assert captured["start_at"] == datetime(2026, 8, 30, 0, 0, tzinfo=SHANGHAI_TZ)
+    assert captured["end_at"] == current
 
 
 def test_ai_auto_response_is_group_only_without_manual_command() -> None:

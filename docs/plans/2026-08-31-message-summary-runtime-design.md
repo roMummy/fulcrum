@@ -47,7 +47,7 @@
 - 指定日期：当天 `00:00:00` 到次日 `00:00:00`，未来日期拒绝执行。
 - 未指定日期：昨天 `00:00:00` 到当前时间。
 
-平台消息服务返回的消息少于 `min_messages` 时不调用 Dify。达到阈值后，插件调用租户配置的 `{api_base}/workflows/run`，固定提交 `inputs.text`、`response_mode=blocking` 和稳定用户标识。响应只读取 `data.outputs.text`，不保留完整上游响应。
+平台消息服务返回的消息少于 `min_messages` 时不调用 Dify。达到阈值后，插件调用租户配置的 `{api_base}/workflows/run`，固定提交 `inputs.query/group_name/chat_content/summary_mode`、`response_mode=blocking` 和稳定用户标识。响应只读取 `data.outputs.text`，不保留完整上游响应。
 
 回复优先生成平台标准图片；图片生成失败时降级为标准文本回复。这是同一业务结果的表现降级，不是旧接口兼容路径。
 
@@ -75,4 +75,3 @@
 - 插件测试覆盖两个命令、指定日期、默认日期、最低消息数、固定 Dify 请求与唯一 `text` 输出。
 - 调度测试覆盖群总结扫描、任务载荷脱敏、会话归属和预生成/推送动作。
 - 每个能力独立中文提交，只运行本次改动直接相关的测试；完整插件组合回归留到迁移批次结束后执行。
-
