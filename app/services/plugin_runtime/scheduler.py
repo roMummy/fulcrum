@@ -139,7 +139,17 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
         .where(
             BotPlugin.status == "enabled",
-            Plugin.code.in_(("daily_news", "douyu", "epic_free", "game_task", "message_summary", "weather")),
+            Plugin.code.in_(
+                (
+                    "daily_news",
+                    "daily_ranking",
+                    "douyu",
+                    "epic_free",
+                    "game_task",
+                    "message_summary",
+                    "weather",
+                )
+            ),
         )
         .order_by(BotPlugin.id.asc())
     ).all()
@@ -406,6 +416,55 @@ def _build_plugin_schedule_specs(
                         scheduled_for=push_at,
                         parameters={},
                         conversation_id=conversation_id,
+                        high_side_effect=True,
+                        priority=70,
+                    )
+                )
+        return tuple(specs)
+    if plugin_code == "daily_ranking":
+        # 每个明确选择的群会话分别创建预生成与推送任务。任务载荷只保存会话主键，
+        # 排行数据、用户标识和积分明细全部在执行时从当前租户数据库重建。
+        if not _coerce_bool(config.get("enabled"), True):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("daily_ranking_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        prepare_hour, prepare_minute = _parse_clock_time(str(config.get("prepare_time") or "04:30"))
+        push_hour, push_minute = _parse_clock_time(str(config.get("push_time") or "09:30"))
+        prepare_at = current.replace(
+            hour=prepare_hour,
+            minute=prepare_minute,
+            second=0,
+            microsecond=0,
+        )
+        push_at = current.replace(
+            hour=push_hour,
+            minute=push_minute,
+            second=0,
+            microsecond=0,
+        )
+        specs: list[PluginScheduledActionSpec] = []
+        for conversation_id in conversation_ids:
+            if current >= prepare_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="daily_ranking_prepare",
+                        scheduled_for=prepare_at,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        high_side_effect=False,
+                        priority=75,
+                    )
+                )
+            if current >= push_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="daily_ranking_push",
+                        scheduled_for=push_at,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        # 推送阶段包含积分写入。即使业务幂等键可防止重复奖励，统一
+                        # Worker 仍不自动重放高副作用动作，故障由下一次人工补跑处理。
                         high_side_effect=True,
                         priority=70,
                     )

@@ -38,7 +38,7 @@ from app.services.task_queue import PLUGIN_SCHEDULED_ACTION_JOB, parse_job_paylo
 
 @pytest.fixture()
 def scheduler_fixture(tmp_path: Path):
-    """准备两个租户及四类统一调度绑定，验证归属与计划幂等。"""
+    """准备两个租户及多类统一调度绑定，验证归属与计划幂等。"""
 
     engine = create_engine(f"sqlite:///{tmp_path / 'plugin-scheduler.db'}")
     Base.metadata.create_all(bind=engine)
@@ -50,8 +50,20 @@ def scheduler_fixture(tmp_path: Path):
         douyu_plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
         game_plugin = Plugin(code="game_task", display_name="游戏任务", plugin_type="command")
         summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
+        ranking_plugin = Plugin(code="daily_ranking", display_name="群聊每日排行", plugin_type="scheduled")
         weather_plugin = Plugin(code="weather", display_name="天气", plugin_type="rule")
-        db.add_all([alpha, beta, daily_plugin, douyu_plugin, game_plugin, summary_plugin, weather_plugin])
+        db.add_all(
+            [
+                alpha,
+                beta,
+                daily_plugin,
+                douyu_plugin,
+                game_plugin,
+                summary_plugin,
+                ranking_plugin,
+                weather_plugin,
+            ]
+        )
         db.flush()
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人", status="running", is_enabled=True)
         beta_bot = Bot(tenant_id=beta.id, name="乙机器人", status="running", is_enabled=True)
@@ -130,6 +142,19 @@ def scheduler_fixture(tmp_path: Path):
                 }
             ),
         )
+        alpha_ranking = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=ranking_plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "daily_ranking_conversation_ids": [conversation.id],
+                    "prepare_time": "04:30",
+                    "push_time": "09:30",
+                }
+            ),
+        )
         alpha_weather = BotPlugin(
             tenant_id=alpha.id,
             bot_id=alpha_bot.id,
@@ -164,6 +189,7 @@ def scheduler_fixture(tmp_path: Path):
                 alpha_douyu,
                 alpha_game,
                 alpha_summary,
+                alpha_ranking,
                 alpha_weather,
                 beta_daily,
                 weather_subscription,
@@ -177,6 +203,7 @@ def scheduler_fixture(tmp_path: Path):
             "alpha_douyu_binding_id": int(alpha_douyu.id),
             "alpha_game_binding_id": int(alpha_game.id),
             "alpha_summary_binding_id": int(alpha_summary.id),
+            "alpha_ranking_binding_id": int(alpha_ranking.id),
             "alpha_weather_binding_id": int(alpha_weather.id),
             "alpha_conversation_id": int(conversation.id),
             "alpha_second_conversation_id": int(second_conversation.id),
@@ -274,10 +301,10 @@ def test_scheduler_rejects_identity_and_secret_parameters(scheduler_fixture) -> 
 
 
 def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) -> None:
-    """新闻、斗鱼、群总结和天气通过统一扫描器入队，重复扫描不重复创建。"""
+    """各类定时插件通过统一扫描器入队，重复扫描不重复创建。"""
 
     factory, identity = scheduler_fixture
-    current = now_shanghai().replace(hour=9, minute=0, second=30, microsecond=0)
+    current = now_shanghai().replace(hour=10, minute=0, second=30, microsecond=0)
     with tenant_scope(identity["alpha_tenant_id"]), tenant_session(factory) as db:
         first = schedule_due_plugin_actions(db, now=current)
         second = schedule_due_plugin_actions(db, now=current + timedelta(seconds=5))
@@ -285,6 +312,8 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
 
         assert sorted(job.related_type for job in first) == [
             "plugin_action:baidu_news_daily_push",
+            "plugin_action:daily_ranking_prepare",
+            "plugin_action:daily_ranking_push",
             "plugin_action:daily_summary",
             "plugin_action:daily_summary_prepare",
             "plugin_action:poll_subscriptions",
@@ -296,6 +325,8 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
         attempts = {job.related_type: job.max_attempts for job in first}
         assert attempts["plugin_action:daily_summary_prepare"] == 3
         assert attempts["plugin_action:daily_summary"] == 1
+        assert attempts["plugin_action:daily_ranking_prepare"] == 3
+        assert attempts["plugin_action:daily_ranking_push"] == 1
         assert attempts["plugin_action:random_task_assignment"] == 1
         game_jobs = [job for job in first if job.related_type == "plugin_action:random_task_assignment"]
         assert len(game_jobs) == 2
@@ -309,6 +340,13 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
         summary_jobs = [job for job in first if "daily_summary" in str(job.related_type)]
         assert all(parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"] for job in summary_jobs)
         assert all("messages" not in json.dumps(parse_job_payload(job), ensure_ascii=False) for job in summary_jobs)
+        ranking_jobs = [job for job in first if "daily_ranking" in str(job.related_type)]
+        assert len(ranking_jobs) == 2
+        assert all(
+            parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"]
+            for job in ranking_jobs
+        )
+        assert all("ranking" not in json.dumps(parse_job_payload(job)["parameters"], ensure_ascii=False) for job in ranking_jobs)
 
 
 def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(scheduler_fixture) -> None:
