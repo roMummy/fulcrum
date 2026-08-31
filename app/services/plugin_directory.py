@@ -786,6 +786,18 @@ class _ModuleFunctionAdapter:
         handler = getattr(self._module, "execute_action")
         return handler(request)
 
+    def execute_scheduled_action(self, db: Session, request: Any) -> Any:
+        """把统一调度请求转给插件模块；未声明入口时返回明确不支持。"""
+
+        handler = getattr(self._module, "execute_scheduled_action", None)
+        if not callable(handler):
+            return {
+                "ok": False,
+                "status": "unsupported",
+                "message": "目录插件未提供 execute_scheduled_action 定时入口。",
+            }
+        return handler(db, request)
+
 
 def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) -> PluginDispatchContext:
     conversation = normalized_event.get("conversation") or {}

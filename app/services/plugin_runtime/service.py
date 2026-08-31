@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from sqlalchemy.orm import Session
+
 from app.models.entities import BotPlugin
 from app.core.logging import get_logger
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest, PluginExecutionResult
@@ -42,6 +44,59 @@ def execute_binding_action(
     payload: Mapping[str, Any] | None = None,
     context: PluginExecutionContext | None = None,
 ) -> PluginExecutionResult | None:
+    plugin_code, request = _build_binding_request(
+        binding,
+        action,
+        payload=payload,
+        context=context,
+    )
+    return execute_plugin_action(
+        plugin_code,
+        request.action,
+        config=request.config,
+        payload=request.payload,
+        context=request.context,
+    )
+
+
+def execute_binding_scheduled_action(
+    db: Session,
+    binding: BotPlugin,
+    action: str,
+    *,
+    payload: Mapping[str, Any] | None = None,
+    context: PluginExecutionContext | None = None,
+) -> PluginExecutionResult | None:
+    """在当前租户会话中执行目录插件的显式定时动作入口。"""
+
+    plugin_code, request = _build_binding_request(
+        binding,
+        action,
+        payload=payload,
+        context=context,
+    )
+    definition = get_plugin_runtime_definition(plugin_code)
+    executor = definition.executor if definition else None
+    scheduled_handler = getattr(executor, "execute_scheduled", None)
+    if not callable(scheduled_handler):
+        logger.warning(
+            "scheduled plugin action skipped because runtime executor is unavailable",
+            extra={"plugin_code": plugin_code or "", "action": action},
+        )
+        return None
+    logger.info("executing scheduled plugin action", extra={"plugin_code": plugin_code or "", "action": action})
+    return scheduled_handler(db, request)
+
+
+def _build_binding_request(
+    binding: BotPlugin,
+    action: str,
+    *,
+    payload: Mapping[str, Any] | None,
+    context: PluginExecutionContext | None,
+) -> tuple[str | None, PluginExecutionRequest]:
+    """从可信绑定统一构造普通和定时执行请求，确保两条链路使用同一密钥边界。"""
+
     plugin_code = binding.plugin.code if binding.plugin else None
     runtime_payload = dict(payload or {})
     ordinary_config = _parse_config_json(binding.config_json)
@@ -67,9 +122,8 @@ def execute_binding_action(
         chat_type=_coerce_optional_text(context.chat_type) if context else None,
         message_type=_coerce_optional_text(context.message_type) if context else None,
     )
-    return execute_plugin_action(
-        plugin_code,
-        action,
+    return plugin_code, PluginExecutionRequest(
+        action=action,
         config=effective_config,
         payload=runtime_payload,
         context=trusted_context,

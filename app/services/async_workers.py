@@ -14,7 +14,7 @@ from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import BotPlugin, Channel, Conversation, ErrorLog, Message, MessageAttachment, Plugin, RawWebhookEvent, TaskJob
+from app.models.entities import Channel, Conversation, ErrorLog, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.models.saas import Tenant
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
@@ -22,11 +22,13 @@ from app.services.channel_runtime import run_due_channel_tasks
 from app.services.inbound_media import download_wechat_media_attachment, mark_attachment_failed
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
+from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
 from app.services.task_queue import (
     INBOUND_MEDIA_FETCH_JOB,
     OPEN_WEBHOOK_DELIVERY_JOB,
     OUTBOUND_DISPATCH_JOB,
     PLUGIN_DISPATCH_JOB,
+    PLUGIN_SCHEDULED_ACTION_JOB,
     WEATHER_PUSH_JOB,
     claim_next_job,
     complete_job,
@@ -39,8 +41,7 @@ from app.services.task_queue import (
 logger = get_logger(__name__)
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
-_last_douyu_poll_at: dict[int, float] = {}
-_last_daily_news_poll_at: dict[int, float] = {}
+_last_plugin_scheduler_scan_at = 0.0
 _last_operational_alert_eval_at = 0.0
 OUTBOUND_JOB_MAX_AGE = timedelta(hours=2)
 
@@ -67,15 +68,17 @@ def _worker_loop() -> None:
     while not _stop_event.is_set():
         try:
             worked = _run_single_job()
+            scheduled = _run_due_plugin_scheduler()
             channel_result = run_due_channel_tasks()
             alerted = _run_due_operational_alerts()
         except Exception:
             logger.exception("background worker loop crashed")
             worked = False
+            scheduled = False
             channel_result = None
             alerted = False
         # 渠道协调器内部已经逐租户、逐任务隔离事务；这里不再持有渠道会话或识别协议类型。
-        if not worked and not alerted and not (channel_result and channel_result.worked):
+        if not worked and not scheduled and not alerted and not (channel_result and channel_result.worked):
             _stop_event.wait(0.5)
 
 
@@ -96,6 +99,7 @@ def _recover_running_jobs_for_all_tenants() -> int:
                 db,
                 job_types=(
                     PLUGIN_DISPATCH_JOB,
+                    PLUGIN_SCHEDULED_ACTION_JOB,
                     OUTBOUND_DISPATCH_JOB,
                     WEATHER_PUSH_JOB,
                     INBOUND_MEDIA_FETCH_JOB,
@@ -113,6 +117,7 @@ def _run_single_job() -> bool:
             scheduler_db,
             job_types=(
                 PLUGIN_DISPATCH_JOB,
+                PLUGIN_SCHEDULED_ACTION_JOB,
                 OUTBOUND_DISPATCH_JOB,
                 WEATHER_PUSH_JOB,
                 INBOUND_MEDIA_FETCH_JOB,
@@ -135,6 +140,8 @@ def _run_single_job() -> bool:
             payload = parse_job_payload(job)
             if job.job_type == PLUGIN_DISPATCH_JOB:
                 result = _process_plugin_dispatch_job(db, payload)
+            elif job.job_type == PLUGIN_SCHEDULED_ACTION_JOB:
+                result = process_plugin_scheduled_action_job(db, job, payload)
             elif job.job_type == OUTBOUND_DISPATCH_JOB:
                 result = _process_outbound_dispatch_job(db, job, payload)
             elif job.job_type == WEATHER_PUSH_JOB:
@@ -156,61 +163,28 @@ def _run_single_job() -> bool:
             return True
 
 
-def _run_due_douyu_pollers() -> bool:
-    from plugins.douyu.plugin import poll_douyu_binding
+def _run_due_plugin_scheduler() -> bool:
+    """按统一节奏逐租户扫描插件计划，不再维护插件专用内存轮询表。"""
 
-    now = time.time()
-    db = SessionLocal()
-    try:
-        bindings = db.scalars(
-            select(BotPlugin)
-            .join(Plugin, Plugin.id == BotPlugin.plugin_id)
-            .where(Plugin.code == "douyu", BotPlugin.status == "enabled")
-            .order_by(BotPlugin.id.asc())
-        ).all()
-        worked = False
-        for binding in bindings:
-            interval = 60
-            try:
-                raw_config = json.loads((binding.config_json or "").strip() or "{}")
-                if isinstance(raw_config, dict):
-                    interval = max(30, int(raw_config.get("poll_interval_seconds") or 60))
-            except Exception:
-                interval = 60
-            elapsed = now - _last_douyu_poll_at.get(binding.id, 0.0)
-            if elapsed < interval:
-                continue
-            _last_douyu_poll_at[binding.id] = now
-            result = poll_douyu_binding(binding.id)
-            worked = worked or bool(result.get("event_count")) or not bool(result.get("skipped"))
-        return worked
-    finally:
-        db.close()
+    global _last_plugin_scheduler_scan_at
+    current_monotonic = time.time()
+    if current_monotonic - _last_plugin_scheduler_scan_at < 15:
+        return False
+    _last_plugin_scheduler_scan_at = current_monotonic
 
-
-def _run_due_daily_news_pollers() -> bool:
-    from plugins.daily_news.plugin import run_daily_news_push
-
-    now = time.time()
-    db = SessionLocal()
-    try:
-        bindings = db.scalars(
-            select(BotPlugin)
-            .join(Plugin, Plugin.id == BotPlugin.plugin_id)
-            .where(Plugin.code == "daily_news", BotPlugin.status == "enabled")
-            .order_by(BotPlugin.id.asc())
-        ).all()
-        worked = False
-        for binding in bindings:
-            elapsed = now - _last_daily_news_poll_at.get(binding.id, 0.0)
-            if elapsed < 30:
-                continue
-            _last_daily_news_poll_at[binding.id] = now
-            result = run_daily_news_push(binding.id)
-            worked = worked or bool(result.get("outbound_job_ids")) or not bool(result.get("skipped"))
-        return worked
-    finally:
-        db.close()
+    worked = False
+    for tenant_id in _list_tenant_ids():
+        try:
+            with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+                created_jobs = schedule_due_plugin_actions(db)
+                if created_jobs:
+                    db.commit()
+                    worked = True
+        except Exception:
+            # 单个租户配置异常不能阻断其他租户计划扫描；具体任务执行仍由队列按
+            # max_attempts 决定是否重试，高副作用动作默认一次失败即终止。
+            logger.exception("tenant plugin schedule scan failed", extra={"tenant_id": tenant_id})
+    return worked
 
 
 def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[str, Any]:

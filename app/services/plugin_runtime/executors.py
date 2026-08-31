@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.services.plugin_directory import get_plugin_default_config, load_directory_plugin
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
 
@@ -59,6 +61,25 @@ class DirectoryRuntimeExecutor:
             context=request.context,
         )
         result = loaded.instance.execute_action(merged_request)
+        return self._normalize_result(result)
+
+    def execute_scheduled(self, db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+        """调用目录插件显式声明的定时动作入口。"""
+
+        loaded = load_directory_plugin(self.plugin_code)
+        if not loaded or not loaded.instance or not hasattr(loaded.instance, "execute_scheduled_action"):
+            return PluginExecutionResult(
+                ok=False,
+                status="unsupported",
+                message=f"{self.plugin_code} 未提供 execute_scheduled_action 定时入口。",
+            )
+        merged_request = PluginExecutionRequest(
+            action=request.action,
+            config={**get_plugin_default_config(self.plugin_code), **dict(request.config)},
+            payload=request.payload,
+            context=request.context,
+        )
+        result = loaded.instance.execute_scheduled_action(db, merged_request)
         return self._normalize_result(result)
 
     def _normalize_result(self, value: Any) -> PluginExecutionResult:

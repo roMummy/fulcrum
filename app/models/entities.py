@@ -456,6 +456,9 @@ class MessageAttachment(Base, TenantOwnedMixin, TimestampMixin):
 
 class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "task_jobs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "dedupe_key", name="uq_task_jobs_tenant_dedupe_key"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_type: Mapped[str] = mapped_column(String(50), index=True)
@@ -469,6 +472,8 @@ class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     locked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     related_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # 只有需要强幂等的任务写入该键；NULL 不参与唯一冲突，现有普通队列保持原行为。
+    dedupe_key: Mapped[str | None] = mapped_column(String(191), nullable=True, index=True)
     payload_json: Mapped[str] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
