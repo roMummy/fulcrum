@@ -27,7 +27,7 @@
 | `douyu` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `duanju_search` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `game_task` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `global_news` | 视租户新闻服务而定 | Authorization | 待审核 | - | - |
+| `global_news` | 租户承担 LLM 成本 | API Key | 已审核 | `88839bb` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k global_news`（3 passed）；插件相关组合验证 37 passed |
 | `group_auto_invite` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `group_member_change` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `group_virtual` | 无固定外部成本 | 无 | 待审核 | - | - |
