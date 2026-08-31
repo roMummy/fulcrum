@@ -796,3 +796,127 @@ def test_group_virtual_uses_trusted_groups_and_outbound_queue(group_plugin_fixtu
     assert 'payload.get("channel_id")' not in source
     assert 'payload.get("conversation_external_id")' not in source
     assert 'payload.get("sender_id")' not in source
+
+
+def test_guess_song_uses_tenant_music_service_and_state_store(group_plugin_fixture, monkeypatch) -> None:
+    """猜歌名只使用租户音乐配置，并把答案状态绑定到可信群会话。"""
+
+    from app.services.plugin_runtime.state_store import PluginStateStore
+
+    factory, identity = group_plugin_fixture
+    discovered = get_discovered_plugin("guess_song", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("猜歌名",)
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.secret_fields == ("api_key",)
+    assert discovered.runtime_config["api_base"] == ""
+    assert "game_sessions" not in discovered.runtime_config
+    assert "192.168.2.240" not in str(discovered.runtime_config)
+
+    loaded = load_directory_plugin("guess_song", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    monkeypatch.setattr(
+        module,
+        "_search_random_song",
+        lambda config, *, singer_name: module.SongResult(
+            song_id="song-001",
+            song_name="稻香",
+            artist_name="周杰伦",
+            play_url="https://media.example.test/song-001.mp3",
+            cover_url="https://media.example.test/song-001.jpg",
+        ),
+    )
+    context = PluginExecutionContext(
+        tenant_id=identity["tenant_id"],
+        binding_id=identity["binding_id"],
+        bot_id=identity["bot_id"],
+        channel_id=identity["channel_id"],
+        conversation_id=identity["primary_conversation_id"],
+        sender_id="guess-user",
+        channel_type="telegram",
+        chat_type="group",
+        message_type="text",
+    )
+    config = {
+        "api_base": "https://music.example.test",
+        "api_key": "tenant-key",
+        "quality": "exhigh",
+        "hint_seconds": 30,
+        "game_ttl_seconds": 1800,
+    }
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        started = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={
+                    "command_name": "猜歌名",
+                    "command_args": "周杰伦",
+                    "conversation_id": identity["forged_conversation_id"],
+                },
+                context=context,
+            ),
+        )
+        store = PluginStateStore(db, context)
+        state_key = f"conversation:{identity['primary_conversation_id']}"
+        state = store.get("guess_song", state_key)
+        assert state is not None
+        state["started_at"] = int(now_shanghai().timestamp()) - 60
+        store.put("guess_song", state_key, state, ttl_seconds=1800)
+
+        wrong = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"command_name": "猜歌名", "command_args": "青花瓷"},
+                context=context,
+            ),
+        )
+        correct = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=config,
+                payload={"command_name": "猜歌名", "command_args": "稻香"},
+                context=context,
+            ),
+        )
+        remaining_state = store.get("guess_song", state_key)
+
+    assert started.ok is True
+    assert started.output["provider_status"] == "started"
+    assert started.output["replies"][0] == {
+        "type": "file",
+        "file_name": "guess-song-preview.mp3",
+        "file_url": "https://media.example.test/song-001.mp3",
+    }
+    assert "song_name" not in started.output
+    assert wrong.output["provider_status"] == "incorrect_with_hint"
+    assert "歌手是 周杰伦" in wrong.output["replies"][0]["content"]
+    assert "稻香" not in wrong.output["replies"][0]["content"]
+    assert correct.output["provider_status"] == "correct"
+    assert correct.output["replies"][1]["file_name"] == "周杰伦 - 稻香.mp3"
+    assert remaining_state is None
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config=config,
+            payload={"conversation_id": identity["primary_conversation_id"]},
+        )
+    )
+    assert untrusted.ok is False
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/guess_song/plugin.py").read_text(encoding="utf-8")
+    assert "192.168.2.240" not in source
+    assert "urlrequest" not in source
+    assert "urlopen" not in source
+    assert "game_sessions" not in source
+    assert "config_patch" not in source
+    assert "<appmsg" not in source
+    assert "SessionLocal" not in source
+    assert 'payload.get("conversation_id")' not in source
