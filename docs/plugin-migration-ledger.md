@@ -28,11 +28,11 @@
 | `duanju_search` | 视租户短剧搜索服务而定 | 可选 API Key | 已审核 | `fc02305` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_query_plugins.py -k duanju_search`（2 passed）；插件相关组合验证 29 passed |
 | `game_task` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `global_news` | 租户承担 LLM 成本 | API Key | 已审核 | `88839bb` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k global_news`（3 passed）；插件相关组合验证 37 passed |
-| `group_auto_invite` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `group_member_change` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `group_virtual` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `guess_song` | 无固定外部成本 | 无 | 待审核 | - | - |
-| `inactive_rank` | 无固定外部成本 | 无 | 待审核 | - | - |
+| `group_auto_invite` | 无固定外部成本 | 无 | 已审核 | `c039963` | 群插件定向验证 6 passed |
+| `group_member_change` | 无固定外部成本 | 无 | 已审核 | `6c730dd` | 群插件定向验证 3 passed |
+| `group_virtual` | 无固定外部成本 | 无 | 已审核 | `7a04bb1` | 群插件定向验证 7 passed |
+| `guess_song` | 租户承担音乐聚合服务成本 | 可选 API Key | 已审核 | `a751040` | 群插件定向验证 8 passed |
+| `inactive_rank` | 无固定外部成本 | 无 | 已审核 | `f7e2b83` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_group_plugins.py -k inactive_rank`（1 passed） |
 | `jd_sign_token` | 租户自行维护京东令牌 | Token | 待审核 | - | - |
 | `lucky_pot` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `message_push_task` | 无固定外部成本 | 无 | 待审核 | - | - |
@@ -92,3 +92,11 @@
 当前 SaaS 已实现斗鱼房间开播/下播提醒、鱼吧动态、成员提醒名单、官方高能增量推送和统一定时轮询。订阅定义保存在插件绑定普通配置中，房间状态、鱼吧最新动态、高能房间基线和会话投递基线保存在 `PluginStateRecord`，聊天命令只使用可信租户、机器人、会话和发送人上下文。
 
 A-BOT 的斗鱼弹幕日报和粉丝日报依赖独立弹幕采集、直播会话、观众统计、图片渲染与模型生成链路。当前 SaaS 尚未具备这些真实数据源，因此本次不注册日报命令、不生成替代文本，也不把官方高能摘要伪装成弹幕日报。后续若建设跨渠道弹幕采集域，应以独立业务表和统一调度能力重新设计，不把大型日报素材塞入插件小型状态表。
+
+## 群与互动插件审核边界
+
+群成员变更由渠道适配器先转换为通用 `member_change` 事件，插件只使用可信会话更新当前群成员；微信系统 XML 只是当前微信渠道的事件解析，不承担群和渠道定位。自动拉群通过渠道适配器统一的群邀请动作执行，当前只有 iPad 874 实现该能力，其他渠道不展示不可用入口。
+
+群桥配置只保存平台 `Chatroom.id`，管理员只能让当前群创建、加入或退出群桥。普通文本根据可信 `Message`、`Conversation` 和 `Chatroom` 定位来源，再通过统一出站任务队列发送，因此 Telegram、微信、企微等已接入渠道可以共用一条跨渠道转发路径。
+
+猜歌名只保留 A-BOT 当前 `猜歌名` 命令，音乐服务地址和可选 API Key 由租户维护。游戏答案和时限状态保存在当前绑定的 `PluginStateRecord`，不再写入插件配置；歌曲通过标准文件回复发送，不生成微信音乐 XML 或协议专用语音载荷。
