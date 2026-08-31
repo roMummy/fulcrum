@@ -166,6 +166,64 @@ def jd_token_fixture(tmp_path: Path):
         engine.dispose()
 
 
+@pytest.fixture()
+def lucky_pot_fixture(tmp_path: Path):
+    """建立幸运池群会话和插件绑定，验证积分守恒、调度与退款。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'lucky-pot.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="lucky-pot", name="幸运池租户", status="active")
+        plugin = Plugin(code="lucky_pot", display_name="幸运池", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="幸运池机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="幸运池 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="lucky-room",
+            title="幸运池群",
+            chat_type="group",
+        )
+        db.add(conversation)
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
 def _game_message_request(
     db,
     identity: dict[str, int],
@@ -250,6 +308,58 @@ def _jd_message_request(
             sender_id="jd-user",
             channel_type="telegram",
             chat_type="direct",
+            message_type="text",
+        ),
+    )
+
+
+def _lucky_message_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    sender_id: str,
+    sender_name: str,
+    max_players: int = 2,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """创建幸运池真实群消息，奖池规则统一来自当前绑定配置。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id=sender_id,
+        sender_name=sender_name,
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    return PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "entry_fee": 10,
+            "min_players": 2,
+            "max_players": max_players,
+            "countdown_seconds": 60,
+            "house_cut_percent": 10,
+            "lucky_bonus_chance": 0,
+            "lucky_bonus_percent": 20,
+        },
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id=sender_id,
+            channel_type="telegram",
+            chat_type="group",
             message_type="text",
         ),
     )
@@ -639,3 +749,191 @@ def test_jd_sign_token_uses_private_message_secret_config_and_bounded_http(jd_to
     assert "request.payload.get" not in source
     assert "qrcode.png" not in source
     assert "except Exception" not in source
+
+
+def test_lucky_pot_persists_room_and_keeps_draw_rewards_idempotent(lucky_pot_fixture, monkeypatch) -> None:
+    """满员开奖使用可信群状态和幂等流水，奖励总额不超过扣除抽水后的奖池。"""
+
+    factory, identity = lucky_pot_fixture
+    discovered = get_discovered_plugin("lucky_pot", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("大奖池",)
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["countdown_seconds"] == 120
+
+    loaded = load_directory_plugin("lucky_pot", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    monkeypatch.setattr(
+        module,
+        "_distribute_rewards",
+        lambda player_ids, total_points: {player_ids[0]: 5, player_ids[1]: total_points - 5},
+    )
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        service = PointsService(db)
+        service.add_points(
+            "player-a",
+            "lucky-room",
+            100,
+            user_name="甲玩家",
+            source="test_seed",
+            idempotency_key="test-seed:lucky:a",
+        )
+        service.add_points(
+            "player-b",
+            "lucky-room",
+            100,
+            user_name="乙玩家",
+            source="test_seed",
+            idempotency_key="test-seed:lucky:b",
+        )
+        create_request = _lucky_message_request(
+            db,
+            identity,
+            content="/大奖池 创建",
+            sender_id="player-a",
+            sender_name="甲玩家",
+            payload={
+                "command_args": "取消",
+                "sender_id": "forged-user",
+                "conversation_external_id": "forged-room",
+            },
+        )
+        created = module.execute_message_action(db, create_request)
+        context = create_request.context
+        assert context is not None
+        store = PluginStateStore(db, context)
+        state_key = f"conversation:{identity['conversation_id']}"
+        created_room = store.get("lucky_pot", state_key)
+        scheduled_jobs = db.scalars(
+            select(TaskJob).where(TaskJob.related_type == "plugin_action:draw_pot")
+        ).all()
+
+        joined = module.execute_message_action(
+            db,
+            _lucky_message_request(
+                db,
+                identity,
+                content="#大奖池 参与",
+                sender_id="player-b",
+                sender_name="乙玩家",
+            ),
+        )
+        repeated_join = module.execute_message_action(
+            db,
+            _lucky_message_request(
+                db,
+                identity,
+                content="大奖池 参与",
+                sender_id="player-b",
+                sender_name="乙玩家",
+            ),
+        )
+        final_room = store.get("lucky_pot", state_key)
+        accounts = db.scalars(
+            select(PointsAccount)
+            .where(PointsAccount.group_id == "lucky-room")
+            .order_by(PointsAccount.user_id.asc())
+        ).all()
+        transactions = db.scalars(
+            select(PointsTransaction)
+            .where(PointsTransaction.source.in_(("lucky_pot_entry", "lucky_pot_reward")))
+            .order_by(PointsTransaction.id.asc())
+        ).all()
+
+    assert created.output["provider_status"] == "created"
+    assert created_room is not None
+    assert created_room["group_id"] == "lucky-room"
+    assert created_room["players"] == {"player-a": "甲玩家"}
+    assert len(scheduled_jobs) == 1
+    assert joined.output["provider_status"] == "drawn"
+    assert joined.output["total_pot"] == 20
+    assert joined.output["house_cut"] == 2
+    assert "rewards" not in joined.output
+    assert repeated_join.output["provider_status"] == "room_missing"
+    assert final_room is None
+    balances = {item.user_id: item.total_points for item in accounts}
+    assert balances == {"player-a": 95, "player-b": 103}
+    assert sum(balances.values()) == 198
+    assert [item.points_delta for item in transactions] == [-10, -10, 5, 13]
+    assert len({item.idempotency_key for item in transactions}) == 4
+    assert all("forged" not in str(item.idempotency_key) for item in transactions)
+
+    source = (PROJECT_ROOT / "plugins/lucky_pot/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "ACTIVE_ROOMS" not in source
+    assert "request.payload.get" not in source
+    assert 'payload.get("sender_id")' not in source
+    assert 'payload.get("conversation_external_id")' not in source
+
+
+def test_lucky_pot_scheduled_action_refunds_when_players_are_insufficient(lucky_pot_fixture) -> None:
+    """倒计时结束仍不足最低人数时自动退款，并向可信群创建通用出站任务。"""
+
+    factory, identity = lucky_pot_fixture
+    loaded = load_directory_plugin("lucky_pot", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        PointsService(db).add_points(
+            "player-a",
+            "lucky-room",
+            100,
+            user_name="甲玩家",
+            source="test_seed",
+            idempotency_key="test-seed:lucky:refund",
+        )
+        create_request = _lucky_message_request(
+            db,
+            identity,
+            content="大奖池 创建",
+            sender_id="player-a",
+            sender_name="甲玩家",
+            max_players=3,
+        )
+        created = module.execute_message_action(db, create_request)
+        context = PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            channel_type="telegram",
+            chat_type="group",
+        )
+        refunded = module.execute_scheduled_action(
+            db,
+            PluginExecutionRequest(action="draw_pot", config={}, context=context),
+        )
+        account = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "player-a",
+                PointsAccount.group_id == "lucky-room",
+            )
+        )
+        transactions = db.scalars(
+            select(PointsTransaction)
+            .where(PointsTransaction.source.in_(("lucky_pot_entry", "lucky_pot_refund")))
+            .order_by(PointsTransaction.id.asc())
+        ).all()
+        state = PluginStateStore(db, context).get(
+            "lucky_pot",
+            f"conversation:{identity['conversation_id']}",
+        )
+        outbound_jobs = db.scalars(
+            select(TaskJob).where(TaskJob.related_type == "lucky_pot_binding")
+        ).all()
+
+    assert created.output["provider_status"] == "created"
+    assert refunded.output["provider_status"] == "refunded"
+    assert refunded.output["refunded_player_count"] == 1
+    assert account is not None and account.total_points == 100
+    assert [item.points_delta for item in transactions] == [-10, 10]
+    assert state is None
+    assert len(outbound_jobs) == 1
+    outbound_payload = json.loads(outbound_jobs[0].payload_json)
+    assert outbound_payload["conversation_id"] == identity["conversation_id"]
+    assert outbound_payload["payload"]["receiver_id"] == "lucky-room"
+    assert "人数不足" in outbound_payload["payload"]["content"]
