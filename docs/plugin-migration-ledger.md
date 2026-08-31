@@ -60,7 +60,7 @@
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 已迁移 | `d3ea0b2` | `.venv/bin/python -m pytest -q tests/test_plugin_dota2_stats.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty tests/test_plugin_common_services.py`（20 passed）；定向语法检查与 `git diff --check` 通过 |
 | `member_context` | 群成员画像与增量摘要 | 租户承担可选 Dify 成本 | API Key | 已迁移 | `b439d24` | `.venv/bin/python -m pytest -q tests/test_plugin_member_context.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（13 passed）；定向语法检查与 `git diff --check` 通过 |
 | `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 已迁移 | `880a314` | `.venv/bin/python -m pytest -q tests/test_plugin_member_roast.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（6 passed）；定向语法检查与 `git diff --check` 通过 |
-| `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 待迁移 | - | - |
+| `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 已迁移 | `283d2c7` | `.venv/bin/python -m pytest -q tests/test_plugin_value_rank.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（21 passed）；定向语法检查与 `git diff --check` 通过 |
 | `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `xiuxian` | 多租户修仙玩法 | 无固定外部成本 | 无 | 待迁移 | - | - |
 
@@ -178,3 +178,11 @@ Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，�
 锐评插件只复用同一机器人已启用 `member_context` 绑定中的结构化画像，不在命令链路复制画像生成逻辑。目标没有画像或近期有效发言不足时直接给出业务提示。最近消息按当前群、目标成员、时间窗口和数量上限读取，再压缩为消息数、平均长度、问句比例、高频词、重复短语和有限代表句；完整聊天历史、数据库对象和模型请求正文均不写入日志、插件状态或执行结果。
 
 模型 API 地址、模型名称、温度、超时和采样上限由租户普通配置维护，API Key 保存到当前绑定密文，调用使用平台通用 OpenAI-compatible 文本生成能力。用户和群分别使用跨进程固定窗口限流控制模型成本。模型提示禁止编造职业、家庭、健康、政治、宗教等敏感信息，返回文本会强制替换为当前可信目标标题并限制长度；模型失败只返回有限业务错误，不泄露画像、提示词、上游响应或密钥。
+
+## 群成员身价迁移边界
+
+群成员身价只使用当前租户群的 `PointsAccount`、标准入站 `Message`、`Conversation`、`Chatroom` 和 `ChatroomMember`。每日快照按积分、统计窗口发言、活跃天数和社交得分四个维度计算，指标先按群内 95 分位缩放，再应用潜水惩罚；权重会归一化，避免租户错误配置让总权重失真。候选成员来自当前群积分和真实发言并集，不建立跨租户、跨群或平台全局排行。
+
+社交关系只识别标准文本中对当前活跃群成员唯一账号、昵称或展示名的明确 `@`，重名不会建立关系边，也不解析微信 XML、Provider 提及字段或联系人缓存。社交热度、搭子、桥梁和关系摘要与身价排行共享同一每日结构化快照，快照和周报保存到当前绑定的 `PluginStateRecord`；趋势只扫描当前绑定、当前会话和有限日期窗口内的快照。
+
+“我的身价”和“我的趋势”固定查询真实消息发送人，执行载荷不能替换用户或会话。“重算身价”只允许租户普通配置中的渠道成员账号执行。统一调度器只为租户明确选择的群会话创建每日重算、周一周报预生成和周报推送任务；周报推送通过标准出站队列并使用绑定、会话和周日期稳定幂等，不调用任何具体渠道 Provider。
