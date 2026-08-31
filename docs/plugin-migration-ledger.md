@@ -50,7 +50,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `epic_free` | 免费游戏查询与定时推送 | 无固定外部成本 | 无 | 已迁移 | `20d5cbd` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_epic_free.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（11 passed） |
 | `github_opengraph` | GitHub 链接图片预览 | 无固定外部成本 | 散列盐 | 已迁移 | `84a255d` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_github_opengraph.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（13 passed） |
-| `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 待迁移 | - | - |
+| `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 已迁移 | `e0c6535` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_robot_menu.py tests/test_plugin_migration_catalog.py`（4 passed） |
 | `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 待迁移 | - | - |
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
@@ -122,3 +122,9 @@ Epic 免费游戏只访问固定的官方活动接口，地区、语言、是否
 GitHub 链接预览只接受 `github.com` 下至少包含 owner/repository 的公开地址，查询参数和片段不参与重复预览，中文标点、重复链接和单消息数量上限在下载前处理。执行载荷只能提供标准消息文本，不能覆盖 OpenGraph 域名、图片地址或散列盐。
 
 散列盐保存在当前租户插件绑定的密文配置中。插件只通过平台受控 HTTP 客户端访问固定的 `opengraph.githubassets.com`，校验响应状态、图片类型、响应体上限和超时后在内存中生成标准图片回复；不下载仓库内容，不写本地图片文件，也不调用微信或 Telegram 专用发送接口。
+
+## 机器人功能菜单迁移边界
+
+功能菜单只响应群聊中的 `菜单` 和 `功能菜单`，并从可信入站消息确定当前租户、机器人、渠道和群会话。执行载荷不能伪造身份、机器人或目标群，运维执行入口也不能生成业务菜单。
+
+菜单只展示当前机器人已经启用、当前渠道支持、当前群未停用且具有命令或关键词触发方式的目录插件。定时插件、系统插件、停用插件、群级关闭插件和无用户触发方式的插件不会展示；旧状态查询、群列表、插件启停、管理员管理、图片模板和自动撤回链路均已删除。菜单只生成标准文本回复，不依赖微信、企业微信或 Telegram Provider。
