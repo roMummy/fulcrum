@@ -514,6 +514,19 @@ class WechatIpadAdapter(BaseChannelAdapter):
                     "Type": app_type or 6,
                 },
             }
+        if message_type == "link":
+            generated_xml = self._build_link_app_xml(payload)
+            if not generated_xml:
+                return None
+            return {
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
+                "body": {
+                    "Wxid": wxid,
+                    "ToWxid": to_wxid,
+                    "Xml": generated_xml,
+                    "Type": 5,
+                },
+            }
         return None
 
     def _run_health_probe(
@@ -622,6 +635,8 @@ class WechatIpadAdapter(BaseChannelAdapter):
             return "video 消息缺少可用载荷，需提供 xml/cdn_xml 或 video_base64 + image_base64/cover_base64，可选 play_length"
         if message_type == "file":
             return "file 消息缺少可用载荷，需提供 xml 或 file_name + file_url/download_url；SendApp 需带真实 Type 或可从 xml.type 推导"
+        if message_type == "link":
+            return "link 消息缺少可用载荷，需提供 url/link_url，可选 title、desc 和 thumb_url"
         return f"暂不支持的消息类型: {message_type}"
 
     def _build_file_app_xml(self, payload: dict[str, Any]) -> str | None:
@@ -645,6 +660,26 @@ class WechatIpadAdapter(BaseChannelAdapter):
             f"<aeskey>{escape(aes_key)}</aeskey>"
             f"<fileext>{escape(self._guess_file_ext(file_name))}</fileext>"
             "</appattach>"
+            "</appmsg>"
+        )
+
+    def _build_link_app_xml(self, payload: dict[str, Any]) -> str | None:
+        """把平台通用链接卡片转换为 874 SendApp 所需的 type=5 XML。"""
+
+        link_url = self._first_non_empty(payload, "url", "link_url")
+        if not link_url:
+            return None
+        title = self._first_non_empty(payload, "title", "link_title") or link_url
+        description = self._first_non_empty(payload, "desc", "description", "link_description") or ""
+        thumb_url = self._first_non_empty(payload, "thumb_url", "image_url") or ""
+        # 所有租户可编辑字段都先做 XML 转义，避免标题或 URL 中的特殊字符破坏消息结构。
+        return (
+            "<appmsg appid='' sdkver='0'>"
+            f"<title>{escape(title)}</title>"
+            f"<des>{escape(description)}</des>"
+            "<type>5</type>"
+            f"<url>{escape(link_url)}</url>"
+            f"<thumburl>{escape(thumb_url)}</thumburl>"
             "</appmsg>"
         )
 

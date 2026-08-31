@@ -28,6 +28,7 @@ from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, BotPlugin, Plugin, PluginStateRecord
 from app.models.saas import Tenant
+from app.services.plugin_directory import _build_auto_outbound_payloads
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.http_client import (
     PluginHttpClient,
@@ -44,6 +45,7 @@ from app.services.plugin_runtime.replies import (
     PluginReplyError,
     file_reply,
     image_reply,
+    link_reply,
     standard_replies,
     text_reply,
     video_reply,
@@ -357,14 +359,68 @@ def test_standard_replies_validate_type_url_file_scope_and_count(tmp_path: Path)
             image_reply(image_path=image_file, allowed_root=allowed_root),
             file_reply(file_name="report.txt", file_url="https://files.example.test/report.txt"),
             video_reply(video_base64=video_data, cover_base64=image_data, play_length=3),
+            link_reply(
+                title="租户活动",
+                description="查看活动详情",
+                url="https://tenant.example.test/activity?id=1",
+                thumb_url="https://tenant.example.test/activity.png",
+            ),
         ],
         allowed_root=allowed_root,
     )
-    assert [item["type"] for item in replies] == ["text", "image", "file", "video"]
+    assert [item["type"] for item in replies] == ["text", "image", "file", "video", "link"]
 
     with pytest.raises(PluginReplyError):
         image_reply(image_path=outside_file, allowed_root=allowed_root)
     with pytest.raises(PluginReplyError):
         file_reply(file_name="report.txt", file_url="file:///tmp/report.txt")
     with pytest.raises(PluginReplyError):
+        link_reply(url="javascript:alert(1)")
+    with pytest.raises(PluginReplyError):
         standard_replies([text_reply(str(index)) for index in range(9)])
+
+
+def test_link_replies_normalize_by_channel_capability() -> None:
+    """链接回复保持单一结构，目录层只在渠道确实不支持卡片时降级为文本。"""
+
+    reply = {
+        "replies": [
+            {
+                "type": "link",
+                "title": "活动中心",
+                "description": "查看本周活动",
+                "url": "https://tenant.example.test/activity",
+                "thumb_url": "https://tenant.example.test/activity.png",
+            }
+        ]
+    }
+    ipad_context = type(
+        "FakeContext",
+        (),
+        {
+            "conversation_external_id": "room-link@chatroom",
+            "content": "test",
+            "channel_type": "wechat_ipad",
+        },
+    )()
+    telegram_context = type(
+        "FakeContext",
+        (),
+        {
+            "conversation_external_id": "telegram-room",
+            "content": "test",
+            "channel_type": "telegram",
+        },
+    )()
+
+    ipad_payloads = _build_auto_outbound_payloads(ipad_context, reply)
+    telegram_payloads = _build_auto_outbound_payloads(telegram_context, reply)
+
+    assert ipad_payloads[0]["message_type"] == "link"
+    assert ipad_payloads[0]["link_url"] == "https://tenant.example.test/activity"
+    assert telegram_payloads == [
+        {
+            "message_type": "text",
+            "content": "活动中心\n查看本周活动\nhttps://tenant.example.test/activity",
+        }
+    ]

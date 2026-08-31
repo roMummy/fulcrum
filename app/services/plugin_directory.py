@@ -1449,6 +1449,36 @@ def _normalize_reply_item(item: Mapping[str, Any], *, channel_type: str = "") ->
         if play_length not in (None, ""):
             payload["play_length"] = play_length
         return payload
+    if reply_type == "link":
+        link_url = str(item.get("url") or item.get("link_url") or "").strip()
+        if not link_url:
+            return None
+        title = str(item.get("title") or item.get("link_title") or "").strip()
+        description = str(
+            item.get("description")
+            or item.get("desc")
+            or item.get("link_description")
+            or ""
+        ).strip()
+        thumb_url = str(item.get("thumb_url") or item.get("image_url") or "").strip()
+        if str(channel_type or "").strip().lower() == "telegram":
+            # Telegram 当前适配器只发送文本和图片。链接卡片在目录层转成业务可读文本，
+            # 保证插件仍然只输出一种通用链接结构，且不会把渠道能力判断散落到插件中。
+            text_parts = [part for part in (title, description, link_url) if part]
+            return {"message_type": "text", "content": "\n".join(text_parts)}
+        payload = {
+            "message_type": "link",
+            "content": title or link_url,
+            "title": title,
+            "desc": description,
+            "url": link_url,
+            "link_url": link_url,
+            "link_title": title,
+            "link_description": description,
+        }
+        if thumb_url:
+            payload["thumb_url"] = thumb_url
+        return payload
     return None
 
 

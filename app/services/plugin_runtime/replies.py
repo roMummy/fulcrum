@@ -11,7 +11,9 @@ MAX_TEXT_LENGTH = 20_000
 MAX_IMAGE_BASE64_LENGTH = 16 * 1024 * 1024
 MAX_VIDEO_BASE64_LENGTH = 40 * 1024 * 1024
 MAX_FILE_NAME_LENGTH = 255
-ALLOWED_REPLY_TYPES = {"text", "image", "file", "video"}
+MAX_LINK_TITLE_LENGTH = 200
+MAX_LINK_DESCRIPTION_LENGTH = 1_000
+ALLOWED_REPLY_TYPES = {"text", "image", "file", "video", "link"}
 
 
 class PluginReplyError(ValueError):
@@ -64,6 +66,39 @@ def file_reply(*, file_name: str, file_url: str) -> dict[str, str]:
         raise PluginReplyError("文件名不合法")
     normalized_url = _validate_public_resource_url(file_url)
     return {"type": "file", "file_name": normalized_name, "file_url": normalized_url}
+
+
+def link_reply(
+    *,
+    url: str,
+    title: str = "",
+    description: str = "",
+    thumb_url: str = "",
+) -> dict[str, str]:
+    """构造渠道无关的链接卡片，协议格式由各渠道适配器负责转换。"""
+
+    normalized_url = _validate_public_resource_url(url)
+    normalized_title = str(title or "").strip()
+    normalized_description = str(description or "").strip()
+    normalized_thumb_url = str(thumb_url or "").strip()
+    if len(normalized_title) > MAX_LINK_TITLE_LENGTH:
+        raise PluginReplyError("链接标题超过平台限制")
+    if len(normalized_description) > MAX_LINK_DESCRIPTION_LENGTH:
+        raise PluginReplyError("链接描述超过平台限制")
+    if normalized_thumb_url:
+        normalized_thumb_url = _validate_public_resource_url(normalized_thumb_url)
+
+    # 标题可以为空，渠道层会使用 URL 作为最小可读内容；这样既保持 A-BOT 规则能力，
+    # 又不会为了展示文案在插件核心中加入任何微信或 Telegram 专用分支。
+    reply = {
+        "type": "link",
+        "url": normalized_url,
+        "title": normalized_title,
+        "description": normalized_description,
+    }
+    if normalized_thumb_url:
+        reply["thumb_url"] = normalized_thumb_url
+    return reply
 
 
 def video_reply(
@@ -134,12 +169,26 @@ def standard_replies(
                     file_url=str(item.get("file_url") or item.get("url") or ""),
                 )
             )
-        else:
+        elif reply_type == "video":
             normalized.append(
                 video_reply(
                     video_base64=str(item.get("base64") or item.get("video_base64") or ""),
                     cover_base64=str(item.get("image_base64") or item.get("cover_base64") or ""),
                     play_length=item.get("play_length"),
+                )
+            )
+        else:
+            normalized.append(
+                link_reply(
+                    url=str(item.get("url") or item.get("link_url") or ""),
+                    title=str(item.get("title") or item.get("link_title") or ""),
+                    description=str(
+                        item.get("description")
+                        or item.get("desc")
+                        or item.get("link_description")
+                        or ""
+                    ),
+                    thumb_url=str(item.get("thumb_url") or item.get("image_url") or ""),
                 )
             )
     return normalized

@@ -280,6 +280,29 @@ def test_ipad_874_video_metadata_initializes_download_section_from_xml() -> None
     }
 
 
+def test_ipad_874_link_reply_uses_send_app_type_five() -> None:
+    """平台链接卡片必须映射到 874 的标准 SendApp，而不是依赖插件拼微信 XML。"""
+
+    request = WechatIpadAdapter()._build_request(
+        "link",
+        "wxid_bot",
+        "room-001@chatroom",
+        {
+            "title": "活动中心",
+            "desc": "A&B 专场",
+            "url": "https://tenant.example.test/activity?a=1&b=2",
+            "thumb_url": "https://tenant.example.test/activity.png",
+        },
+    )
+
+    assert request is not None
+    assert request["endpoint"] == IPAD_874_CONTRACT.endpoints.message_send_app
+    assert request["body"]["Type"] == 5
+    assert "<type>5</type>" in request["body"]["Xml"]
+    assert "A&amp;B" in request["body"]["Xml"]
+    assert "a=1&amp;b=2" in request["body"]["Xml"]
+
+
 def test_wechat_ipad_catalog_uses_platform_managed_endpoint_without_unused_token() -> None:
     """租户目录不暴露平台地址或无效 Token，只声明端点由平台统一托管。"""
 
