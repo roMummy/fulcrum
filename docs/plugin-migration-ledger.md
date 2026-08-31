@@ -56,7 +56,7 @@
 | `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 已迁移 | `5fb4219` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_maibot_adapter.py tests/test_plugin_runtime_secrets.py tests/test_plugin_secret_forms.py tests/test_plugin_migration_catalog.py tests/test_plugin_scheduler.py`（24 passed） |
 | `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 已迁移 | `ba8806e` | `.venv/bin/python -m pytest -q tests/test_plugin_codex_quota_allocator.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（9 passed） |
 | `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌、SMTP 密码 | 已迁移 | `eaf31db` | `.venv/bin/python -m pytest -q tests/test_plugin_newapi_coupon.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（8 passed）；临时 SQLite 空库升级到 `20260901_0017` |
-| `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 待迁移 | - | - |
+| `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 已迁移 | `e543fc5` | `.venv/bin/python -m pytest -q tests/test_plugin_daily_ranking.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（12 passed）；定向语法检查与 `git diff --check` 通过 |
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 待迁移 | - | - |
 | `member_context` | 群成员画像与增量摘要 | 视画像服务而定 | 可选 API Key | 待迁移 | - | - |
 | `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 待迁移 | - | - |
