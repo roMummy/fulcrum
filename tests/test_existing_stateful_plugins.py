@@ -36,6 +36,7 @@ from app.models.saas import Tenant
 from app.services.points import PointsService
 from app.services.plugin_directory import get_discovered_plugin, load_directory_plugin
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
+from app.services.plugin_runtime.http_client import PluginHttpResponse
 from app.services.plugin_runtime.state_store import PluginStateStore
 
 
@@ -107,6 +108,64 @@ def game_task_fixture(tmp_path: Path):
         engine.dispose()
 
 
+@pytest.fixture()
+def jd_token_fixture(tmp_path: Path):
+    """建立京东令牌私聊会话和独立插件绑定，验证租户青龙写入边界。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'jd-token.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="jd-token", name="京东令牌租户", status="active")
+        plugin = Plugin(code="jd_sign_token", display_name="京东签到令牌", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="京东机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="京东 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="jd-user-chat",
+            title="京东用户",
+            chat_type="direct",
+        )
+        db.add(conversation)
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
 def _game_message_request(
     db,
     identity: dict[str, int],
@@ -144,6 +203,53 @@ def _game_message_request(
             sender_id=sender_id,
             channel_type="telegram",
             chat_type="group",
+            message_type="text",
+        ),
+    )
+
+
+def _jd_message_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """把京东命令先落库，再构造只指向该私聊消息的可信上下文。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id="jd-user",
+        sender_name="京东用户",
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    return PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "ql_host": "https://ql.example.test",
+            "client_id": "tenant-client-id",
+            "client_secret": "tenant-client-secret",
+            "env_name": "JD_COOKIE",
+            "timeout_seconds": 15,
+        },
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id="jd-user",
+            channel_type="telegram",
+            chat_type="direct",
             message_type="text",
         ),
     )
@@ -410,3 +516,126 @@ def test_game_task_scheduled_assignment_queues_one_trusted_outbound_job(game_tas
     assert "forged-room" not in jobs[0].payload_json
     assert state is not None
     assert state["active_tasks"]["1"]["holder_id"] == "scheduled-player"
+
+
+def test_jd_sign_token_uses_private_message_secret_config_and_bounded_http(jd_token_fixture, monkeypatch) -> None:
+    """京东 Cookie 只从真实私聊读取，青龙凭证来自密文配置且结果不回显完整账号。"""
+
+    factory, identity = jd_token_fixture
+    discovered = get_discovered_plugin("jd_sign_token", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("设置京东",)
+    assert discovered.capability.chat_types == ("direct",)
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.secret_fields == ("client_id", "client_secret")
+    assert discovered.runtime_config["ql_host"] == ""
+
+    loaded = load_directory_plugin("jd_sign_token", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+
+    class FakeQlClient:
+        """记录受控 HTTP 参数，并返回一条同 pt_pin 的现有青龙环境变量。"""
+
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        def request(self, method, url, **kwargs):  # noqa: ANN001
+            self.calls.append({"method": method, "url": url, **kwargs})
+            if "/open/auth/token" in url:
+                payload = {"code": 200, "data": {"token_type": "Bearer", "token": "ql-access-token"}}
+            elif method == "GET" and "/open/envs" in url:
+                payload = {
+                    "code": 200,
+                    "data": [
+                        {
+                            "id": "env-001",
+                            "name": "JD_COOKIE",
+                            "value": "pt_key=old-key;pt_pin=jd_pin_001;",
+                            "remarks": "旧备注",
+                        }
+                    ],
+                }
+            elif method == "PUT" and "/open/envs" in url:
+                payload = {"code": 200, "data": kwargs.get("json_body")}
+            else:
+                raise AssertionError(f"unexpected ql request: {method} {url}")
+            return PluginHttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                url=url,
+            )
+
+    fake_client = FakeQlClient()
+    monkeypatch.setattr(module, "PluginHttpClient", lambda: fake_client)
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        request = _jd_message_request(
+            db,
+            identity,
+            content="/设置京东 pt_key=new-key;pt_pin=jd_pin_001; 新备注",
+            payload={
+                "token": "pt_key=forged;pt_pin=forged_pin;",
+                "remark": "伪造备注",
+                "sender_id": "forged-user",
+            },
+        )
+        result = module.execute_message_action(db, request)
+
+    assert result.ok is True
+    assert result.output == {
+        "provider_status": "updated",
+        "env_name": "JD_COOKIE",
+        "remark": "新备注",
+        "account_hint": "jd***001",
+        "replies": [
+            {
+                "type": "text",
+                "content": "已更新京东账号“新备注”，账号标识：jd***001。",
+            }
+        ],
+    }
+    assert len(fake_client.calls) == 3
+    auth_call, env_call, update_call = fake_client.calls
+    assert auth_call["method"] == "GET"
+    assert "client_secret=tenant-client-secret" in str(auth_call["url"])
+    assert env_call["method"] == "GET"
+    assert "searchValue=JD_COOKIE" in str(env_call["url"])
+    assert update_call["method"] == "PUT"
+    assert update_call["json_body"] == {
+        "id": "env-001",
+        "name": "JD_COOKIE",
+        "value": "pt_key=new-key;pt_pin=jd_pin_001;",
+        "remarks": "新备注",
+    }
+    assert update_call["headers"] == {
+        "Accept": "application/json",
+        "Authorization": "Bearer ql-access-token",
+    }
+    assert all(call["max_response_bytes"] == 2 * 1024 * 1024 for call in fake_client.calls)
+    serialized_result = json.dumps(dict(result.output), ensure_ascii=False)
+    assert "new-key" not in serialized_result
+    assert "jd_pin_001" not in serialized_result
+    assert "tenant-client-secret" not in serialized_result
+    assert "forged_pin" not in json.dumps(update_call["json_body"], ensure_ascii=False)
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={
+                "ql_host": "https://ql.example.test",
+                "client_id": "id",
+                "client_secret": "secret",
+            },
+            payload={"token": "pt_key=x;pt_pin=y;"},
+        )
+    )
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/jd_sign_token/plugin.py").read_text(encoding="utf-8")
+    assert "urllib.request" not in source
+    assert "urlopen" not in source
+    assert "request.payload.get" not in source
+    assert "qrcode.png" not in source
+    assert "except Exception" not in source
