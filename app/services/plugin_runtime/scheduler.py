@@ -149,6 +149,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
                     "game_task",
                     "member_context",
                     "message_summary",
+                    "value_rank",
                     "weather",
                 )
             ),
@@ -567,6 +568,57 @@ def _build_plugin_schedule_specs(
                         # 下一周期会从数据库水位继续处理尚未成功保存的新消息。
                         high_side_effect=True,
                         priority=65,
+                    )
+                )
+        return tuple(specs)
+    if plugin_code == "value_rank":
+        # 身价快照和周报都按租户明确选择的群会话独立入队。调度任务只保存
+        # 会话主键，积分、消息、成员和社交关系在执行时从当前租户数据库聚合。
+        if not _coerce_bool(config.get("enabled"), True):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("value_rank_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        definitions = [
+            (
+                "value_rank_daily_recompute",
+                str(config.get("daily_recompute_time") or "04:00"),
+                True,
+                False,
+                70,
+            ),
+            (
+                "value_rank_weekly_report_prepare",
+                str(config.get("weekly_report_prepare_time") or "09:10"),
+                current.weekday() == 0,
+                False,
+                65,
+            ),
+            (
+                "value_rank_weekly_report_push",
+                str(config.get("weekly_report_push_time") or "09:35"),
+                current.weekday() == 0,
+                True,
+                60,
+            ),
+        ]
+        specs: list[PluginScheduledActionSpec] = []
+        for action_key, time_text, date_matches, high_side_effect, priority in definitions:
+            if not date_matches:
+                continue
+            hour, minute = _parse_clock_time(time_text)
+            scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if current < scheduled_for:
+                continue
+            for conversation_id in conversation_ids:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key=action_key,
+                        scheduled_for=scheduled_for,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        high_side_effect=high_side_effect,
+                        priority=priority,
                     )
                 )
         return tuple(specs)

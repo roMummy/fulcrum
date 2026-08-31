@@ -53,6 +53,7 @@ def scheduler_fixture(tmp_path: Path):
         summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
         ranking_plugin = Plugin(code="daily_ranking", display_name="群聊每日排行", plugin_type="scheduled")
         member_context_plugin = Plugin(code="member_context", display_name="群成员画像", plugin_type="scheduled")
+        value_rank_plugin = Plugin(code="value_rank", display_name="群成员身价", plugin_type="command")
         weather_plugin = Plugin(code="weather", display_name="天气", plugin_type="rule")
         db.add_all(
             [
@@ -65,6 +66,7 @@ def scheduler_fixture(tmp_path: Path):
                 summary_plugin,
                 ranking_plugin,
                 member_context_plugin,
+                value_rank_plugin,
                 weather_plugin,
             ]
         )
@@ -186,6 +188,20 @@ def scheduler_fixture(tmp_path: Path):
                 }
             ),
         )
+        alpha_value_rank = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=value_rank_plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "value_rank_conversation_ids": [conversation.id],
+                    "daily_recompute_time": "04:00",
+                    "weekly_report_prepare_time": "09:10",
+                    "weekly_report_push_time": "09:35",
+                }
+            ),
+        )
         alpha_weather = BotPlugin(
             tenant_id=alpha.id,
             bot_id=alpha_bot.id,
@@ -223,6 +239,7 @@ def scheduler_fixture(tmp_path: Path):
                 alpha_summary,
                 alpha_ranking,
                 alpha_member_context,
+                alpha_value_rank,
                 alpha_weather,
                 beta_daily,
                 weather_subscription,
@@ -239,6 +256,7 @@ def scheduler_fixture(tmp_path: Path):
             "alpha_summary_binding_id": int(alpha_summary.id),
             "alpha_ranking_binding_id": int(alpha_ranking.id),
             "alpha_member_context_binding_id": int(alpha_member_context.id),
+            "alpha_value_rank_binding_id": int(alpha_value_rank.id),
             "alpha_weather_binding_id": int(alpha_weather.id),
             "alpha_conversation_id": int(conversation.id),
             "alpha_second_conversation_id": int(second_conversation.id),
@@ -357,6 +375,7 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
             "plugin_action:poll_subscriptions",
             "plugin_action:random_task_assignment",
             "plugin_action:random_task_assignment",
+            "plugin_action:value_rank_daily_recompute",
             "plugin_action:weather_daily_push",
         ]
         assert second == []
@@ -368,6 +387,7 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
         assert attempts["plugin_action:dota2_group_ranking_prepare"] == 3
         assert attempts["plugin_action:dota2_group_ranking_push"] == 1
         assert attempts["plugin_action:member_context_daily_refresh"] == 1
+        assert attempts["plugin_action:value_rank_daily_recompute"] == 3
         assert attempts["plugin_action:random_task_assignment"] == 1
         game_jobs = [job for job in first if job.related_type == "plugin_action:random_task_assignment"]
         assert len(game_jobs) == 2
@@ -452,6 +472,39 @@ def test_member_context_weekly_and_monthly_schedules(
             for job in member_jobs
         )
         assert all(job.max_attempts == 1 for job in member_jobs)
+
+
+def test_value_rank_monday_schedules_snapshot_and_weekly_report(scheduler_fixture) -> None:
+    """周一为每个目标群创建日快照、周报预生成和周报推送任务。"""
+
+    factory, identity = scheduler_fixture
+    current = now_shanghai().replace(
+        year=2026,
+        month=9,
+        day=7,
+        hour=10,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    with tenant_scope(identity["alpha_tenant_id"]), tenant_session(factory) as db:
+        jobs = schedule_due_plugin_actions(db, now=current)
+        db.commit()
+
+        value_jobs = [job for job in jobs if "value_rank" in str(job.related_type)]
+        assert {str(job.related_type) for job in value_jobs} == {
+            "plugin_action:value_rank_daily_recompute",
+            "plugin_action:value_rank_weekly_report_prepare",
+            "plugin_action:value_rank_weekly_report_push",
+        }
+        attempts = {str(job.related_type): int(job.max_attempts) for job in value_jobs}
+        assert attempts["plugin_action:value_rank_daily_recompute"] == 3
+        assert attempts["plugin_action:value_rank_weekly_report_prepare"] == 3
+        assert attempts["plugin_action:value_rank_weekly_report_push"] == 1
+        assert all(
+            parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"]
+            for job in value_jobs
+        )
 
 
 def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(scheduler_fixture) -> None:
