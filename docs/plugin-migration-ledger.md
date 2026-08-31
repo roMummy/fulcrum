@@ -53,7 +53,7 @@
 | `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 已迁移 | `e0c6535` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_robot_menu.py tests/test_plugin_migration_catalog.py`（4 passed） |
 | `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 已迁移 | `88890a7` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_gscore_adapter.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（14 passed） |
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 已迁移 | `a8de7e4` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_ai_gen_image.py tests/test_plugin_common_services.py tests/test_plugin_runtime_secrets.py tests/test_plugin_migration_catalog.py`（22 passed） |
-| `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
+| `maibot_adapter` | MaiBot 消息转发与回复 | 租户承担外部服务成本 | API Key | 已迁移 | `5fb4219` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_maibot_adapter.py tests/test_plugin_runtime_secrets.py tests/test_plugin_secret_forms.py tests/test_plugin_migration_catalog.py tests/test_plugin_scheduler.py`（24 passed） |
 | `codex_quota_allocator` | Codex 配额查询、调整与重置 | 租户承担上游账户成本 | 管理密钥、管理员 API Key | 待迁移 | - | - |
 | `newapi_coupon` | NewAPI 用户绑定与领券 | 租户承担上游套餐成本 | 管理员令牌 | 待迁移 | - | - |
 | `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 待迁移 | - | - |
@@ -140,3 +140,9 @@ GScore 只保留 `早柚` 业务查询命令，服务地址和 API Key 由当前
 AI 绘图保留 `AI绘图`、`绘图`、`画图` 和 `生成图片` 四个业务命令。API Base、模型和请求超时由当前租户普通配置维护，API Key 保存到当前插件绑定密文；平台不提供共享模型、共享密钥、全局 LLM 场景或旧图片接口回退。
 
 文本生图固定调用 OpenAI 兼容 `/images/generations`，当前消息存在已下载的可信图片附件时固定调用 `/images/edits`。提示词只从落库入站消息解析，参考图只从当前租户、渠道、会话和消息关联的附件记录读取；执行载荷不能覆盖提示词、模型、地址或附件路径。请求在平台已有异步插件分发任务中执行，图片结果只接受受限 JSON 中的有效 `b64_json`，经内存校验后生成标准图片回复，不保存临时文件，也不调用微信、企业微信或 Telegram 专用发送接口。
+
+## MaiBot 适配迁移边界
+
+MaiBot 作为旁路观察者采集群聊和私聊消息，不注册聊天命令，也不阻断其他插件。WebSocket 地址、采集开关、回复开关和连接参数由当前租户普通配置维护，API Key 保存到当前绑定密文；每个 `(tenant_id, binding_id)` 使用独立线程、事件循环、发送队列和 WebSocket，不共享跨租户连接。绑定停用、配置保存、机器人删除和应用关闭都会停止对应旧连接。
+
+入站消息维度只从可信绑定、渠道、会话和消息构造，群成员与群会话使用平台内部令牌，不向 MaiBot 暴露可直接改选的原始出站目标。客户端只接受当前连接最近 24 小时实际发送过的内部会话回复，并限制最近会话数量；回包进入平台后再次验证租户、绑定、机器人、渠道、会话、群级停用和回复开关，只提取文本或文本片段列表并写入标准出站任务。MaiBot 回包中的其他路由、媒体和任意对象不能指定租户、渠道或目标会话。
