@@ -200,3 +200,11 @@ Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，�
 玩家、背包、门派、资产流水和命令冷却分别保存在 `cultivation_players`、`cultivation_inventory`、`cultivation_clans`、`cultivation_transactions` 和 `cultivation_cooldowns`。所有数据同时受租户、插件绑定和群会话边界约束；写命令使用消息级唯一业务键，多个 Worker 重复消费同一消息时整体回滚失败事务并读取已完成结果。物品和灵石赠送、劫掠、购买、突破、炼丹与历练在数据库行锁内结算，稳定随机数由可信消息身份派生，任务重试不会改变结果。
 
 积分兑换灵石复用当前积分账本，并让积分扣减、灵石入账、两类流水、命令结果和冷却共享同一次数据库提交，不能出现部分到账。签到使用玩家日期字段，闭关、受伤、气息不稳、历练和炼丹状态使用上海时区时间。排行榜直接查询当前群玩家，不迁移 Redis 排行榜、玩家缓存、旧修仙表或单机初始化 SQL；旧帮助别名、进程内管理入口、微信提及解析和非正式 `出售` 命令均不保留。
+
+## 最终交付校验
+
+`scripts/verify_plugin_migration.py` 固定校验 36 个 A-BOT 目标插件和 2 个 SaaS 自有插件。脚本使用 TOML 与 Python AST 静态检查目录数量、manifest、真实执行入口、敏感字段空默认值、废弃双入口和 A-BOT `base/db/utils/plugins` 运行时导入，只输出数量、插件代码和错误，不读取数据库或输出凭证。
+
+部署必须配置独立 `ABOT_PLUGIN_SECRET_KEY`，执行完整性校验、`alembic upgrade head` 和 `scripts/scrub_plugin_plaintext_secrets.py` 后再替换旧进程。清理脚本只输出租户、绑定和删除字段数量。升级前仍把 API Key 等凭证保存在普通配置中的绑定会删除对应明文，租户需要在新插件配置表单中重新录入；已写入新密文列的凭证不会被重复清理。
+
+需要租户自行维护外部凭证的插件包括：`ai_auto_response`、`ai_gen_image`、`codex_quota_allocator`、`dify`、`dota2_stats`、`douyin_parser`、`duanju_search`、`github_opengraph`、`global_news`、`gscore_adapter`、`guess_song`、`jd_sign_token`、`maibot_adapter`、`member_context`、`member_roast`、`message_summary`、`music`、`newapi_coupon` 和 `weather`。平台不提供共享凭证或旧环境变量回退。

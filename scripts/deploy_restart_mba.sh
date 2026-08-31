@@ -9,8 +9,6 @@ APP_HOST="${MBS_HOST:-0.0.0.0}"
 APP_MODULE="${MBS_APP_MODULE:-app.main:app}"
 APP_BRANCH="${MBS_GIT_BRANCH:-main}"
 ALLOW_DIRTY="${MBS_ALLOW_DIRTY:-0}"
-INITIAL_DEPLOY="${MBS_INITIAL_DEPLOY:-0}"
-DB_BACKUP_COMMAND="${MBS_DB_BACKUP_COMMAND:-}"
 PID_FILE=".run/ui-${APP_PORT}.pid"
 LOG_FILE=".run/mbs-uvicorn.log"
 
@@ -39,37 +37,32 @@ if [ -n "${script_status}" ]; then
   git restore --source=HEAD --staged --worktree scripts/deploy_restart_mba.sh
 fi
 
-echo "[1/9] fetching latest code from origin/${APP_BRANCH}"
+echo "[1/10] fetching latest code from origin/${APP_BRANCH}"
 git fetch origin "${APP_BRANCH}"
 git checkout "${APP_BRANCH}"
 git pull --ff-only origin "${APP_BRANCH}"
 
 if [ ! -d .venv ]; then
-  echo "[2/9] creating virtual environment"
+  echo "[2/10] creating virtual environment"
   python3 -m venv .venv
 fi
 
-echo "[3/9] installing dependencies"
+echo "[3/10] installing dependencies"
 .venv/bin/python -m pip install -r requirements.txt
 
-# 已有数据库升级前必须完成外部备份。备份命令由部署环境注入，脚本不会拼接
-# DATABASE_URL，也不会把数据库用户名或密码写入日志。首次部署的目标应是独立空库，
-# 只有显式声明 MBS_INITIAL_DEPLOY=1 时才允许跳过备份命令。
-echo "[4/9] checking database backup gate"
-if [ "${INITIAL_DEPLOY}" = "1" ]; then
-  echo "initial deployment declared; database backup command is not required"
-elif [ -z "${DB_BACKUP_COMMAND}" ]; then
-  echo "MBS_DB_BACKUP_COMMAND is required before upgrading an existing database"
-  exit 1
-else
-  bash -lc "${DB_BACKUP_COMMAND}"
-  echo "database backup command completed"
-fi
+# 部署前先证明当前分支包含完整插件集合，并通过一次纯内存加密验证主密钥。
+# 该探针不会读取数据库、保存密文或把主密钥打印到部署日志。
+echo "[4/10] verifying plugin migration and secret key"
+.venv/bin/python scripts/verify_plugin_migration.py
+.venv/bin/python -c 'from app.services.plugin_secrets import encrypt_plugin_secret_config; encrypt_plugin_secret_config(tenant_id=1, binding_id=1, config={"deployment_probe": "ok"})'
 
-# Alembic 必须在停止旧进程前成功。这样即使依赖安装、备份或迁移失败，旧服务仍会
-# 保持运行，避免把部署前置错误扩大为不必要的停机。
-echo "[5/9] migrating database"
+# Alembic 和敏感字段清理必须在停止旧进程前成功。这样依赖安装、完整性校验、
+# 密钥校验或数据库处理失败时，旧服务仍会保持运行，不扩大部署前置错误。
+echo "[5/10] migrating database"
 .venv/bin/alembic upgrade head
+
+echo "[6/10] scrubbing plaintext plugin secrets"
+.venv/bin/python scripts/scrub_plugin_plaintext_secrets.py
 
 stop_pid() {
   local pid="$1"
@@ -85,7 +78,7 @@ stop_pid() {
   fi
 }
 
-echo "[6/9] stopping old process"
+echo "[7/10] stopping old process"
 if [ -f "$PID_FILE" ]; then
   stop_pid "$(cat "$PID_FILE" || true)"
   rm -f "$PID_FILE"
@@ -104,7 +97,7 @@ if [ -n "${port_pids:-}" ]; then
   done
 fi
 
-echo "[7/9] starting service"
+echo "[8/10] starting service"
 nohup setsid .venv/bin/python -m uvicorn "${APP_MODULE}" --host "${APP_HOST}" --port "${APP_PORT}" > "$LOG_FILE" 2>&1 < /dev/null &
 new_pid=$!
 echo "$new_pid" > "$PID_FILE"
@@ -117,14 +110,14 @@ if ! kill -0 "$new_pid" 2>/dev/null; then
   exit 1
 fi
 
-echo "[8/9] checking liveness"
+echo "[9/10] checking liveness"
 if ! curl -fsS "http://127.0.0.1:${APP_PORT}/healthz" >/dev/null; then
   echo "liveness check failed"
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
   exit 1
 fi
 
-echo "[9/9] checking readiness"
+echo "[10/10] checking readiness"
 if ! curl -fsS "http://127.0.0.1:${APP_PORT}/readyz" >/dev/null; then
   echo "readiness check failed"
   tail -n 80 "$LOG_FILE" 2>/dev/null || true

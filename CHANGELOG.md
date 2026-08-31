@@ -2,6 +2,39 @@
 
 All notable changes to this project should be documented in this file.
 
+## 2026-09-01
+
+### Added
+
+- 新增插件通用 HTTP、状态存储、限流、标准回复、统一调度和可信租户运行上下文
+- 完成 36 个 A-BOT 业务插件的 SaaS 原生迁移，并保留 2 个 SaaS 自有业务插件
+- 新增插件敏感配置 AES-GCM 密文、表单分离、明文清理和交付完整性校验脚本
+
+### Changed
+
+- LLM、Dify、解析服务、NewAPI、MaiBot 等第三方地址和凭证改由租户插件绑定维护
+- 插件只通过通用渠道与标准出站能力执行，不直接调用企业微信、微信或 Telegram Provider
+- 部署脚本改为插件与主密钥预检、Alembic 差异迁移、敏感明文清理、进程替换和双健康探针
+
+### Removed
+
+- 删除 A-BOT 数据库、Redis、Provider、微信 XML、单机管理入口和占位执行器兼容链路
+- 删除 `plugin_manager`、`stats_collector`、`system_updater`、`trendradar_permission` 等平台原生插件目录
+- 删除部署前数据库备份命令和首次部署跳过门禁变量
+
+### Security
+
+- 插件敏感配置使用独立 `ABOT_PLUGIN_SECRET_KEY`，密文同时绑定租户和插件绑定主键
+- 目录配置敏感默认值保持为空，运行日志、任务载荷和页面不回显租户凭证
+- 配额调整、领券、积分、排行和修仙等高副作用操作使用可信身份、限流、幂等和事务边界
+
+### Validation
+
+- 插件交付校验确认 38 个目录、36 个目标插件、2 个 SaaS 自有插件和 0 个静态错误
+- 已执行插件目录、运行密钥、平台原生边界、运维和大盘相关轻量组合验证
+- 已执行 Python 语法检查、Jinja 模板解析和差异检查
+- 未执行完整历史回归、性能测试或真实第三方账号联调
+
 ## 2026-08-29
 
 ### Added

@@ -30,6 +30,7 @@ Typical production settings:
 ```env
 APP_ENV=prod
 SECRET_KEY=change-this-secret-key
+ABOT_PLUGIN_SECRET_KEY=
 LOG_LEVEL=INFO
 AUTH_SEED_DEMO_USERS=false
 AUTH_COOKIE_SECURE=true
@@ -41,6 +42,12 @@ BILLING_PAYMENT_PROOF_MAX_BYTES=5242880
 ```
 
 `SECRET_KEY` 同时参与会话安全和设备指纹 HMAC。已经产生机器人绑定后不得直接更换该值，否则同一设备会计算出不同摘要，破坏设备归属和试用防重复判断。若必须轮换，应先实现双密钥过渡或摘要迁移。
+
+`ABOT_PLUGIN_SECRET_KEY` 专门用于插件敏感配置 AES-GCM 加密，不能复用 `SECRET_KEY`。它必须是 32 字节 URL-safe Base64，部署后保持稳定；可使用以下命令生成：
+
+```bash
+python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
 
 `AUTH_COOKIE_SECURE` 必须与实际访问协议一致。通过正式 HTTPS 域名访问时保持 `true`；当前仅通过受控内网 `http://IP:8280` 验收时必须显式设为 `false`，否则浏览器收到登录 Cookie 后不会在后续 HTTP 请求中回传。切换到 HTTPS 后应立即恢复为 `true`。
 
@@ -163,13 +170,14 @@ The default compose stack starts:
 已有 MariaDB 环境必须按以下顺序执行，迁移失败时不能重建正在服务的应用容器：
 
 1. 记录当前 Git HEAD、应用镜像和 Alembic revision；
-2. 以权限 `600` 备份 `.env.docker` 等环境文件；
-3. 备份 MariaDB，并同步备份 `data/tenant_billing/`；
-4. `git pull --ff-only`，禁止覆盖远程或本地未确认改动；
-5. `docker compose build app`；
+2. 确认 `.env.docker` 已配置稳定的 `ABOT_PLUGIN_SECRET_KEY`；
+3. `git pull --ff-only`，禁止覆盖远程或本地未确认改动；
+4. `docker compose build app`；
+5. `docker compose run --rm app python scripts/verify_plugin_migration.py`；
 6. `docker compose run --rm app alembic upgrade head`；
-7. 迁移成功后执行 `docker compose up -d --no-deps app`，只重建 SaaS 应用容器；
-8. 验证健康探针、公开入口、注册试用、订单审核和机器人额度，再清理旧镜像。
+7. `docker compose run --rm app python scripts/scrub_plugin_plaintext_secrets.py`；
+8. 迁移和清理成功后执行 `docker compose up -d --no-deps app`，只重建 SaaS 应用容器；
+9. 验证健康探针、公开入口、注册试用、订单审核、机器人额度和插件绑定，再清理旧镜像。
 
 部署主机如果还运行旧 `8180` 服务，不得执行整组 Compose 重启或端口清理；上线后必须单独确认旧服务仍然可用。
 
@@ -229,18 +237,18 @@ On startup the application will:
 3. 数据库就绪后启动后台 Worker；
 4. revision 落后时保留 `/healthz`，让 `/readyz` 返回 503，并拒绝业务流量。
 
-## 订单审核与备份
+## 订单凭证持久化与恢复
 
 企业主从 `/account/billing` 创建订单，在订单详情提交交易流水号和付款凭证。平台管理员从 `/platform/billing/orders` 检查租户、套餐、金额和凭证后批准或驳回。批准操作具备幂等保护，重复提交不能重复延长订阅。
 
-付款凭证保存于 `DATA_DIR/tenant_billing/<tenant_id>/<order_no>/`，不通过静态目录公开。数据库备份和文件目录备份应处于同一维护窗口，并记录二者时间点。恢复时先恢复数据库和私有目录，再启动应用并抽查订单凭证下载权限。
+付款凭证保存于 `DATA_DIR/tenant_billing/<tenant_id>/<order_no>/`，不通过静态目录公开。自动更新脚本不会创建数据库或文件备份；如部署环境另行实施灾难恢复，数据库与私有目录必须使用同一恢复时间点，并在启动后抽查订单凭证下载权限。
 
-回滚应用镜像前先判断数据库迁移是否向后兼容。本次商业化迁移增加字段和表，不能只切回旧镜像后继续写入。若必须回滚结构，应停止写流量，使用部署前数据库与私有目录备份整体恢复；不得在生产库上直接尝试未经验证的 `alembic downgrade`。
+回滚应用镜像前先判断数据库迁移是否向后兼容。不能只切回旧镜像后继续写入，也不得在生产库上直接尝试未经验证的 `alembic downgrade`。
 
 ## Notes
 
-- 已有数据库部署前必须备份，迁移失败时不得停止旧进程。
-- `scripts/deploy_restart_mba.sh` 要求已有数据库提供 `MBS_DB_BACKUP_COMMAND`；首次独立空库部署可显式设置 `MBS_INITIAL_DEPLOY=1`。
+- `scripts/deploy_restart_mba.sh` 只做差异更新，不执行备份，也不设置备份门禁。
+- 插件目录、独立主密钥、数据库迁移和敏感明文清理成功前不得停止旧进程。
 - 平台可修改公开套餐价格和额度，订单创建后使用金额和额度快照，不受后续套餐修改影响。
 - 一个手机号首版只拥有一个企业；试用机器人绑定不可由租户自行更换，付费绑定释放也必须由平台管理员带原因执行。
 - 旧系统数据导入见 [legacy-import.md](/data/multi-bot-saas/docs/legacy-import.md)，必须先 dry-run，再备份目标库并正式导入。

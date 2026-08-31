@@ -134,10 +134,18 @@ def test_installer_creates_admin_only_after_migrations(tmp_path: Path) -> None:
 
 
 def test_deploy_script_migrates_before_stopping_old_process() -> None:
-    """部署脚本必须在迁移成功后才停止旧进程，避免迁移失败扩大停机。"""
+    """部署脚本先完成完整性、密钥、迁移和清理，再替换旧进程。"""
 
     script = (PROJECT_ROOT / "scripts" / "deploy_restart_mba.sh").read_text(encoding="utf-8")
+    catalog_index = script.index("scripts/verify_plugin_migration.py")
+    secret_key_index = script.index("encrypt_plugin_secret_config")
     migration_index = script.index("alembic upgrade head")
+    scrub_index = script.index("scripts/scrub_plugin_plaintext_secrets.py")
     stop_index = script.index("stopping old process")
     ready_index = script.index("/readyz")
-    assert migration_index < stop_index < ready_index
+
+    assert catalog_index < migration_index
+    assert secret_key_index < migration_index
+    assert migration_index < scrub_index < stop_index < ready_index
+    assert "MBS_DB_BACKUP_COMMAND" not in script
+    assert "MBS_INITIAL_DEPLOY" not in script

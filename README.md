@@ -10,6 +10,7 @@
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
 - 平台管理：套餐、租户、订阅、订单审核、受控解绑和平台审计
 - 渠道接入：统一管理企业微信、微信 iPad 协议、Windows 微信和 Telegram
+- 插件生态：36 个 A-BOT 业务插件完成 SaaS 原生迁移，支持租户自备第三方服务地址和密钥
 - 远端执行：企业微信执行端支持一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
 - 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
 - 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
@@ -121,10 +122,12 @@ chmod +x scripts/deploy_restart_mba.sh
 
 脚本会自动执行：
 
-- 拉取 `origin/main` 最新代码
+- 拉取 `MBS_GIT_BRANCH` 指定分支，默认使用 `origin/main`
 - 安装或更新依赖
-- 检查数据库备份门禁
+- 校验 36 个迁移插件、2 个 SaaS 自有插件和目录安全边界
+- 校验独立插件主密钥，不生成或使用弱默认值
 - 在旧进程仍运行时执行 `alembic upgrade head`
+- 清除历史普通配置中的插件敏感明文字段
 - 迁移成功后关闭旧的 `uvicorn` 进程
 - 重新启动服务
 - 检查 `/healthz` 和 `/readyz`
@@ -134,11 +137,10 @@ chmod +x scripts/deploy_restart_mba.sh
 ```bash
 MBS_GIT_BRANCH=main \
 MBS_PORT=8280 \
-MBS_DB_BACKUP_COMMAND='/opt/backup/multi-bot-saas-db.sh' \
 ./scripts/deploy_restart_mba.sh
 ```
 
-首次部署到确认过的独立空库时可显式设置 `MBS_INITIAL_DEPLOY=1`。已有数据库升级不得用该变量跳过备份门禁。
+脚本只做 Git 快进、数据库差异迁移和应用进程替换，不执行数据库备份或要求备份门禁。数据库迁移和敏感字段清理成功前不会停止旧进程。
 
 ### 3. 初始化数据库和平台管理员
 
@@ -175,6 +177,7 @@ Copy-Item .env.example .env
 ```env
 APP_ENV=prod
 SECRET_KEY=change-this-secret-key
+ABOT_PLUGIN_SECRET_KEY=
 AUTH_SEED_DEMO_USERS=false
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
@@ -196,6 +199,7 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | --- | --- |
 | `APP_ENV` | 运行环境，常用 `dev` / `prod` |
 | `SECRET_KEY` | 用于认证、敏感摘要和设备指纹 HMAC；部署后必须保持稳定 |
+| `ABOT_PLUGIN_SECRET_KEY` | 插件敏感配置 AES-GCM 主密钥；必须使用 32 字节 URL-safe Base64，部署后保持稳定 |
 | `DATABASE_URL` | 数据库连接串 |
 | `LOG_LEVEL` | 日志级别 |
 | `AUTH_SEED_DEMO_USERS` | 是否自动创建演示账号 |
@@ -209,6 +213,26 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | `BILLING_PAYMENT_PROOF_MAX_BYTES` | 单个付款凭证最大字节数，默认 5 MiB |
 
 示例见 [`.env.example`](/data/multi-bot-saas/.env.example)。
+
+生成独立插件主密钥：
+
+```bash
+python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+## 插件迁移交付
+
+当前目录包含 36 个从 A-BOT 业务迁移的插件，以及 `customer_operations`、`supplier_order_flow` 两个 SaaS 自有插件。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不导入 A-BOT 的数据库、Redis、Provider 或单机管理运行时。
+
+租户承担的 LLM、Dify、解析服务、NewAPI、MaiBot 等第三方成本，均由租户在插件绑定中维护地址和凭证。敏感字段使用 `ABOT_PLUGIN_SECRET_KEY` 加密后按租户和绑定隔离，目录配置不提供共享密钥或环境回退。
+
+交付前可执行静态完整性检查：
+
+```bash
+.venv/bin/python scripts/verify_plugin_migration.py
+```
+
+详细范围、迁移边界和定向验证记录见 [插件迁移台账](/data/multi-bot-saas/docs/plugin-migration-ledger.md)。
 
 ## 套餐、试用与付款
 
@@ -450,7 +474,7 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
   - 租户隔离的微信 iPad 消息同步、心跳和登录恢复
   - 企业微信远端执行端任务队列
 - 插件配置与运行态信息会存入数据库
-- 敏感信息如 bot token 会基于 `SECRET_KEY` 做简单加密存储
+- 插件敏感配置使用独立 `ABOT_PLUGIN_SECRET_KEY` 和 AES-GCM 加密，并绑定租户与插件绑定主键
 
 ## 常见文件
 

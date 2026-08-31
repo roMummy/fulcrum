@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from app.core.settings import settings
+from app.core.settings import Settings, settings
 from app.services.plugin_secrets import (
     PLUGIN_SECRET_VERSION,
     PluginSecretError,
@@ -20,6 +20,21 @@ def _install_test_key(monkeypatch: pytest.MonkeyPatch, seed: bytes = b"k") -> No
     raw_key = (seed * 32)[:32]
     encoded = base64.urlsafe_b64encode(raw_key).decode("ascii")
     monkeypatch.setattr(settings, "plugin_secret_key", encoded)
+
+
+def test_plugin_secret_key_reads_the_confirmed_environment_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """正式配置只读取已确认的 ABOT_PLUGIN_SECRET_KEY，不依赖字段名隐式映射。"""
+
+    encoded = base64.urlsafe_b64encode(b"e" * 32).decode("ascii")
+    monkeypatch.setenv("ABOT_PLUGIN_SECRET_KEY", encoded)
+    monkeypatch.delenv("PLUGIN_SECRET_KEY", raising=False)
+
+    assert Settings(_env_file=None).plugin_secret_key == encoded
+
+    # 已废弃的隐式字段名不能继续作为隐藏兼容入口，否则部署环境可能误用两套主密钥。
+    monkeypatch.delenv("ABOT_PLUGIN_SECRET_KEY")
+    monkeypatch.setenv("PLUGIN_SECRET_KEY", encoded)
+    assert Settings(_env_file=None).plugin_secret_key == ""
 
 
 def test_plugin_secret_round_trip_does_not_expose_plaintext(monkeypatch: pytest.MonkeyPatch) -> None:
