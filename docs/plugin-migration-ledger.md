@@ -5,7 +5,7 @@
 - 来源仓库：`/data/abot`
 - 来源分支：`feature-855`
 - 来源提交：`a842271986b1e50ab62daa30b5be73a65d872d0d`
-- 核对日期：`2026-08-31`
+- 核对日期：`2026-09-01`
 - 迁移方式：SaaS 原生重构，不加载 A-BOT 运行时，不保留兼容调用链
 
 本次从 `9efa1739748e0e8fa2506b80b9670e77080f001a` 核对到
@@ -49,7 +49,7 @@
 | 插件代码 | 核心能力 | 外部成本 | 敏感配置 | 当前状态 | SaaS 提交 | 轻量验证 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `epic_free` | 免费游戏查询与定时推送 | 无固定外部成本 | 无 | 已迁移 | `20d5cbd` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_epic_free.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（11 passed） |
-| `github_opengraph` | GitHub 链接图片预览 | 无固定外部成本 | 散列盐 | 待迁移 | - | - |
+| `github_opengraph` | GitHub 链接图片预览 | 无固定外部成本 | 散列盐 | 已迁移 | `84a255d` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_github_opengraph.py tests/test_plugin_common_services.py tests/test_plugin_migration_catalog.py`（13 passed） |
 | `robot_menu` | 当前机器人功能菜单 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `gscore_adapter` | GScore 消息适配 | 租户承担外部服务成本 | API Key | 待迁移 | - | - |
 | `ai_gen_image` | 文生图与图片编辑 | 租户承担模型成本 | API Key | 待迁移 | - | - |
@@ -116,3 +116,9 @@ A-BOT 的斗鱼弹幕日报和粉丝日报依赖独立弹幕采集、直播会�
 Epic 免费游戏只访问固定的官方活动接口，地区、语言、是否包含即将免费内容和轮询频率由当前租户绑定配置维护，执行载荷不能覆盖查询地址或地区。官方响应只提取游戏、活动窗口、价格和产品链接，不保存完整第三方返回。
 
 统一调度器按小时创建查询动作，插件通过标准出站队列发送文本。内容摘要按插件绑定和目标群分别保存到 `PluginStateRecord`，因此已收到当前内容的群不会重复推送，部分群入队失败也不会导致其他群重复，新启用的群仍能收到当前活动。微信系群级停用、绑定允许/拒绝范围和非群会话都会在入队前过滤。
+
+## GitHub 链接预览迁移边界
+
+GitHub 链接预览只接受 `github.com` 下至少包含 owner/repository 的公开地址，查询参数和片段不参与重复预览，中文标点、重复链接和单消息数量上限在下载前处理。执行载荷只能提供标准消息文本，不能覆盖 OpenGraph 域名、图片地址或散列盐。
+
+散列盐保存在当前租户插件绑定的密文配置中。插件只通过平台受控 HTTP 客户端访问固定的 `opengraph.githubassets.com`，校验响应状态、图片类型、响应体上限和超时后在内存中生成标准图片回复；不下载仓库内容，不写本地图片文件，也不调用微信或 Telegram 专用发送接口。
