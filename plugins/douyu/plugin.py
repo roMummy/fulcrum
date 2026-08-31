@@ -5,15 +5,15 @@ from dataclasses import dataclass
 from html import escape
 from typing import Any
 import urllib.parse
-from urllib import request as urlrequest
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.core.time import now_shanghai
-from app.models.entities import BotPlugin, Conversation, Plugin
+from app.models.entities import BotPlugin, Conversation
 from app.services.outbound_batch import enqueue_outbound_jobs_by_conversation
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from app.services.plugin_runtime.http_client import PluginHttpClient
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -74,26 +74,52 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         return PluginExecutionResult(ok=False, status="error", message=f"douyu failed: {exc}")
 
 
-def poll_douyu_binding(binding_id: int) -> dict[str, Any]:
-    with SessionLocal() as db:
-        binding = db.get(BotPlugin, int(binding_id or 0))
-        if binding is None or binding.status != "enabled" or binding.bot is None or not binding.bot.is_enabled:
-            return {"skipped": True}
-        plugin = binding.plugin or db.scalar(select(Plugin).where(Plugin.id == binding.plugin_id).limit(1))
-        if plugin is None or plugin.code != "douyu":
-            return {"skipped": True}
-        config = _load_config(_parse_json(binding.config_json))
-        room_states = dict(config.room_states)
-        yuba_last_ids = dict(config.yuba_last_feed_ids)
-        events: list[dict[str, Any]] = []
+def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+    """在任务所属租户会话中检查订阅变化并创建通用出站任务。"""
 
+    if request.action != "poll_subscriptions":
+        return PluginExecutionResult(
+            ok=False,
+            status="unsupported",
+            message=f"不支持的斗鱼定时动作: {request.action}",
+        )
+    if request.context is None:
+        return PluginExecutionResult(ok=False, status="error", message="斗鱼定时任务缺少可信上下文。")
+    binding = db.get(BotPlugin, int(request.context.binding_id))
+    if (
+        binding is None
+        or int(binding.tenant_id) != int(request.context.tenant_id)
+        or int(binding.bot_id) != int(request.context.bot_id)
+        or binding.status != "enabled"
+        or binding.bot is None
+        or not binding.bot.is_enabled
+    ):
+        return PluginExecutionResult(ok=False, status="error", message="斗鱼插件绑定或机器人未启用。")
+
+    config = _load_config(dict(request.config))
+    room_states = dict(config.room_states)
+    yuba_last_ids = dict(config.yuba_last_feed_ids)
+    events: list[dict[str, Any]] = []
+
+    try:
         for room_id in _all_values(config.room_subscriptions):
             room = _fetch_room_status_output(room_id, config)
             previous = str((config.room_states.get(room_id) or {}).get("provider_status") or "").strip()
             current = str(room.get("provider_status") or "").strip()
             if (previous == "live") != (current == "live"):
-                events.append({"type": "room_live" if current == "live" else "room_offline", "room": room, "target_keys": _targets_for_value(config.room_subscriptions, room_id)})
-            room_states[room_id] = {"provider_status": current, "nickname": room.get("nickname"), "room_name": room.get("room_name"), "updated_at": now_shanghai().isoformat()}
+                events.append(
+                    {
+                        "type": "room_live" if current == "live" else "room_offline",
+                        "room": room,
+                        "target_keys": _targets_for_value(config.room_subscriptions, room_id),
+                    }
+                )
+            room_states[room_id] = {
+                "provider_status": current,
+                "nickname": room.get("nickname"),
+                "room_name": room.get("room_name"),
+                "updated_at": now_shanghai().isoformat(),
+            }
 
         for hash_id in _all_values(config.yuba_subscriptions):
             feed = _fetch_yuba_feed_output(hash_id, config, limit=max(10, config.default_feed_limit))
@@ -102,48 +128,60 @@ def poll_douyu_binding(binding_id: int) -> dict[str, Any]:
             latest_id = str((latest or {}).get("feed_id") or "").strip()
             previous_id = str(config.yuba_last_feed_ids.get(hash_id) or "").strip()
             if latest_id and latest_id != previous_id:
-                events.append({"type": "yuba_update", "item": latest, "target_keys": _targets_for_value(config.yuba_subscriptions, hash_id)})
+                events.append(
+                    {
+                        "type": "yuba_update",
+                        "item": latest,
+                        "target_keys": _targets_for_value(config.yuba_subscriptions, hash_id),
+                    }
+                )
                 yuba_last_ids[hash_id] = latest_id
+    except Exception as exc:
+        return PluginExecutionResult(ok=False, status="error", message=f"斗鱼订阅检查失败: {exc}")
 
-        conversations = _resolve_target_conversations(db, binding.bot_id, config, events)
-        job_ids: list[int] = []
-        failed_targets: list[dict[str, Any]] = []
-        pushed_conversation_count = 0
-        for event in events:
-            batch_result = enqueue_outbound_jobs_by_conversation(
-                db,
-                conversations=conversations,
-                plugin_code="douyu",
-                related_type="douyu_binding",
-                related_id=binding.id,
-                priority=70,
-                payload_builder=lambda conversation, channel, current_event=event: _build_event_payloads(
-                    conversation,
-                    current_event,
-                    config.reminder_subscribers,
-                ),
-                log_context={"binding_id": binding.id, "event_type": str(event.get("type") or "").strip()},
-            )
-            job_ids.extend(batch_result["job_ids"])
-            failed_targets.extend(batch_result["failed_targets"])
-            pushed_conversation_count += int(batch_result["pushed_conversation_count"] or 0)
+    conversations = _resolve_target_conversations(db, binding.bot_id, config, events)
+    job_ids: list[int] = []
+    failed_targets: list[dict[str, Any]] = []
+    pushed_conversation_count = 0
+    for event in events:
+        batch_result = enqueue_outbound_jobs_by_conversation(
+            db,
+            conversations=conversations,
+            plugin_code="douyu",
+            related_type="douyu_binding",
+            related_id=binding.id,
+            priority=70,
+            payload_builder=lambda conversation, channel, current_event=event: _build_event_payloads(
+                conversation,
+                current_event,
+                config.reminder_subscribers,
+            ),
+            log_context={"binding_id": binding.id, "event_type": str(event.get("type") or "").strip()},
+        )
+        job_ids.extend(batch_result["job_ids"])
+        failed_targets.extend(batch_result["failed_targets"])
+        pushed_conversation_count += int(batch_result["pushed_conversation_count"] or 0)
 
-        binding.config_json = json.dumps(_dump_config(config, room_states, yuba_last_ids), ensure_ascii=False, sort_keys=True)
-        binding.last_execution_at = now_shanghai()
-        binding.last_execution_status = "completed"
-        summary = f"douyu poll checked {len(room_states)} rooms and {len(yuba_last_ids)} yuba feeds"
-        if pushed_conversation_count:
-            summary += f", queued {pushed_conversation_count} conversation deliveries"
-        if failed_targets:
-            summary += f", skipped {len(failed_targets)} failed conversations"
-        binding.last_execution_summary = summary
-        db.commit()
-        return {
-            "ok": True,
+    binding.config_json = json.dumps(
+        _dump_config(config, room_states, yuba_last_ids),
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    summary = f"斗鱼已检查 {len(room_states)} 个房间和 {len(yuba_last_ids)} 个鱼吧订阅。"
+    if pushed_conversation_count:
+        summary += f" 已创建 {pushed_conversation_count} 个会话通知。"
+    if failed_targets:
+        summary += f" {len(failed_targets)} 个会话创建失败。"
+    return PluginExecutionResult(
+        ok=not failed_targets,
+        status="completed" if not failed_targets else "partial",
+        message=summary,
+        output={
             "event_count": len(events),
             "outbound_job_ids": job_ids,
             "failed_targets": failed_targets,
-        }
+        },
+    )
 
 
 def _fetch_room_status_output(room_id: str, config: DouyuConfig) -> dict[str, Any]:
@@ -278,8 +316,6 @@ def _build_event_payloads(conversation: Conversation, event: dict[str, Any], rem
             lines.append(f"提醒对象：{' '.join(reminders)}")
         lines.append(str(room.get("room_url") or ""))
         payloads.append({"external_id": conversation.external_id, "receiver_id": conversation.external_id, "chat_type": conversation.chat_type, "message_type": "text", "content": "\n".join(line for line in lines if line.strip())})
-        if room.get("douyu_xml"):
-            payloads.append({"external_id": conversation.external_id, "receiver_id": conversation.external_id, "chat_type": conversation.chat_type, "message_type": "file", "xml": str(room["douyu_xml"])})
     elif event["type"] == "room_offline":
         room = event["room"]
         lines = ["斗鱼下播提醒", f"{room.get('nickname') or '未知主播'} 已下播", f"标题：{room.get('room_name') or '斗鱼直播'}"]
@@ -297,9 +333,18 @@ def _build_event_payloads(conversation: Conversation, event: dict[str, Any], rem
 
 
 def _get_json(url: str, *, timeout: int, user_agent: str) -> dict[str, object]:
-    req = urlrequest.Request(url, method="GET", headers={"accept": "application/json", "User-Agent": user_agent})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        parsed = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    response = PluginHttpClient().request(
+        "GET",
+        url,
+        headers={"Accept": "application/json", "User-Agent": user_agent},
+        connect_timeout_seconds=max(1, timeout),
+        total_timeout_seconds=max(1, timeout),
+        max_response_bytes=2 * 1024 * 1024,
+        retry_count=1,
+    )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"provider returned HTTP {response.status_code}")
+    parsed = response.json()
     if isinstance(parsed, dict):
         return parsed
     raise ValueError("provider returned non-object json")
@@ -329,14 +374,6 @@ def _normalize_scalar_mapping(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
     return {str(key).strip(): str(item).strip() for key, item in value.items() if str(key).strip() and str(item).strip()}
-
-
-def _parse_json(raw: str | None) -> dict[str, Any]:
-    try:
-        parsed = json.loads(str(raw or "").strip() or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _coerce_int(value: object, default: int) -> int:

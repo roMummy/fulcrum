@@ -187,3 +187,111 @@ def test_daily_news_baidu_format_keeps_latest_hashtag_output() -> None:
     assert "当前日期：2026年08月31日  星期一" in text
     assert "1 :#第一_条" in text
     assert "2 :#第二条" in text
+
+
+@pytest.fixture()
+def douyu_schedule_fixture(tmp_path: Path):
+    """建立一个斗鱼房间订阅，验证统一轮询动作的租户执行链路。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'douyu-schedule.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="douyu", name="斗鱼租户", status="active")
+        plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="斗鱼机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="TG 群",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="room-douyu",
+            chat_type="group",
+        )
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "room_subscriptions": {"room-douyu": ["100"]},
+                    "room_states": {"100": {"provider_status": "offline"}},
+                    "poll_interval_seconds": 60,
+                }
+            ),
+        )
+        db.add_all([conversation, binding])
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "binding_id": int(binding.id),
+            "conversation_id": int(conversation.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def test_douyu_scheduled_poll_uses_tenant_session_and_generic_text(douyu_schedule_fixture) -> None:
+    """斗鱼统一轮询不再打开平台会话，Telegram 目标只收到通用文本任务。"""
+
+    factory, identity = douyu_schedule_fixture
+    loaded = load_directory_plugin("douyu", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    source = (PROJECT_ROOT / "plugins/douyu/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "poll_douyu_binding" not in source
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        binding = db.get(BotPlugin, identity["binding_id"])
+        assert binding is not None
+        request = PluginExecutionRequest(
+            action="poll_subscriptions",
+            config=json.loads(binding.config_json or "{}"),
+            payload={},
+            context=PluginExecutionContext(
+                tenant_id=identity["tenant_id"],
+                binding_id=identity["binding_id"],
+                bot_id=identity["bot_id"],
+            ),
+        )
+        live_room = {
+            "provider_status": "live",
+            "room_id": "100",
+            "nickname": "主播",
+            "room_name": "直播标题",
+            "room_url": "https://www.douyu.com/100",
+            "reply_text": "主播 - 直播标题",
+        }
+        with patch.object(module, "_fetch_room_status_output", return_value=live_room):
+            result = module.execute_scheduled_action(db, request)
+
+        assert result.ok is True
+        assert result.output["event_count"] == 1
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+        assert len(jobs) == 1
+        payload = json.loads(jobs[0].payload_json)
+        assert payload["conversation_id"] == identity["conversation_id"]
+        assert payload["payload"]["message_type"] == "text"
+        assert "douyu.com/100" in payload["payload"]["content"]
+        stored = json.loads(binding.config_json or "{}")
+        assert stored["room_states"]["100"]["provider_status"] == "live"
