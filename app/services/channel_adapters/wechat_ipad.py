@@ -108,6 +108,64 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 error_message=str(exc),
             )
 
+    def invite_group_members(
+        self,
+        channel: Channel,
+        *,
+        chatroom_external_id: str,
+        member_external_ids: list[str],
+    ) -> dict[str, Any]:
+        """通过 874 协议执行群邀请，并返回统一渠道动作结果。"""
+
+        adapter_config = self._load_adapter_config(channel)
+        wxid = str(adapter_config.get("wxid") or "").strip()
+        target_room = str(chatroom_external_id or "").strip()
+        target_members = [str(item or "").strip() for item in member_external_ids if str(item or "").strip()]
+        if not channel.api_base:
+            return self._group_invite_error("missing_api_base", "渠道未配置 API Base")
+        if not wxid:
+            return self._group_invite_error("missing_wxid", "渠道缺少登录账号标识")
+        if not target_room or not target_members:
+            return self._group_invite_error("invalid_target", "群聊或待邀请成员为空")
+
+        try:
+            response = WechatIpadApiClient().invite_chatroom_member(
+                channel,
+                wxid=wxid,
+                chatroom_id=target_room,
+                to_wxids=target_members,
+            )
+        except Exception as exc:
+            return self._group_invite_error("request_failed", str(exc))
+        ok = self._response_indicates_success(response)
+        result: dict[str, Any] = {
+            "ok": ok,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "sent" if ok else "failed",
+            "external_status": self._pick_response_status(response) if ok else "failed",
+            "chatroom_external_id": target_room,
+            "member_count": len(target_members),
+            "raw_response": response,
+        }
+        if not ok:
+            result["error_code"] = self._extract_error_code(response)
+            result["error_message"] = self._extract_error_message(response)
+        return result
+
+    def _group_invite_error(self, error_code: str, error_message: str) -> dict[str, Any]:
+        """构造不依赖会话消息的群邀请错误结果。"""
+
+        return {
+            "ok": False,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "failed",
+            "external_status": "failed",
+            "error_code": error_code,
+            "error_message": error_message,
+        }
+
     def normalize_inbound_payload(
         self,
         channel: Channel,

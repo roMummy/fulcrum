@@ -54,6 +54,16 @@ def group_plugin_fixture(tmp_path: Path):
         )
         db.add(channel)
         db.flush()
+        invite_channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="群邀请 iPad",
+            channel_type="wechat_ipad",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(invite_channel)
+        db.flush()
         primary_conversation = Conversation(
             tenant_id=tenant.id,
             bot_id=bot.id,
@@ -71,6 +81,24 @@ def group_plugin_fixture(tmp_path: Path):
             chat_type="group",
         )
         db.add_all([primary_conversation, forged_conversation])
+        db.flush()
+        invite_direct_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=invite_channel.id,
+            channel_type="wechat_ipad",
+            external_id="wxid-direct-user",
+            chat_type="direct",
+        )
+        invite_group_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=invite_channel.id,
+            channel_type="wechat_ipad",
+            external_id="invite-room@chatroom",
+            chat_type="group",
+        )
+        db.add_all([invite_direct_conversation, invite_group_conversation])
         db.flush()
         primary_chatroom = Chatroom(
             tenant_id=tenant.id,
@@ -91,6 +119,17 @@ def group_plugin_fixture(tmp_path: Path):
             is_active=True,
         )
         db.add_all([primary_chatroom, forged_chatroom])
+        db.flush()
+        invite_chatroom = Chatroom(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=invite_channel.id,
+            external_id="invite-room@chatroom",
+            name="产品交流群",
+            status="active",
+            is_active=True,
+        )
+        db.add(invite_chatroom)
         db.flush()
         db.add_all(
             [
@@ -163,6 +202,10 @@ def group_plugin_fixture(tmp_path: Path):
             "forged_conversation_id": int(forged_conversation.id),
             "primary_chatroom_id": int(primary_chatroom.id),
             "forged_chatroom_id": int(forged_chatroom.id),
+            "invite_channel_id": int(invite_channel.id),
+            "invite_direct_conversation_id": int(invite_direct_conversation.id),
+            "invite_group_conversation_id": int(invite_group_conversation.id),
+            "invite_chatroom_id": int(invite_chatroom.id),
         }
     try:
         yield factory, identity
@@ -412,3 +455,217 @@ def test_group_member_change_uses_trusted_group_and_generic_event(group_plugin_f
     assert "SessionLocal" not in source
     assert 'payload.get("channel_id")' not in source
     assert 'payload.get("conversation_external_id")' not in source
+
+
+def test_group_invite_operation_dispatches_through_channel_adapter(group_plugin_fixture, monkeypatch) -> None:
+    """群邀请通用服务先校验可信资源，再把动作交给渠道适配器。"""
+
+    from app.services import channel_group_operations
+
+    factory, identity = group_plugin_fixture
+    calls: list[dict[str, object]] = []
+
+    class FakeAdapter:
+        def invite_group_members(self, channel, *, chatroom_external_id, member_external_ids):
+            calls.append(
+                {
+                    "channel_id": channel.id,
+                    "chatroom_external_id": chatroom_external_id,
+                    "member_external_ids": member_external_ids,
+                }
+            )
+            return {"ok": True, "status": "sent", "action": "invite_group_members"}
+
+    monkeypatch.setattr(channel_group_operations, "get_channel_adapter", lambda _channel: FakeAdapter())
+    context = PluginExecutionContext(
+        tenant_id=identity["tenant_id"],
+        binding_id=identity["binding_id"],
+        bot_id=identity["bot_id"],
+        channel_id=identity["invite_channel_id"],
+        conversation_id=identity["invite_direct_conversation_id"],
+        sender_id="wxid-user",
+        channel_type="wechat_ipad",
+        chat_type="direct",
+        message_type="text",
+    )
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        result = channel_group_operations.invite_group_members(
+            db,
+            context=context,
+            chatroom_id=identity["invite_chatroom_id"],
+            member_external_ids=["wxid-user", "wxid-user"],
+        )
+        rejected = channel_group_operations.invite_group_members(
+            db,
+            context=context,
+            chatroom_id=identity["primary_chatroom_id"],
+            member_external_ids=["wxid-user"],
+        )
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "channel_id": identity["invite_channel_id"],
+            "chatroom_external_id": "invite-room@chatroom",
+            "member_external_ids": ["wxid-user"],
+        }
+    ]
+    assert rejected["error_code"] == "chatroom_not_found"
+
+
+def test_wechat_ipad_adapter_implements_generic_group_invite(monkeypatch) -> None:
+    """iPad 874 协议实现通用群邀请接口，不由插件直接构造协议请求。"""
+
+    from app.services.channel_adapters.wechat_ipad import WechatIpadAdapter
+    from app.services.wechat_ipad.client import WechatIpadApiClient
+
+    calls: list[dict[str, object]] = []
+
+    def fake_invite(self, channel, *, wxid, chatroom_id, to_wxids):
+        calls.append(
+            {
+                "channel_id": channel.id,
+                "wxid": wxid,
+                "chatroom_id": chatroom_id,
+                "to_wxids": to_wxids,
+            }
+        )
+        return {"Ret": 0, "Msg": "success"}
+
+    monkeypatch.setattr(WechatIpadApiClient, "invite_chatroom_member", fake_invite)
+    channel = Channel(
+        id=88,
+        bot_id=1,
+        name="iPad",
+        channel_type="wechat_ipad",
+        api_base="http://protocol.example",
+        adapter_config_json='{"wxid":"wxid-bot"}',
+    )
+    result = WechatIpadAdapter().invite_group_members(
+        channel,
+        chatroom_external_id="room@chatroom",
+        member_external_ids=["wxid-user"],
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "invite_group_members"
+    assert calls == [
+        {
+            "channel_id": 88,
+            "wxid": "wxid-bot",
+            "chatroom_id": "room@chatroom",
+            "to_wxids": ["wxid-user"],
+        }
+    ]
+
+
+def test_group_auto_invite_uses_current_commands_and_trusted_user(group_plugin_fixture, monkeypatch) -> None:
+    """自动拉群使用当前中文命令、内部群映射和通用邀请接口。"""
+
+    factory, identity = group_plugin_fixture
+    discovered = get_discovered_plugin("group_auto_invite", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("加群配置", "加群")
+    assert discovered.capability.channel_types == ("wechat_ipad",)
+    assert discovered.runtime_config == {
+        "admin_user_ids": [],
+        "require_direct_chat": True,
+        "response_prefix": "",
+    }
+
+    loaded = load_directory_plugin("group_auto_invite", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    admin_context = PluginExecutionContext(
+        tenant_id=identity["tenant_id"],
+        binding_id=identity["binding_id"],
+        bot_id=identity["bot_id"],
+        channel_id=identity["invite_channel_id"],
+        conversation_id=identity["invite_direct_conversation_id"],
+        sender_id="admin-id",
+        channel_type="wechat_ipad",
+        chat_type="direct",
+        message_type="text",
+    )
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        configured = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config={"admin_user_ids": ["admin-id"]},
+                payload={
+                    "command_name": "加群配置",
+                    "command_args": "添加 产品群 产品交流群",
+                    "channel_id": 99999,
+                },
+                context=admin_context,
+            ),
+        )
+    assert configured.ok is True
+    assert configured.output["config_patch"] == {
+        "mappings": {"产品群": identity["invite_chatroom_id"]}
+    }
+
+    calls: list[dict[str, object]] = []
+
+    def fake_invite(db, *, context, chatroom_id, member_external_ids):
+        calls.append(
+            {
+                "context": context,
+                "chatroom_id": chatroom_id,
+                "member_external_ids": member_external_ids,
+            }
+        )
+        return {"ok": True, "status": "sent"}
+
+    monkeypatch.setattr(module, "invite_group_members", fake_invite)
+    user_context = PluginExecutionContext(
+        tenant_id=identity["tenant_id"],
+        binding_id=identity["binding_id"],
+        bot_id=identity["bot_id"],
+        channel_id=identity["invite_channel_id"],
+        conversation_id=identity["invite_direct_conversation_id"],
+        sender_id="wxid-current-user",
+        channel_type="wechat_ipad",
+        chat_type="direct",
+        message_type="text",
+    )
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        invited = module.execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config={
+                    "admin_user_ids": ["admin-id"],
+                    "mappings": {"产品群": identity["invite_chatroom_id"]},
+                },
+                payload={
+                    "command_name": "加群",
+                    "command_args": "产品群",
+                    "sender_id": "forged-user",
+                    "channel_id": 99999,
+                },
+                context=user_context,
+            ),
+        )
+    assert invited.ok is True
+    assert invited.output["provider_status"] == "invite_sent"
+    assert invited.output["replies"] == [{"type": "text", "content": "群邀请已发送，请在客户端确认。"}]
+    assert calls[0]["chatroom_id"] == identity["invite_chatroom_id"]
+    assert calls[0]["member_external_ids"] == ["wxid-current-user"]
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={},
+            payload={"sender_id": "admin-id", "channel_id": identity["invite_channel_id"]},
+        )
+    )
+    assert untrusted.ok is False
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/group_auto_invite/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "WechatIpadApiClient" not in source
+    assert 'payload.get("sender_id")' not in source
+    assert 'payload.get("channel_id")' not in source

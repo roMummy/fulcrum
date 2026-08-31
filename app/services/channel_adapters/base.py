@@ -28,6 +28,25 @@ class BaseChannelAdapter(ABC):
             "external_status": "unsupported",
         }
 
+    def invite_group_members(
+        self,
+        channel: Channel,
+        *,
+        chatroom_external_id: str,
+        member_external_ids: list[str],
+    ) -> dict[str, Any]:
+        """邀请成员加入群聊；不具备该能力的渠道必须明确返回不支持。"""
+
+        return {
+            "ok": False,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "unsupported",
+            "external_status": "unsupported",
+            "error_code": "group_invite_unsupported",
+            "error_message": "当前渠道不支持邀请成员加入群聊",
+        }
+
     def health_check(self, channel: Channel) -> dict[str, Any]:
         return {
             "ok": True,
