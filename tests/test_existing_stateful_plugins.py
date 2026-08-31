@@ -32,6 +32,8 @@ from app.models.entities import (
     Plugin,
     PointsAccount,
     PointsTransaction,
+    SignInHistory,
+    SignInRecord,
     TaskJob,
 )
 from app.models.saas import Tenant
@@ -294,6 +296,74 @@ def message_push_fixture(tmp_path: Path):
         engine.dispose()
 
 
+@pytest.fixture()
+def message_sign_fixture(tmp_path: Path):
+    """建立两个群会话和签到绑定，验证用户与群身份只能来自真实消息。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'message-sign.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with platform_session(factory) as db:
+        tenant = Tenant(code="message-sign", name="群签到租户", status="active")
+        plugin = Plugin(code="message_sign", display_name="群签到", plugin_type="command")
+        db.add_all([tenant, plugin])
+        db.flush()
+        bot = Bot(tenant_id=tenant.id, name="签到机器人", status="running", is_enabled=True)
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="签到 Telegram",
+            channel_type="telegram",
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="sign-room",
+            title="签到群",
+            chat_type="group",
+        )
+        other_conversation = Conversation(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            channel_id=channel.id,
+            channel_type="telegram",
+            external_id="other-sign-room",
+            title="其他签到群",
+            chat_type="group",
+        )
+        db.add_all([conversation, other_conversation])
+        db.flush()
+        binding = BotPlugin(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            plugin_id=plugin.id,
+            status="enabled",
+        )
+        db.add(binding)
+        db.commit()
+        identity = {
+            "tenant_id": int(tenant.id),
+            "bot_id": int(bot.id),
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "other_conversation_id": int(other_conversation.id),
+            "binding_id": int(binding.id),
+        }
+    try:
+        yield factory, identity
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
 def _game_message_request(
     db,
     identity: dict[str, int],
@@ -468,6 +538,55 @@ def _message_push_request(
             conversation_id=identity["conversation_id"],
             message_id=int(message.id),
             sender_id="push-admin",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+
+
+def _message_sign_request(
+    db,
+    identity: dict[str, int],
+    *,
+    content: str,
+    sender_id: str,
+    sender_name: str,
+    payload: dict[str, object] | None = None,
+) -> PluginExecutionRequest:
+    """创建真实签到群消息，载荷仅用于验证伪造字段不会影响业务身份。"""
+
+    message = Message(
+        tenant_id=identity["tenant_id"],
+        conversation_id=identity["conversation_id"],
+        direction="in",
+        sender_id=sender_id,
+        sender_name=sender_name,
+        content=content,
+        message_type="text",
+        status="received",
+    )
+    db.add(message)
+    db.flush()
+    return PluginExecutionRequest(
+        action="execute",
+        config={
+            "enabled": True,
+            "min_point": 3,
+            "max_point": 50,
+            "streak_cycle": 1,
+            "max_streak_point": 50,
+            "makeup_cost": 10,
+        },
+        payload=payload or {},
+        context=PluginExecutionContext(
+            tenant_id=identity["tenant_id"],
+            binding_id=identity["binding_id"],
+            bot_id=identity["bot_id"],
+            channel_id=identity["channel_id"],
+            conversation_id=identity["conversation_id"],
+            message_id=int(message.id),
+            sender_id=sender_id,
             channel_type="telegram",
             chat_type="group",
             message_type="text",
@@ -833,6 +952,191 @@ def test_message_push_task_lists_and_cancels_only_current_conversation(message_p
     assert cancelled.ok is True and cancelled.output["provider_status"] == "cancelled"
     assert current_job is not None and current_job.status == "cancelled"
     assert foreign_job is not None and foreign_job.status == "pending"
+
+
+def test_message_sign_uses_trusted_group_identity_and_idempotent_reward(message_sign_fixture) -> None:
+    """签到只采用真实消息发送人和群会话，重复执行同一消息不重复发积分。"""
+
+    factory, identity = message_sign_fixture
+    discovered = get_discovered_plugin("message_sign", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("签到", "补签")
+    assert discovered.capability.chat_types == ("group",)
+    assert "telegram" in discovered.capability.channel_types
+
+    loaded = load_directory_plugin("message_sign", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        request = _message_sign_request(
+            db,
+            identity,
+            content="/签到",
+            sender_id="sign-user",
+            sender_name="签到用户",
+            payload={
+                "command_name": "补签",
+                "sender_id": "forged-user",
+                "sender_name": "伪造昵称",
+                "conversation_id": identity["other_conversation_id"],
+                "conversation_external_id": "other-sign-room",
+            },
+        )
+        first = module.execute_message_action(db, request)
+        repeated = module.execute_message_action(db, request)
+        record = db.scalar(
+            select(SignInRecord).where(
+                SignInRecord.user_id == "sign-user",
+                SignInRecord.group_id == "sign-room",
+            )
+        )
+        histories = db.scalars(
+            select(SignInHistory).where(
+                SignInHistory.user_id == "sign-user",
+                SignInHistory.group_id == "sign-room",
+            )
+        ).all()
+        transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.user_id == "sign-user",
+                PointsTransaction.group_id == "sign-room",
+            )
+        ).all()
+        forged_record = db.scalar(
+            select(SignInRecord).where(
+                (SignInRecord.user_id == "forged-user")
+                | (SignInRecord.group_id == "other-sign-room")
+            )
+        )
+
+    assert first.ok is True and first.output["provider_status"] == "signed"
+    assert first.output["points_awarded"] == 4
+    assert first.output["signin_streak"] == 1
+    assert repeated.ok is True and repeated.output["provider_status"] == "already_signed"
+    assert record is not None
+    assert record.user_name == "签到用户"
+    assert record.points == 4
+    assert record.total_sign_count == 1
+    assert record.signin_streak == 1
+    assert len(histories) == 1 and histories[0].points_delta == 4
+    assert len(transactions) == 1 and transactions[0].points_delta == 4
+    assert transactions[0].idempotency_key and transactions[0].idempotency_key.endswith(
+        f":{request.context.message_id}:reward"
+    )
+    assert forged_record is None
+
+    untrusted = module.execute_action(
+        PluginExecutionRequest(
+            action="execute",
+            config={},
+            payload={
+                "sender_id": "sign-user",
+                "conversation_external_id": "sign-room",
+                "content": "签到",
+            },
+        )
+    )
+    assert untrusted.output["provider_status"] == "trusted_context_required"
+
+    source = (PROJECT_ROOT / "plugins/message_sign/plugin.py").read_text(encoding="utf-8")
+    assert "SessionLocal" not in source
+    assert "request.payload.get" not in source
+    assert 'payload.get("sender_id")' not in source
+    assert 'payload.get("conversation_external_id")' not in source
+
+
+def test_message_sign_makeup_restores_full_streak_and_deducts_once(message_sign_fixture) -> None:
+    """今天已签到时补昨天会计入昨天和今天，补签成本只在积分账本扣除一次。"""
+
+    factory, identity = message_sign_fixture
+    loaded = load_directory_plugin("message_sign", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    current = now_shanghai()
+    today_start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_before_yesterday = today_start - timedelta(days=2)
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        record = SignInRecord(
+            user_id="makeup-user",
+            group_id="sign-room",
+            user_name="补签用户",
+            points=28,
+            total_sign_count=3,
+            signin_streak=1,
+            previous_streak=2,
+            sign_stat=current,
+            last_sign_date=day_before_yesterday,
+        )
+        db.add(record)
+        PointsService(db).add_points(
+            "makeup-user",
+            "sign-room",
+            28,
+            user_name="补签用户",
+            source="test_seed",
+            idempotency_key="test-seed:message-sign:makeup-user",
+        )
+        request = _message_sign_request(
+            db,
+            identity,
+            content="#补签",
+            sender_id="makeup-user",
+            sender_name="补签用户",
+            payload={
+                "command_name": "签到",
+                "sender_id": "forged-user",
+                "conversation_external_id": "other-sign-room",
+            },
+        )
+        first = module.execute_message_action(db, request)
+        repeated = module.execute_message_action(db, request)
+        final_record = db.scalar(
+            select(SignInRecord).where(
+                SignInRecord.user_id == "makeup-user",
+                SignInRecord.group_id == "sign-room",
+            )
+        )
+        makeup_histories = db.scalars(
+            select(SignInHistory).where(
+                SignInHistory.user_id == "makeup-user",
+                SignInHistory.group_id == "sign-room",
+                SignInHistory.is_makeup.is_(True),
+            )
+        ).all()
+        makeup_transactions = db.scalars(
+            select(PointsTransaction).where(
+                PointsTransaction.user_id == "makeup-user",
+                PointsTransaction.group_id == "sign-room",
+                PointsTransaction.source == "checkin_makeup",
+            )
+        ).all()
+        account = db.scalar(
+            select(PointsAccount).where(
+                PointsAccount.user_id == "makeup-user",
+                PointsAccount.group_id == "sign-room",
+            )
+        )
+
+    assert first.ok is True and first.output["provider_status"] == "makeup_signed"
+    assert first.output["signin_streak"] == 4
+    assert first.output["total_sign_count"] == 4
+    assert first.output["points"] == 18
+    assert repeated.ok is False and repeated.output["provider_status"] == "makeup_unavailable"
+    assert final_record is not None
+    assert final_record.points == 28
+    assert final_record.signin_streak == 4
+    assert final_record.previous_streak == 0
+    assert final_record.total_sign_count == 4
+    assert len(makeup_histories) == 1
+    assert makeup_histories[0].points_delta == 0
+    assert len(makeup_transactions) == 1
+    assert makeup_transactions[0].points_delta == -10
+    assert makeup_transactions[0].idempotency_key and makeup_transactions[0].idempotency_key.endswith(
+        f":{request.context.message_id}:makeup"
+    )
+    assert account is not None and account.total_points == 18
 
 
 def test_game_task_scheduled_assignment_queues_one_trusted_outbound_job(game_task_fixture, monkeypatch) -> None:
