@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -33,7 +34,11 @@ from app.services.plugin_directory import (
     get_discovered_plugin,
     load_directory_plugin,
 )
-from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
+from app.services.plugin_runtime.contracts import (
+    PluginExecutionContext,
+    PluginExecutionRequest,
+    PluginExecutionResult,
+)
 from app.services.plugin_runtime.http_client import PluginHttpResponse
 from app.services.plugin_runtime.messages import PluginMessageBatch, PluginMessageRecord
 
@@ -254,6 +259,150 @@ def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
     assert result.output["message_count"] == 0
     assert captured["start_at"] == datetime(2026, 8, 30, 0, 0, tzinfo=SHANGHAI_TZ)
     assert captured["end_at"] == current
+
+
+def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
+    """凌晨只缓存最小摘要，早上命中缓存后直接创建群聊出站任务。"""
+
+    loaded = load_directory_plugin("message_summary", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    current = datetime(2026, 8, 31, 9, 0, tzinfo=SHANGHAI_TZ)
+    binding = SimpleNamespace(
+        id=2,
+        tenant_id=1,
+        bot_id=3,
+        status="enabled",
+        bot=SimpleNamespace(is_enabled=True),
+    )
+    conversation = SimpleNamespace(
+        id=50,
+        bot_id=3,
+        channel_id=4,
+        chat_type="group",
+        external_id="room-50",
+        title="产品研发群",
+    )
+
+    class FakeDb:
+        def get(self, model, object_id):
+            if model is BotPlugin and int(object_id) == 2:
+                return binding
+            if model is Conversation and int(object_id) == 50:
+                return conversation
+            return None
+
+    cache: dict[str, dict[str, object]] = {}
+
+    class FakeStore:
+        def __init__(self, db, context):
+            del db, context
+
+        def get(self, namespace, state_key, **kwargs):
+            del namespace, kwargs
+            return cache.get(state_key)
+
+        def put(self, namespace, state_key, payload, **kwargs):
+            del namespace, kwargs
+            cache[state_key] = dict(payload)
+
+    generated_calls = []
+
+    def fake_generate(db, request):
+        del db
+        generated_calls.append(request)
+        return PluginExecutionResult(
+            ok=True,
+            status="completed",
+            message="generated",
+            output={
+                "provider_status": "completed",
+                "summary": "# 昨日摘要\n\n- 主流程已确认",
+                "message_count": 120,
+                "participant_count": 8,
+                "period_start": "2026-08-30T00:00:00+08:00",
+                "period_end": "2026-08-31T00:00:00+08:00",
+                "date_key": "2026-08-30",
+                "token_usage": 300,
+                "replies": [{"type": "text", "content": "不应缓存的回复"}],
+                "messages": ["不应缓存的消息正文"],
+            },
+        )
+
+    outbound_capture: dict[str, object] = {}
+
+    def fake_enqueue(db, **kwargs):
+        del db
+        target = list(kwargs["conversations"])[0]
+        outbound_capture["payloads"] = kwargs["payload_builder"](target, SimpleNamespace())
+        return {"job_ids": [901], "failed_targets": [], "pushed_conversation_count": 1}
+
+    context = PluginExecutionContext(
+        tenant_id=1,
+        binding_id=2,
+        bot_id=3,
+        channel_id=4,
+        conversation_id=50,
+        channel_type="telegram",
+        chat_type="group",
+    )
+    base_config = {
+        "api_base": "https://dify.example.test/v1",
+        "api_key": "tenant-key",
+        "render_as_image": False,
+    }
+    with (
+        patch.object(module, "now_shanghai", return_value=current),
+        patch.object(module, "PluginStateStore", FakeStore),
+        patch.object(module, "execute_message_action", side_effect=fake_generate),
+        patch.object(module, "enqueue_outbound_jobs_by_conversation", side_effect=fake_enqueue),
+    ):
+        prepare = module.execute_scheduled_action(
+            FakeDb(),
+            PluginExecutionRequest(
+                action="daily_summary_prepare",
+                config=base_config,
+                payload={},
+                context=context,
+            ),
+        )
+        push = module.execute_scheduled_action(
+            FakeDb(),
+            PluginExecutionRequest(
+                action="daily_summary",
+                config=base_config,
+                payload={},
+                context=context,
+            ),
+        )
+
+    assert prepare.ok is True
+    assert prepare.output["cache_status"] == "prepared"
+    assert push.ok is True
+    assert push.output["cache_hit"] is True
+    assert push.output["outbound_job_ids"] == [901]
+    assert len(generated_calls) == 1
+    stored = next(iter(cache.values()))
+    assert set(stored) == {
+        "summary",
+        "message_count",
+        "participant_count",
+        "period_start",
+        "period_end",
+        "date_key",
+        "token_usage",
+    }
+    assert "tenant-key" not in json.dumps(stored, ensure_ascii=False)
+    assert "不应缓存的消息正文" not in json.dumps(stored, ensure_ascii=False)
+    assert outbound_capture["payloads"] == [
+        {
+            "external_id": "room-50",
+            "receiver_id": "room-50",
+            "chat_type": "group",
+            "message_type": "text",
+            "content": "# 昨日摘要\n\n- 主流程已确认",
+        }
+    ]
 
 
 def test_ai_auto_response_is_group_only_without_manual_command() -> None:

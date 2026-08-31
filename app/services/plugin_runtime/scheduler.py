@@ -138,7 +138,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
         .where(
             BotPlugin.status == "enabled",
-            Plugin.code.in_(("daily_news", "douyu")),
+            Plugin.code.in_(("daily_news", "douyu", "message_summary")),
         )
         .order_by(BotPlugin.id.asc())
     ).all()
@@ -274,7 +274,7 @@ def _build_plugin_schedule_specs(
     config: Mapping[str, Any],
     current: datetime,
 ) -> tuple[PluginScheduledActionSpec, ...]:
-    """把现有两个定时插件收敛为统一动作计划，后续插件继续在此注册。"""
+    """把定时插件收敛为统一动作计划，所有任务都只携带非敏感定位参数。"""
 
     if plugin_code == "daily_news":
         today = current.strftime("%Y-%m-%d")
@@ -310,6 +310,53 @@ def _build_plugin_schedule_specs(
                 priority=65,
             ),
         )
+    if plugin_code == "message_summary":
+        conversation_ids = _normalize_positive_ids(config.get("daily_summary_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        prepare_hour, prepare_minute = _parse_clock_time(
+            str(config.get("daily_summary_prepare_time") or "03:00")
+        )
+        push_hour, push_minute = _parse_clock_time(
+            str(config.get("daily_summary_push_time") or "09:00")
+        )
+        prepare_at = current.replace(
+            hour=prepare_hour,
+            minute=prepare_minute,
+            second=0,
+            microsecond=0,
+        )
+        push_at = current.replace(
+            hour=push_hour,
+            minute=push_minute,
+            second=0,
+            microsecond=0,
+        )
+        specs: list[PluginScheduledActionSpec] = []
+        for conversation_id in conversation_ids:
+            if current >= prepare_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="daily_summary_prepare",
+                        scheduled_for=prepare_at,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        high_side_effect=False,
+                        priority=75,
+                    )
+                )
+            if current >= push_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="daily_summary",
+                        scheduled_for=push_at,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        high_side_effect=True,
+                        priority=70,
+                    )
+                )
+        return tuple(specs)
     return ()
 
 
@@ -377,6 +424,19 @@ def _mapping_has_values(value: Any) -> bool:
         isinstance(items, (list, tuple)) and any(str(item).strip() for item in items)
         for items in value.values()
     )
+
+
+def _normalize_positive_ids(value: Any) -> tuple[int, ...]:
+    """把表单列表收敛为去重正整数会话编号，不接受逗号字符串的隐式兼容格式。"""
+
+    if not isinstance(value, (list, tuple)):
+        return ()
+    normalized: list[int] = []
+    for item in value:
+        resolved = _coerce_optional_positive_int(item)
+        if resolved is not None and resolved not in normalized:
+            normalized.append(resolved)
+    return tuple(normalized)
 
 
 def _coerce_optional_positive_int(value: Any) -> int | None:

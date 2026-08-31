@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.markdown_to_image import convert_md_str_to_image_sync
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.models.entities import BotPlugin, Conversation
+from app.services.outbound_batch import enqueue_outbound_jobs_by_conversation
 from app.services.plugin_runtime.contracts import (
     PluginExecutionContext,
     PluginExecutionRequest,
@@ -21,6 +23,7 @@ from app.services.plugin_runtime.contracts import (
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError, PluginHttpResponse
 from app.services.plugin_runtime.messages import PluginMessageAccessError, PluginMessageBatch, PluginMessageReader
 from app.services.plugin_runtime.replies import image_reply, standard_replies, text_reply
+from app.services.plugin_runtime.state_store import PluginStateStore
 
 
 DEFAULT_COMMANDS = ("总结", "summary")
@@ -30,6 +33,9 @@ DEFAULT_TIMEOUT_SECONDS = 60
 MAX_SUMMARY_TEXT_LENGTH = 18_000
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SUMMARY_IMAGE_ROOT = PROJECT_ROOT / "data" / "temp" / "md2image"
+SUMMARY_CACHE_NAMESPACE = "daily_summary"
+SUMMARY_CACHE_TTL_SECONDS = 3 * 24 * 60 * 60
+SCHEDULE_ACTIONS = {"daily_summary_prepare", "daily_summary"}
 
 
 @dataclass(frozen=True)
@@ -225,6 +231,142 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     )
 
 
+def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+    """预生成或推送昨日群总结，所有数据都从任务所属租户会话重新读取。"""
+
+    if request.action not in SCHEDULE_ACTIONS:
+        return PluginExecutionResult(
+            ok=False,
+            status="unsupported",
+            message=f"不支持的群总结定时动作: {request.action}",
+        )
+    context = request.context
+    if context is None or context.conversation_id is None:
+        return PluginExecutionResult(ok=False, status="error", message="群总结定时任务缺少目标群聊。")
+    binding = db.get(BotPlugin, int(context.binding_id))
+    conversation = db.get(Conversation, int(context.conversation_id))
+    if (
+        binding is None
+        or int(binding.tenant_id) != int(context.tenant_id)
+        or int(binding.bot_id) != int(context.bot_id)
+        or binding.status != "enabled"
+        or binding.bot is None
+        or not binding.bot.is_enabled
+    ):
+        return PluginExecutionResult(ok=False, status="error", message="群总结插件绑定或机器人未启用。")
+    if (
+        conversation is None
+        or int(conversation.bot_id) != int(binding.bot_id)
+        or str(conversation.chat_type or "").strip().lower() != "group"
+    ):
+        return PluginExecutionResult(ok=False, status="error", message="群总结定时任务目标不是当前机器人的群聊。")
+
+    current = now_shanghai()
+    yesterday = (current.date() - timedelta(days=1)).isoformat()
+    period = _resolve_summary_period(yesterday, now=current)
+    cache_key = _summary_cache_key(int(conversation.id), period.date_key)
+    store = PluginStateStore(db, context)
+
+    if request.action == "daily_summary_prepare":
+        # 预生成阶段只需要摘要文本和统计，不渲染图片。这样凌晨任务不会把大块
+        # base64 写入内存或状态，早上推送再按当前渠道统一生成表现形式。
+        generated = execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config={**dict(request.config), "render_as_image": False},
+                payload={"command_name": "总结", "summary_date": period.date_key},
+                context=context,
+            ),
+        )
+        state = _summary_state_from_result(generated)
+        if state is None:
+            return _scheduled_generation_result(generated, action="prepare")
+        store.put(
+            SUMMARY_CACHE_NAMESPACE,
+            cache_key,
+            state,
+            ttl_seconds=SUMMARY_CACHE_TTL_SECONDS,
+            now=current,
+        )
+        return PluginExecutionResult(
+            ok=True,
+            status="completed",
+            message=f"已预生成 {period.date_key} 的群聊总结。",
+            output={
+                "date_key": period.date_key,
+                "conversation_id": int(conversation.id),
+                "message_count": int(state["message_count"]),
+                "participant_count": int(state["participant_count"]),
+                "cache_status": "prepared",
+            },
+        )
+
+    cached = store.get(SUMMARY_CACHE_NAMESPACE, cache_key, now=current)
+    cache_hit = cached is not None and bool(str(cached.get("summary") or "").strip())
+    if cache_hit:
+        state = cached
+        config = _load_config(request.config)
+        replies, _reply_type = _build_summary_replies(
+            config,
+            summary_text=str(state["summary"]),
+            conversation_title=str(conversation.title or conversation.external_id or "群聊").strip() or "群聊",
+            period_label=period.label,
+        )
+    else:
+        generated = execute_message_action(
+            db,
+            PluginExecutionRequest(
+                action="execute",
+                config=request.config,
+                payload={"command_name": "总结", "summary_date": period.date_key},
+                context=context,
+            ),
+        )
+        state = _summary_state_from_result(generated)
+        if state is None:
+            return _scheduled_generation_result(generated, action="push")
+        store.put(
+            SUMMARY_CACHE_NAMESPACE,
+            cache_key,
+            state,
+            ttl_seconds=SUMMARY_CACHE_TTL_SECONDS,
+            now=current,
+        )
+        replies = [dict(item) for item in generated.output.get("replies", []) if isinstance(item, Mapping)]
+
+    batch_result = enqueue_outbound_jobs_by_conversation(
+        db,
+        conversations=[conversation],
+        plugin_code="message_summary",
+        related_type="message_summary_binding",
+        related_id=int(binding.id),
+        priority=70,
+        payload_builder=lambda target, channel: _build_scheduled_outbound_payloads(target, replies),
+        log_context={"binding_id": int(binding.id), "date_key": period.date_key},
+    )
+    failed_targets = list(batch_result["failed_targets"])
+    job_ids = [int(item) for item in batch_result["job_ids"]]
+    return PluginExecutionResult(
+        ok=not failed_targets,
+        status="completed" if not failed_targets else "partial",
+        message=(
+            f"已为 {period.date_key} 的群聊总结创建推送任务。"
+            if not failed_targets
+            else f"{period.date_key} 的群聊总结推送创建失败。"
+        ),
+        output={
+            "date_key": period.date_key,
+            "conversation_id": int(conversation.id),
+            "message_count": int(state["message_count"]),
+            "participant_count": int(state["participant_count"]),
+            "cache_hit": cache_hit,
+            "outbound_job_ids": job_ids,
+            "failed_target_count": len(failed_targets),
+        },
+    )
+
+
 def _request_dify_summary(
     request: PluginExecutionRequest,
     config: SummaryConfig,
@@ -269,6 +411,102 @@ def _request_dify_summary(
         max_response_bytes=2 * 1024 * 1024,
         max_redirects=2,
     )
+
+
+def _summary_state_from_result(result: PluginExecutionResult) -> dict[str, Any] | None:
+    """从即时执行结果提取可短期缓存的最小摘要，不保存回复和消息正文。"""
+
+    if not result.ok or str(result.output.get("provider_status") or "") != "completed":
+        return None
+    summary = str(result.output.get("summary") or "").strip()
+    if not summary:
+        return None
+    return {
+        "summary": summary,
+        "message_count": _bounded_int(result.output.get("message_count"), default=0, minimum=0, maximum=2000),
+        "participant_count": _bounded_int(
+            result.output.get("participant_count"),
+            default=0,
+            minimum=0,
+            maximum=2000,
+        ),
+        "period_start": str(result.output.get("period_start") or ""),
+        "period_end": str(result.output.get("period_end") or ""),
+        "date_key": str(result.output.get("date_key") or ""),
+        "token_usage": _bounded_int(
+            result.output.get("token_usage"),
+            default=0,
+            minimum=0,
+            maximum=10_000_000,
+        ),
+    }
+
+
+def _scheduled_generation_result(result: PluginExecutionResult, *, action: str) -> PluginExecutionResult:
+    """把即时生成结果收敛为不含摘要正文和标准回复的定时任务结果。"""
+
+    provider_status = str(result.output.get("provider_status") or "generation_failed")
+    if provider_status == "insufficient_messages":
+        return PluginExecutionResult(
+            ok=True,
+            status="skipped",
+            message="昨日群聊消息不足，已跳过自动总结。",
+            output={
+                "action": action,
+                "provider_status": provider_status,
+                "message_count": _bounded_int(
+                    result.output.get("message_count"),
+                    default=0,
+                    minimum=0,
+                    maximum=2000,
+                ),
+            },
+        )
+    return PluginExecutionResult(
+        ok=False,
+        status="error",
+        message=result.message or "群聊总结生成失败。",
+        output={"action": action, "provider_status": provider_status},
+    )
+
+
+def _build_scheduled_outbound_payloads(
+    conversation: Conversation,
+    replies: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把标准文本或图片回复转换为当前群聊的通用出站载荷。"""
+
+    payloads: list[dict[str, Any]] = []
+    base = {
+        "external_id": str(conversation.external_id or "").strip(),
+        "receiver_id": str(conversation.external_id or "").strip(),
+        "chat_type": "group",
+    }
+    for reply in replies:
+        reply_type = str(reply.get("type") or "").strip().lower()
+        if reply_type == "text" and str(reply.get("content") or "").strip():
+            payloads.append(
+                {
+                    **base,
+                    "message_type": "text",
+                    "content": str(reply.get("content") or "").strip(),
+                }
+            )
+        elif reply_type == "image" and str(reply.get("base64") or "").strip():
+            payloads.append(
+                {
+                    **base,
+                    "message_type": "image",
+                    "base64": str(reply.get("base64") or "").strip(),
+                }
+            )
+    if not payloads:
+        raise ValueError("群聊总结没有可发送的标准回复")
+    return payloads
+
+
+def _summary_cache_key(conversation_id: int, date_key: str) -> str:
+    return f"conversation-{int(conversation_id)}:{str(date_key or '').strip()}"
 
 
 def _extract_workflow_result(payload: Any) -> tuple[str, int]:

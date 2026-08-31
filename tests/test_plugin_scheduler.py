@@ -38,7 +38,7 @@ from app.services.task_queue import PLUGIN_SCHEDULED_ACTION_JOB, parse_job_paylo
 
 @pytest.fixture()
 def scheduler_fixture(tmp_path: Path):
-    """准备两个租户及每日新闻、斗鱼绑定，用于验证归属和计划幂等。"""
+    """准备两个租户及新闻、斗鱼和群总结绑定，验证归属与计划幂等。"""
 
     engine = create_engine(f"sqlite:///{tmp_path / 'plugin-scheduler.db'}")
     Base.metadata.create_all(bind=engine)
@@ -48,7 +48,8 @@ def scheduler_fixture(tmp_path: Path):
         beta = Tenant(code="beta", name="乙租户", status="active")
         daily_plugin = Plugin(code="daily_news", display_name="每日新闻", plugin_type="command")
         douyu_plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
-        db.add_all([alpha, beta, daily_plugin, douyu_plugin])
+        summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
+        db.add_all([alpha, beta, daily_plugin, douyu_plugin, summary_plugin])
         db.flush()
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人", status="running", is_enabled=True)
         beta_bot = Bot(tenant_id=beta.id, name="乙机器人", status="running", is_enabled=True)
@@ -72,6 +73,8 @@ def scheduler_fixture(tmp_path: Path):
             external_id="room-alpha",
             chat_type="group",
         )
+        db.add(conversation)
+        db.flush()
         alpha_daily = BotPlugin(
             tenant_id=alpha.id,
             bot_id=alpha_bot.id,
@@ -91,6 +94,19 @@ def scheduler_fixture(tmp_path: Path):
                 }
             ),
         )
+        alpha_summary = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=summary_plugin.id,
+            status="enabled",
+            config_json=json.dumps(
+                {
+                    "daily_summary_conversation_ids": [conversation.id],
+                    "daily_summary_prepare_time": "03:00",
+                    "daily_summary_push_time": "09:00",
+                }
+            ),
+        )
         beta_daily = BotPlugin(
             tenant_id=beta.id,
             bot_id=beta_bot.id,
@@ -98,13 +114,14 @@ def scheduler_fixture(tmp_path: Path):
             status="enabled",
             config_json=json.dumps({"push_time": "08:30", "last_push_date": ""}),
         )
-        db.add_all([conversation, alpha_daily, alpha_douyu, beta_daily])
+        db.add_all([alpha_daily, alpha_douyu, alpha_summary, beta_daily])
         db.commit()
         identity = {
             "alpha_tenant_id": int(alpha.id),
             "alpha_bot_id": int(alpha_bot.id),
             "alpha_daily_binding_id": int(alpha_daily.id),
             "alpha_douyu_binding_id": int(alpha_douyu.id),
+            "alpha_summary_binding_id": int(alpha_summary.id),
             "alpha_conversation_id": int(conversation.id),
             "beta_tenant_id": int(beta.id),
             "beta_daily_binding_id": int(beta_daily.id),
@@ -199,8 +216,8 @@ def test_scheduler_rejects_identity_and_secret_parameters(scheduler_fixture) -> 
             )
 
 
-def test_due_schedule_scanner_creates_daily_and_douyu_jobs_once(scheduler_fixture) -> None:
-    """现有两个定时插件通过统一扫描器入队，重复扫描不重复创建。"""
+def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) -> None:
+    """新闻、斗鱼和群总结通过统一扫描器入队，重复扫描不重复创建。"""
 
     factory, identity = scheduler_fixture
     current = now_shanghai().replace(hour=9, minute=0, second=30, microsecond=0)
@@ -211,10 +228,17 @@ def test_due_schedule_scanner_creates_daily_and_douyu_jobs_once(scheduler_fixtur
 
         assert sorted(job.related_type for job in first) == [
             "plugin_action:baidu_news_daily_push",
+            "plugin_action:daily_summary",
+            "plugin_action:daily_summary_prepare",
             "plugin_action:poll_subscriptions",
         ]
         assert second == []
-        assert all(job.max_attempts == 1 for job in first)
+        attempts = {job.related_type: job.max_attempts for job in first}
+        assert attempts["plugin_action:daily_summary_prepare"] == 3
+        assert attempts["plugin_action:daily_summary"] == 1
+        summary_jobs = [job for job in first if "daily_summary" in str(job.related_type)]
+        assert all(parse_job_payload(job)["conversation_id"] == identity["alpha_conversation_id"] for job in summary_jobs)
+        assert all("messages" not in json.dumps(parse_job_payload(job), ensure_ascii=False) for job in summary_jobs)
 
 
 def test_scheduled_job_rebuilds_context_from_job_tenant_and_redacts_result(scheduler_fixture) -> None:

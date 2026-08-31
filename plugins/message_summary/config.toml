@@ -30,3 +30,6 @@ min_messages = 100
 max_messages = 1000
 request_timeout_seconds = 60
 render_as_image = true
+daily_summary_conversation_ids = []
+daily_summary_prepare_time = "03:00"
+daily_summary_push_time = "09:00"
