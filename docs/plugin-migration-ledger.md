@@ -62,7 +62,7 @@
 | `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 已迁移 | `880a314` | `.venv/bin/python -m pytest -q tests/test_plugin_member_roast.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（6 passed）；定向语法检查与 `git diff --check` 通过 |
 | `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 已迁移 | `283d2c7` | `.venv/bin/python -m pytest -q tests/test_plugin_value_rank.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（21 passed）；定向语法检查与 `git diff --check` 通过 |
 | `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 已迁移 | `9a03136`、`27e40d7`、`6831cd5` | `.venv/bin/python -m pytest -q tests/test_plugin_fun_command_play.py tests/test_plugin_migration_catalog.py`（8 passed）；通用链接回复 3 passed；Alembic 生命周期 2 passed；目录发现无错误或警告；定向语法检查与 `git diff --check` 通过 |
-| `xiuxian` | 多租户修仙玩法 | 无固定外部成本 | 无 | 待迁移 | - | - |
+| `xiuxian` | 多租户修仙玩法 | 无固定外部成本 | 无 | 已迁移 | `917f383`、`057b4cb`、`8e4cd0c` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_plugin_xiuxian.py tests/test_cultivation_service.py tests/test_plugin_migration_catalog.py tests/test_alembic_lifecycle.py`（13 passed）；目录发现和加载通过；定向语法检查与 `git diff --check` 通过 |
 
 ## 平台原生替代
 
@@ -192,3 +192,11 @@ Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，�
 趣味命令作为 `observer` 只观察标准群聊或私聊文本，具体规则必须通过可信租户、机器人绑定、渠道、会话和落库入站消息查询。规则独立保存在 `fun_command_rules`，同一机器人插件绑定内触发文本唯一；当前只支持 `exact`、`prefix` 和 `contains` 三种明确匹配方式，不执行租户可编辑正则，也不保留 A-BOT 全局作用域、事件触发或拍一拍解析。规则按优先级执行首条命中结果，冷却使用当前绑定的跨进程状态限流，不维护 Redis 或进程内规则缓存。
 
 规则回复只支持文本、图片、视频和链接卡片。文本模板只开放发送人、发送人名称、会话名称和原消息四个固定占位符；图片和视频必须使用 `DATA_DIR/tenants/<tenant_id>/fun_command` 下的相对路径，并在读取前完成目录归属和文件体积校验。链接先经过 HTTP/HTTPS URL 校验，再进入平台通用回复链；Telegram 当前降级为标题、描述和链接文本，微信 iPad 由渠道适配器转换为 874 `SendApp(Type=5)`，其他渠道接收同一通用链接载荷。插件不拼微信 XML，不直接调用企业微信、微信、Telegram 或其他 Provider，也不迁移旧语音、App 消息、延时连发和媒体 LRU 缓存。
+
+## 文字修仙迁移边界
+
+文字修仙只接受真实群入站文本中的正式命令。租户、机器人绑定、渠道、会话、消息和发送人必须通过数据库归属链交叉验证，执行载荷不能覆盖命令、道号、目标、数量或身份。目标玩家只能在当前租户、当前插件绑定和当前群中按渠道账号 ID、道号或唯一显示名解析；显示名重合时拒绝猜测，要求使用唯一账号 ID。插件输出统一使用标准文本回复，不读取或生成微信 XML，也不调用企业微信、微信、Telegram 或其他 Provider。
+
+玩家、背包、门派、资产流水和命令冷却分别保存在 `cultivation_players`、`cultivation_inventory`、`cultivation_clans`、`cultivation_transactions` 和 `cultivation_cooldowns`。所有数据同时受租户、插件绑定和群会话边界约束；写命令使用消息级唯一业务键，多个 Worker 重复消费同一消息时整体回滚失败事务并读取已完成结果。物品和灵石赠送、劫掠、购买、突破、炼丹与历练在数据库行锁内结算，稳定随机数由可信消息身份派生，任务重试不会改变结果。
+
+积分兑换灵石复用当前积分账本，并让积分扣减、灵石入账、两类流水、命令结果和冷却共享同一次数据库提交，不能出现部分到账。签到使用玩家日期字段，闭关、受伤、气息不稳、历练和炼丹状态使用上海时区时间。排行榜直接查询当前群玩家，不迁移 Redis 排行榜、玩家缓存、旧修仙表或单机初始化 SQL；旧帮助别名、进程内管理入口、微信提及解析和非正式 `出售` 命令均不保留。
