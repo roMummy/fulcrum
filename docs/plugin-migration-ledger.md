@@ -59,7 +59,7 @@
 | `daily_ranking` | 群聊日榜与积分奖励 | 无固定外部成本 | 无 | 已迁移 | `e543fc5` | `.venv/bin/python -m pytest -q tests/test_plugin_daily_ranking.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（12 passed）；定向语法检查与 `git diff --check` 通过 |
 | `dota2_stats` | Dota2 战绩与群排行 | 可选 OpenDota 成本 | API Key | 已迁移 | `d3ea0b2` | `.venv/bin/python -m pytest -q tests/test_plugin_dota2_stats.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty tests/test_plugin_common_services.py`（20 passed）；定向语法检查与 `git diff --check` 通过 |
 | `member_context` | 群成员画像与增量摘要 | 租户承担可选 Dify 成本 | API Key | 已迁移 | `b439d24` | `.venv/bin/python -m pytest -q tests/test_plugin_member_context.py tests/test_plugin_scheduler.py tests/test_plugin_migration_catalog.py`（13 passed）；定向语法检查与 `git diff --check` 通过 |
-| `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 待迁移 | - | - |
+| `member_roast` | 基于画像的成员锐评 | 租户承担 LLM 成本 | API Key | 已迁移 | `880a314` | `.venv/bin/python -m pytest -q tests/test_plugin_member_roast.py tests/test_plugin_migration_catalog.py tests/test_plugin_runtime_secrets.py::test_declared_plugin_secret_defaults_are_physically_empty`（6 passed）；定向语法检查与 `git diff --check` 通过 |
 | `value_rank` | 身价、关系和趋势排行 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `fun_command_play` | 自定义趣味命令与媒体回复 | 无固定外部成本 | 无 | 待迁移 | - | - |
 | `xiuxian` | 多租户修仙玩法 | 无固定外部成本 | 无 | 待迁移 | - | - |
@@ -170,3 +170,11 @@ NewAPI 领券只保留群聊中的 `领券 邮箱` 单一入口。插件从可�
 每个成员的画像使用可信渠道、群主键和成员标识哈希生成状态键，保存到当前绑定的 `PluginStateRecord`。首次建档读取有限历史样本，后续只处理 `last_message_id` 水位之后的新入站文本；重复调度在没有新消息时直接跳过。状态只保存结构化画像、聚合统计和增量水位，不保存完整聊天输入、Dify 请求正文、API Key 或第三方原始响应。
 
 Dify 地址由租户普通配置维护，API Key 保存到当前绑定密文，平台不提供共享模型或共享密钥。每个群每次刷新最多批量调用一次工作流，输入限制成员数量、群消息数量和单条文本长度；外部服务未配置、超时、失败或返回无效 JSON 时仍保存本地基础画像。Dify 返回结果只能覆盖本次候选成员白名单内的画像字段，返回其他群或未知成员会被丢弃，成员身份、水位和来源统计始终由平台保留。
+
+## 群成员锐评迁移边界
+
+群成员锐评只接受真实群入站文本中的“锐评/吐槽”命令。被锐评目标只能是消息发送人本人，或当前群成员表中按外部账号、昵称、展示名唯一匹配的成员；执行载荷不能指定目标，重名时要求使用唯一账号 ID，不读取微信 XML、Provider 联系人缓存或临时成员查询接口。
+
+锐评插件只复用同一机器人已启用 `member_context` 绑定中的结构化画像，不在命令链路复制画像生成逻辑。目标没有画像或近期有效发言不足时直接给出业务提示。最近消息按当前群、目标成员、时间窗口和数量上限读取，再压缩为消息数、平均长度、问句比例、高频词、重复短语和有限代表句；完整聊天历史、数据库对象和模型请求正文均不写入日志、插件状态或执行结果。
+
+模型 API 地址、模型名称、温度、超时和采样上限由租户普通配置维护，API Key 保存到当前绑定密文，调用使用平台通用 OpenAI-compatible 文本生成能力。用户和群分别使用跨进程固定窗口限流控制模型成本。模型提示禁止编造职业、家庭、健康、政治、宗教等敏感信息，返回文本会强制替换为当前可信目标标题并限制长度；模型失败只返回有限业务错误，不泄露画像、提示词、上游响应或密钥。
