@@ -233,6 +233,171 @@ def test_ai_auto_response_honors_model_silence_and_rejects_direct_chat() -> None
     assert "provider_response" not in source
 
 
+def test_dify_matches_latest_chat_command_and_group_mention_contract() -> None:
+    """Dify 只保留来源最新“聊天”命令和群聊 @ 入口，不接管普通私聊。"""
+
+    discovered = get_discovered_plugin("dify", force=True)
+    assert discovered is not None
+    assert discovered.matcher.commands == ("聊天",)
+    assert "telegram" in discovered.capability.channel_types
+    assert discovered.runtime_config["api_base"] == ""
+
+    loaded = load_directory_plugin("dify", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    direct_plain = type(
+        "DirectPlain",
+        (),
+        {"content": "普通消息", "command_name": "", "mentioned_self": False, "chat_type": "direct"},
+    )()
+    direct_command = type(
+        "DirectCommand",
+        (),
+        {"content": "聊天 你好", "command_name": "聊天", "mentioned_self": False, "chat_type": "direct"},
+    )()
+    group_mention = type(
+        "GroupMention",
+        (),
+        {"content": "@机器人 你好", "command_name": "", "mentioned_self": True, "chat_type": "group"},
+    )()
+
+    assert module.matches_event(direct_plain)["matched"] is False
+    assert module.matches_event(direct_command)["matched"] is True
+    assert module.matches_event(group_mention)["matched"] is True
+
+
+def test_dify_uses_controlled_http_and_does_not_store_provider_payload() -> None:
+    """Dify 对话通过统一 HTTP 执行，引用文本进入请求但原始响应和密钥不进入结果。"""
+
+    loaded = load_directory_plugin("dify", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    captured: dict[str, object] = {}
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=json.dumps(
+            {
+                "data": {
+                    "outputs": {"text": "这是结合引用内容生成的回答。"},
+                    "total_tokens": 123,
+                },
+                "trace_id": "provider-sensitive-trace",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        url="https://dify.example.test/v1/workflows/run",
+    )
+
+    class FakeClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "kwargs": kwargs})
+            return response
+
+    request = PluginExecutionRequest(
+        action="execute",
+        config={
+            "api_base": "https://dify.example.test/v1",
+            "api_key": "tenant-dify-key",
+            "app_mode": "workflow",
+            "request_timeout_seconds": 30,
+        },
+        payload={
+            "content": "聊天 解释一下",
+            "command_name": "聊天",
+            "conversation_external_id": "room-1",
+            "quote_payload": {"ref_type": 1, "ref_content": "被引用的原始内容"},
+            "messages": ["成员A: 前一条", "成员B: 后一条"],
+        },
+        context=PluginExecutionContext(
+            tenant_id=1,
+            binding_id=2,
+            bot_id=3,
+            channel_id=4,
+            conversation_id=5,
+            message_id=6,
+            sender_id="member-7",
+            channel_type="telegram",
+            chat_type="group",
+            message_type="text",
+        ),
+    )
+    with patch.object(module, "PluginHttpClient", return_value=FakeClient()):
+        result = module.execute_action(request)
+
+    assert result.ok is True
+    assert result.output == {
+        "provider_status": "completed",
+        "app_mode": "workflow",
+        "reply_text": "这是结合引用内容生成的回答。",
+        "media_type": "",
+        "token_usage": 123,
+        "quote_type": "text",
+        "input_file_count": 0,
+        "replies": [{"type": "text", "content": "这是结合引用内容生成的回答。"}],
+    }
+    assert captured["url"] == "https://dify.example.test/v1/workflows/run"
+    request_body = captured["payload"]
+    assert request_body["inputs"]["query"] == "被引用的原始内容"
+    assert "成员A: 前一条" in request_body["inputs"]["history"]
+    serialized_output = json.dumps(result.output, ensure_ascii=False)
+    assert "tenant-dify-key" not in serialized_output
+    assert "provider-sensitive-trace" not in serialized_output
+
+
+def test_dify_converts_inline_image_to_generic_image_reply() -> None:
+    """Dify 返回 data URL 图片时直接生成标准图片回复，不依赖某个渠道客户端。"""
+
+    loaded = load_directory_plugin("dify", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"image-payload"
+    image_base64 = base64.b64encode(image_bytes).decode("ascii")
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body=json.dumps({"answer": f"data:image/png;base64,{image_base64}"}).encode("utf-8"),
+        url="https://dify.example.test/v1/chat-messages",
+    )
+
+    class FakeClient:
+        def post_json(self, *args, **kwargs):
+            return response
+
+    with patch.object(module, "PluginHttpClient", return_value=FakeClient()):
+        result = module.execute_action(
+            PluginExecutionRequest(
+                action="execute",
+                config={
+                    "api_base": "https://dify.example.test/v1",
+                    "api_key": "tenant-key",
+                    "app_mode": "chat",
+                },
+                payload={"content": "聊天 画一张图", "command_name": "聊天"},
+                context=PluginExecutionContext(
+                    tenant_id=1,
+                    binding_id=2,
+                    bot_id=3,
+                    sender_id="member-4",
+                    channel_type="wechat_ipad",
+                    chat_type="direct",
+                    message_type="text",
+                ),
+            )
+        )
+
+    assert result.ok is True
+    assert result.output["media_type"] == "image"
+    assert result.output["reply_text"] == ""
+    assert result.output["replies"] == [{"type": "image", "base64": image_base64}]
+
+    source = (PROJECT_ROOT / "plugins/dify/plugin.py").read_text(encoding="utf-8")
+    assert "WechatIpadApiClient" not in source
+    assert "urlrequest" not in source
+    assert "subprocess" not in source
+    assert "provider_response" not in source
+
+
 @pytest.fixture()
 def daily_news_fixture(tmp_path: Path):
     """建立一个群聊和一个私聊，验证日报只向群聊创建任务。"""

@@ -16,9 +16,9 @@
 
 | 插件代码 | 外部成本 | 敏感配置 | 当前状态 | SaaS 提交 | 轻量验证 |
 | --- | --- | --- | --- | --- | --- |
-| `ai_auto_response` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | 待统一回填 | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k ai_auto_response`（3 passed） |
+| `ai_auto_response` | 租户承担 LLM/Dify 成本 | API Key | 已审核 | `b2a2a0e` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k ai_auto_response`（3 passed） |
 | `daily_news` | 无固定外部成本 | 无 | 已审核 | `4a8ec15` | `pytest -q tests/test_existing_ai_content_plugins.py -k daily_news`（3 passed）；调度测试 6 passed |
-| `dify` | 租户承担 Dify 成本 | API Key | 待审核 | - | - |
+| `dify` | 租户承担 Dify 成本 | API Key | 已审核 | 待统一回填 | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k dify`（3 passed） |
 | `douyin_parser` | 视租户解析服务而定 | 外部 API Key | 待审核 | - | - |
 | `douyu` | 无固定外部成本 | 无 | 待审核 | - | - |
 | `duanju_search` | 无固定外部成本 | 无 | 待审核 | - | - |

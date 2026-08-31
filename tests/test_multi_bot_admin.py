@@ -883,12 +883,15 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertEqual(discovered["dify"].entrypoint_name, "plugin.py")
         self.assertEqual(discovered["message_summary"].entrypoint_name, "main.py")
         self.assertEqual(discovered["weather"].entrypoint_name, "plugin.py")
-        self.assertEqual(discovered["dify"].capability.channel_types, ("wechat_ipad", "openclaw", "simulator"))
+        self.assertEqual(
+            discovered["dify"].capability.channel_types,
+            ("wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"),
+        )
         self.assertEqual(discovered["message_summary"].matcher.commands, ("总结", "日报"))
 
         runtime_info = get_plugin_runtime_meta("dify")
         self.assertEqual(runtime_info["catalog_source"], "directory")
-        self.assertEqual(runtime_info["commands"], ["ai", "聊天"])
+        self.assertEqual(runtime_info["commands"], ["聊天"])
         self.assertTrue(str(runtime_info["config_path"]).endswith("plugins/dify/config.toml"))
 
         loaded = load_directory_plugin("message_summary", force=True)
@@ -1079,7 +1082,7 @@ consume_policy = "continue"
         self.assertEqual(report.static_plan.candidate_plugin_codes, ("dify", "message_summary"))
         self.assertEqual(report.matched_plugin_codes, ("message_summary",))
         decision_map = {item.candidate.plugin_code: item for item in report.decisions}
-        self.assertEqual(decision_map["dify"].reason, "ai_no_trigger")
+        self.assertEqual(decision_map["dify"].reason, "dify_no_trigger")
         self.assertEqual(decision_map["message_summary"].reason, "command_hit")
         execution_map = {item.candidate.plugin_code: item for item in report.executions}
         self.assertEqual(execution_map["message_summary"].status, "completed")
@@ -1965,7 +1968,11 @@ consume_policy = "shared"
                                     "ok": True,
                                     "status": "completed",
                                     "message": "Dify 执行完成。",
-                                    "output": {"answer": "来自 Dify 的回复", "provider_response": {"http_status": 200}},
+                                    "output": {
+                                        "provider_status": "completed",
+                                        "reply_text": "来自 Dify 的回复",
+                                        "replies": [{"type": "text", "content": "来自 Dify 的回复"}],
+                                    },
                                 }
                             )
                         },
@@ -1982,7 +1989,7 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "dify")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["answer"], "来自 Dify 的回复")
+        self.assertEqual(data["output"]["reply_text"], "来自 Dify 的回复")
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
