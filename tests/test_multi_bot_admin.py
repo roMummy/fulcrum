@@ -262,19 +262,28 @@ class MultiBotAdminTestCase(unittest.TestCase):
 
         return FakeResponse(payload, url)
 
-    def _fake_weather_urlopen(self, req, timeout=0):
-        url = req.full_url if hasattr(req, "full_url") else str(req)
-        self.assertIn("/weather", url)
-        self.assertIn("appid=", url)
-        return self._json_response(
-            {
-                "weather": [{"main": "Clouds", "description": "broken clouds"}],
-                "main": {"temp": 22.5, "feels_like": 21.2, "humidity": 61},
-                "wind": {"speed": 3.4},
-                "name": "Shanghai",
-            },
-            url=url,
-        )
+    @staticmethod
+    def _fake_weather_snapshot():
+        """为通用调度测试提供当前天气插件认可的最小业务结果。"""
+
+        return {
+            "city_id": "101020100",
+            "city_name": "上海",
+            "adm1": "上海",
+            "country": "中国",
+            "forecast_date": "2026-08-31",
+            "condition_day": "多云",
+            "condition_night": "小雨",
+            "temp_min": 22,
+            "temp_max": 30,
+            "humidity": 61,
+            "precipitation": 1.2,
+            "uv_index": 5,
+            "sunrise": "05:30",
+            "sunset": "18:20",
+            "wind_direction": "东南风",
+            "wind_scale": "3-4",
+        }
 
     @contextmanager
     def override_settings(self, **overrides):
@@ -1229,16 +1238,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     report = build_dispatch_report(
                         db,
                         channel,
@@ -1287,16 +1302,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     report = build_dispatch_report(
                         db,
                         channel,
@@ -1452,16 +1473,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     result = ingest_inbound_event(
                         db,
                         channel,
@@ -1805,16 +1832,21 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "api_base": "https://api.openweathermap.org/data/2.5",
-                    "api_key": "weather-secret-001",
-                    "default_city": "Hong Kong",
-                    "units": "metric",
+                    "api_base": "https://weather.example.test",
+                    "default_city": "香港",
                 }
             )
             db.commit()
             binding_id = binding.id
 
-        with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+        loaded_weather = load_directory_plugin("weather", force=True)
+        self.assertIsNotNone(loaded_weather)
+        weather_module = loaded_weather.instance._module
+        with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+            weather_module,
+            "_fetch_weather_bundle",
+            return_value=self._fake_weather_snapshot(),
+        ):
             response = self.client.post(
                 f"/plugins/{binding_id}/execute",
                 json={"city": "Shanghai"},
@@ -1824,16 +1856,16 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "weather")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["city"], "Shanghai")
-        self.assertEqual(data["output"]["provider_status"], "fetched")
-        self.assertEqual(data["output"]["condition"], "broken clouds")
-        self.assertIn("Shanghai天气", data["output"]["reply_text"])
+        self.assertEqual(data["output"]["city"], "上海")
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["condition_day"], "多云")
+        self.assertIn("上海天气", data["output"]["replies"][0]["content"])
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
             self.assertIsNotNone(binding)
             self.assertEqual(binding.last_execution_status, "completed")
-            self.assertIn("天气查询完成", binding.last_execution_summary or "")
+            self.assertIn("已返回上海的天气", binding.last_execution_summary or "")
             self.assertIn("\"action\": \"execute\"", binding.runtime_details_json or "")
 
     def test_dify_plugin_execution_endpoint_uses_new_runtime_executor(self):

@@ -29,7 +29,6 @@ from app.services.task_queue import (
     OUTBOUND_DISPATCH_JOB,
     PLUGIN_DISPATCH_JOB,
     PLUGIN_SCHEDULED_ACTION_JOB,
-    WEATHER_PUSH_JOB,
     claim_next_job,
     complete_job,
     fail_job,
@@ -101,7 +100,6 @@ def _recover_running_jobs_for_all_tenants() -> int:
                     PLUGIN_DISPATCH_JOB,
                     PLUGIN_SCHEDULED_ACTION_JOB,
                     OUTBOUND_DISPATCH_JOB,
-                    WEATHER_PUSH_JOB,
                     INBOUND_MEDIA_FETCH_JOB,
                     OPEN_WEBHOOK_DELIVERY_JOB,
                 ),
@@ -119,7 +117,6 @@ def _run_single_job() -> bool:
                 PLUGIN_DISPATCH_JOB,
                 PLUGIN_SCHEDULED_ACTION_JOB,
                 OUTBOUND_DISPATCH_JOB,
-                WEATHER_PUSH_JOB,
                 INBOUND_MEDIA_FETCH_JOB,
                 OPEN_WEBHOOK_DELIVERY_JOB,
             ),
@@ -144,8 +141,6 @@ def _run_single_job() -> bool:
                 result = process_plugin_scheduled_action_job(db, job, payload)
             elif job.job_type == OUTBOUND_DISPATCH_JOB:
                 result = _process_outbound_dispatch_job(db, job, payload)
-            elif job.job_type == WEATHER_PUSH_JOB:
-                result = _process_weather_push_job(payload)
             elif job.job_type == INBOUND_MEDIA_FETCH_JOB:
                 result = _process_inbound_media_fetch_job(db, payload)
             elif job.job_type == OPEN_WEBHOOK_DELIVERY_JOB:
@@ -331,12 +326,6 @@ def _outbound_job_age_seconds(job: TaskJob) -> int:
     if created_at is None:
         return 0
     return max(0, int((now_shanghai() - ensure_shanghai_datetime(created_at)).total_seconds()))
-
-
-def _process_weather_push_job(payload: dict[str, Any]) -> dict[str, Any]:
-    from plugins.weather.plugin import process_weather_push_job
-
-    return process_weather_push_job(payload)
 
 
 def _process_inbound_media_fetch_job(db: Session, payload: dict[str, Any]) -> dict[str, Any]:

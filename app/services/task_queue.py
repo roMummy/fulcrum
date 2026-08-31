@@ -22,7 +22,6 @@ PLUGIN_SCHEDULED_ACTION_JOB = "plugin_scheduled_action"
 OUTBOUND_DISPATCH_JOB = "outbound_dispatch"
 WORKWECHAT_CLOUD_OUTBOUND_JOB = "workwechat_cloud_outbound"
 WORKWECHAT_CLOUD_CONTROL_JOB = "workwechat_cloud_control"
-WEATHER_PUSH_JOB = "weather_push"
 INBOUND_MEDIA_FETCH_JOB = "inbound_media_fetch"
 OPEN_WEBHOOK_DELIVERY_JOB = "open_webhook_delivery"
 FINAL_STATUSES = {"completed", "failed", "cancelled"}

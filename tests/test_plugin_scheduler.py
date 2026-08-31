@@ -24,7 +24,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import now_shanghai
-from app.models.entities import Bot, BotPlugin, Channel, Conversation, Plugin, TaskJob
+from app.models.entities import Bot, BotPlugin, Channel, Conversation, Plugin, TaskJob, WeatherSubscription
 from app.models.saas import Tenant
 from app.services.plugin_runtime.contracts import PluginExecutionResult
 from app.services.plugin_runtime.scheduler import (
@@ -38,7 +38,7 @@ from app.services.task_queue import PLUGIN_SCHEDULED_ACTION_JOB, parse_job_paylo
 
 @pytest.fixture()
 def scheduler_fixture(tmp_path: Path):
-    """准备两个租户及新闻、斗鱼和群总结绑定，验证归属与计划幂等。"""
+    """准备两个租户及四类统一调度绑定，验证归属与计划幂等。"""
 
     engine = create_engine(f"sqlite:///{tmp_path / 'plugin-scheduler.db'}")
     Base.metadata.create_all(bind=engine)
@@ -49,7 +49,8 @@ def scheduler_fixture(tmp_path: Path):
         daily_plugin = Plugin(code="daily_news", display_name="每日新闻", plugin_type="command")
         douyu_plugin = Plugin(code="douyu", display_name="斗鱼", plugin_type="command")
         summary_plugin = Plugin(code="message_summary", display_name="群聊总结", plugin_type="command")
-        db.add_all([alpha, beta, daily_plugin, douyu_plugin, summary_plugin])
+        weather_plugin = Plugin(code="weather", display_name="天气", plugin_type="rule")
+        db.add_all([alpha, beta, daily_plugin, douyu_plugin, summary_plugin, weather_plugin])
         db.flush()
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人", status="running", is_enabled=True)
         beta_bot = Bot(tenant_id=beta.id, name="乙机器人", status="running", is_enabled=True)
@@ -107,6 +108,13 @@ def scheduler_fixture(tmp_path: Path):
                 }
             ),
         )
+        alpha_weather = BotPlugin(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            plugin_id=weather_plugin.id,
+            status="enabled",
+            config_json=json.dumps({"daily_push_time": "08:00"}),
+        )
         beta_daily = BotPlugin(
             tenant_id=beta.id,
             bot_id=beta_bot.id,
@@ -114,7 +122,21 @@ def scheduler_fixture(tmp_path: Path):
             status="enabled",
             config_json=json.dumps({"push_time": "08:30", "last_push_date": ""}),
         )
-        db.add_all([alpha_daily, alpha_douyu, alpha_summary, beta_daily])
+        weather_subscription = WeatherSubscription(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            channel_id=alpha_channel.id,
+            conversation_id=conversation.id,
+            chat_type="group",
+            target_external_id="room-alpha",
+            subscriber_id="member-alpha",
+            city_query="长沙",
+            city_name="长沙",
+            city_id="101250101",
+            schedule_hour=8,
+            status="active",
+        )
+        db.add_all([alpha_daily, alpha_douyu, alpha_summary, alpha_weather, beta_daily, weather_subscription])
         db.commit()
         identity = {
             "alpha_tenant_id": int(alpha.id),
@@ -122,6 +144,7 @@ def scheduler_fixture(tmp_path: Path):
             "alpha_daily_binding_id": int(alpha_daily.id),
             "alpha_douyu_binding_id": int(alpha_douyu.id),
             "alpha_summary_binding_id": int(alpha_summary.id),
+            "alpha_weather_binding_id": int(alpha_weather.id),
             "alpha_conversation_id": int(conversation.id),
             "beta_tenant_id": int(beta.id),
             "beta_daily_binding_id": int(beta_daily.id),
@@ -217,7 +240,7 @@ def test_scheduler_rejects_identity_and_secret_parameters(scheduler_fixture) -> 
 
 
 def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) -> None:
-    """新闻、斗鱼和群总结通过统一扫描器入队，重复扫描不重复创建。"""
+    """新闻、斗鱼、群总结和天气通过统一扫描器入队，重复扫描不重复创建。"""
 
     factory, identity = scheduler_fixture
     current = now_shanghai().replace(hour=9, minute=0, second=30, microsecond=0)
@@ -231,6 +254,7 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
             "plugin_action:daily_summary",
             "plugin_action:daily_summary_prepare",
             "plugin_action:poll_subscriptions",
+            "plugin_action:weather_daily_push",
         ]
         assert second == []
         attempts = {job.related_type: job.max_attempts for job in first}
@@ -303,4 +327,6 @@ def test_async_worker_source_has_no_plugin_specific_pollers() -> None:
     assert "_run_due_daily_news_pollers" not in source
     assert "_last_douyu_poll_at" not in source
     assert "_last_daily_news_poll_at" not in source
+    assert "WEATHER_PUSH_JOB" not in source
+    assert "_process_weather_push_job" not in source
     assert "process_plugin_scheduled_action_job" in source

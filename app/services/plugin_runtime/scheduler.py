@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import BotPlugin, Conversation, Plugin, TaskJob
+from app.models.entities import BotPlugin, Conversation, Plugin, TaskJob, WeatherSubscription
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.service import execute_binding_scheduled_action
 from app.services.task_queue import PLUGIN_SCHEDULED_ACTION_JOB, enqueue_job
@@ -138,7 +138,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
         .where(
             BotPlugin.status == "enabled",
-            Plugin.code.in_(("daily_news", "douyu", "message_summary")),
+            Plugin.code.in_(("daily_news", "douyu", "message_summary", "weather")),
         )
         .order_by(BotPlugin.id.asc())
     ).all()
@@ -148,6 +148,19 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
             continue
         config = _parse_json_object(binding.config_json)
         plugin_code = str(binding.plugin.code if binding.plugin else "").strip()
+        if plugin_code == "weather":
+            # 天气计划按机器人绑定执行。没有有效订阅时不创建空任务，避免大量已启用但
+            # 尚未使用的租户绑定每天占用任务队列。
+            has_subscription = db.scalar(
+                select(WeatherSubscription.id)
+                .where(
+                    WeatherSubscription.bot_id == int(binding.bot_id),
+                    WeatherSubscription.status == "active",
+                )
+                .limit(1)
+            )
+            if has_subscription is None:
+                continue
         for spec in _build_plugin_schedule_specs(plugin_code, config, current):
             job, created = enqueue_plugin_scheduled_action(
                 db,
@@ -357,6 +370,20 @@ def _build_plugin_schedule_specs(
                     )
                 )
         return tuple(specs)
+    if plugin_code == "weather":
+        hour, minute = _parse_clock_time(str(config.get("daily_push_time") or "08:00"))
+        scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if current < scheduled_for:
+            return ()
+        return (
+            PluginScheduledActionSpec(
+                action_key="weather_daily_push",
+                scheduled_for=scheduled_for,
+                parameters={},
+                high_side_effect=True,
+                priority=70,
+            ),
+        )
     return ()
 
 
