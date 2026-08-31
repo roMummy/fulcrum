@@ -143,6 +143,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
                 (
                     "daily_news",
                     "daily_ranking",
+                    "dota2_stats",
                     "douyu",
                     "epic_free",
                     "game_task",
@@ -465,6 +466,57 @@ def _build_plugin_schedule_specs(
                         conversation_id=conversation_id,
                         # 推送阶段包含积分写入。即使业务幂等键可防止重复奖励，统一
                         # Worker 仍不自动重放高副作用动作，故障由下一次人工补跑处理。
+                        high_side_effect=True,
+                        priority=70,
+                    )
+                )
+        return tuple(specs)
+    if plugin_code == "dota2_stats":
+        # Dota 群榜与日榜使用相同的目标会话约束，但准备阶段会访问 OpenDota，
+        # 推送阶段只读取当天快照。两类任务必须按会话独立入队和观测。
+        if not _coerce_bool(config.get("enabled"), True):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("dota2_group_ranking_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        prepare_hour, prepare_minute = _parse_clock_time(
+            str(config.get("group_ranking_prepare_time") or "05:00")
+        )
+        push_hour, push_minute = _parse_clock_time(
+            str(config.get("group_ranking_push_time") or "09:00")
+        )
+        prepare_at = current.replace(
+            hour=prepare_hour,
+            minute=prepare_minute,
+            second=0,
+            microsecond=0,
+        )
+        push_at = current.replace(
+            hour=push_hour,
+            minute=push_minute,
+            second=0,
+            microsecond=0,
+        )
+        specs: list[PluginScheduledActionSpec] = []
+        for conversation_id in conversation_ids:
+            if current >= prepare_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="dota2_group_ranking_prepare",
+                        scheduled_for=prepare_at,
+                        parameters={},
+                        conversation_id=conversation_id,
+                        high_side_effect=False,
+                        priority=75,
+                    )
+                )
+            if current >= push_at:
+                specs.append(
+                    PluginScheduledActionSpec(
+                        action_key="dota2_group_ranking_push",
+                        scheduled_for=push_at,
+                        parameters={},
+                        conversation_id=conversation_id,
                         high_side_effect=True,
                         priority=70,
                     )
