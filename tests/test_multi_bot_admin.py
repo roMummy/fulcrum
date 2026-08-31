@@ -1627,26 +1627,26 @@ consume_policy = "continue"
         self.assertTrue(hasattr(module, "execute_binding_action"))
         self.assertTrue(hasattr(module, "get_plugin_runtime_meta"))
 
-    def test_plugin_config_view_masks_sensitive_fields_and_keeps_unknown_preview_fields(self):
+    def test_plugin_config_view_separates_sensitive_fields_and_keeps_unknown_preview_fields(self):
         view = build_plugin_config_view(
             "dify",
             json.dumps(
                 {
                     "api_base": "https://api.dify.example/v1",
-                    "api_key": "app-secret-001",
                     "workflow_id": "workflow-001",
                     "commands": ["ai"],
                     "custom_timeout": 15,
                 }
             ),
+            secret_config={"api_key": "app-secret-001"},
         )
 
         self.assertEqual(view["mode"], "schema")
         self.assertIn('"custom_timeout": 15', view["preview_json"])
-        self.assertIn('"api_key": "app***001"', view["preview_json"])
+        self.assertNotIn("api_key", view["preview_json"])
         api_key_field = next(item for item in view["fields"] if item["name"] == "api_key")
         self.assertEqual(api_key_field["render_value"], "")
-        self.assertTrue(api_key_field["masked_value"])
+        self.assertTrue(api_key_field["secret_configured"])
 
     def test_plugin_detail_renders_schema_fields(self):
         self.login("ops", "ops123")
@@ -1662,7 +1662,8 @@ consume_policy = "continue"
         self.assertIn("Workflow ID", response.text)
         self.assertIn("触发命令", response.text)
         self.assertIn("结构化表单", response.text)
-        self.assertIn("掩码 JSON 预览", response.text)
+        self.assertIn("当前状态：未配置", response.text)
+        self.assertNotIn("掩码 JSON 预览", response.text)
         self.assertIn("schema", response.text)
 
     def test_plugins_page_focuses_on_scan_results_and_runtime_navigation(self):

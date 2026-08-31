@@ -1,3 +1,5 @@
+from typing import Any, Mapping
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -5,6 +7,11 @@ from app.core.tenant_context import require_tenant_id
 from app.models.entities import Bot, BotPlugin, Channel, Plugin
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.channel_catalog import get_channel_type_definition
+from app.services.plugin_secrets import (
+    PLUGIN_SECRET_VERSION,
+    decrypt_plugin_secret_config,
+    encrypt_plugin_secret_config,
+)
 from app.services.runtime import compute_binding_runtime
 from app.services.security import encrypt_secret, mask_secret
 
@@ -148,13 +155,24 @@ def delete_bot(db: Session, bot: Bot) -> None:
     db.commit()
 
 
-def bind_plugin(db: Session, data: BotPluginBindCreate) -> BotPlugin:
+def bind_plugin(
+    db: Session,
+    data: BotPluginBindCreate,
+    *,
+    secret_config_patch: Mapping[str, Any] | None = None,
+    clear_secret_fields: tuple[str, ...] = (),
+) -> BotPlugin:
     existing = db.scalar(
         select(BotPlugin).where(BotPlugin.bot_id == data.bot_id, BotPlugin.plugin_id == data.plugin_id)
     )
     if existing:
         existing.status = data.status
         existing.config_json = data.config_json
+        _apply_binding_secret_changes(
+            existing,
+            secret_config_patch=secret_config_patch,
+            clear_secret_fields=clear_secret_fields,
+        )
         existing.runtime_status = compute_binding_runtime(existing)
         db.commit()
         db.refresh(existing)
@@ -168,6 +186,14 @@ def bind_plugin(db: Session, data: BotPluginBindCreate) -> BotPlugin:
         config_json=data.config_json,
     )
     db.add(binding)
+    # AES-GCM 的 AAD 需要稳定绑定主键，因此必须先 flush 获得 binding.id，
+    # 再保存本次表单提交的敏感字段，不能在客户端或临时负数主键上加密。
+    db.flush()
+    _apply_binding_secret_changes(
+        binding,
+        secret_config_patch=secret_config_patch,
+        clear_secret_fields=clear_secret_fields,
+    )
     db.commit()
     db.refresh(binding)
     return binding
@@ -185,13 +211,63 @@ def toggle_binding(db: Session, binding: BotPlugin) -> BotPlugin:
     return binding
 
 
-def update_binding_config(db: Session, binding: BotPlugin, status: str, config_json: str | None) -> BotPlugin:
+def update_binding_config(
+    db: Session,
+    binding: BotPlugin,
+    status: str,
+    config_json: str | None,
+    *,
+    secret_config_patch: Mapping[str, Any] | None = None,
+    clear_secret_fields: tuple[str, ...] = (),
+) -> BotPlugin:
     binding.status = status
     binding.runtime_status = compute_binding_runtime(binding)
     binding.config_json = config_json
+    _apply_binding_secret_changes(
+        binding,
+        secret_config_patch=secret_config_patch,
+        clear_secret_fields=clear_secret_fields,
+    )
     db.commit()
     db.refresh(binding)
     return binding
+
+
+def _apply_binding_secret_changes(
+    binding: BotPlugin,
+    *,
+    secret_config_patch: Mapping[str, Any] | None,
+    clear_secret_fields: tuple[str, ...],
+) -> None:
+    """把一次表单产生的密钥变更合并到绑定密文，不读取客户端租户编号。"""
+
+    patch = {
+        str(key): value
+        for key, value in dict(secret_config_patch or {}).items()
+        if str(key).strip() and value not in (None, "", [], {})
+    }
+    clear_fields = tuple(str(item).strip() for item in clear_secret_fields if str(item).strip())
+    if not patch and not clear_fields:
+        return
+
+    tenant_id = int(binding.tenant_id or require_tenant_id())
+    binding_id = int(binding.id or 0)
+    current = decrypt_plugin_secret_config(
+        tenant_id=tenant_id,
+        binding_id=binding_id,
+        encrypted=binding.secret_config_encrypted,
+    )
+    for field_name in clear_fields:
+        current.pop(field_name, None)
+    current.update(patch)
+
+    encrypted = encrypt_plugin_secret_config(
+        tenant_id=tenant_id,
+        binding_id=binding_id,
+        config=current,
+    )
+    binding.secret_config_encrypted = encrypted
+    binding.secret_config_version = PLUGIN_SECRET_VERSION if encrypted else None
 
 
 def list_bots(db: Session):

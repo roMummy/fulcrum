@@ -81,6 +81,7 @@ from app.services.plugin_schemas import (
     parse_config_json,
 )
 from app.services.plugin_runtime import execute_binding_action, get_plugin_runtime_meta
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.wechat_ipad.login_flow import (
     WechatIpadLoginFlowError,
     cancel_login_with_proxy_session,
@@ -920,7 +921,18 @@ def build_binding_schema_cards(bindings: list[BotPlugin]) -> list[dict[str, obje
     cards: list[dict[str, object]] = []
     for binding in bindings:
         plugin_code = binding.plugin.code if binding.plugin else None
-        config_view = build_plugin_config_view(plugin_code, binding.config_json)
+        # 页面只需要知道哪些敏感字段已经配置。服务端在可信绑定范围内解密后仅传
+        # 布尔状态给模板，密钥原文不会进入 HTML、JSON 预览或浏览器表单值。
+        secret_config = decrypt_plugin_secret_config(
+            tenant_id=int(binding.tenant_id),
+            binding_id=int(binding.id),
+            encrypted=binding.secret_config_encrypted,
+        )
+        config_view = build_plugin_config_view(
+            plugin_code,
+            binding.config_json,
+            secret_config=secret_config,
+        )
         cards.append(
             {
                 "binding": binding,
@@ -3752,13 +3764,23 @@ async def bind_plugin_action(
         if not plugin:
             raise HTTPException(status_code=404, detail="Plugin not found")
         form = await request.form()
-        effective_config_json = merge_schema_config(
+        merged_config = merge_schema_config(
             plugin.code,
             form,
             fallback_config_json=config_json or None,
         )
-        payload = BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status=status, config_json=effective_config_json)
-        binding = bind_plugin(db, payload)
+        payload = BotPluginBindCreate(
+            bot_id=bot_id,
+            plugin_id=plugin_id,
+            status=status,
+            config_json=merged_config.config_json,
+        )
+        binding = bind_plugin(
+            db,
+            payload,
+            secret_config_patch=merged_config.secret_patch,
+            clear_secret_fields=merged_config.clear_secret_fields,
+        )
         record_audit(db, "plugin.bind", "bot_plugin", binding.id, f"bot={binding.bot_id}, plugin={binding.plugin_id}")
         return RedirectResponse(url=f"/plugins/{plugin_id}?notice=" + quote("插件绑定已保存"), status_code=303)
     finally:
@@ -3857,13 +3879,20 @@ async def edit_plugin_binding_action(
             raise HTTPException(status_code=404, detail="Binding not found")
         form = await request.form()
         plugin_code = binding.plugin.code if binding.plugin else None
-        effective_config_json = merge_schema_config(
+        merged_config = merge_schema_config(
             plugin_code,
             form,
             existing_config_json=binding.config_json,
             fallback_config_json=config_json or None,
         )
-        update_binding_config(db, binding, status=status, config_json=effective_config_json)
+        update_binding_config(
+            db,
+            binding,
+            status=status,
+            config_json=merged_config.config_json,
+            secret_config_patch=merged_config.secret_patch,
+            clear_secret_fields=merged_config.clear_secret_fields,
+        )
         record_audit(db, "plugin.update", "bot_plugin", binding.id, f"status={status}")
         return RedirectResponse(url="/plugins/runtime?notice=插件绑定配置已保存", status_code=303)
     finally:

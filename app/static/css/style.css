@@ -1927,6 +1927,23 @@ code {
   accent-color: var(--primary);
 }
 
+.form-grid .check-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.form-grid .check-option input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 17px;
+  min-height: 17px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
 .form-grid input:hover,
 .form-grid select:hover,
 .form-grid textarea:hover,

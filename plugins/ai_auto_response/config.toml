@@ -20,6 +20,9 @@ timeout_ms = 12000
 commands = ["ai_auto_response"]
 require_mention = false
 
+[secrets]
+fields = ["api_key"]
+
 [runtime]
 enabled = true
 api_base = "http://192.168.2.240/v1"

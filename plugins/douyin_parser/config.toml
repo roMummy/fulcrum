@@ -20,6 +20,9 @@ timeout_ms = 12000
 keywords = ["https://v.douyin.com/"]
 require_mention = false
 
+[secrets]
+fields = ["external_api_key"]
+
 [runtime]
 internal_api_url = "http://192.168.2.32:8999/api/hybrid/video_data"
 external_api_url = "https://api.pearktrue.cn/api/video/api.php"

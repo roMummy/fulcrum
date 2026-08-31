@@ -20,6 +20,9 @@ timeout_ms = 10000
 commands = ["天气", "weather", "订阅天气", "取消订阅", "天气订阅"]
 require_mention = false
 
+[secrets]
+fields = ["api_key"]
+
 [runtime]
 api_base = "https://mx564thnfv.re.qweatherapi.com"
 api_key = "32e692f94e364105808ea2c0302ef162"

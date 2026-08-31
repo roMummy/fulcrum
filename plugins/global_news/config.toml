@@ -20,6 +20,9 @@ timeout_ms = 12000
 commands = ["全球新闻", "国际新闻", "环球新闻", "政经新闻"]
 require_mention = false
 
+[secrets]
+fields = ["authorization"]
+
 [runtime]
 sources = ["nbc", "cnn", "abc", "fox", "bbc"]
 per_source_limit = 5

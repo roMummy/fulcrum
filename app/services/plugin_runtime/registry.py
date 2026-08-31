@@ -62,7 +62,6 @@ class PluginRuntimeDefinition:
         return self.executor is not None
 
 
-SENSITIVE_KEYWORDS = ("api_key", "apikey", "secret", "token", "password", "authorization", "auth_key", "access_key")
 LONG_TEXT_HINTS = ("prompt", "notes", "message", "content", "template", "instruction", "description")
 
 
@@ -104,6 +103,7 @@ def get_plugin_runtime_meta(plugin_code: str | None) -> Mapping[str, Any]:
             "manifest_valid": False,
             "manifest_errors": [],
             "manifest_warnings": [],
+            "secret_fields": [],
             "admin_extension": {},
         }
     return {
@@ -131,6 +131,7 @@ def get_plugin_runtime_meta(plugin_code: str | None) -> Mapping[str, Any]:
         "manifest_valid": discovered.is_valid,
         "manifest_errors": list(discovered.validation_errors),
         "manifest_warnings": list(discovered.validation_warnings),
+        "secret_fields": list(discovered.secret_fields),
     }
 
 
@@ -242,8 +243,14 @@ def _build_plugin_schema(discovered: DiscoveredPlugin) -> PluginConfigSchema:
     if "require_mention" not in merged_defaults:
         merged_defaults["require_mention"] = discovered.matcher.require_mention
 
+    # 敏感字段只以空默认值进入 schema。目录文件中的历史共享值即使尚未物理删除，
+    # 也不会进入表单默认值、运行配置或页面预览。
+    for secret_name in discovered.secret_fields:
+        merged_defaults.setdefault(secret_name, "")
+
+    explicit_secret_fields = set(discovered.secret_fields)
     for key, value in merged_defaults.items():
-        fields.append(_build_config_field(key, value))
+        fields.append(_build_config_field(key, value, sensitive=key in explicit_secret_fields))
 
     if not fields:
         fields.append(
@@ -265,38 +272,33 @@ def _build_plugin_schema(discovered: DiscoveredPlugin) -> PluginConfigSchema:
     )
 
 
-def _build_config_field(name: str, default: Any) -> PluginConfigField:
-    field_type = _infer_field_type(name, default)
+def _build_config_field(name: str, default: Any, *, sensitive: bool) -> PluginConfigField:
+    field_type = _infer_field_type(name, default, sensitive=sensitive)
     return PluginConfigField(
         name=name,
         field_type=field_type,
         label=_humanize_label(name),
         description=f"Auto-generated from plugin config for `{name}`.",
         default=default,
-        sensitive=_is_sensitive_field(name),
+        sensitive=sensitive,
         placeholder=_build_placeholder(default),
     )
 
 
-def _infer_field_type(name: str, value: Any) -> str:
+def _infer_field_type(name: str, value: Any, *, sensitive: bool) -> str:
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, int):
         return "number"
     if isinstance(value, list):
         return "list"
-    if _is_sensitive_field(name):
+    if sensitive:
         return "password"
     text = str(value or "")
     lowered_name = name.lower()
     if "\n" in text or any(hint in lowered_name for hint in LONG_TEXT_HINTS) or len(text) > 120:
         return "textarea"
     return "text"
-
-
-def _is_sensitive_field(name: str) -> bool:
-    lowered = name.lower()
-    return any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
 
 
 def _humanize_label(name: str) -> str:

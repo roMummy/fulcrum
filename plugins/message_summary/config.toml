@@ -20,6 +20,9 @@ timeout_ms = 12000
 commands = ["总结", "日报"]
 require_mention = false
 
+[secrets]
+fields = ["api_key"]
+
 [runtime]
 enabled = true
 commands = ["总结", "日报"]

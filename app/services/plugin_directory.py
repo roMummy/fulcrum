@@ -101,6 +101,7 @@ class DiscoveredPlugin:
     entrypoint_path: Path
     directory_path: Path
     runtime_config: Mapping[str, Any] = field(default_factory=dict)
+    secret_fields: tuple[str, ...] = ()
     admin_config: Mapping[str, Any] = field(default_factory=dict)
     validation_errors: tuple[str, ...] = ()
     validation_warnings: tuple[str, ...] = ()
@@ -1861,11 +1862,18 @@ def _build_discovered_plugin(
     parsed: dict[str, Any],
 ) -> DiscoveredPlugin:
     errors, warnings = _validate_manifest(plugin_dir.name, parsed)
+    secret_fields = _extract_secret_fields(parsed)
+    runtime_config = _extract_runtime_config(parsed)
+    # 即使旧目录里仍残留可用密钥，扫描阶段也必须把显式敏感字段从默认运行配置中删除。
+    # 后续物理清理配置文件时不依赖这层防线，但当前提交开始就不能再执行共享凭证。
+    for field_name in secret_fields:
+        runtime_config.pop(field_name, None)
     return DiscoveredPlugin(
         manifest=_build_manifest(plugin_dir.name, parsed),
         capability=_build_capability(parsed),
         matcher=_build_matcher(parsed),
-        runtime_config=_extract_runtime_config(parsed),
+        runtime_config=runtime_config,
+        secret_fields=secret_fields,
         admin_config=_extract_admin_config(parsed),
         config_path=config_path,
         entrypoint_path=entrypoint_path,
@@ -1980,6 +1988,11 @@ def _validate_manifest(default_code: str, parsed: dict[str, Any]) -> tuple[list[
     _validate_text_sequence(capability_block.get("message_types"), "message_types", errors)
     _validate_text_sequence(matcher_block.get("commands"), "commands", errors)
     _validate_text_sequence(matcher_block.get("keywords"), "keywords", errors)
+    secrets_block = parsed.get("secrets")
+    if secrets_block is not None and not isinstance(secrets_block, dict):
+        errors.append("[secrets] 配置块类型非法。")
+    elif isinstance(secrets_block, dict):
+        _validate_text_sequence(secrets_block.get("fields"), "secrets.fields", errors)
     return errors, warnings
 
 
@@ -2019,11 +2032,20 @@ def _extract_runtime_config(parsed: dict[str, Any]) -> dict[str, Any]:
 
     defaults: dict[str, Any] = {}
     for key, value in parsed.items():
-        if key in {"plugin", "capability", "matcher"}:
+        if key in {"plugin", "capability", "matcher", "secrets", "admin"}:
             continue
         if isinstance(value, dict):
             defaults.update(value)
     return defaults
+
+
+def _extract_secret_fields(parsed: dict[str, Any]) -> tuple[str, ...]:
+    """读取插件显式敏感字段声明，字段名重复时保持首次出现顺序。"""
+
+    secrets_block = parsed.get("secrets")
+    if not isinstance(secrets_block, dict):
+        return ()
+    return tuple(dict.fromkeys(_normalize_text_tuple(secrets_block.get("fields"))))
 
 
 def _extract_admin_config(parsed: dict[str, Any]) -> dict[str, Any]:

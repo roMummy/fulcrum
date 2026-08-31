@@ -20,6 +20,9 @@ timeout_ms = 45000
 commands = ["ai", "聊天"]
 require_mention = false
 
+[secrets]
+fields = ["api_key"]
+
 [runtime]
 api_base = "http://192.168.2.240/v1"
 api_key = "app-u5EnYq3ill19bm6pWJwGkY4D"
