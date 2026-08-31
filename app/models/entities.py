@@ -97,6 +97,10 @@ class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):
     last_execution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 普通配置继续保存在 config_json；API Key、Token 和密码等敏感字段整体加密后
+    # 单独保存，运行时只在可信租户和绑定上下文中短暂解密并合并。
+    secret_config_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    secret_config_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     bot = relationship("Bot", back_populates="plugin_bindings")
     plugin = relationship("Plugin", back_populates="bot_bindings")

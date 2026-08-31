@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: int = 30
     plugins_dir: str = str(Path(__file__).resolve().parents[2] / "plugins")
     secret_key: str = "change-me"
+    # 插件外部服务密钥使用独立的 32 字节 URL-safe Base64 主密钥。
+    # 这里不提供默认值，也不复用登录会话 secret_key，避免不同安全边界共用同一把密钥。
+    plugin_secret_key: str = ""
     log_level: str = "INFO"
     log_file_max_bytes: int = 10 * 1024 * 1024
     # RotatingFileHandler backupCount counts backup files only.

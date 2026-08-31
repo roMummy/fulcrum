@@ -75,10 +75,12 @@ def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) 
     actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
 
     assert _current_revision(database_path) == expected_database_revision()
-    assert expected_database_revision() == "20260827_0008"
+    assert expected_database_revision() == "20260831_0011"
     assert actual_tables == set(Base.metadata.tables)
     assert DELETED_TABLES.isdisjoint(actual_tables)
     assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})
+    bot_plugin_columns = {column["name"] for column in inspector.get_columns("bot_plugins")}
+    assert {"secret_config_encrypted", "secret_config_version"} <= bot_plugin_columns
     # 平台大盘的跨租户查询必须命中明确的组合索引，不能依赖数据量小时的全表扫描表现。
     for table_name, index_name in PLATFORM_ANALYTICS_INDEXES.items():
         actual_indexes = {item["name"] for item in inspector.get_indexes(table_name)}
