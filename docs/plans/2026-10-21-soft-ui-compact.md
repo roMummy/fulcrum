@@ -20,6 +20,8 @@
 
 ## 实施步骤
 
+先按 `docs/ui/soft-ui-guidelines.md` 完成调性与规约整理，再依照 `docs/ui/soft-ui-page-checklist.md` 逐页实施和登记证据。下列内容是工程范围，不代表先做完所有共享改动再统一验收。
+
 1. `app/static/css/style.css`：原位替换 token、导航、标题、表面、指标、表格、表单、认证、营销及响应式规则，清理旧风格专用规则。
 2. `app/templates/base.html`、`marketing_base.html`：简化重复标题层级，统一认证壳与通知位置，保留现有会话与 CSRF 行为。
 3. `enterprise_login.html`、`platform_login.html`、`register.html` 及共享认证局部模板：品牌构图、字段分组、密码可见切换和精简的身份提示。
