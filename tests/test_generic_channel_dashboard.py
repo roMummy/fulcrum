@@ -6,7 +6,8 @@ import app.main as main_module
 
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
-from app.models.entities import Channel
+from app.models.entities import Channel, MessageActivityHourly
+from app.core.time import hour_bucket_shanghai
 from test_provider_node_pages import _login, provider_page_context
 
 
@@ -68,3 +69,25 @@ def test_manual_bot_creation_route_and_button_are_removed(provider_page_context)
         getattr(route, "path", "") == "/bots" and "POST" in (getattr(route, "methods", None) or set())
         for route in main_module.app.routes
     )
+
+
+def test_dashboard_with_hourly_messages_renders_real_trend(provider_page_context) -> None:
+    """有小时统计时也应正常渲染；空库无法覆盖日志中引用已删除环境变量的分支。"""
+
+    client, ids = provider_page_context
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        db.add(MessageActivityHourly(
+            bot_id=ids["bot"],
+            bucket_start=hour_bucket_shanghai(),
+            direction="in",
+            message_count=37,
+        ))
+        db.commit()
+        # 同时检查返回的聚合值，避免仅靠 HTTP 200 掩盖趋势数据被跳过的问题。
+        series = main_module.build_dashboard_trend_series(db, hours=24)
+        assert series["inbound_chart"]["max_value"] == 37
+
+    _login(client, "admin")
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert "入站趋势" in response.text

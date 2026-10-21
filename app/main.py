@@ -593,7 +593,8 @@ def build_dashboard_trend_series(
         logger.info(
             "dashboard message hourly rows",
             extra={
-                "environment": environment or "all",
+                # 环境筛选已从当前 SaaS 架构移除；日志只记录已受租户会话约束的统计行，
+                # 避免有数据时访问已删除变量，导致整个企业总览返回 500。
                 "rows": [
                     {
                         "bucket_start": _normalize_dt_utc(row.bucket_start).isoformat(),
