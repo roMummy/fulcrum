@@ -2,7 +2,7 @@
 {% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">订单记录</a>{% endblock %}
 {% block content %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>当前套餐</h2></div></div>
+  <div class="section-head"><div><h2>当前套餐</h2></div></div>
   {% if subscription %}
   <dl class="detail-grid">
     <div><dt>套餐</dt><dd>{{ subscription.plan.name }}</dd></div>
@@ -14,7 +14,7 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>购买套餐</h2></div></div>
+  <div class="section-head"><div><h2>购买套餐</h2></div></div>
   <div class="marketing-plan-grid">
     {% for plan in plans %}
     <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">

@@ -1,17 +1,14 @@
 {% extends 'base.html' %}
+{% from '_dashboard_chart.html' import trend_chart %}
+{% block hero_actions %}
+<div class="chip-row">
+  <span class="chip chip-outline">近 24 小时</span>
+  <span class="chip {% if alert_summary.total %}chip-outline{% else %}chip-success{% endif %}">告警 {{ alert_summary.total }}</span>
+</div>
+{% endblock %}
 {% block content %}
-{# 总览首屏使用连续数据带承载核心指标，不再为每个数字创建独立卡片。 #}
+{# 首屏指标使用等高紧凑网格，时间范围移到页头，避免重复总览标题挤占数据区。 #}
 <section class="dashboard-overview">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Operations Overview</p>
-      <h2>运营总览</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-outline">24 小时视角</span>
-      <span class="chip {% if alert_summary.total %}chip-outline{% else %}chip-success{% endif %}">告警 {{ alert_summary.total }}</span>
-    </div>
-  </div>
   <div class="metric-band dashboard-kpi-grid">
     <div class="metric-item">
       <span>今日入站</span>
@@ -70,25 +67,12 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Inbound Trend</p>
+
         <h2>入站趋势</h2>
       </div>
       <span class="chip chip-outline">近 24 小时</span>
     </div>
-    <div class="dashboard-chart-card">
-      <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="{{ trend_series.inbound_chart.points }}" class="chart-line chart-line-primary"></polyline>
-      </svg>
-      <div class="dashboard-bar-strip">
-        {% for item in trend_series.inbound_chart["items"] %}
-        <div class="dashboard-bar-item">
-          <strong class="dashboard-bar-value">{{ item.value }}</strong>
-          <div class="dashboard-bar dashboard-bar-primary" style="height: {{ item.height_percent }}%;"></div>
-          <span>{{ item.label }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
+    {{ trend_chart(trend_series.inbound_chart, '最近 24 小时入站消息趋势') }}
     <div class="metric-band metric-band-compact">
       <div class="metric-item">
         <span>峰值</span>
@@ -104,25 +88,12 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Plugin Trend</p>
+
         <h2>插件使用趋势</h2>
       </div>
       <span class="chip chip-outline">近 24 小时</span>
     </div>
-    <div class="dashboard-chart-card">
-      <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="{{ trend_series.plugin_chart.points }}" class="chart-line chart-line-success"></polyline>
-      </svg>
-      <div class="dashboard-bar-strip">
-        {% for item in trend_series.plugin_chart["items"] %}
-        <div class="dashboard-bar-item">
-          <strong class="dashboard-bar-value">{{ item.value }}</strong>
-          <div class="dashboard-bar dashboard-bar-success" style="height: {{ item.height_percent }}%;"></div>
-          <span>{{ item.label }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
+    {{ trend_chart(trend_series.plugin_chart, '最近 24 小时插件触发趋势', 'success') }}
     <div class="metric-band metric-band-compact">
       <div class="metric-item">
         <span>峰值</span>
@@ -140,7 +111,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>热门插件</h2>
       </div>
     </div>
@@ -162,7 +133,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃机器人</h2>
       </div>
       <a class="chip chip-action" href="/bots">查看全部</a>
@@ -187,7 +158,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃用户</h2>
       </div>
     </div>
@@ -209,7 +180,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃群组</h2>
       </div>
     </div>
@@ -233,7 +204,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Alerts</p>
+
         <h2>告警摘要</h2>
       </div>
     </div>
@@ -275,7 +246,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Risk Queue</p>
+
         <h2>待处理风险</h2>
       </div>
     </div>
@@ -291,7 +262,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Signals</p>
+
         <h2>最近日志异常</h2>
       </div>
     </div>
@@ -319,7 +290,7 @@
   <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Task Queue</p>
+
         <h2>最近任务状态</h2>
       </div>
     </div>
@@ -348,7 +319,7 @@
 <section class="page-section">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Operations Snapshot</p>
+
       <h2>实时运维态势</h2>
     </div>
   </div>
@@ -383,7 +354,7 @@
 <section class="page-section">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Bot Matrix</p>
+
       <h2>机器人总览</h2>
     </div>
     <a class="chip chip-action" href="/bots">进入详情</a>

@@ -1,13 +1,10 @@
 {% extends 'marketing_base.html' %}
 {% block content %}
 <section class="marketing-hero marketing-hero-stage">
-  {# 几何场景只承担 Swiss 构图和交互反馈，所有产品价值与操作入口继续由正文提供。 #}
+  {# 柔和品牌构图提供受限交互反馈，正文仍是产品主张与行动的唯一入口。 #}
   <div class="marketing-hero-scene" data-hero-scene aria-hidden="true">
-    <span class="marketing-hero-axis marketing-hero-axis-horizontal"></span>
-    <span class="marketing-hero-axis marketing-hero-axis-vertical"></span>
     <span class="marketing-hero-signal"><span></span></span>
     <span class="marketing-hero-marker"></span>
-    <span class="marketing-hero-index">01 / 03</span>
   </div>
   <div class="marketing-hero-copy">
     <p class="marketing-hero-eyebrow">全渠道智能机器人运营平台</p>
@@ -76,8 +73,8 @@
     <div class="marketing-plan-grid">
       {% for plan in plans %}
       <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
-        {% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}
-        <h3>{{ plan.name }}</h3>
+        {# 标题与推荐标记共用一行，避免推荐套餐将价格和按钮向下推移。 #}
+        <div class="marketing-plan-head"><h3>{{ plan.name }}</h3>{% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}</div>
         <p class="marketing-plan-quota"><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
         <p class="marketing-plan-price"><strong>¥{{ format_yuan(plan.monthly_price_cents) }}</strong><span>/ 月</span></p>
         <a class="btn" href="/register">免费试用 7 天</a>

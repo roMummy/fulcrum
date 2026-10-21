@@ -2,7 +2,7 @@
 {% block hero_actions %}<a class="btn" href="/channels/connect">接入账号</a>{% endblock %}
 {% block content %}
 <section class="page-section">
-  <div class="section-head"><div><p class="section-kicker">Trial</p><h2>当前试用</h2></div></div>
+  <div class="section-head"><div><h2>当前试用</h2></div></div>
   {% if subscription %}
   <dl class="detail-grid">
     <div><dt>套餐</dt><dd>{{ subscription.plan.name }}</dd></div>
@@ -13,7 +13,7 @@
 </section>
 
 <section class="page-section">
-  <div class="section-head"><div><p class="section-kicker">Next</p><h2>开始使用</h2></div></div>
+  <div class="section-head"><div><h2>开始使用</h2></div></div>
   <div class="form-actions-inline">
     <a class="btn" href="/channels/connect">接入第一个账号</a>
     <a class="btn btn-secondary" href="/account/billing">查看套餐</a>

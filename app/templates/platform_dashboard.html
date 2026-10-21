@@ -10,7 +10,7 @@
 </div>
 {% endblock %}
 {% block content %}
-{# 核心指标使用单一连续数据带，周期指标与当前状态通过短说明区分，不再保留旧四指标入口。 #}
+{# 核心指标使用紧凑等高网格，周期指标与当前状态通过短说明区分。 #}
 <div class="metric-band platform-metric-band platform-analytics-kpis">
   {% for item in analytics.core_metric_items %}
   <div class="metric-item">
@@ -21,12 +21,12 @@
   {% endfor %}
 </div>
 
-{# 双趋势共享一个 Swiss 业务表面，内部图表保持单层结构，避免重复卡片边界。 #}
+{# 双趋势各自拥有清晰表面，外层仅负责等高网格，内部图表不再嵌套卡片。 #}
 <section class="platform-analytics-surface platform-analytics-trends-surface">
 <div class="platform-analytics-grid platform-analytics-chart-grid">
   <section class="page-section analytics-chart-section">
     <div class="section-head">
-      <div><p class="section-kicker">Message trend</p><h2>消息趋势</h2></div>
+      <div><h2>消息趋势</h2></div>
       <div class="analytics-chart-total"><strong>{{ analytics.core_metrics.message_total }}</strong><span>{{ analytics.range_label }}总量</span></div>
     </div>
     <div class="analytics-chart-legend" aria-label="消息趋势图例">
@@ -48,7 +48,7 @@
 
   <section class="page-section analytics-chart-section">
     <div class="section-head">
-      <div><p class="section-kicker">Activity trend</p><h2>活跃趋势</h2></div>
+      <div><h2>活跃趋势</h2></div>
       <div class="analytics-chart-total"><strong>{{ analytics.core_metrics.trigger_user_total }}</strong><span>触发用户</span></div>
     </div>
     <div class="analytics-chart-legend" aria-label="活跃趋势图例">
@@ -70,11 +70,11 @@
 </div>
 </section>
 
-{# 使用漏斗与订阅经营属于同一租户采用链路，共享经营分析表面。 #}
+{# 使用漏斗与订阅经营相邻排列，保留各自标题与表面，便于跨区比较。 #}
 <section class="platform-analytics-surface platform-analytics-operations-surface">
 <div class="platform-analytics-grid platform-analytics-operations-grid">
   <section class="page-section platform-adoption-funnel">
-    <div class="section-head"><div><p class="section-kicker">Adoption</p><h2>SaaS 使用漏斗</h2></div></div>
+    <div class="section-head"><div><h2>SaaS 使用漏斗</h2></div></div>
     <div class="analytics-funnel">
       {% for item in analytics.adoption_funnel %}
       <div class="analytics-funnel-row">
@@ -89,7 +89,7 @@
   </section>
 
   <section class="page-section platform-subscription-summary">
-    <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>订阅经营</h2></div><a class="text-link" href="/platform/billing/orders">订单审核</a></div>
+    <div class="section-head"><div><h2>订阅经营</h2></div><a class="text-link" href="/platform/billing/orders">订单审核</a></div>
     <div class="analytics-summary-grid">
       <div class="analytics-summary-item"><span>试用租户</span><strong>{{ analytics.subscription_summary.trial_tenant_total }}</strong></div>
       <div class="analytics-summary-item"><span>付费租户</span><strong>{{ analytics.subscription_summary.paid_tenant_total }}</strong></div>
@@ -103,7 +103,7 @@
 </section>
 
 <section class="page-section platform-channel-summary">
-  <div class="section-head"><div><p class="section-kicker">Channel health</p><h2>渠道运行情况</h2></div></div>
+  <div class="section-head"><div><h2>渠道运行情况</h2></div></div>
   <div class="table-scroll">
     <table class="table analytics-table">
       <thead><tr><th>渠道类型</th><th>接入账号</th><th>在线</th><th>异常或离线</th><th>{{ analytics.range_label }}消息</th><th>最近活跃</th></tr></thead>
@@ -126,7 +126,7 @@
 </section>
 
 <section class="page-section platform-tenant-rankings">
-  <div class="section-head"><div><p class="section-kicker">Tenant usage</p><h2>租户使用排行</h2></div><a class="text-link" href="/platform/tenants">租户管理</a></div>
+  <div class="section-head"><div><h2>租户使用排行</h2></div><a class="text-link" href="/platform/tenants">租户管理</a></div>
   <div class="table-scroll">
     <table class="table analytics-table analytics-ranking-table">
       <thead><tr><th>租户</th><th>套餐</th><th>消息</th><th>触发用户</th><th>接入账号</th><th>在线渠道</th><th>额度使用</th><th>最近活跃</th></tr></thead>
@@ -154,7 +154,7 @@
 <section class="platform-analytics-surface platform-analytics-health-surface">
 <div class="platform-analytics-grid platform-analytics-health-grid">
   <section class="page-section platform-tenant-health">
-    <div class="section-head"><div><p class="section-kicker">Attention</p><h2>租户健康情况</h2></div></div>
+    <div class="section-head"><div><h2>租户健康情况</h2></div></div>
     <div class="analytics-health-list">
       {% for item in analytics.tenant_health %}
       <a class="analytics-health-row" href="/platform/tenants/{{ item.tenant_id }}">
@@ -169,7 +169,7 @@
   </section>
 
   <section class="page-section platform-presence-summary">
-    <div class="section-head"><div><p class="section-kicker">Presence</p><h2>在线状态</h2></div></div>
+    <div class="section-head"><div><h2>在线状态</h2></div></div>
     <div class="analytics-summary-grid analytics-presence-grid">
       <div class="analytics-summary-item"><span>近 30 分钟活跃员工</span><strong>{{ analytics.presence_summary.active_employee_total }}</strong></div>
       <div class="analytics-summary-item"><span>当前有效会话</span><strong>{{ analytics.presence_summary.valid_session_total }}</strong></div>

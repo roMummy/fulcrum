@@ -2,7 +2,7 @@
 {% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users">员工管理</a>{% endblock %}
 {% block content %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>{{ tenant.name }}</h2></div><span class="chip {% if current_user.tenant_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ current_user.tenant_status }}</span></div>
+  <div class="section-head"><div><h2>{{ tenant.name }}</h2></div><span class="chip {% if current_user.tenant_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ current_user.tenant_status }}</span></div>
   <div class="detail-row"><span>租户编码</span><strong><code>{{ tenant.code }}</code></strong></div>
   <div class="detail-row"><span>订阅状态</span><strong>{{ current_user.subscription_status or '未设置' }}</strong></div>
   <div class="detail-row"><span>有效期</span><strong>{{ format_time(current_user.subscription_expires_at) if current_user.subscription_expires_at else '长期有效' }}</strong></div>

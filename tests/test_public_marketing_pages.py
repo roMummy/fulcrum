@@ -101,8 +101,8 @@ def marketing_client(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_home_uses_yaoshu_brand_generic_positioning_and_interactive_swiss_hero(marketing_client: TestClient) -> None:
-    """首页必须突出曜枢 AI，并用无截图 Swiss 场景承载全渠道产品定位。"""
+def test_home_uses_yaoshu_brand_generic_positioning_and_interactive_soft_hero(marketing_client: TestClient) -> None:
+    """首页必须突出曜枢 AI，并用无截图 Soft UI 场景承载全渠道产品定位。"""
 
     response = marketing_client.get("/")
 

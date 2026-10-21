@@ -19,7 +19,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Chatroom</p>
+
       <h2>{{ detail.name }}</h2>
     </div>
     <div class="chip-row">
@@ -29,16 +29,19 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="metric-item"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
-    <div class="metric-item"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
-    <div class="metric-item"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
-    <div class="metric-item"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
+    {# 标识、时间和文字状态不是数量指标，用正文级字号保留完整信息，不抢占群配置空间。 #}
+    <div class="metric-item metric-item-text"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
+    <div class="metric-item metric-item-text"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
+    <div class="metric-item metric-item-text"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
+    <div class="metric-item metric-item-text"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
     <div class="metric-item"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
     <div class="metric-item"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
-    <div class="metric-item"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
+    <div class="metric-item metric-item-time"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
   </div>
   <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
     <div class="subsection">
+      {# 详情字段表格与后续编辑表单分开滚动，手机只滚动表格自身，不撑宽页面。 #}
+      <div class="table-scroll">
       <table class="table table-tight">
         <tbody>
           <tr><th>群名</th><td>{{ detail.name }}</td></tr>
@@ -49,7 +52,8 @@
           <tr><th>附件自动下载</th><td>{{ detail.auto_download_media_label }}</td></tr>
         </tbody>
       </table>
-      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/management" style="margin-top:12px;">
+      </div>
+      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/management" class="form-grid top-gap">
         <label class="full-row">
           <span>群纳管状态</span>
           <select name="management_status">
@@ -76,7 +80,7 @@
       {% endif %}
     </div>
     <div class="subsection">
-      <p class="section-kicker">Member Snapshot</p>
+
       <h3 style="margin:0 0 8px;">成员角色概览</h3>
       <div class="chip-row" style="margin-bottom:10px;">
         {% for role, count in detail.role_counts.items() %}
@@ -95,7 +99,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Message Flow</p>
+
       <h2>群消息流水</h2>
     </div>
     <div class="chip-row">
@@ -161,7 +165,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Members</p>
+
       <h2>群成员快照</h2>
     </div>
     <span class="chip chip-outline">{{ detail.members|length }} 条记录</span>
@@ -223,7 +227,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">BotPlugin Scope</p>
+
       <h2>群级插件控制</h2>
     </div>
     <div class="chip-row">

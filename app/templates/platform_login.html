@@ -1,49 +1,20 @@
-{% extends 'base.html' %}
-
-{#
-  平台管理员与租户员工使用完全独立的登录入口和会话体系。
-  本页只提交平台账号的用户名与密码，不展示租户编码，避免两类身份在界面和请求参数上混用。
-  登录失败或其他状态提示统一由 base.html 根据 notice 和 notice_tone 渲染，保持认证页面提示样式一致。
-#}
+{% extends 'auth_base.html' %}
+{% from '_auth_fields.html' import password_field %}
+{% block access_title_id %}platform-login-title{% endblock %}
+{% block access_headline %}全局尽在掌握，<br />运营从容有序。{% endblock %}
+{% block access_summary %}关注每一位租户，让平台稳步向前。{% endblock %}
 {% block content %}
-<section class="auth-showcase auth-showcase-single" aria-labelledby="platform-login-title">
-  {# 平台登录使用独立 Swiss 表单表面，不与企业营销认证路径共享身份参数。 #}
-  <section class="login-card auth-form-card auth-form-card-swiss">
-    {# 标题区明确当前入口属于平台管理后台，防止租户员工误用平台账号入口。 #}
-    <div class="section-head auth-card-head">
-      <div>
-        <p class="section-kicker">Platform Access</p>
-        {# 独立平台入口使用页面级主标题，便于辅助技术和搜索工具准确识别当前页面。 #}
-        <h1 id="platform-login-title">平台管理后台</h1>
-      </div>
-      <span class="chip chip-outline">平台管理员入口</span>
-    </div>
-
-    <p class="muted-text">请使用平台管理员账号登录。</p>
-
-    {#
-      字段名称与平台认证路由保持一致；浏览器自动填充属性用于密码管理器识别账号和当前密码。
-      prefill_username 仅在服务端明确传入时回填用户名，密码始终保持空白，避免敏感信息出现在页面源码中。
-    #}
-    <form method="post" action="/platform/login" class="form-grid auth-form-grid">
-      <label class="full-row">
-        <span>用户名</span>
-        <input name="username" autocomplete="username" value="{{ prefill_username or '' }}" required />
-      </label>
-      <label class="full-row">
-        <span>密码</span>
-        <input name="password" type="password" autocomplete="current-password" required />
-      </label>
-      <div class="full-row auth-form-actions">
-        <button class="btn auth-submit" type="submit">登录平台后台</button>
-      </div>
-    </form>
-
-    {# 身份说明只陈述入口边界，不放置产品宣传或与登录无关的操作信息。 #}
-    <div class="auth-tip-panel">
-      <strong>身份说明</strong>
-      <p class="muted-text">此入口仅供平台管理员使用，租户员工请使用租户登录入口。</p>
-    </div>
-  </section>
-</section>
+<div class="access-heading">
+  <span class="access-entry-label">平台管理员入口</span>
+  <h1 id="platform-login-title">平台管理后台</h1>
+  <p>欢迎回来，登录后查看平台运营情况。</p>
+</div>
+{# 平台入口只提交平台用户名与密码，保留独立认证路径与密码管理器识别语义。 #}
+<form method="post" action="/platform/login" class="form-grid auth-form-grid">
+  <label class="access-field" for="platform-username"><span>用户名</span><input id="platform-username" name="username" autocomplete="username" spellcheck="false" value="{{ prefill_username or '' }}" placeholder="请输入管理员用户名" required /></label>
+  {{ password_field('platform-password') }}
+  <div class="auth-form-actions"><button class="btn auth-submit" type="submit">登录平台后台 <span aria-hidden="true">→</span></button></div>
+</form>
+<p class="access-switch">企业用户？<a href="/login">前往企业工作台 <span aria-hidden="true">↗</span></a></p>
+<p class="access-identity">此入口仅供平台管理员使用</p>
 {% endblock %}

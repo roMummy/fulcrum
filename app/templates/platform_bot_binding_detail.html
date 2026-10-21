@@ -17,7 +17,7 @@
 
 {% if binding.status != 'released' %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Release</p><h2>受控释放</h2></div></div>
+  <div class="section-head"><div><h2>受控释放</h2></div></div>
   <form method="post" action="/platform/bot-bindings/{{ binding.id }}/release" class="form-grid" data-confirm-mode="confirm" data-confirm-title="释放机器人绑定" data-confirm-message="释放后租户可以占用新的额度，但历史设备和试用领取记录仍会保留。">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label class="full-row"><span>释放原因</span><textarea name="reason" rows="3" maxlength="1000" required></textarea></label>

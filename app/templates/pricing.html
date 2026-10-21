@@ -11,8 +11,8 @@
   <div class="marketing-section-inner marketing-plan-grid">
     {% for plan in plans %}
     <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
-      {% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}
-      <h2>{{ plan.name }}</h2>
+      {# 推荐标记不新增网格行，同组套餐的额度、金额和行动按钮保持对齐。 #}
+      <div class="marketing-plan-head"><h2>{{ plan.name }}</h2>{% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}</div>
       <p class="marketing-plan-quota"><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
       <dl class="marketing-price-list">
         <div><dt>月付</dt><dd>¥{{ format_yuan(plan.monthly_price_cents) }}</dd></div>

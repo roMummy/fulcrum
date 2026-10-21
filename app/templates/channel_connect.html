@@ -20,7 +20,7 @@
 {% if stage == 'choose' %}
 <section class="work-surface connection-surface">
   <div class="section-head">
-    <div><p class="section-kicker">Platform</p><h2>选择账号平台</h2></div>
+    <div><h2>选择账号平台</h2></div>
   </div>
   <div class="connection-choice-list">
     <a class="connection-choice" href="/channels/connect?platform=wechat">
@@ -43,7 +43,7 @@
 {% elif stage == 'wechat_method' %}
 <section class="work-surface connection-surface">
   <div class="section-head">
-    <div><p class="section-kicker">Connection</p><h2>选择个人微信连接方式</h2></div>
+    <div><h2>选择个人微信连接方式</h2></div>
   </div>
   <div class="connection-choice-list">
     <a class="connection-choice" href="/channels/connect?channel_type=wechat_ipad">
@@ -63,7 +63,7 @@
 <section class="work-surface connection-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Connect</p>
+
       <h2>
         {% if requested_type == 'telegram' %}连接 Telegram
         {% elif requested_type == 'workwechat' %}连接企业微信
@@ -119,7 +119,7 @@
 {% elif stage == 'progress' and channel %}
 <section class="work-surface connection-surface"{% if channel.channel_type == 'wechat_ipad' %} id="connection-ipad-flow"{% endif %}>
   <div class="section-head">
-    <div><p class="section-kicker">Verification</p><h2>{{ channel.channel_type|channel_type_label }}账号验证</h2></div>
+    <div><h2>{{ channel.channel_type|channel_type_label }}账号验证</h2></div>
     <span class="chip chip-muted" id="connection-state-label">{% if channel.channel_type == 'wechat_ipad' %}准备二维码{% else %}{{ connection.label }}{% endif %}</span>
   </div>
   <div class="connection-progress-body">
@@ -161,7 +161,7 @@
 {% elif stage == 'confirm' and channel %}
 <section class="work-surface connection-surface">
   <div class="section-head">
-    <div><p class="section-kicker">Confirm</p><h2>确认启用账号</h2></div>
+    <div><h2>确认启用账号</h2></div>
     <span class="chip chip-success">验证成功</span>
   </div>
   <dl class="connection-confirm-list">

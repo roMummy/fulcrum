@@ -20,7 +20,7 @@
 
 {% if order.status == 'payment_submitted' %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Review</p><h2>审核操作</h2></div></div>
+  <div class="section-head"><div><h2>审核操作</h2></div></div>
   <form method="post" action="/platform/billing/orders/{{ order.id }}/approve" data-confirm-mode="confirm" data-confirm-title="批准订单" data-confirm-message="批准后将立即创建或续期订阅。">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <button class="btn" type="submit">批准并开通</button>

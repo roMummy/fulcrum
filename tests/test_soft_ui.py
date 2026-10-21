@@ -26,27 +26,27 @@ def _read_css_rule(stylesheet: str, selector: str) -> str:
     return stylesheet.split(f"{selector} {{", 1)[1].split("}", 1)[0]
 
 
-def test_swiss_tokens_and_forbidden_visual_patterns() -> None:
-    """全站必须使用已确认的 Swiss Style 色板和直角网格语言。
+def test_soft_ui_tokens_and_forbidden_visual_patterns() -> None:
+    """全站必须使用已确认的 Soft UI 色板、圆角表面与紧凑后台间距。
 
-    这里约束产品级视觉基础，不枚举每个业务组件的像素值。黑白灰承担信息结构，
-    红、蓝、黄只承担信号与状态；渐变、玻璃模糊和全圆角会破坏理性网格，因此不能
-    通过局部页面重新引入。
+    这里约束产品级视觉基础，不枚举每个业务组件的像素值。白色表面与柔影承担信息结构，
+    靛紫用于品牌和交互，语义色用于运行状态；旧高饱和色和粗黑边界不能通过局部
+    页面重新引入。
     """
 
     stylesheet = _read_project_file(STYLE_PATH)
     font_stylesheet = _read_project_file(FONT_STYLE_PATH)
 
     for required_token in (
-        "--bg: #fafafa;",
+        "--bg: #f5f6fa;",
         "--surface: #ffffff;",
-        "--surface-muted: #f0f0f0;",
-        "--text: #0a0a0a;",
-        "--signal: #ff0000;",
-        "--info: #0057b8;",
-        "--warning: #ffcc00;",
-        "--radius-lg: 0;",
-        "--space-section: 48px;",
+        "--surface-muted: #f1f5f9;",
+        "--text: #1f2937;",
+        "--signal: #6366f1;",
+        "--info: #496ba8;",
+        "--warning: #a66416;",
+        "--radius-lg: 20px;",
+        "--space-section: 20px;",
     ):
         assert required_token in stylesheet
 
@@ -54,7 +54,7 @@ def test_swiss_tokens_and_forbidden_visual_patterns() -> None:
     assert 'font-family: "Albert Sans";' in font_stylesheet
     assert 'font-family: "Noto Sans SC";' in font_stylesheet
     assert "font-size: 15px;" in stylesheet
-    assert "font-weight: 380;" in stylesheet
+    assert "font-weight: 400;" in stylesheet
 
     font_root = PROJECT_ROOT / "app/static/fonts"
     assert len(list((font_root / "albert-sans").glob("*.woff2"))) == 2
@@ -62,16 +62,16 @@ def test_swiss_tokens_and_forbidden_visual_patterns() -> None:
     assert (font_root / "FONT-LICENSES.md").exists()
 
     for forbidden_pattern in (
-        "linear-gradient(",
-        "radial-gradient(",
+        "#ff0000",
+        "#0a0a0a",
         "backdrop-filter:",
-        "border-radius: 999px",
+        "border-top: 4px solid",
     ):
         assert forbidden_pattern not in stylesheet
 
 
-def test_backend_shell_uses_swiss_top_navigation_and_keeps_platform_identity_separate() -> None:
-    """双后台必须共享 Swiss 顶部导航，同时保留平台与企业身份边界。
+def test_backend_shell_uses_soft_top_navigation_and_keeps_platform_identity_separate() -> None:
+    """双后台必须共享紧凑顶部导航，同时保留平台与企业身份边界。
 
     桌面侧栏会长期占用业务工作区，且和移动顶部栏形成两套结构。本轮统一为顶部
     导航后，只允许保留一套导航数据和一个响应式壳层，避免后续入口在两处产生差异。
@@ -95,9 +95,9 @@ def test_backend_shell_uses_swiss_top_navigation_and_keeps_platform_identity_sep
     assert "企业工作台" in base_template
     assert "平台管理后台" in platform_template
     assert "request.url.path.startswith('/platform')" in base_template
-    assert '<meta name="theme-color" content="#fafafa" />' in base_template
+    assert '<meta name="theme-color" content="#f5f6fa" />' in base_template
 
-    # 顶栏、工作区和页头必须通过黑白网格与信号红建立层级，不能退回低对比暖灰表面。
+    # 规约明确后台内容优先：收紧页头、拓宽工作区，导航通过浅色选中面表达当前位置。
     topbar_rule = _read_css_rule(stylesheet, ".app-topbar")
     topbar_inner_rule = _read_css_rule(stylesheet, ".app-topbar-inner")
     workspace_rule = _read_css_rule(stylesheet, ".workspace")
@@ -105,17 +105,17 @@ def test_backend_shell_uses_swiss_top_navigation_and_keeps_platform_identity_sep
     active_nav_rule = _read_css_rule(stylesheet, ".nav-link.active")
 
     assert "background: var(--surface);" in topbar_rule
-    assert "border-bottom: 1px solid var(--border-strong);" in topbar_rule
-    assert "min-height: 68px;" in topbar_inner_rule
-    assert "padding: 44px 0 80px;" in workspace_rule
-    assert "margin-bottom: 36px;" in page_header_rule
-    assert "border-bottom: 1px solid var(--border);" in page_header_rule
-    assert "color: var(--text);" in active_nav_rule
-    assert ".nav-link.active::after" in stylesheet
+    assert "box-shadow:" in topbar_rule
+    assert "min-height: 64px;" in topbar_inner_rule
+    assert "padding: 24px 0 40px;" in workspace_rule
+    assert "margin-bottom: 20px;" in page_header_rule
+    assert "border-bottom:" not in page_header_rule
+    assert "color: var(--primary-strong);" in active_nav_rule
+    assert ".nav-link.active::after" not in stylesheet
 
 
-def test_marketing_and_auth_pages_use_swiss_grid_and_preserve_accessibility_contracts() -> None:
-    """营销与认证页面必须使用 Swiss 网格，并保留真实产品与表单语义。"""
+def test_marketing_and_auth_pages_use_soft_surfaces_and_preserve_accessibility_contracts() -> None:
+    """营销与认证页面必须使用统一的柔和视觉，并保留真实产品与表单语义。"""
 
     marketing_home = _read_project_file(TEMPLATE_ROOT / "marketing_home.html")
     marketing_base = _read_project_file(TEMPLATE_ROOT / "marketing_base.html")
@@ -135,12 +135,17 @@ def test_marketing_and_auth_pages_use_swiss_grid_and_preserve_accessibility_cont
     assert "<h1>曜枢 AI</h1>" in marketing_home
     assert "marketing-hero-content" not in marketing_home
     assert 'role="alert"' in marketing_base
-    assert '<meta name="theme-color" content="#fafafa" />' in marketing_base
-    assert 'class="marketing-auth-context marketing-auth-context-signal"' in enterprise_login
-    assert 'class="marketing-auth-context marketing-auth-context-signal"' in register
+    assert '<meta name="theme-color" content="#f5f6fa" />' in marketing_base
+    assert "{% extends 'auth_base.html' %}" in enterprise_login
+    assert "{% extends 'auth_base.html' %}" in register
+    auth_base = _read_project_file(TEMPLATE_ROOT / "auth_base.html")
+    auth_fields = _read_project_file(TEMPLATE_ROOT / "_auth_fields.html")
+    assert 'role="alert"' in auth_base
+    assert 'aria-live="polite"' in auth_base
     assert 'autocomplete="username"' in enterprise_login
-    assert 'autocomplete="current-password"' in enterprise_login
-    for autocomplete in ("organization", "name", "tel", "new-password"):
+    assert "autocomplete='current-password'" in auth_fields
+    assert "autocomplete='new-password'" in register
+    for autocomplete in ("organization", "name", "tel"):
         assert f'autocomplete="{autocomplete}"' in register
 
 
@@ -191,11 +196,11 @@ def test_marketing_hero_interaction_respects_motion_and_keyboard_boundaries() ->
         assert required_script in script
 
 
-def test_swiss_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
+def test_soft_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
     """站内标志与圆角 favicon 必须共享内部几何，并彻底删除旧渐变机器人。
 
-    SVG 使用 XML 解析而不是字符串猜测结构。站内版本保持直角红底，浏览器图标只
-    改变外层圆角；白色 Y 路径和蓝色枢点必须完全相同，避免形成两套品牌标志。
+    SVG 使用 XML 解析而不是字符串猜测结构。站内版本使用圆角靛紫底，浏览器图标只
+    改变外层圆角；白色 Y 路径和浅靛枢点必须完全相同，避免形成两套品牌标志。
     """
 
     assert BRAND_MARK_PATH.exists()
@@ -210,9 +215,9 @@ def test_swiss_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
     favicon_background = favicon_root.find("svg:rect", namespace)
     assert brand_background is not None
     assert favicon_background is not None
-    assert brand_background.attrib.get("rx") in (None, "0")
+    assert brand_background.attrib.get("rx") == "16"
     assert favicon_background.attrib.get("rx") == "14"
-    assert brand_background.attrib.get("fill") == favicon_background.attrib.get("fill") == "#ff0000"
+    assert brand_background.attrib.get("fill") == favicon_background.attrib.get("fill") == "#6366f1"
 
     brand_path = brand_root.find("svg:path", namespace)
     favicon_path = favicon_root.find("svg:path", namespace)
@@ -223,7 +228,7 @@ def test_swiss_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
     brand_pivot = brand_root.findall("svg:rect", namespace)[1]
     favicon_pivot = favicon_root.findall("svg:rect", namespace)[1]
     assert brand_pivot.attrib == favicon_pivot.attrib
-    assert brand_pivot.attrib.get("fill") == "#0057b8"
+    assert brand_pivot.attrib.get("fill") == "#c7d2fe"
 
     base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
     marketing_base = _read_project_file(TEMPLATE_ROOT / "marketing_base.html")
@@ -233,8 +238,8 @@ def test_swiss_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
     assert '<span class="marketing-brand-mark" aria-hidden="true">曜</span>' not in marketing_base
 
 
-def test_dashboards_use_swiss_data_bands_and_single_layer_surfaces() -> None:
-    """两个总览必须使用连续数据带和单层 Swiss 业务表面。"""
+def test_dashboards_use_compact_data_grids_and_single_layer_surfaces() -> None:
+    """两个总览必须使用紧凑指标网格和单层业务表面。"""
 
     tenant_dashboard = _read_project_file(TEMPLATE_ROOT / "dashboard.html")
     platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
@@ -265,8 +270,14 @@ def test_dashboards_use_swiss_data_bands_and_single_layer_surfaces() -> None:
         assert forbidden_class not in tenant_dashboard
         assert forbidden_class not in platform_dashboard
 
+    # 首屏使用曲线不应丢掉逐小时精确读数；原始数据必须仍能通过原生折叠区查看。
+    chart_template = _read_project_file(TEMPLATE_ROOT / "_dashboard_chart.html")
+    assert '<details class="dashboard-chart-detail">' in chart_template
+    assert "{{ item.label }}" in chart_template
+    assert "{{ item.value }}" in chart_template
 
-def test_overview_grids_align_swiss_surfaces_without_fixed_heights() -> None:
+
+def test_overview_grids_align_soft_surfaces_without_fixed_heights() -> None:
     """总览业务表面必须通过网格拉伸对齐，不能依赖固定高度。
 
     企业总览包含五组双列业务卡片，必须统一声明总览专用网格语义，避免通用的
@@ -285,7 +296,7 @@ def test_overview_grids_align_swiss_surfaces_without_fixed_heights() -> None:
 
 
 def test_platform_analytics_uses_stable_charts_and_mobile_single_column_layout() -> None:
-    """平台大盘必须有稳定图表、明确 Swiss 分区和移动单列布局。"""
+    """平台大盘必须有稳定图表、明确业务分区和移动单列布局。"""
 
     platform_dashboard = _read_project_file(TEMPLATE_ROOT / "platform_dashboard.html")
     stylesheet = _read_project_file(STYLE_PATH)
@@ -296,13 +307,13 @@ def test_platform_analytics_uses_stable_charts_and_mobile_single_column_layout()
     assert ".platform-analytics-chart-grid" in stylesheet
     assert ".platform-analytics-surface" in stylesheet
     assert ".platform-analytics-surface > .platform-analytics-grid" in stylesheet
-    assert "aspect-ratio: 16 / 7;" in stylesheet
+    assert "height: 210px;" in stylesheet
     assert "@media (max-width: 820px)" in stylesheet
     assert ".platform-analytics-grid" in stylesheet
 
 
-def test_shared_styles_define_mobile_navigation_and_swiss_work_surfaces() -> None:
-    """共享样式必须显式覆盖移动导航与直角单层业务表面。"""
+def test_shared_styles_define_mobile_navigation_and_soft_work_surfaces() -> None:
+    """共享样式必须显式覆盖移动导航与圆角单层业务表面。"""
 
     stylesheet = _read_project_file(STYLE_PATH)
 
@@ -312,7 +323,7 @@ def test_shared_styles_define_mobile_navigation_and_swiss_work_surfaces() -> Non
     assert ".metric-band" in stylesheet
     page_section_rule = _read_css_rule(stylesheet, ".page-section")
     assert "background: var(--surface);" in page_section_rule
-    assert "border-top: 4px solid var(--border-strong);" in page_section_rule
+    assert "box-shadow: var(--shadow-card);" in page_section_rule
     assert "border-radius: var(--radius-lg);" in page_section_rule
     assert "@media (max-width: 820px)" in stylesheet
     assert ".app-nav-toggle" in stylesheet
@@ -346,7 +357,8 @@ def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> Non
     platform_plans = _read_project_file(TEMPLATE_ROOT / "platform_plans.html")
 
     for template_source in (tenant_users, platform_users, platform_plans):
-        assert 'class="editor-surface"' in template_source
+        assert 'class="editor-surface"' not in template_source
+        assert 'data-modal-open="create-' in template_source
         assert 'class="page-section"' in template_source
         assert 'class="record-list"' in template_source
         assert 'class="record-row"' in template_source
@@ -355,6 +367,8 @@ def test_account_and_plan_management_use_compact_lists_and_edit_dialogs() -> Non
     assert 'data-modal-open="edit-tenant-user-' in tenant_users
     assert 'data-modal-open="edit-platform-user-' in platform_users
     assert 'data-modal-open="edit-plan-' in platform_plans
+    base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
+    assert 'lastModalTrigger = actionMenu ? actionMenu.querySelector("summary") : button;' in base_template
     assert '<td colspan="5">' not in tenant_users
     assert '<td colspan="4">' not in platform_users
     assert '<td colspan="9">' not in platform_plans
@@ -411,14 +425,41 @@ def test_mobile_data_table_and_platform_login_keep_page_boundaries() -> None:
     assert '<tr><td colspan="7"><div class="empty-state">' not in bots_template
     assert '<h1 id="platform-login-title">平台管理后台</h1>' in platform_login
     assert ".page-section:has(> .table)" in stylesheet
-    assert ".marketing-nav::-webkit-scrollbar" in stylesheet
+    assert ".marketing-nav {\n    justify-content: flex-start;\n    flex-wrap: wrap;" in stylesheet
     assert "width: min(100% - 40px, 520px);" in stylesheet
     assert "body {\n    font-size: 15px;" in stylesheet
     assert ".dashboard-kpi-grid .metric-item:nth-child(5n)" not in stylesheet
 
 
+def test_nested_details_shrink_and_mobile_metrics_keep_two_columns() -> None:
+    """回归实际手机溢出：小节允许收缩，局部宽表滚动；短指标不再全部堆叠单列。"""
+
+    stylesheet = _read_project_file(STYLE_PATH)
+    chatroom = _read_project_file(TEMPLATE_ROOT / "chatroom_detail.html")
+    subsection_rule = _read_css_rule(stylesheet, ".subsection")
+    assert "min-width: 0;" in subsection_rule
+    assert '<div class="table-scroll">' in chatroom
+    assert "metric-item-text" in chatroom
+    assert ".stats-grid:not(.time-metric-grid)" in stylesheet
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in stylesheet
+
+
+def test_soft_auth_controls_preserve_visibility_and_submit_state() -> None:
+    """密码显示必须由原生按钮主动触发，提交后提供等待状态并在浏览器返回时恢复。"""
+
+    script = _read_project_file(PROJECT_ROOT / "app/static/js/auth.js")
+    fields = _read_project_file(TEMPLATE_ROOT / "_auth_fields.html")
+    assert 'type="button" data-password-toggle' in fields
+    assert 'aria-pressed="false"' in fields
+    assert ' hidden>显示</button>' in fields
+    assert 'toggle.setAttribute("aria-pressed", String(visible))' in script
+    assert 'form.setAttribute("aria-busy", "true")' in script
+    assert 'button.textContent = "正在提交…"' in script
+    assert 'window.addEventListener("pageshow"' in script
+
+
 def test_all_templates_have_migrated_away_from_legacy_card_tokens() -> None:
-    """全站模板不得继续引用旧卡片语义或通过内联样式恢复大圆角。
+    """全站模板不得继续引用旧卡片语义或通过内联样式绕过共享圆角规则。
 
     新样式不提供旧类名兼容层，因此这里同时约束模板和 CSS。这样后续新增页面必须
     明确选择工作表面、指标单元或内部小节，而不能继续使用含义模糊的通用卡片。

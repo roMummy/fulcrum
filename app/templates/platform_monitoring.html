@@ -7,7 +7,7 @@
 {% endblock %}
 {% block content %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Platform health</p><h2>全局运行概览</h2></div><a class="btn btn-secondary" href="/platform/logs">查看全局日志</a></div>
+  <div class="section-head"><div><h2>全局运行概览</h2></div><a class="btn btn-secondary" href="/platform/logs">查看全局日志</a></div>
   <div class="stats-grid compact-grid">
     <div class="metric-item metric-item-accent"><span>健康检查总数</span><strong>{{ stats.health_checks }}</strong></div>
     <div class="metric-item danger-soft"><span>未关闭告警</span><strong>{{ stats.open_alerts }}</strong></div>
@@ -18,7 +18,7 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Alerts</p><h2>未关闭告警</h2></div></div>
+  <div class="section-head"><div><h2>未关闭告警</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-md">
     <table class="table table-tight ops-record-table">
       <thead><tr><th>ID</th><th>租户</th><th>来源</th><th>级别</th><th>标题</th><th>时间</th><th>操作</th></tr></thead>
@@ -44,7 +44,7 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Checks</p><h2>最近健康检查</h2></div></div>
+  <div class="section-head"><div><h2>最近健康检查</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-md">
     <table class="table table-tight ops-record-table">
       <thead><tr><th>ID</th><th>租户</th><th>范围</th><th>目标</th><th>状态</th><th>摘要</th><th>时间</th></tr></thead>
@@ -58,7 +58,7 @@
 </section>
 
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Audit trail</p><h2>最近租户操作审计</h2></div></div>
+  <div class="section-head"><div><h2>最近租户操作审计</h2></div></div>
   <div class="record-scroll-panel record-scroll-panel-lg">
     <table class="table table-tight ops-record-table">
       <thead><tr><th>ID</th><th>租户</th><th>操作者</th><th>动作</th><th>对象</th><th>明细</th><th>时间</th></tr></thead>

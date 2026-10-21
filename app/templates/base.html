@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#fafafa" />
+  <meta name="theme-color" content="#f5f6fa" />
   <title>{{ page_title }} - 曜枢 AI</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
-{# 平台登录和首次安装页共用认证壳，企业登录使用独立营销站点布局。 #}
-{% set auth_shell_paths = ['/platform/login', '/setup', '/setup/completed'] %}
+{# 首次安装页保留设置壳；企业与平台登录统一由 auth_base 提供视觉结构。 #}
+{% set auth_shell_paths = ['/setup', '/setup/completed'] %}
 {% set is_platform_area = request.url.path.startswith('/platform') %}
 {% set backend_home_href = '/platform/dashboard' if is_platform_area else '/dashboard' %}
 <body class="{% if request.url.path in auth_shell_paths %}auth-shell{% else %}app-shell{% endif %}">
@@ -46,7 +46,7 @@
         {% set overflow_nav_items = secondary_nav_items|default([]) %}
         <nav class="app-primary-nav" aria-label="主导航">
           {% for item in visible_nav_items %}
-          <a href="{{ item.href }}" class="nav-link{% if item.active %} active{% endif %}">{{ item.label }}</a>
+          <a href="{{ item.href }}" class="nav-link{% if item.active %} active{% endif %}"{% if item.active %} aria-current="page"{% endif %}>{{ item.label }}</a>
           {% endfor %}
           {% if overflow_nav_items %}
           <details class="nav-more">
@@ -93,7 +93,6 @@
       <main class="workspace" id="main-content" tabindex="-1">
       <section class="page-header">
         <div class="page-header-copy">
-          <p class="eyebrow">{% if is_platform_area %}平台运营{% else %}企业运营{% endif %}</p>
           <h1{% if page_title_class %} class="{{ page_title_class }}"{% endif %}>{{ page_title }}</h1>
           <div class="page-intro">{% block page_intro %}{% endblock %}</div>
         </div>
@@ -107,7 +106,7 @@
       {% if section_nav_items %}
       <nav class="section-tabs" aria-label="当前模块入口">
         {% for item in section_nav_items %}
-        <a class="section-tab{% if item.active %} active{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+        <a class="section-tab{% if item.active %} active{% endif %}" href="{{ item.href }}"{% if item.active %} aria-current="page"{% endif %}>{{ item.label }}</a>
         {% endfor %}
       </nav>
       {% endif %}
@@ -128,7 +127,7 @@
     <div class="app-modal-card confirm-modal-card">
       <div class="app-modal-head">
         <div>
-          <p class="section-kicker">Confirm</p>
+
           <h2 id="confirm-action-title">确认操作</h2>
           <p class="muted-text" id="confirm-action-message">请确认是否继续。</p>
         </div>
@@ -277,7 +276,9 @@
             if (actionMenu) {
               actionMenu.open = false;
             }
-            lastModalTrigger = button;
+            // 操作菜单在打开弹窗时已经收起，原按钮不可见；关闭后返回仍可见的菜单摘要。
+            // 页头直接打开的新增弹窗仍返回原按钮，避免键盘焦点遗留在已关闭的 dialog 内。
+            lastModalTrigger = actionMenu ? actionMenu.querySelector("summary") : button;
             dialog.showModal();
             // 弹窗打开后把焦点移入弹窗，键盘用户不需要重新 Tab 很多次才能操作表单。
             const firstFocusable = dialog.querySelector(focusableSelector);

@@ -1,8 +1,10 @@
 {% extends 'platform_base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/platform/tenants">租户管理</a>{% endblock %}
+{% block hero_actions %}<button class="btn" type="button" data-modal-open="create-plan">新增套餐</button><a class="btn btn-secondary" href="/platform/tenants">租户管理</a>{% endblock %}
 {% block content %}
-<section class="editor-surface">
-  <div class="section-head"><div><h2>新增套餐</h2></div></div>
+{# 大表单按需打开，套餐比较清单始终优先展示；创建和编辑仍提交同一个保存接口。 #}
+<dialog class="app-modal" id="create-plan" aria-labelledby="create-plan-title">
+  <div class="app-modal-card">
+  <div class="app-modal-head"><div><h2 id="create-plan-title">新增套餐</h2></div><button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button></div>
   <form method="post" action="/platform/plans" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <input type="hidden" name="plan_id" value="0" />
@@ -18,9 +20,10 @@
     <label><span>公开展示</span><select name="is_public"><option value="false">否</option><option value="true">是</option></select></label>
     <label><span>推荐套餐</span><select name="is_featured"><option value="false">否</option><option value="true">是</option></select></label>
     <label class="full-row"><span>说明</span><textarea name="description" rows="3"></textarea></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建套餐</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建套餐</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
   </form>
-</section>
+  </div>
+</dialog>
 
 <section class="page-section">
   <div class="section-head"><div><h2>套餐清单</h2></div><span class="chip chip-outline">{{ plans|length }} 个套餐</span></div>

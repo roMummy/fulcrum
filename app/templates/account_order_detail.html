@@ -16,7 +16,7 @@
 
 {% if order.status in ['pending_payment', 'rejected'] and can_manage_billing %}
 <section class="work-surface">
-  <div class="section-head"><div><p class="section-kicker">Payment</p><h2>{{ payment_instructions.title }}</h2></div></div>
+  <div class="section-head"><div><h2>{{ payment_instructions.title }}</h2></div></div>
   {% if payment_instructions.instructions %}<p>{{ payment_instructions.instructions }}</p>{% endif %}
   {% if payment_instructions.qr_image %}<img class="payment-qr-image" src="{{ payment_instructions.qr_image }}" alt="收款二维码" />{% endif %}
   {% if payment_instructions.bank_details %}<pre class="payment-bank-details">{{ payment_instructions.bank_details }}</pre>{% endif %}

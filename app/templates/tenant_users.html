@@ -1,22 +1,25 @@
 {% extends 'base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/subscription">查看订阅</a>{% endblock %}
+{% block hero_actions %}{% if can_manage_users %}<button class="btn" type="button" data-modal-open="create-tenant-user">新增员工</button>{% endif %}<a class="btn btn-secondary" href="/tenant/subscription">查看订阅</a>{% endblock %}
 {% block content %}
 {% if initial_password %}
 <section class="notice-card"><strong>一次性初始密码</strong><p><code>{{ initial_password }}</code></p><p class="muted-text">该密码未保存明文，离开或刷新本页后无法再次查看。</p></section>
 {% endif %}
 
 {% if can_manage_users %}
-<section class="editor-surface">
-  <div class="section-head"><div><h2>新增员工</h2></div></div>
+{# 按原权限控制弹窗入口与表单，手机号、角色、CSRF 仍由原服务端路径校验。 #}
+<dialog class="app-modal" id="create-tenant-user" aria-labelledby="create-tenant-user-title">
+  <div class="app-modal-card">
+  <div class="app-modal-head"><div><h2 id="create-tenant-user-title">新增员工</h2></div><button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button></div>
   <form method="post" action="/tenant/users" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label><span>用户名</span><input name="username" required /></label>
     <label><span>登录手机号</span><input name="mobile" type="tel" inputmode="tel" autocomplete="tel" required /></label>
     <label><span>显示名</span><input name="display_name" required /></label>
     <label><span>角色</span><select name="role"><option value="readonly">只读</option><option value="operator">运营</option><option value="tenant_admin">租户管理员</option></select></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建员工</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建员工</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
   </form>
-</section>
+  </div>
+</dialog>
 {% endif %}
 
 <section class="page-section">

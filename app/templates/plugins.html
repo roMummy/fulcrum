@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <section class="work-surface">
-  <div class="stats-grid compact-grid">
+  <div class="stats-grid plugin-catalog-metrics">
     <div class="metric-item ">
       <span>功能型插件</span>
       <strong>{{ runtime_summary.functional_total }}</strong>
@@ -194,64 +194,26 @@
     </form>
   </details>
   {% if plugins %}
-  <div class="plugin-card-grid">
+  {# 目录采用紧凑条目；版本、作者及完整能力标签由已有详情页承载，不重复平铺技术信息。 #}
+  <div class="plugin-catalog-list">
     {% for plugin in plugins %}
     {% set runtime_info = plugin_runtime_map.get(plugin.code, {}) %}
-    {% set has_manifest_errors = runtime_info.manifest_errors %}
-    {% set has_manifest_warnings = runtime_info.manifest_warnings %}
-    <article class="plugin-overview-card {% if has_manifest_errors %}plugin-overview-card-danger{% elif has_manifest_warnings %}plugin-overview-card-warning{% endif %}">
-      <div class="plugin-overview-head">
-        <div class="plugin-overview-title">
-          <a href="/plugins/{{ plugin.id }}">{{ plugin.display_name }}</a>
-          <p><code>{{ plugin.code }}</code></p>
-        </div>
-        <div class="plugin-overview-badges">
-          <span class="badge {% if runtime_info.migration_state == 'migrated' %}badge-enabled{% else %}badge-error{% endif %}">
-            {{ '状态正常' if runtime_info.migration_state == 'migrated' else '需要处理' }}
-          </span>
-          <span class="badge {% if runtime_info.supports_execution %}badge-info{% else %}badge-disabled{% endif %}">
-            {{ '可执行' if runtime_info.supports_execution else '不可执行' }}
-          </span>
-          <span class="badge {% if plugin.default_enabled %}badge-enabled{% else %}badge-disabled{% endif %}">
-            {{ '默认启用' if plugin.default_enabled else '默认关闭' }}
-          </span>
-        </div>
-      </div>
-
-      <p class="plugin-overview-description">{{ plugin.description or '暂无插件描述。' }}</p>
-
-      <div class="plugin-overview-meta">
-        <div><span>类型</span><strong>{{ plugin.plugin_type or '-' }}</strong></div>
-        <div><span>分类</span><strong>{{ runtime_info.plugin_category or '-' }}</strong></div>
-        <div><span>版本</span><strong>{{ plugin.version or '-' }}</strong></div>
-        <div><span>作者</span><strong>{{ plugin.author or '-' }}</strong></div>
-      </div>
-
-      <div class="chip-row plugin-overview-tags">
-        {% if runtime_info.capabilities %}
-          {% for capability in runtime_info.capabilities %}
-          <span class="chip chip-muted">{{ capability }}</span>
-          {% endfor %}
-        {% else %}
-        <span class="chip chip-muted">暂无能力标签</span>
+    <article class="plugin-catalog-row">
+      <span class="plugin-catalog-icon" aria-hidden="true">{{ plugin.display_name[:1] }}</span>
+      <div class="plugin-catalog-copy">
+        <h3><a href="/plugins/{{ plugin.id }}">{{ plugin.display_name }}</a></h3>
+        <p>{{ plugin.description or '暂无插件描述。' }}</p>
+        {% if runtime_info.manifest_errors %}
+        <p class="plugin-catalog-warning">暂不可用 · {{ runtime_info.manifest_errors|join('；') }}</p>
+        {% elif runtime_info.manifest_warnings %}
+        <p class="plugin-catalog-warning">使用提醒 · {{ runtime_info.manifest_warnings|join('；') }}</p>
         {% endif %}
       </div>
-
-      {% if has_manifest_errors %}
-      <div class="plugin-overview-alert plugin-overview-alert-danger">
-        <strong>Manifest 错误</strong>
-        <p>{{ runtime_info.manifest_errors|join('；') }}</p>
+      <div class="plugin-catalog-state">
+        <span class="chip {% if runtime_info.supports_execution %}chip-success{% else %}chip-muted{% endif %}">{{ '可执行' if runtime_info.supports_execution else '不可执行' }}</span>
+        <span class="muted-text">{{ plugin.version or '—' }}</span>
       </div>
-      {% elif has_manifest_warnings %}
-      <div class="plugin-overview-alert plugin-overview-alert-warning">
-        <strong>Manifest 提示</strong>
-        <p>{{ runtime_info.manifest_warnings|join('；') }}</p>
-      </div>
-      {% endif %}
-
-      <div class="plugin-overview-actions">
-        <a class="btn btn-secondary" href="/plugins/{{ plugin.id }}">查看详情</a>
-      </div>
+      <a class="btn btn-small btn-secondary" href="/plugins/{{ plugin.id }}" aria-label="配置 {{ plugin.display_name }}">查看详情</a>
     </article>
     {% endfor %}
   </div>
