@@ -1,0 +1,40 @@
+[plugin]
+code = "fanhao_search"
+display_name = "番号查询"
+plugin_type = "command"
+version = "2.0.0"
+author = "abot"
+description = "查询影片详情，并支持引用图片进行以图查番。"
+default_enabled = false
+
+[capability]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text", "image"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 30000
+
+[matcher]
+commands = ["番号", "番号查询", "查番", "以图查番"]
+require_mention = false
+
+[runtime]
+enabled = false
+commands = ["番号", "番号查询"]
+image_search_enabled = true
+image_search_commands = ["查番", "以图查番"]
+javbus_base_url = "https://www.javbus.com"
+javbus_fallback_base_urls = ["https://www.cdnbus.casa"]
+request_timeout_seconds = 8
+allow_download_link = true
+prefer_subtitle_magnet = true
+avscan_base_url = "https://avscan.cc"
+avscan_timeout_seconds = 20
+avscan_result_count = 2
+avscan_min_similarity = 60
+avscan_fetch_detail = true
+points_cost = 100
+rate_limit = 3
+rate_window_seconds = 60
+max_image_bytes = 8388608
