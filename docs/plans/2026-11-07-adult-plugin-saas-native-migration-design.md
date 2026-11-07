@@ -1,5 +1,11 @@
 # 成人内容插件 SaaS 原生迁移设计
 
+## 实施状态（2026-11-07）
+
+四批迁移已经按 SaaS 原生重构方案完成：`beautyleg`、`video`、`video_man`、`fanhao_search`、`xiuren_image` 和 `sehuatang_push` 均已进入当前目录插件协议，并接入统一租户状态、媒体边界、文件出站队列和计划任务调度。迁移校验器当前识别 44 个目录插件，其中 42 个来自 A-BOT 目标台账、2 个为 SaaS 自有插件，错误数量为 0。
+
+`sehuatang_push` 的 PDF 渲染仅使用当前运行环境提供的 Playwright Chromium；代码不会隐式安装系统依赖，也不保留旧 Selenium、A-BOT 客户端或旧路径回退。真实第三方站点、浏览器、代理和渠道发送仍需在目标部署环境单独验收。
+
 ## 目标
 
 将 `/data/abot` 中的 `beautyleg`、`video`、`video_man`、`fanhao_search`、`xiuren_image` 和 `sehuatang_push` 六个插件，以当前 Multi Bot SaaS 的目录插件、租户绑定、标准消息、媒体、积分、状态和统一调度能力重新实现。

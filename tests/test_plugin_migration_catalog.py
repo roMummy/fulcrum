@@ -112,7 +112,7 @@ def test_existing_plugin_directories_have_single_saas_entrypoint() -> None:
 
 
 def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> None:
-    """迁移进行中校验器必须识别完整目标集合，并明确报告尚未创建的目录。"""
+    """交付校验器必须识别完整目标集合，并在四批迁移完成后返回成功。"""
 
     assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | ADULT_PLUGIN_CODES
     assert VERIFIED_SAAS_OWN_PLUGIN_CODES == SAAS_OWN_PLUGIN_CODES
@@ -125,11 +125,10 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
         check=False,
     )
 
-    # 四批迁移尚未创建六个目录，因此当前阶段应返回缺失目录，而不是静默把
-    # 目标集合缩回旧的 36 个插件；最终交付任务会把这里恢复为成功断言。
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "目录插件总数: 43" in result.stdout
+    # 六个成人插件已经全部进入 SaaS 原生目录，校验器应返回成功，避免后续
+    # 为了兼容迁移中间状态而保留第二套目录统计逻辑。
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "目录插件总数: 44" in result.stdout
     assert "A-BOT 目标插件数: 42" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
-    assert "sehuatang_push: 缺少插件目录" in result.stdout
-    assert "sehuatang_push: 缺少插件目录" in result.stdout
+    assert "错误数量: 0" in result.stdout

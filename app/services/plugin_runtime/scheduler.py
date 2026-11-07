@@ -152,6 +152,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
                     "value_rank",
                     "weather",
                     "xiuren_image",
+                    "sehuatang_push",
                 )
             ),
         )
@@ -655,6 +656,30 @@ def _build_plugin_schedule_specs(
                 high_side_effect=False,
                 priority=70,
             ),
+        )
+    if plugin_code == "sehuatang_push":
+        # 涩图 PDF 推送只对租户在绑定配置中明确选择的会话创建任务。
+        # 任务载荷不保存站点地址、文件内容或其他外部输入，执行时由绑定配置和
+        # 当前租户上下文重建，避免跨租户传递可伪造的目标信息。
+        if not _coerce_bool(config.get("enabled"), False):
+            return ()
+        conversation_ids = _normalize_positive_ids(config.get("target_conversation_ids"))
+        if not conversation_ids:
+            return ()
+        hour, minute = _parse_clock_time(str(config.get("push_time") or "15:30"))
+        scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if current < scheduled_for:
+            return ()
+        return tuple(
+            PluginScheduledActionSpec(
+                action_key="daily_pdf_push",
+                scheduled_for=scheduled_for,
+                parameters={},
+                conversation_id=conversation_id,
+                high_side_effect=True,
+                priority=70,
+            )
+            for conversation_id in conversation_ids
         )
     return ()
 
