@@ -14,7 +14,7 @@ from app.services.plugin_runtime.contracts import (
 from app.services.plugin_runtime.rate_limit import PluginRateLimiter, PluginStateError
 from app.services.plugin_runtime.replies import standard_replies, text_reply
 
-from .service import BeautyLegConfig, build_image_reply, load_config, select_random_image
+from plugins.beautyleg.service import build_image_reply, load_config, select_random_image
 
 
 def matches_event(context) -> dict[str, object]:

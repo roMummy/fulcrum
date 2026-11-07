@@ -11,7 +11,7 @@ from app.services.plugin_runtime.rate_limit import PluginRateLimiter, PluginStat
 from app.services.plugin_runtime.replies import standard_replies, text_reply, video_reply
 from app.services.plugin_runtime.http_client import PluginHttpClient
 
-from .service import VideoConfig, fetch_video, load_config
+from plugins.video.service import fetch_video, load_config
 
 
 def matches_event(context) -> dict[str, object]:
