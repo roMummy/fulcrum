@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 通过显式依赖
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_ROOT = PROJECT_ROOT / "plugins"
 
-# 36 个目标代码来自已经确认的 A-BOT 迁移台账。交付校验固定使用完整集合，
+# 42 个目标代码来自已经确认的 A-BOT 迁移台账。交付校验固定使用完整集合，
 # 不允许因为某个插件暂时未配置第三方凭证就把目录从正式交付范围中排除。
 TARGET_PLUGIN_CODES = {
     "ai_auto_response",
@@ -28,6 +28,7 @@ TARGET_PLUGIN_CODES = {
     "douyu",
     "duanju_search",
     "epic_free",
+    "fanhao_search",
     "fun_command_play",
     "game_task",
     "github_opengraph",
@@ -50,8 +51,13 @@ TARGET_PLUGIN_CODES = {
     "newapi_coupon",
     "point_trade",
     "robot_menu",
+    "sehuatang_push",
     "value_rank",
     "weather",
+    "beautyleg",
+    "video",
+    "video_man",
+    "xiuren_image",
     "xiuxian",
 }
 
@@ -61,16 +67,10 @@ SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow"}
 # 排除项和平台原生能力不能重新以目录插件形式出现。平台管理、统计、运维和群级
 # 作用域已经有唯一 SaaS 页面和服务入口，不保留 A-BOT 单机管理兼容目录。
 FORBIDDEN_PLUGIN_CODES = {
-    "beautyleg",
-    "fanhao_search",
     "plugin_manager",
-    "sehuatang_push",
     "stats_collector",
     "system_updater",
     "trendradar_permission",
-    "video",
-    "video_man",
-    "xiuren_image",
 }
 
 FORBIDDEN_IMPORT_ROOTS = {"base", "db", "plugins", "utils"}

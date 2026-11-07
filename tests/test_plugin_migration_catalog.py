@@ -57,6 +57,17 @@ NEW_PLUGIN_CODES = {
     "xiuxian",
 }
 
+# 本次成人插件按四批逐步落地；目录台账允许它们进入最终 A-BOT 迁移集合，
+# 但每个批次仍需通过自己的功能测试后才能宣布完成。
+ADULT_PLUGIN_CODES = {
+    "beautyleg",
+    "fanhao_search",
+    "sehuatang_push",
+    "video",
+    "video_man",
+    "xiuren_image",
+}
+
 SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow"}
 
 # 这些能力已经明确排除或上移为平台原生能力。测试直接禁止同名目录出现，防止
@@ -89,7 +100,7 @@ def test_plugin_directories_stay_inside_confirmed_migration_scope() -> None:
     """目录插件只能来自已确认范围，不允许迁移过程顺手加入其他旧插件。"""
 
     actual = _directory_plugin_codes()
-    allowed = EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | SAAS_OWN_PLUGIN_CODES
+    allowed = EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | ADULT_PLUGIN_CODES | SAAS_OWN_PLUGIN_CODES
 
     assert EXISTING_PLUGIN_CODES <= actual
     assert actual <= allowed
@@ -106,10 +117,10 @@ def test_existing_plugin_directories_have_single_saas_entrypoint() -> None:
         assert not (plugin_dir / "main.py").exists()
 
 
-def test_delivery_verifier_accepts_the_complete_confirmed_catalog() -> None:
-    """最终交付工具必须覆盖完整迁移集合，并能在干净目录上独立返回成功。"""
+def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> None:
+    """迁移进行中校验器必须识别完整目标集合，并明确报告尚未创建的目录。"""
 
-    assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES
+    assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | ADULT_PLUGIN_CODES
     assert VERIFIED_SAAS_OWN_PLUGIN_CODES == SAAS_OWN_PLUGIN_CODES
 
     result = subprocess.run(
@@ -120,8 +131,11 @@ def test_delivery_verifier_accepts_the_complete_confirmed_catalog() -> None:
         check=False,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    # 四批迁移尚未创建六个目录，因此当前阶段应返回缺失目录，而不是静默把
+    # 目标集合缩回旧的 36 个插件；最终交付任务会把这里恢复为成功断言。
+    assert result.returncode == 1, result.stdout + result.stderr
     assert "目录插件总数: 38" in result.stdout
-    assert "A-BOT 目标插件数: 36" in result.stdout
+    assert "A-BOT 目标插件数: 42" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
-    assert "错误数量: 0" in result.stdout
+    assert "beautyleg: 缺少插件目录" in result.stdout
+    assert "sehuatang_push: 缺少插件目录" in result.stdout
