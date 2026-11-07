@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.routing import Match
 
 from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
+from app.api.local_proxy_connector import router as local_proxy_connector_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal, TenantSessionLocal
@@ -50,8 +51,11 @@ from app.services.login_proxy_pool import (
     LoginProxyPoolError,
     build_login_proxy_session_summary,
     create_login_proxy_session,
+    get_active_login_proxy_session,
     list_available_proxy_regions,
 )
+from app.services.local_proxy_relay import local_proxy_relay_server
+from app.services.local_proxy_connector import list_online_proxy_connectors
 from app.services.crud import (
     bind_plugin,
     delete_bot,
@@ -197,6 +201,7 @@ app.include_router(channel_inbound_router)
 app.include_router(customer_operations_router)
 app.include_router(open_api_router)
 app.include_router(workwechat_provider_cloud_router)
+app.include_router(local_proxy_connector_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
 app.include_router(public_site_router)
@@ -249,11 +254,13 @@ async def startup_event() -> None:
     finally:
         db.close()
     start_background_workers()
+    await local_proxy_relay_server.start()
     log_startup_banner()
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    await local_proxy_relay_server.stop()
     stop_background_workers()
 
 
@@ -1768,6 +1775,8 @@ def _account_connection_error_message(code: str) -> str:
         "proxy_host_required": "请输入自有代理地址",
         "proxy_port_invalid": "请输入有效的自有代理端口",
         "proxy_region_unavailable": "所选地区暂无可用代理，请选择其他地区或直接登录",
+        "proxy_connector_required": "请选择一个在线的本地代理连接器",
+        "proxy_connector_unavailable": "本地连接器当前不在线，请在 Windows 连接器中启动后重试",
     }
     normalized = str(code or "").strip()
     return messages.get(normalized, normalized or "账号连接失败")
@@ -1831,6 +1840,7 @@ async def channel_connect_page(request: Request):
             quota_error=quota_error,
             provider_nodes=list_provider_nodes(db),
             proxy_regions=(list_available_proxy_regions(db) if requested_type == "wechat_ipad" else []),
+            local_connectors=(list_online_proxy_connectors(db) if requested_type == "wechat_ipad" else []),
             is_relogin=is_relogin,
             login_network=(
                 build_login_proxy_session_summary(db, channel_id=int(channel.id))
@@ -1861,6 +1871,7 @@ async def channel_connect_start_action(
     custom_proxy_port: str = Form(""),
     custom_proxy_username: str = Form(""),
     custom_proxy_password: str = Form(""),
+    proxy_connector_id: int = Form(0),
     csrf_token: str = Form(""),
 ):
     """创建连接草稿；可信账号 ID 和设备键绝不从此表单接收。"""
@@ -1896,6 +1907,7 @@ async def channel_connect_start_action(
                         "port": custom_proxy_port,
                         "username": custom_proxy_username,
                         "password": custom_proxy_password,
+                        "connector_id": proxy_connector_id,
                     },
                 )
             else:
@@ -1949,6 +1961,7 @@ async def create_wechat_ipad_login_session_action(
     custom_proxy_port: str = Form(""),
     custom_proxy_username: str = Form(""),
     custom_proxy_password: str = Form(""),
+    proxy_connector_id: int = Form(0),
     csrf_token: str = Form(""),
 ):
     """替换当前扫码会话并跳转到业务化二维码页，旧会话租约同步释放。"""
@@ -1974,6 +1987,7 @@ async def create_wechat_ipad_login_session_action(
                     "port": custom_proxy_port,
                     "username": custom_proxy_username,
                     "password": custom_proxy_password,
+                    "connector_id": proxy_connector_id,
                 },
             )
         except LoginProxyPoolError as exc:
@@ -2326,10 +2340,29 @@ async def start_wechat_ipad_login_flow(request: Request, channel_id: int):
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
+        active_session = get_active_login_proxy_session(db, channel_id=int(channel.id))
+        connector_registry = None
+        if active_session is not None and active_session.mode == "local_connector":
+            from app.services.local_proxy_connector_ws import local_proxy_connector_ws_registry
+
+            connector_registry = local_proxy_connector_ws_registry
+            if not connector_registry.is_online(int(active_session.proxy_connector_id or 0)):
+                raise HTTPException(status_code=409, detail="proxy_connector_offline")
         try:
             start_login_with_proxy_session(db, channel)
         except WechatIpadLoginFlowError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        active_session = get_active_login_proxy_session(db, channel_id=int(channel.id))
+        if active_session is not None and active_session.mode == "local_connector":
+            if connector_registry is None:
+                raise HTTPException(status_code=409, detail="proxy_connector_offline")
+            await connector_registry.bind_session(
+                int(active_session.proxy_connector_id or 0), active_session.session_key
+            )
+            await connector_registry.send_session_message(
+                active_session.session_key,
+                {"type": "session_bind", "session_key": active_session.session_key},
+            )
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:

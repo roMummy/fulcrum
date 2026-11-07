@@ -215,6 +215,7 @@
     }
     const province = fieldset.querySelector("[data-proxy-province]");
     const city = fieldset.querySelector("[data-proxy-city]");
+    const connector = fieldset.querySelector("[data-proxy-connector]");
     const poolRadio = fieldset.querySelector('input[name="proxy_mode"][value="platform_pool"]');
 
     // 地区只来自平台返回的可用摘要，浏览器不会接触具体代理地址、账号或密码。
@@ -247,6 +248,7 @@
             || input.name === "proxy_city"
             || input.name === "custom_proxy_host"
             || input.name === "custom_proxy_port"
+            || input.name === "proxy_connector_id"
           );
         });
       });

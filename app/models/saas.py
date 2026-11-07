@@ -20,7 +20,9 @@ BILLING_ORDER_STATUSES = frozenset(
 )
 BOT_BINDING_STATUSES = frozenset({"active", "disabled", "released"})
 PROXY_HEALTH_STATUSES = frozenset({"healthy", "unhealthy"})
-LOGIN_PROXY_MODES = frozenset({"direct", "platform_pool", "custom"})
+LOGIN_PROXY_MODES = frozenset({"direct", "platform_pool", "custom", "local_connector"})
+LOCAL_PROXY_CONNECTOR_STATUSES = frozenset({"pending", "active", "disabled"})
+LOCAL_PROXY_CLEANUP_STATES = frozenset({"not_required", "pending", "completed", "failed"})
 LOGIN_PROXY_SESSION_STATUSES = frozenset(
     {"preparing", "qrcode_ready", "completed", "failed", "cancelled", "expired"}
 )
@@ -410,7 +412,7 @@ class LoginProxySession(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "login_proxy_sessions"
     __table_args__ = (
         CheckConstraint(
-            "mode IN ('direct', 'platform_pool', 'custom')",
+            "mode IN ('direct', 'platform_pool', 'custom', 'local_connector')",
             name="ck_login_proxy_sessions_mode",
         ),
         CheckConstraint(
@@ -430,6 +432,10 @@ class LoginProxySession(Base, TenantOwnedMixin, TimestampMixin):
             "state",
             "expires_at",
         ),
+        CheckConstraint(
+            "proxy_cleanup_state IN ('not_required', 'pending', 'completed', 'failed')",
+            name="ck_login_proxy_sessions_proxy_cleanup_state",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -440,6 +446,11 @@ class LoginProxySession(Base, TenantOwnedMixin, TimestampMixin):
     city: Mapped[str | None] = mapped_column(String(64), nullable=True)
     platform_proxy_id: Mapped[int | None] = mapped_column(
         ForeignKey("platform_proxies.id"),
+        nullable=True,
+        index=True,
+    )
+    proxy_connector_id: Mapped[int | None] = mapped_column(
+        ForeignKey("proxy_connectors.id"),
         nullable=True,
         index=True,
     )
@@ -455,6 +466,74 @@ class LoginProxySession(Base, TenantOwnedMixin, TimestampMixin):
     expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     result_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    relay_username_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    relay_password_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    relay_expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    proxy_cleanup_state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="not_required", index=True
+    )
+    proxy_cleanup_error: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class ProxyConnector(Base, TenantOwnedMixin, TimestampMixin):
+    """租户绑定的 Windows 本地连接器；只保存设备和在线状态，不保存本地 SOCKS 凭证。"""
+
+    __tablename__ = "proxy_connectors"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'active', 'disabled')",
+            name="ck_proxy_connectors_status",
+        ),
+        UniqueConstraint("tenant_id", "name", name="uq_proxy_connectors_tenant_name"),
+        UniqueConstraint("device_id", name="uq_proxy_connectors_device_id"),
+        Index("ix_proxy_connectors_tenant_status", "tenant_id", "status", "last_seen_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    last_seen_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    client_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    local_proxy_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    disabled_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProxyConnectorActivationCode(Base, TimestampMixin):
+    """一次性连接器激活码，只保存不可逆摘要。"""
+
+    __tablename__ = "proxy_connector_activation_codes"
+    __table_args__ = (
+        UniqueConstraint("code_hash", name="uq_proxy_connector_activation_code_hash"),
+        Index("ix_proxy_connector_activation_codes_connector", "connector_id", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    connector_id: Mapped[int] = mapped_column(ForeignKey("proxy_connectors.id"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("tenant_users.id"), nullable=True)
+
+
+class ProxyConnectorCredential(Base, TimestampMixin):
+    """连接器设备密钥摘要；密钥原文只存在 Windows 连接器受保护存储中。"""
+
+    __tablename__ = "proxy_connector_credentials"
+    __table_args__ = (
+        UniqueConstraint("device_key_hash", name="uq_proxy_connector_credential_key_hash"),
+        Index("ix_proxy_connector_credentials_connector", "connector_id", "revoked_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    connector_id: Mapped[int] = mapped_column(ForeignKey("proxy_connectors.id"), nullable=False, index=True)
+    device_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_shanghai)
+    last_used_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PlatformAuditLog(Base, TimestampMixin):

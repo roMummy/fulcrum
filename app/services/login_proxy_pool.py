@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import secrets
@@ -16,14 +17,17 @@ from sqlalchemy.orm import Session
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.core.settings import settings
 from app.models.entities import Channel
 from app.models.saas import (
     LOGIN_PROXY_MODES,
     LOGIN_PROXY_SESSION_STATUSES,
     LoginProxySession,
+    ProxyConnector,
     PlatformProxy,
 )
 from app.services.security import decrypt_secret, encrypt_secret, mask_secret
+from app.services.local_proxy_connector import CONNECTOR_OFFLINE_AFTER
 
 
 ACTIVE_LOGIN_PROXY_STATES = frozenset({"preparing", "qrcode_ready"})
@@ -435,6 +439,11 @@ def _finish_login_proxy_session_no_commit(
     if state not in TERMINAL_LOGIN_PROXY_STATES:
         raise LoginProxyPoolError("proxy_session_terminal_state_invalid")
     _release_platform_proxy(db, session)
+    if session.mode == "local_connector":
+        # 临时中继凭证不随终态记录保留；连接器可以继续在线，但本次扫码隧道必须失效。
+        from app.services.local_proxy_connector_ws import local_proxy_connector_ws_registry
+
+        local_proxy_connector_ws_registry.remove_session_credentials(session.session_key)
     session.state = state
     session.last_error_code = str(error_code or "").strip() or None
     session.result_summary = str(summary or "").strip()[:255] or None
@@ -504,6 +513,31 @@ def create_login_proxy_session(
         session.custom_password_encrypted = encrypt_secret(
             _normalize_optional_text(values.get("password"), max_length=500)
         )
+    elif normalized_mode == "local_connector":
+        # 本地连接器只绑定可信租户下的在线设备；本地 SOCKS 地址和密码不会进入此表。
+        try:
+            connector_id = int(str(values.get("connector_id") or "").strip())
+        except (TypeError, ValueError) as exc:
+            raise LoginProxyPoolError("proxy_connector_required") from exc
+        connector = db.scalar(
+            select(ProxyConnector).where(
+                ProxyConnector.id == connector_id,
+                ProxyConnector.tenant_id == tenant_id,
+                ProxyConnector.status == "active",
+            )
+        )
+        if connector is None or connector.last_seen_at is None or now - ensure_shanghai_datetime(connector.last_seen_at) > CONNECTOR_OFFLINE_AFTER:
+            raise LoginProxyPoolError("proxy_connector_unavailable")
+        session.proxy_connector_id = connector.id
+        session.proxy_cleanup_state = "pending"
+        # 中继口令只由内存中的 WS 注册表持有，数据库仅保存摘要用于会话绑定校验。
+        relay_username = secrets.token_urlsafe(18)
+        relay_password = secrets.token_urlsafe(32)
+        session.relay_username_hash = hashlib.sha256(relay_username.encode("utf-8")).hexdigest()
+        session.relay_password_hash = hashlib.sha256(relay_password.encode("utf-8")).hexdigest()
+        session.relay_expires_at = session.expires_at
+        session._relay_username = relay_username
+        session._relay_password = relay_password
 
     try:
         db.add(session)
@@ -517,6 +551,15 @@ def create_login_proxy_session(
         db.rollback()
         raise
     db.refresh(session)
+    if normalized_mode == "local_connector":
+        # 874 使用的是服务端临时 SOCKS 监听器；明文只交给当前进程的 WS 注册表。
+        from app.services.local_proxy_connector_ws import local_proxy_connector_ws_registry
+
+        local_proxy_connector_ws_registry.register_session_credentials(
+            session.session_key,
+            str(getattr(session, "_relay_username", "")),
+            str(getattr(session, "_relay_password", "")),
+        )
     return session
 
 
@@ -586,6 +629,18 @@ def resolve_login_proxy_credentials(
             "port": str(session.custom_port or ""),
             "username": str(session.custom_username or ""),
             "password": str(decrypt_secret(session.custom_password_encrypted) or ""),
+        }
+    if session.mode == "local_connector":
+        from app.services.local_proxy_connector_ws import local_proxy_connector_ws_registry
+
+        credentials = local_proxy_connector_ws_registry.get_session_credentials(session.session_key)
+        if credentials is None:
+            raise LoginProxyPoolError("proxy_connector_offline")
+        return {
+            "host": settings.local_proxy_relay_host,
+            "port": str(settings.local_proxy_relay_port),
+            "username": credentials[0],
+            "password": credentials[1],
         }
     proxy = db.get(PlatformProxy, int(session.platform_proxy_id or 0))
     if proxy is None or proxy.lease_key != session.session_key:
@@ -718,3 +773,32 @@ def expire_login_proxy_sessions(db: Session) -> int:
     if sessions:
         db.commit()
     return len(sessions)
+
+
+def fail_login_proxy_session_by_key(
+    db: Session,
+    *,
+    session_key: str,
+    tenant_id: int,
+    error_code: str = "proxy_connector_disconnected",
+) -> bool:
+    """连接器断开时立即终止绑定的扫码会话并清理临时中继凭证。"""
+
+    session = db.scalar(
+        select(LoginProxySession).where(
+            LoginProxySession.session_key == str(session_key or "").strip(),
+            LoginProxySession.tenant_id == int(tenant_id),
+            LoginProxySession.state.in_(ACTIVE_LOGIN_PROXY_STATES),
+        )
+    )
+    if session is None:
+        return False
+    _finish_login_proxy_session_no_commit(
+        db,
+        session,
+        state="failed",
+        error_code=error_code,
+        summary="本地代理连接器已断开",
+    )
+    db.commit()
+    return True

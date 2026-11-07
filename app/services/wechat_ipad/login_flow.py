@@ -31,6 +31,42 @@ class WechatIpadLoginFlowError(ValueError):
     """扫码登录缺少有效会话或进入非法状态时使用的稳定业务错误。"""
 
 
+def _clear_local_connector_proxy(
+    db: Session,
+    channel: Channel,
+    session: Any,
+    overview: dict[str, Any],
+    *,
+    client: WechatIpadApiClient,
+) -> bool:
+    """登录成功后先清空 874 保存的 Proxy，成功后才能释放本地连接器隧道。"""
+
+    if session.mode != "local_connector":
+        return True
+    wxid = str(overview.get("wxid") or "").strip()
+    if not wxid:
+        session.proxy_cleanup_state = "failed"
+        session.proxy_cleanup_error = "wxid_missing_after_login"
+        db.commit()
+        return False
+    try:
+        result = client.set_proxy(channel, wxid=wxid, proxy={})
+    except Exception:
+        session.proxy_cleanup_state = "failed"
+        session.proxy_cleanup_error = "setproxy_request_failed"
+        db.commit()
+        return False
+    if not client.is_success(result):
+        session.proxy_cleanup_state = "failed"
+        session.proxy_cleanup_error = "setproxy_rejected"
+        db.commit()
+        return False
+    session.proxy_cleanup_state = "completed"
+    session.proxy_cleanup_error = None
+    db.commit()
+    return True
+
+
 def _parse_expiry(value: Any) -> datetime | None:
     """把登录总览中的 ISO 时间转换为项目统一时区时间。"""
 
@@ -66,6 +102,7 @@ def start_login_with_proxy_session(
     if session.state == "qrcode_ready":
         # 二维码已经生成后严禁重复取码或换代理；页面刷新只读取当前业务总览。
         return build_wechat_ipad_overview(channel)
+
 
     while True:
         proxy = resolve_login_proxy_credentials(db, session)
@@ -126,6 +163,19 @@ def poll_login_with_proxy_session(
     login_state = str(overview.get("login_state") or "")
     qrcode_status = str(overview.get("qrcode_status") or "")
     if login_state == "online" or qrcode_status == "success":
+        active_client = client or WechatIpadApiClient()
+        if not _clear_local_connector_proxy(
+            db,
+            channel,
+            session,
+            overview,
+            client=active_client,
+        ):
+            # 874 登录已经完成，但本地代理仍绑定在登录数据中；保持会话和连接器在线，
+            # 页面可以重试清理，不能提前告诉用户可以关闭连接器。
+            overview["login_state"] = "proxy_cleanup_required"
+            overview["last_error"] = "proxy_cleanup_required"
+            return overview
         record_login_proxy_success(db, session, summary="扫码登录成功")
         finish_login_proxy_session(db, session, state="completed", summary="扫码登录成功")
     elif qrcode_status == "expired" or bool(overview.get("qrcode_is_expired")):

@@ -10,6 +10,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.models.entities import Bot, Channel
 from app.models.saas import PlatformProxy, Tenant
+from app.services.local_proxy_connector import create_proxy_connector, consume_activation_code, issue_activation_code
 from app.services.login_proxy_pool import create_login_proxy_session, save_platform_proxy
 from app.services.wechat_ipad.login_flow import (
     poll_login_with_proxy_session,
@@ -90,6 +91,40 @@ class _RotatingQrClient:
         }
 
 
+class _LocalConnectorLoginClient:
+    """模拟本地连接器完成扫码后，验证编排层会清空 874 代理。"""
+
+    def __init__(self):
+        self.set_proxy_calls: list[dict[str, object]] = []
+
+    def get_qr_code(self, channel: Channel, **kwargs):
+        del channel, kwargs
+        return {
+            "Success": True,
+            "Code": 1,
+            "Data": {"Uuid": "local-connector-uuid", "QrUrl": "https://qr.example.com/local", "ExpiredTime": 240},
+            "http_status": 200,
+        }
+
+    def check_qr(self, channel: Channel, *, uuid: str):
+        del channel, uuid
+        return {
+            "Success": True,
+            "Code": 0,
+            "Message": "登录成功",
+            "Data": {"status": 2, "Wxid": "wxid_local_connector", "NickName": "本地代理账号"},
+            "http_status": 200,
+        }
+
+    def set_proxy(self, channel: Channel, *, wxid: str, proxy: dict[str, object]):
+        del channel
+        self.set_proxy_calls.append({"wxid": wxid, "proxy": proxy})
+        return {"Success": True, "Code": 0}
+
+    @staticmethod
+    def is_success(payload: dict[str, object]) -> bool:
+        return payload.get("Success") is True and payload.get("Code") == 0
+
 def test_pool_login_rotates_before_qrcode_and_releases_after_success(db: Session) -> None:
     """取码前最多轮换三个同地区代理，二维码成功后固定并在登录完成时释放。"""
 
@@ -149,3 +184,28 @@ def test_login_orchestrator_does_not_accept_client_proxy_or_tenant_fields() -> N
     assert "proxy" not in parameters
     assert "proxy_id" not in parameters
     assert "tenant_id" not in parameters
+
+
+def test_local_connector_login_clears_874_proxy_before_finishing_session(db: Session) -> None:
+    """本地代理只覆盖扫码登录，874 清理成功后连接器会话才进入终态。"""
+
+    tenant, channel = _seed_channel(db)
+    client = _LocalConnectorLoginClient()
+    with tenant_scope(tenant.id):
+        connector = create_proxy_connector(db, name="Windows 连接器")
+        activation_code = issue_activation_code(db, connector_id=connector.id)
+        activation = consume_activation_code(db, code=activation_code, device_id="windows-local-01")
+        session = create_login_proxy_session(
+            db,
+            channel=channel,
+            mode="local_connector",
+            values={"connector_id": int(activation["connector_id"])},
+        )
+        start_login_with_proxy_session(db, channel, client=client)
+        overview = poll_login_with_proxy_session(db, channel, client=client)
+
+    db.refresh(session)
+    assert overview["login_state"] == "online"
+    assert client.set_proxy_calls == [{"wxid": "wxid_local_connector", "proxy": {}}]
+    assert session.proxy_cleanup_state == "completed"
+    assert session.state == "completed"

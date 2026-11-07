@@ -21,6 +21,13 @@ from app.services.tenant_admin import (
     reset_tenant_user_password,
     update_tenant_user,
 )
+from app.services.local_proxy_connector import (
+    LocalProxyConnectorError,
+    create_proxy_connector,
+    disable_proxy_connector,
+    issue_activation_code,
+    list_proxy_connectors,
+)
 from app.web.auth_common import (
     TENANT_CSRF_COOKIE,
     TENANT_LOGOUT_PATH,
@@ -123,6 +130,80 @@ async def tenant_users_page(request: Request):
         return templates.TemplateResponse(request, "tenant_users.html", context)
     finally:
         db.close()
+
+
+@router.get("/connectors", response_class=HTMLResponse)
+async def tenant_connectors_page(request: Request):
+    """租户管理员管理 Windows 本地代理连接器和一次性激活码。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        context = _tenant_context(
+            request,
+            page_title="本地代理连接器",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            connectors=list_proxy_connectors(db),
+            activation_code=request.query_params.get("activation_code", ""),
+        )
+        return templates.TemplateResponse(request, "tenant_connectors.html", context)
+    finally:
+        db.close()
+
+
+@router.post("/connectors")
+async def tenant_connector_create_action(
+    request: Request,
+    name: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """创建连接器并在当前响应中一次性展示激活码。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            connector = create_proxy_connector(db, name=name)
+            code = issue_activation_code(db, connector_id=connector.id)
+        except LocalProxyConnectorError as exc:
+            return _redirect("/tenant/connectors", f"连接器创建失败：{exc}", danger=True)
+        return templates.TemplateResponse(
+            request,
+            "tenant_connectors.html",
+            _tenant_context(
+                request,
+                page_title="本地代理连接器",
+                notice="连接器已创建，请复制本次激活码。离开本页后无法再次查看。",
+                connectors=list_proxy_connectors(db),
+                activation_code=code,
+            ),
+            status_code=201,
+        )
+    finally:
+        db.close()
+
+
+@router.post("/connectors/{connector_id}/disable")
+async def tenant_connector_disable_action(
+    connector_id: int,
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    """停用连接器并吊销设备密钥，断开后的登录会话由统一回收逻辑结束。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            disable_proxy_connector(db, connector_id=connector_id)
+        except LocalProxyConnectorError as exc:
+            return _redirect("/tenant/connectors", f"连接器停用失败：{exc}", danger=True)
+    finally:
+        db.close()
+    return _redirect("/tenant/connectors", "连接器已停用")
 
 
 @router.post("/users", response_class=HTMLResponse)

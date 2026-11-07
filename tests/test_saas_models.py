@@ -78,9 +78,15 @@ def test_saas_identity_tables_are_registered_in_shared_metadata() -> None:
 def test_login_proxy_pool_tables_and_status_sets_are_registered() -> None:
     """平台代理和租户登录会话必须进入统一元数据，并使用唯一状态集合。"""
 
-    assert {"platform_proxies", "login_proxy_sessions"}.issubset(Base.metadata.tables)
+    assert {
+        "platform_proxies",
+        "login_proxy_sessions",
+        "proxy_connectors",
+        "proxy_connector_activation_codes",
+        "proxy_connector_credentials",
+    }.issubset(Base.metadata.tables)
     assert PROXY_HEALTH_STATUSES == frozenset({"healthy", "unhealthy"})
-    assert LOGIN_PROXY_MODES == frozenset({"direct", "platform_pool", "custom"})
+    assert LOGIN_PROXY_MODES == frozenset({"direct", "platform_pool", "custom", "local_connector"})
     assert LOGIN_PROXY_SESSION_STATUSES == frozenset(
         {"preparing", "qrcode_ready", "completed", "failed", "cancelled", "expired"}
     )
