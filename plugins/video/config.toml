@@ -1,0 +1,32 @@
+[plugin]
+code = "video"
+display_name = "黑丝视频"
+plugin_type = "command"
+version = "2.0.0"
+author = "abot"
+description = "从租户配置的视频服务获取受限视频并跨渠道回复。"
+default_enabled = false
+
+[capability]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 30000
+
+[matcher]
+commands = ["黑丝视频", "黑丝", "来个黑丝", "搞个黑丝"]
+require_mention = false
+
+[runtime]
+enabled = false
+commands = ["黑丝视频", "黑丝", "来个黑丝", "搞个黑丝"]
+video_url = "http://api.yujn.cn/api/heisis.php?type=video"
+request_timeout_seconds = 20
+points_cost = 8
+rate_limit = 3
+rate_window_seconds = 60
+max_video_bytes = 41943040
+max_video_seconds = 180
+

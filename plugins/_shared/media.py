@@ -174,6 +174,39 @@ def extract_video_cover(
     return target.resolve(strict=True)
 
 
+def probe_video_duration(
+    video_path: str | Path,
+    *,
+    ffprobe_binary: str = "ffprobe",
+    runner: Callable[..., Any] | None = None,
+) -> float | None:
+    """读取视频时长；依赖缺失或容器无法解析时返回空值，由业务配置决定是否拒绝。"""
+
+    source = Path(video_path).expanduser().resolve(strict=True)
+    execute = runner or subprocess.run
+    command = [
+        str(ffprobe_binary),
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(source),
+    ]
+    try:
+        result = execute(command, check=False, capture_output=True, text=True, timeout=15)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    try:
+        duration = float(str(getattr(result, "stdout", "") or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return duration if duration >= 0 else None
+
+
 def stable_media_metadata(path: str | Path, *, content_type: str, size: int) -> Mapping[str, Any]:
     """只返回日志和状态需要的稳定媒体元数据，不包含原始内容和本地绝对路径。"""
 
