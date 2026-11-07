@@ -151,6 +151,7 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
                     "message_summary",
                     "value_rank",
                     "weather",
+                    "xiuren_image",
                 )
             ),
         )
@@ -633,6 +634,25 @@ def _build_plugin_schedule_specs(
                 scheduled_for=scheduled_for,
                 parameters={},
                 high_side_effect=True,
+                priority=70,
+            ),
+        )
+    if plugin_code == "xiuren_image":
+        # 图片缓存刷新只按绑定执行，不携带外部地址或文件内容；任务去重键由
+        # 绑定、动作和时间桶组成，服务重启或多 worker 并发时不会重复创建刷新任务。
+        if not _coerce_bool(config.get("enabled"), False) or not _coerce_bool(config.get("refresh_enabled"), False):
+            return ()
+        if not isinstance(config.get("source_urls"), (list, tuple)) or not config.get("source_urls"):
+            return ()
+        interval = max(300, min(_coerce_int(config.get("refresh_interval_seconds"), 86_400), 2_592_000))
+        timestamp = math.floor(current.timestamp() / interval) * interval
+        scheduled_for = datetime.fromtimestamp(timestamp, tz=current.tzinfo)
+        return (
+            PluginScheduledActionSpec(
+                action_key="refresh_resources",
+                scheduled_for=scheduled_for,
+                parameters={},
+                high_side_effect=False,
                 priority=70,
             ),
         )
