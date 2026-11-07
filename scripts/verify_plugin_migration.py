@@ -184,10 +184,12 @@ def verify_plugin_migration() -> tuple[tuple[str, ...], tuple[str, ...]]:
 
     errors: list[str] = []
     expected_codes = TARGET_PLUGIN_CODES | SAAS_OWN_PLUGIN_CODES
+    # 只统计同时具备 manifest 和执行入口的真实目录插件；`plugins/_shared` 等
+    # 共用代码目录不能被误计入插件目录总数，也不能因此触发未纳入范围错误。
     actual_codes = {
         path.name
         for path in PLUGINS_ROOT.iterdir()
-        if path.is_dir()
+        if path.is_dir() and (path / "config.toml").is_file() and (path / "plugin.py").is_file()
     } if PLUGINS_ROOT.is_dir() else set()
 
     missing = expected_codes - actual_codes

@@ -73,16 +73,10 @@ SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow"}
 # 这些能力已经明确排除或上移为平台原生能力。测试直接禁止同名目录出现，防止
 # 研发过程中为了快速复用又把 A-BOT 单机管理链路或不需要的内容带回 SaaS。
 FORBIDDEN_PLUGIN_CODES = {
-    "beautyleg",
-    "fanhao_search",
     "plugin_manager",
-    "sehuatang_push",
     "stats_collector",
     "system_updater",
     "trendradar_permission",
-    "video",
-    "video_man",
-    "xiuren_image",
 }
 
 
@@ -134,8 +128,8 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
     # 四批迁移尚未创建六个目录，因此当前阶段应返回缺失目录，而不是静默把
     # 目标集合缩回旧的 36 个插件；最终交付任务会把这里恢复为成功断言。
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "目录插件总数: 38" in result.stdout
+    assert "目录插件总数: 41" in result.stdout
     assert "A-BOT 目标插件数: 42" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
-    assert "beautyleg: 缺少插件目录" in result.stdout
+    assert "fanhao_search: 缺少插件目录" in result.stdout
     assert "sehuatang_push: 缺少插件目录" in result.stdout
