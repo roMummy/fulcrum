@@ -174,6 +174,18 @@ def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list
             imported_roots = {alias.name.split(".", 1)[0] for alias in node.names}
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             imported_roots = {node.module.split(".", 1)[0]}
+        # 目录插件允许引用自身的纯业务模块和本项目共享边界工具；其他 `plugins.*`
+        # 导入仍然视为跨插件耦合，避免重新形成 A-BOT 全局插件运行时。
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            allowed_internal = {
+                f"plugins.{plugin_code}.service",
+                f"plugins.{plugin_code}.parsers",
+                "plugins._shared",
+                "plugins._shared.media",
+                "plugins._shared.resources",
+            }
+            if node.module in allowed_internal:
+                imported_roots.discard("plugins")
         forbidden = imported_roots & FORBIDDEN_IMPORT_ROOTS
         for root_name in sorted(forbidden):
             errors.append(f"{plugin_code}: 禁止导入 A-BOT 运行时 {root_name}")

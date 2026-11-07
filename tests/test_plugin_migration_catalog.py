@@ -128,8 +128,8 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
     # 四批迁移尚未创建六个目录，因此当前阶段应返回缺失目录，而不是静默把
     # 目标集合缩回旧的 36 个插件；最终交付任务会把这里恢复为成功断言。
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "目录插件总数: 41" in result.stdout
+    assert "目录插件总数: 42" in result.stdout
     assert "A-BOT 目标插件数: 42" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
-    assert "fanhao_search: 缺少插件目录" in result.stdout
+    assert "sehuatang_push: 缺少插件目录" in result.stdout
     assert "sehuatang_push: 缺少插件目录" in result.stdout
