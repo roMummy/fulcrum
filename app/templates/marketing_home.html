@@ -1,13 +1,16 @@
 {% extends 'marketing_base.html' %}
 {% block content %}
-<section class="marketing-hero">
-  {# 首屏使用隔离演示租户生成的真实控制台截图，图片本身不包含真实客户信息。 #}
-  <img class="marketing-hero-image" src="/static/images/yaoshu-console.webp" alt="曜枢 AI 机器人运营控制台界面" />
-  <div class="marketing-hero-content">
+<section class="marketing-hero marketing-hero-stage">
+  {# 柔和品牌构图提供受限交互反馈，正文仍是产品主张与行动的唯一入口。 #}
+  <div class="marketing-hero-scene" data-hero-scene aria-hidden="true">
+    <span class="marketing-hero-signal"><span></span></span>
+    <span class="marketing-hero-marker"></span>
+  </div>
+  <div class="marketing-hero-copy">
     <p class="marketing-hero-eyebrow">全渠道智能机器人运营平台</p>
     <h1>曜枢 AI</h1>
     <p class="marketing-hero-lead">一个后台，统一运营所有智能机器人</p>
-    <p class="marketing-hero-summary">统一管理多渠道接入、自动化任务、团队权限和机器人额度，让运营状态始终清晰可控。</p>
+    <p class="marketing-hero-summary">支持微信、企业微信、Telegram 等渠道，通过统一适配能力管理机器人账号和运行状态。</p>
     <div class="marketing-hero-actions">
       {% if current_user %}
       <a class="btn" href="/dashboard">进入控制台</a>
@@ -70,8 +73,8 @@
     <div class="marketing-plan-grid">
       {% for plan in plans %}
       <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">
-        {% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}
-        <h3>{{ plan.name }}</h3>
+        {# 标题与推荐标记共用一行，避免推荐套餐将价格和按钮向下推移。 #}
+        <div class="marketing-plan-head"><h3>{{ plan.name }}</h3>{% if plan.is_featured %}<span class="marketing-plan-badge">推荐套餐</span>{% endif %}</div>
         <p class="marketing-plan-quota"><strong>{{ plan.bot_limit }}</strong> 个机器人额度</p>
         <p class="marketing-plan-price"><strong>¥{{ format_yuan(plan.monthly_price_cents) }}</strong><span>/ 月</span></p>
         <a class="btn" href="/register">免费试用 7 天</a>

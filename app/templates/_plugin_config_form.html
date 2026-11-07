@@ -5,7 +5,7 @@
 </div>
 {% for field in config_view.fields %}
 <label class="{% if field.field_type == 'textarea' %}full-row{% endif %}">
-  <span>{{ field.label }}{% if field.sensitive %}（敏感）{% endif %}</span>
+  <span>{{ field.label }}</span>
   {% if field.field_type == 'select' %}
   <select name="schema__{{ field.name }}">
     {% for option in field.options %}
@@ -24,13 +24,20 @@
     type="{% if field.field_type == 'password' %}password{% elif field.field_type == 'number' %}number{% else %}text{% endif %}"
     name="schema__{{ field.name }}"
     value="{{ field.render_value }}"
-    placeholder="{{ field.placeholder }}"
+    placeholder="{% if field.sensitive %}留空保持现有配置{% else %}{{ field.placeholder }}{% endif %}"
+    {% if field.sensitive %}autocomplete="new-password"{% endif %}
   />
   {% endif %}
-  <small>{{ field.description }}{% if field.masked_value %} 当前已保存：{{ field.masked_value }}{% endif %}</small>
+  {% if field.sensitive %}
+  <small>当前状态：{% if field.secret_configured %}已配置{% else %}未配置{% endif %}</small>
+  {% if field.secret_configured %}
+  <span class="check-option"><input type="checkbox" name="schema_clear__{{ field.name }}" value="true" /> 清除已保存配置</span>
+  {% endif %}
+  {% else %}
+  <small>{{ field.description }}</small>
+  {% endif %}
 </label>
 {% endfor %}
-<label class="full-row"><span>掩码 JSON 预览</span><textarea rows="4" disabled>{{ config_view.preview_json }}</textarea></label>
 {% else %}
 <label class="full-row"><span>配置 JSON</span><textarea name="config_json" rows="4">{{ config_view.raw_config_json }}</textarea></label>
 {% endif %}

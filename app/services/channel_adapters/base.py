@@ -7,7 +7,7 @@ from app.models.entities import Channel, Conversation
 
 
 class BaseChannelAdapter(ABC):
-    provider = "generic"
+    adapter_type = "generic"
 
     @abstractmethod
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
@@ -22,16 +22,35 @@ class BaseChannelAdapter(ABC):
     ) -> dict[str, Any]:
         return {
             "ok": False,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "action": "send_chat_action",
             "status": "unsupported",
             "external_status": "unsupported",
         }
 
+    def invite_group_members(
+        self,
+        channel: Channel,
+        *,
+        chatroom_external_id: str,
+        member_external_ids: list[str],
+    ) -> dict[str, Any]:
+        """邀请成员加入群聊；不具备该能力的渠道必须明确返回不支持。"""
+
+        return {
+            "ok": False,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "unsupported",
+            "external_status": "unsupported",
+            "error_code": "group_invite_unsupported",
+            "error_message": "当前渠道不支持邀请成员加入群聊",
+        }
+
     def health_check(self, channel: Channel) -> dict[str, Any]:
         return {
             "ok": True,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "summary": "adapter health check not implemented",
         }
 
@@ -52,7 +71,7 @@ class BaseChannelAdapter(ABC):
         chat_type = "group" if payload.get("is_group") else "direct"
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": str(payload.get("event") or payload.get("event_type") or "message"),
             "should_persist_message": bool(message_content),
@@ -91,7 +110,7 @@ class BaseChannelAdapter(ABC):
     ) -> dict[str, Any]:
         result = {
             "ok": ok,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "action": "send_message",
             "message_type": message_type,
             "transport_status": transport_status,

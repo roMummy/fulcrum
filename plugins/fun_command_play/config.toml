@@ -1,0 +1,26 @@
+[plugin]
+code = "fun_command_play"
+display_name = "趣味命令"
+plugin_type = "observer"
+version = "2.0.0"
+author = "abot"
+description = "按当前机器人规则触发文本、图片、视频或链接卡片回复。"
+default_enabled = false
+
+[capability]
+# 趣味命令只消费平台标准文本，回复协议转换统一交给渠道适配器。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 85
+consume_policy = "continue"
+timeout_ms = 30000
+
+[matcher]
+commands = []
+require_mention = false
+
+[runtime]
+enabled = true
+allow_direct_messages = true
+max_replies_per_rule = 8

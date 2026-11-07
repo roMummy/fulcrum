@@ -13,10 +13,10 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Contact Profile</p>
+
       <h2>{{ '新增联系人' if is_create else detail.name }}</h2>
       <p class="muted-text">这里保存的是渠道联系人，不会写入群成员表。</p>
     </div>
@@ -81,10 +81,10 @@
 </section>
 
 {% if detail %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Relations</p>
+
       <h2>联系关系</h2>
       <p class="muted-text">客户删除我方账号时，关系会标记删除；联系人主记录仍保留。</p>
     </div>

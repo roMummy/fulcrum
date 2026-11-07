@@ -1,7 +1,4 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>把 bootstrap 管理员和演示账号继续收敛成可运营的后台账号面板，支持新增账号、角色分配和启停控制。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <button class="btn" type="button" data-modal-open="create-user-modal">新建后台账号</button>
@@ -10,32 +7,32 @@
 {% endblock %}
 {% block content %}
 <div class="stats-grid compact-grid">
-  <div class="stat-card accent-card">
+  <div class="metric-item metric-item-accent">
     <span>账号总数</span>
     <strong>{{ stats.total }}</strong>
     <div class="muted-text">已纳入后台认证的用户</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>启用中</span>
     <strong>{{ stats.enabled }}</strong>
     <div class="muted-text">当前允许登录的账号</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>管理员</span>
     <strong>{{ stats.admins }}</strong>
     <div class="muted-text">含禁用中的管理员账号</div>
   </div>
-  <div class="stat-card">
+  <div class="metric-item">
     <span>启用管理员</span>
     <strong>{{ stats.enabled_admins }}</strong>
     <div class="muted-text">后台至少需要保留 1 个</div>
   </div>
 </div>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Governance</p>
+
       <h2>账号清单</h2>
     </div>
     <span class="chip chip-outline">账号管理</span>
@@ -71,12 +68,11 @@
 
 <dialog class="app-modal" id="create-user-modal">
   <div class="app-modal-card">
-    <div class="app-modal-head">
-      <div>
-        <p class="section-kicker">Provision</p>
-        <h2>新建后台账号</h2>
-        <p class="muted-text">新增动作收进弹窗后，这页会专注在账号清单和状态管理。</p>
-      </div>
+        <div class="app-modal-head">
+          <div>
+
+            <h2>新建后台账号</h2>
+          </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/users" class="form-grid">

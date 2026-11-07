@@ -27,12 +27,6 @@ from app.services.billing import (
     list_tenant_orders,
     submit_payment_evidence,
 )
-from app.services.bot_entitlements import (
-    BotEntitlementError,
-    bind_bot_account,
-    get_bot_quota,
-    list_bot_bindings,
-)
 from app.services.payment_gateways.manual import ManualPaymentGateway
 from app.services.saas_auth import has_tenant_role
 from app.web.auth_common import (
@@ -41,6 +35,7 @@ from app.web.auth_common import (
     TENANT_PASSWORD_PATH,
     require_tenant_csrf,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 
 
 router = APIRouter(prefix="/account", tags=["tenant-billing"])
@@ -108,7 +103,6 @@ def _tenant_context(
     request: Request,
     *,
     page_title: str,
-    active: str,
     notice: str = "",
     notice_tone: str = "",
     **extra,
@@ -116,27 +110,10 @@ def _tenant_context(
     """构造租户计费页的稳定导航、身份和格式化上下文。"""
 
     principal = _require_principal(request)
-    primary_nav_items = [
-        {"label": "总览", "href": "/dashboard", "active": False},
-        {"label": "接入", "href": "/channels", "active": False},
-        {"label": "机器人", "href": "/bots", "active": False},
-        {"label": "插件", "href": "/plugins", "active": False},
-        {"label": "消息", "href": "/conversations", "active": False},
-        {"label": "套餐与额度", "href": "/account/billing", "active": True},
-    ]
     context: dict[str, object] = {
         "request": request,
         "page_title": page_title,
         "current_user": principal,
-        "primary_nav_items": primary_nav_items,
-        "secondary_nav_items": [],
-        "secondary_nav_active": False,
-        "section_nav_items": [
-            {"label": "新手引导", "href": "/account/onboarding", "active": active == "onboarding"},
-            {"label": "套餐与额度", "href": "/account/billing", "active": active == "billing"},
-            {"label": "订单", "href": "/account/orders", "active": active == "orders"},
-            {"label": "机器人绑定", "href": "/account/bot-bindings", "active": active == "bindings"},
-        ],
         "module_links": {},
         "notice": notice,
         "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice else "info"),
@@ -148,6 +125,7 @@ def _tenant_context(
         "status_labels": ORDER_STATUS_LABELS,
         "can_manage_billing": _can_manage_billing(principal),
     }
+    context.update(build_tenant_navigation(request.url.path))
     context.update(extra)
     return context
 
@@ -159,15 +137,6 @@ def _redirect(path: str, notice: str, *, danger: bool = False) -> RedirectRespon
     if danger:
         suffix += "&tone=danger"
     return RedirectResponse(url=path + suffix, status_code=303)
-
-
-def _mask_bot_account(value: str) -> str:
-    """租户清单只显示可识别的账号片段，减少页面截图泄露完整外部账号。"""
-
-    normalized = value or ""
-    if len(normalized) <= 6:
-        return "*" * max(len(normalized) - 2, 0) + normalized[-2:]
-    return f"{normalized[:2]}{'*' * min(len(normalized) - 6, 8)}{normalized[-4:]}"
 
 
 def _proof_signature_matches(suffix: str, content: bytes) -> bool:
@@ -254,7 +223,6 @@ def _render_order_detail(
         # 高熵订单号可能包含无法自然断行的连续字符。页面标题保持稳定，完整订单号只在
         # 详情字段内展示并由局部样式处理换行，避免移动端页头按内容宽度撑开工作区。
         page_title="订单详情",
-        active="orders",
         notice=notice,
         notice_tone="danger" if status_code >= 400 else "",
         order=order,
@@ -279,7 +247,6 @@ async def account_onboarding_page(request: Request):
         context = _tenant_context(
             request,
             page_title="开始使用曜枢 AI",
-            active="onboarding",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             subscription=subscription,
@@ -306,7 +273,6 @@ async def account_billing_page(request: Request):
         context = _tenant_context(
             request,
             page_title="套餐与额度",
-            active="billing",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             subscription=subscription,
@@ -325,7 +291,6 @@ async def account_orders_page(request: Request):
         context = _tenant_context(
             request,
             page_title="订单",
-            active="orders",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             orders=list_tenant_orders(db, tenant_id=principal.tenant_id),
@@ -480,57 +445,3 @@ async def account_order_proof_download(order_id: int, request: Request):
             filename=f"{order.order_no}-proof{proof_path.suffix.lower()}",
             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
         )
-
-
-@router.get("/bot-bindings", response_class=HTMLResponse)
-async def account_bot_bindings_page(request: Request):
-    """展示当前租户通用机器人额度和绑定历史，不提供租户解绑动作。"""
-
-    _require_principal(request)
-    with SessionLocal() as db:
-        bindings = list_bot_bindings(db)
-        try:
-            quota = get_bot_quota(db)
-            quota_error = ""
-        except BotEntitlementError as exc:
-            quota = None
-            quota_error = str(exc)
-        context = _tenant_context(
-            request,
-            page_title="机器人绑定",
-            active="bindings",
-            notice=request.query_params.get("notice", ""),
-            notice_tone=request.query_params.get("tone", ""),
-            bindings=bindings,
-            quota=quota,
-            quota_error=quota_error,
-            mask_bot_account=_mask_bot_account,
-        )
-        return templates.TemplateResponse(request, "account_bot_bindings.html", context)
-
-
-@router.post("/bot-bindings")
-async def account_bot_binding_create_action(
-    request: Request,
-    adapter_type: str = Form(""),
-    bot_account_id: str = Form(""),
-    display_name: str = Form(""),
-    device_fingerprint: str = Form(""),
-    csrf_token: str = Form(""),
-):
-    """使用可信租户上下文创建绑定，表单中的设备原始指纹不会写入日志或数据库。"""
-
-    _require_billing_manager(request)
-    with SessionLocal() as db:
-        require_tenant_csrf(db, request, csrf_token)
-        try:
-            bind_bot_account(
-                db,
-                adapter_type=adapter_type,
-                bot_account_id=bot_account_id,
-                display_name=display_name,
-                device_fingerprint=device_fingerprint,
-            )
-        except BotEntitlementError as exc:
-            return _redirect("/account/bot-bindings", f"机器人绑定失败：{exc}", danger=True)
-    return _redirect("/account/bot-bindings", "机器人账号已绑定")

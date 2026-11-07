@@ -1,0 +1,10 @@
+{# 密码组件只管理可见性，字段名称和浏览器自动填充语义仍由调用页面明确传入。 #}
+{% macro password_field(id, name='password', label='密码', autocomplete='current-password', minlength=none) %}
+<div class="access-field">
+  <label for="{{ id }}">{{ label }}</label>
+  <span class="access-password">
+    <input id="{{ id }}" name="{{ name }}" type="password" autocomplete="{{ autocomplete }}"{% if minlength %} minlength="{{ minlength }}" maxlength="128"{% endif %} required />
+    <button class="password-toggle" type="button" data-password-toggle aria-controls="{{ id }}" aria-label="显示{{ label }}" aria-pressed="false" data-field-label="{{ label }}" hidden>显示</button>
+  </span>
+</div>
+{% endmacro %}

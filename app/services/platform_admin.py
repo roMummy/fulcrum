@@ -12,11 +12,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import PlatformAuditLog, SaasPlan, Tenant, TenantSession, TenantSubscription, TenantUser
-from app.services.registration import RegistrationError, normalize_mobile
+from app.services.registration import RegistrationError, generate_tenant_code, normalize_mobile
 from app.services.saas_auth import generate_initial_password, hash_password
 
 
-TENANT_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 PLAN_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$")
 
 
@@ -33,13 +32,12 @@ class CreatedTenant:
     initial_password: str
 
 
-def _normalize_code(value: str, *, kind: str) -> str:
-    """统一收敛租户和套餐编码，避免 URL、登录和 API 中出现大小写歧义。"""
+def _normalize_plan_code(value: str) -> str:
+    """收敛平台套餐编码，租户编码已经由注册服务统一生成。"""
 
     normalized = (value or "").strip().lower()
-    pattern = TENANT_CODE_PATTERN if kind == "tenant" else PLAN_CODE_PATTERN
-    if not pattern.fullmatch(normalized):
-        raise PlatformAdminError(f"{kind}_code_invalid")
+    if not PLAN_CODE_PATTERN.fullmatch(normalized):
+        raise PlatformAdminError("plan_code_invalid")
     return normalized
 
 
@@ -93,7 +91,7 @@ def save_plan(
 ) -> SaasPlan:
     """创建或更新套餐，并把金额严格保存为整数分。"""
 
-    normalized_code = _normalize_code(code, kind="plan")
+    normalized_code = _normalize_plan_code(code)
     normalized_name = (name or "").strip()
     normalized_status = (status or "active").strip().lower()
     if not normalized_name:
@@ -175,36 +173,21 @@ def save_plan(
 def create_tenant_with_subscription(
     db: Session,
     *,
-    code: str,
     name: str,
     plan_id: int,
     expires_at: datetime | None,
-    admin_username: str,
     admin_mobile: str,
-    admin_display_name: str,
-    contact_name: str = "",
-    contact_phone: str = "",
-    notes: str = "",
     actor_user_id: int | None = None,
 ) -> CreatedTenant:
-    """在一个事务中创建租户、当前订阅和首个租户管理员。"""
+    """用最少平台输入创建租户、当前订阅和首个管理员。"""
 
-    normalized_code = _normalize_code(code, kind="tenant")
     normalized_name = (name or "").strip()
-    normalized_username = (admin_username or "").strip()
     try:
         normalized_admin_mobile = normalize_mobile(admin_mobile)
     except RegistrationError as exc:
         raise PlatformAdminError(str(exc)) from exc
-    normalized_display_name = (admin_display_name or "").strip()
     if not normalized_name:
         raise PlatformAdminError("tenant_name_required")
-    if not normalized_username:
-        raise PlatformAdminError("admin_username_required")
-    if not normalized_display_name:
-        raise PlatformAdminError("admin_display_name_required")
-    if db.scalar(select(Tenant.id).where(Tenant.code == normalized_code)) is not None:
-        raise PlatformAdminError("tenant_code_exists")
     if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_admin_mobile)) is not None:
         raise PlatformAdminError("mobile_already_registered")
 
@@ -221,13 +204,16 @@ def create_tenant_with_subscription(
 
     initial_password = generate_initial_password()
     try:
+        # 平台员工不再手工维护租户编码。高熵随机编码不会泄露企业名称，
+        # 也避免因为拼音、简称或历史命名规则产生冲突。
+        generated_code = generate_tenant_code(db)
         tenant = Tenant(
-            code=normalized_code,
+            code=generated_code,
             name=normalized_name,
             status="active",
-            contact_name=(contact_name or "").strip() or None,
-            contact_phone=(contact_phone or "").strip() or normalized_admin_mobile,
-            notes=(notes or "").strip() or None,
+            contact_name="企业管理员",
+            contact_phone=normalized_admin_mobile,
+            notes=None,
         )
         db.add(tenant)
         db.flush()
@@ -241,9 +227,9 @@ def create_tenant_with_subscription(
         )
         admin = TenantUser(
             tenant_id=tenant.id,
-            username=normalized_username,
+            username="owner",
             mobile=normalized_admin_mobile,
-            display_name=normalized_display_name,
+            display_name="企业管理员",
             role="tenant_admin",
             password_hash=hash_password(initial_password),
             is_enabled=True,
@@ -270,12 +256,10 @@ def create_tenant_with_subscription(
             initial_password=initial_password,
         )
     except IntegrityError as exc:
-        # 租户编码与手机号均有数据库唯一约束，并发开通冲突必须转换为稳定业务错误。
+        # 手机号和随机租户编码仍有数据库唯一约束，并发冲突必须转换为稳定业务错误。
         db.rollback()
         if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_admin_mobile)) is not None:
             raise PlatformAdminError("mobile_already_registered") from exc
-        if db.scalar(select(Tenant.id).where(Tenant.code == normalized_code)) is not None:
-            raise PlatformAdminError("tenant_code_exists") from exc
         raise PlatformAdminError("tenant_create_conflict") from exc
     except BaseException:
         db.rollback()

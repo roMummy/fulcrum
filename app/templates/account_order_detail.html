@@ -1,8 +1,7 @@
 {% extends 'base.html' %}
-{% block page_intro %}<p>{{ status_labels.get(order.status, order.status) }}</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">返回订单</a>{% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <dl class="detail-grid">
     {# 订单号保留完整值但独占一行，窄屏由 code 的局部断行规则避免撑宽页面。 #}
     <div class="detail-grid-wide"><dt>订单号</dt><dd><code>{{ order.order_no }}</code></dd></div>
@@ -16,8 +15,8 @@
 </section>
 
 {% if order.status in ['pending_payment', 'rejected'] and can_manage_billing %}
-<section class="card">
-  <div class="section-head"><div><p class="section-kicker">Payment</p><h2>{{ payment_instructions.title }}</h2></div></div>
+<section class="work-surface">
+  <div class="section-head"><div><h2>{{ payment_instructions.title }}</h2></div></div>
   {% if payment_instructions.instructions %}<p>{{ payment_instructions.instructions }}</p>{% endif %}
   {% if payment_instructions.qr_image %}<img class="payment-qr-image" src="{{ payment_instructions.qr_image }}" alt="收款二维码" />{% endif %}
   {% if payment_instructions.bank_details %}<pre class="payment-bank-details">{{ payment_instructions.bank_details }}</pre>{% endif %}

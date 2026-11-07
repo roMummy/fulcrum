@@ -1,15 +1,15 @@
 [plugin]
 code = "message_push_task"
-display_name = "消息推送任务"
+display_name = "定时推送"
 plugin_type = "scheduled"
-version = "1.0.0"
+version = "2.0.0"
 author = "abot"
-description = "迁移自 abot 的消息推送任务插件，复用当前 task_jobs/outbound_dispatch 队列创建定时消息。"
+description = "在当前群聊中创建、查看和取消文本定时推送。"
 default_enabled = false
 
 [capability]
-# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+# 插件只依赖标准群文本和通用出站队列，不绑定任何具体 provider 实现。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat"]
 chat_types = ["group"]
 message_types = ["text"]
 priority = 150
@@ -17,9 +17,9 @@ consume_policy = "continue"
 timeout_ms = 12000
 
 [matcher]
-commands = ["推送", "消息推送", "定时推送", "message_push_task"]
+commands = ["定时推送"]
 require_mention = false
 
 [runtime]
 enable = true
-command = ["推送", "消息推送", "定时推送", "message_push_task"]
+command = ["定时推送"]

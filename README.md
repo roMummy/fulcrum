@@ -9,8 +9,9 @@
 - 通用额度：按 `bot_limit` 管理机器人数量，以 `adapter_type` 和 `bot_account_id` 标识外部账号
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
 - 平台管理：套餐、租户、订阅、订单审核、受控解绑和平台审计
-- 执行接入：通过通用适配能力扩展渠道；当前随仓库交付的成熟 Windows 执行端是企业微信 Provider
-- Provider 节点：一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
+- 渠道接入：统一管理企业微信、微信 iPad 协议、Windows 微信和 Telegram
+- 插件生态：36 个 A-BOT 业务插件完成 SaaS 原生迁移，支持租户自备第三方服务地址和密钥
+- 远端执行：企业微信执行端支持一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
 - 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
 - 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
 - 旧系统迁移：只读来源、dry-run、外键重映射、批次审计和重复导入防护
@@ -102,7 +103,13 @@ http://127.0.0.1:8280
 | `/pricing` | 公开套餐价格 |
 | `/register` | 企业自助注册与 7 天试用 |
 | `/login` | 企业所有者与员工统一使用手机号登录 |
+| `/channels` | 企业账号清单与额度状态 |
+| `/channels/connect` | 企业微信、个人微信和 Telegram 统一接入向导 |
 | `/platform/login` | 平台管理员登录 |
+
+企业账号接入使用单一主流程：企业管理员选择平台并填写最少连接信息，具体连接器从 Telegram、微信客户端或企业微信客户端取得可信账号身份；确认后系统在同一事务内启用机器人和渠道并写入额度绑定。验证前的草稿不占用额度，也不能通过独立开关进入调度。
+
+旧的手工渠道创建和租户自助解绑入口已经移除。账号对应的机器人、可信账号 ID 和执行客户端不能在高级设置中更换；需要释放付费绑定时，由平台管理员在绑定详情中填写原因后受控处理。
 
 ### 一键更新并重启
 
@@ -115,10 +122,12 @@ chmod +x scripts/deploy_restart_mba.sh
 
 脚本会自动执行：
 
-- 拉取 `origin/main` 最新代码
+- 拉取 `MBS_GIT_BRANCH` 指定分支，默认使用 `origin/main`
 - 安装或更新依赖
-- 检查数据库备份门禁
+- 校验 36 个迁移插件、2 个 SaaS 自有插件和目录安全边界
+- 校验独立插件主密钥，不生成或使用弱默认值
 - 在旧进程仍运行时执行 `alembic upgrade head`
+- 清除历史普通配置中的插件敏感明文字段
 - 迁移成功后关闭旧的 `uvicorn` 进程
 - 重新启动服务
 - 检查 `/healthz` 和 `/readyz`
@@ -128,11 +137,10 @@ chmod +x scripts/deploy_restart_mba.sh
 ```bash
 MBS_GIT_BRANCH=main \
 MBS_PORT=8280 \
-MBS_DB_BACKUP_COMMAND='/opt/backup/multi-bot-saas-db.sh' \
 ./scripts/deploy_restart_mba.sh
 ```
 
-首次部署到确认过的独立空库时可显式设置 `MBS_INITIAL_DEPLOY=1`。已有数据库升级不得用该变量跳过备份门禁。
+脚本只做 Git 快进、数据库差异迁移和应用进程替换，不执行数据库备份或要求备份门禁。数据库迁移和敏感字段清理成功前不会停止旧进程。
 
 ### 3. 初始化数据库和平台管理员
 
@@ -169,6 +177,7 @@ Copy-Item .env.example .env
 ```env
 APP_ENV=prod
 SECRET_KEY=change-this-secret-key
+ABOT_PLUGIN_SECRET_KEY=
 AUTH_SEED_DEMO_USERS=false
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
@@ -190,6 +199,7 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | --- | --- |
 | `APP_ENV` | 运行环境，常用 `dev` / `prod` |
 | `SECRET_KEY` | 用于认证、敏感摘要和设备指纹 HMAC；部署后必须保持稳定 |
+| `ABOT_PLUGIN_SECRET_KEY` | 插件敏感配置 AES-GCM 主密钥；必须使用 32 字节 URL-safe Base64，部署后保持稳定 |
 | `DATABASE_URL` | 数据库连接串 |
 | `LOG_LEVEL` | 日志级别 |
 | `AUTH_SEED_DEMO_USERS` | 是否自动创建演示账号 |
@@ -203,6 +213,26 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | `BILLING_PAYMENT_PROOF_MAX_BYTES` | 单个付款凭证最大字节数，默认 5 MiB |
 
 示例见 [`.env.example`](/data/multi-bot-saas/.env.example)。
+
+生成独立插件主密钥：
+
+```bash
+python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+## 插件迁移交付
+
+当前目录包含 36 个从 A-BOT 业务迁移的插件，以及 `customer_operations`、`supplier_order_flow` 两个 SaaS 自有插件。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不导入 A-BOT 的数据库、Redis、Provider 或单机管理运行时。
+
+租户承担的 LLM、Dify、解析服务、NewAPI、MaiBot 等第三方成本，均由租户在插件绑定中维护地址和凭证。敏感字段使用 `ABOT_PLUGIN_SECRET_KEY` 加密后按租户和绑定隔离，目录配置不提供共享密钥或环境回退。
+
+交付前可执行静态完整性检查：
+
+```bash
+.venv/bin/python scripts/verify_plugin_migration.py
+```
+
+详细范围、迁移边界和定向验证记录见 [插件迁移台账](/data/multi-bot-saas/docs/plugin-migration-ledger.md)。
 
 ## 套餐、试用与付款
 
@@ -280,35 +310,52 @@ DATABASE_URL=sqlite:////app/data/app.db
 
 插件位于 `plugins/<plugin_code>/` 目录下，当前项目已接入的目录插件包括：
 
-- `dify`
-- `message_summary`
-- `daily_news`
-- `douyu`
-- `weather`
-- `music`
-- `guess_song`
-- `group_member_change`
-- `inactive_rank`
-- `message_push_task`
 - `ai_auto_response`
-- `group_auto_invite`
-- `group_virtual`
+- `customer_operations`
+- `daily_news`
+- `dify`
+- `douyin_parser`
+- `douyu`
+- `duanju_search`
 - `game_task`
+- `global_news`
+- `group_auto_invite`
+- `group_member_change`
+- `group_virtual`
+- `guess_song`
+- `inactive_rank`
 - `jd_sign_token`
 - `lucky_pot`
+- `message_push_task`
 - `message_sign`
+- `message_summary`
+- `music`
 - `point_trade`
-- `douyin_parser`
-- `duanju_search`
-- `global_news`
+- `supplier_order_flow`
+- `weather`
 
 插件由后台启动时自动扫描并同步到数据库。
+
+A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录在
+[`docs/plugin-migration-ledger.md`](docs/plugin-migration-ledger.md)。迁移只复用业务规则，
+不加载 A-BOT 的插件接口、数据库、全局 Redis 或微信客户端。
 
 ## 渠道与适配边界
 
 套餐、订单、试用和机器人额度只依赖通用 `adapter_type`、`bot_account_id` 与执行能力接口，不依赖 Provider 数据模型。新增渠道时应实现适配接口并复用通用额度校验，不能把具体 Provider 客户端导入商业服务。
 
-当前仓库已完成并可实际运行的 Windows 执行端仍是企业微信 Provider。节点通过一次性激活码换取设备凭证，随后主动上报心跳、发现账号并长轮询领取绑定渠道的任务；其他渠道应沿相同抽象边界扩展，而不是复制计费和租户逻辑。
+正式渠道由 `app/services/channel_catalog.py` 统一声明。页面、启用校验、适配器解析和后台调度都读取同一份目录；未知渠道类型直接拒绝，不降级到通用 HTTP 适配器。
+
+| 渠道类型 | 展示名称 | 运行方式 | 启用前必要配置 |
+| --- | --- | --- | --- |
+| `workwechat` | 企业微信 | 客户端远端执行并主动领取任务 | 已连接企业微信客户端及在线账号 |
+| `wechat_ipad` | 微信 iPad 协议 | 平台按租户执行消息同步、心跳和登录恢复 | API Base |
+| `wechat_winauto` | 微信 Windows | HTTP 执行端与 Webhook | API Base |
+| `telegram` | Telegram | 平台按租户调用 Bot API 拉取更新 | Bot Token |
+
+接入向导可以保留尚未验证的停用草稿，但只有可信身份验证和额度绑定都完成后才能启用。渠道类型、关联机器人和可信账号创建后不可由租户修改；企业微信客户端关联也只在首次接入时确定。只有声明需要远端执行器的渠道会保存客户端和账号主键，其他渠道即使夹带这些字段也会被服务端清空。
+
+后台协调器使用平台会话枚举有效租户主键，再为每个租户建立独立 `tenant_scope` 和租户数据库会话。Telegram 拉取、微信 iPad 消息同步、心跳和自动恢复均在对应租户上下文中执行；单个渠道失败不会中断其他渠道或租户。企业微信远端执行和 Windows 微信 Webhook 不进入平台主动轮询。
 
 ### 跨机器发送图片和文件
 
@@ -401,7 +448,9 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 推荐使用方式：
 
 - 启动 `workwechat_provider`，它会自动拉起内置 Hook runtime
-- 在后台新增 `channel_type=workwechat` 的渠道，并把 `API Base` 指向 `workwechat_provider`
+- 在企业后台连接企业微信客户端并生成一次性激活码
+- 客户端激活并上报在线账号后，从 `/channels/connect` 选择企业微信完成身份验证和额度绑定
+- 客户端通过长轮询领取绑定渠道的任务，不需要平台主动连接客户电脑
 
 ## 测试
 
@@ -421,11 +470,11 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 - 后台 worker 会处理：
   - 插件派发
   - 出站消息发送
-  - Telegram 轮询
-  - 微信心跳与消息同步
-  - 定时新闻、天气、订阅类任务
+  - 租户隔离的 Telegram 拉取
+  - 租户隔离的微信 iPad 消息同步、心跳和登录恢复
+  - 企业微信远端执行端任务队列
 - 插件配置与运行态信息会存入数据库
-- 敏感信息如 bot token 会基于 `SECRET_KEY` 做简单加密存储
+- 插件敏感配置使用独立 `ABOT_PLUGIN_SECRET_KEY` 和 AES-GCM 加密，并绑定租户与插件绑定主键
 
 ## 常见文件
 
@@ -435,6 +484,8 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 - [entities.py](/data/multi-bot-saas/app/models/entities.py): 数据模型
 - [plugin_directory.py](/data/multi-bot-saas/app/services/plugin_directory.py): 目录插件扫描与调度
 - [async_workers.py](/data/multi-bot-saas/app/services/async_workers.py): 后台任务与轮询
+- [channel_catalog.py](/data/multi-bot-saas/app/services/channel_catalog.py): 正式渠道、能力和表单字段目录
+- [channel_runtime.py](/data/multi-bot-saas/app/services/channel_runtime.py): 租户隔离渠道任务协调器
 
 ## 生产建议
 

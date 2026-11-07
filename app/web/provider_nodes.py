@@ -1,4 +1,4 @@
-"""租户 Provider 节点、激活码和渠道解绑管理页面。"""
+"""租户企业微信客户端、激活码和账号状态管理页面。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from app.services.provider_nodes import (
     list_provider_nodes,
     reactivate_provider_node,
     revoke_provider_node_credentials,
-    unbind_provider_channel,
 )
 from app.services.saas_auth import has_tenant_role
 from app.web.auth_common import (
@@ -34,6 +33,7 @@ from app.web.auth_common import (
     TENANT_PASSWORD_PATH,
     require_tenant_csrf,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 
 
 router = APIRouter(prefix="/provider-nodes", tags=["provider-node-pages"])
@@ -62,12 +62,11 @@ def _page_context(
     request: Request,
     *,
     page_title: str,
-    active: str,
     notice: str = "",
     notice_tone: str = "",
     **extra,
 ) -> dict[str, object]:
-    """构造接入模块导航和 Provider 页面共用身份上下文。"""
+    """构造企业微信客户端页面共用身份上下文。"""
 
     principal = _require_principal(request)
     context: dict[str, object] = {
@@ -76,21 +75,6 @@ def _page_context(
         # 节点名可能包含设备编号或连续英文标识，页面标题必须允许在移动端任意断行。
         "page_title_class": "provider-node-breakable",
         "current_user": principal,
-        "primary_nav_items": [
-            {"label": "总览", "href": "/", "active": False},
-            {"label": "接入", "href": "/channels", "active": True},
-            {"label": "机器人", "href": "/bots", "active": False},
-            {"label": "插件", "href": "/plugins", "active": False},
-            {"label": "消息", "href": "/conversations", "active": False},
-        ],
-        "secondary_nav_items": [
-            {"label": "租户设置", "href": "/tenant/users", "active": False},
-        ],
-        "secondary_nav_active": False,
-        "section_nav_items": [
-            {"label": "渠道清单", "href": "/channels", "active": active == "channels"},
-            {"label": "Provider 节点", "href": "/provider-nodes", "active": active == "nodes"},
-        ],
         "module_links": {},
         "notice": notice,
         "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice and "已" not in notice else "info"),
@@ -100,6 +84,7 @@ def _page_context(
         "format_time": format_shanghai_time,
         "can_manage_provider_nodes": has_tenant_role(principal, "tenant_admin"),
     }
+    context.update(build_tenant_navigation(request.url.path))
     context.update(extra)
     return context
 
@@ -153,8 +138,7 @@ async def provider_node_list_page(request: Request):
         }
         context = _page_context(
             request,
-            page_title="Provider 节点",
-            active="nodes",
+            page_title="企业微信客户端",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             nodes=nodes,
@@ -187,8 +171,7 @@ async def provider_node_create_action(
             return _redirect("/provider-nodes", f"节点创建失败：{exc}", danger=True)
         context = _page_context(
             request,
-            page_title=f"Provider 节点 · {node.name}",
-            active="nodes",
+            page_title=f"企业微信客户端 · {node.name}",
             notice="节点创建成功。激活码只显示本次，请立即安全交付。",
             activation_code=issued.raw_code,
             activation_expires_at=issued.expires_at,
@@ -208,8 +191,7 @@ async def provider_node_detail_page(node_id: int, request: Request):
         data = _node_detail_data(db, node_id)
         context = _page_context(
             request,
-            page_title=f"Provider 节点 · {data['node'].name}",
-            active="nodes",
+            page_title=f"企业微信客户端 · {data['node'].name}",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             activation_code="",
@@ -240,8 +222,7 @@ async def provider_node_activation_code_action(
             return _redirect(f"/provider-nodes/{node_id}", f"激活码生成失败：{exc}", danger=True)
         context = _page_context(
             request,
-            page_title=f"Provider 节点 · {_node_detail_data(db, node_id)['node'].name}",
-            active="nodes",
+            page_title=f"企业微信客户端 · {_node_detail_data(db, node_id)['node'].name}",
             notice="新的激活码已生成，旧未使用激活码已失效。",
             activation_code=issued.raw_code,
             activation_expires_at=issued.expires_at,
@@ -290,8 +271,7 @@ async def provider_node_reactivate_action(
         data = _node_detail_data(db, node_id)
         context = _page_context(
             request,
-            page_title=f"Provider 节点 · {data['node'].name}",
-            active="nodes",
+            page_title=f"企业微信客户端 · {data['node'].name}",
             notice="旧设备密钥已吊销。新的激活码只显示本次。",
             activation_code=issued.raw_code,
             activation_expires_at=issued.expires_at,
@@ -317,27 +297,4 @@ async def provider_node_disable_action(node_id: int, request: Request, csrf_toke
             return _redirect(f"/provider-nodes/{node_id}", f"停用失败：{exc}", danger=True)
     finally:
         db.close()
-    return _redirect(f"/provider-nodes/{node_id}", "Provider 节点已停用")
-
-
-@router.post("/{node_id}/channels/{channel_id}/unbind")
-async def provider_node_channel_unbind_action(
-    node_id: int,
-    channel_id: int,
-    request: Request,
-    csrf_token: str = Form(""),
-):
-    """从节点详情解绑渠道，运行中任务存在时由服务层拒绝。"""
-
-    _require_tenant_admin(request)
-    db = open_tenant_session(TenantSessionLocal)
-    try:
-        require_tenant_csrf(db, request, csrf_token)
-        try:
-            channel = unbind_provider_channel(db, node_id, channel_id)
-            record_audit(db, "provider_node.channel.unbind", "channel", channel.id, f"解绑渠道 {channel.name}")
-        except ProviderNodeError as exc:
-            return _redirect(f"/provider-nodes/{node_id}", f"渠道解绑失败：{exc}", danger=True)
-    finally:
-        db.close()
-    return _redirect(f"/provider-nodes/{node_id}", "渠道已从 Provider 节点解绑")
+    return _redirect(f"/provider-nodes/{node_id}", "企业微信客户端已停用")

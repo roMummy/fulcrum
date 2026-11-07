@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
@@ -21,10 +21,17 @@ class Bot(Base, TenantOwnedMixin, TimestampMixin):
     channels = relationship("Channel", back_populates="bot", cascade="all, delete-orphan")
     plugin_bindings = relationship("BotPlugin", back_populates="bot", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="bot", cascade="all, delete-orphan")
+    # 商业额度绑定与业务机器人保持一对一关系。旧绑定允许暂时没有关联，
+    # 新的统一账号接入流程会在同一事务中写入真实机器人和主渠道。
+    entitlement_binding = relationship("BotBinding", back_populates="bot", uselist=False)
 
 
 class Channel(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "channels"
+    __table_args__ = (
+        # 平台大盘按租户汇总启用渠道及通用运行、登录状态，组合索引避免逐列索引回表扫描。
+        Index("ix_channels_platform_health", "tenant_id", "is_enabled", "status", "login_state"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), index=True)
@@ -57,6 +64,8 @@ class Channel(Base, TenantOwnedMixin, TimestampMixin):
     chatrooms = relationship("Chatroom", back_populates="channel", cascade="all, delete-orphan")
     provider_node = relationship("ProviderNode")
     provider_account = relationship("ProviderNodeAccount")
+    # 一个正式接入账号只能占用一个主渠道，避免额度记录与实际运行渠道脱节。
+    entitlement_binding = relationship("BotBinding", back_populates="channel", uselist=False)
 
 
 class Plugin(Base, TimestampMixin):
@@ -88,9 +97,45 @@ class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):
     last_execution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 普通配置继续保存在 config_json；API Key、Token 和密码等敏感字段整体加密后
+    # 单独保存，运行时只在可信租户和绑定上下文中短暂解密并合并。
+    secret_config_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    secret_config_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     bot = relationship("Bot", back_populates="plugin_bindings")
     plugin = relationship("Plugin", back_populates="bot_bindings")
+    state_records = relationship("PluginStateRecord", back_populates="binding", cascade="all, delete-orphan")
+
+
+class PluginStateRecord(Base, TenantOwnedMixin, TimestampMixin):
+    """保存租户插件的小型运行状态，不承载独立业务域的事务数据。"""
+
+    __tablename__ = "plugin_state_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "bot_plugin_id",
+            "namespace",
+            "state_key",
+            name="uq_plugin_state_records_locator",
+        ),
+        Index(
+            "ix_plugin_state_records_binding_namespace",
+            "tenant_id",
+            "bot_plugin_id",
+            "namespace",
+        ),
+        Index("ix_plugin_state_records_expiry", "tenant_id", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bot_plugin_id: Mapped[int] = mapped_column(ForeignKey("bot_plugins.id"), nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String(80), nullable=False)
+    state_key: Mapped[str] = mapped_column(String(191), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    binding = relationship("BotPlugin", back_populates="state_records")
 
 
 class Conversation(Base, TenantOwnedMixin, TimestampMixin):
@@ -364,6 +409,10 @@ class RawWebhookEvent(Base, TenantOwnedMixin, TimestampMixin):
 
 class Message(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "messages"
+    __table_args__ = (
+        # 平台分析只扫描有限时间窗口，并按方向、租户和发送者完成消息及触发用户统计。
+        Index("ix_messages_platform_analytics", "created_at", "direction", "tenant_id", "sender_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
@@ -407,6 +456,9 @@ class MessageAttachment(Base, TenantOwnedMixin, TimestampMixin):
 
 class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "task_jobs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "dedupe_key", name="uq_task_jobs_tenant_dedupe_key"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_type: Mapped[str] = mapped_column(String(50), index=True)
@@ -420,6 +472,8 @@ class TaskJob(Base, TenantOwnedMixin, TimestampMixin):
     locked_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     related_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # 只有需要强幂等的任务写入该键；NULL 不参与唯一冲突，现有普通队列保持原行为。
+    dedupe_key: Mapped[str | None] = mapped_column(String(191), nullable=True, index=True)
     payload_json: Mapped[str] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -506,6 +560,13 @@ class PointsAccount(Base, TenantOwnedMixin, TimestampMixin):
 
 class PointsTransaction(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "points_transactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_points_transactions_tenant_idempotency",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     group_id: Mapped[str] = mapped_column(String(128), default="", index=True)
@@ -514,6 +575,7 @@ class PointsTransaction(Base, TenantOwnedMixin, TimestampMixin):
     points_delta: Mapped[int] = mapped_column(Integer, default=0)
     balance_after: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(50), default="other", index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(191), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -573,6 +635,15 @@ class PluginExecutionLog(Base, TenantOwnedMixin, TimestampMixin):
 
 class MessageActivityHourly(Base, TenantOwnedMixin):
     __tablename__ = "message_activity_hourly"
+    __table_args__ = (
+        # 全平台趋势先按时间范围过滤，再按租户和消息方向聚合，不依赖原始消息回退。
+        Index(
+            "ix_message_activity_hourly_platform_analytics",
+            "bucket_start",
+            "tenant_id",
+            "direction",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bucket_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True)

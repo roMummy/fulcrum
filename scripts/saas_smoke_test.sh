@@ -61,13 +61,16 @@ platform_status="$(request_status GET /platform/login "${SMOKE_TMP_DIR}/platform
 expect_status "${platform_status}" "200" "platform login"
 grep -q 'action="/platform/login"' "${SMOKE_TMP_DIR}/platform-login.html"
 
-owner_status="$(request_status GET /login "${SMOKE_TMP_DIR}/owner-login.html")"
-expect_status "${owner_status}" "200" "owner login"
-grep -q 'action="/login"' "${SMOKE_TMP_DIR}/owner-login.html"
+enterprise_status="$(request_status GET /login "${SMOKE_TMP_DIR}/enterprise-login.html")"
+expect_status "${enterprise_status}" "200" "enterprise login"
+grep -q 'action="/login"' "${SMOKE_TMP_DIR}/enterprise-login.html"
 
-employee_status="$(request_status GET /employee/login "${SMOKE_TMP_DIR}/employee-login.html")"
-expect_status "${employee_status}" "200" "employee login"
-grep -q 'action="/employee/login"' "${SMOKE_TMP_DIR}/employee-login.html"
+# 企业所有者和员工已经统一使用手机号入口。旧员工登录路由必须保持原生 404，
+# 冒烟检查同时覆盖 GET 和 POST，避免后续发布重新引入租户编码或用户名兼容链。
+removed_employee_get_status="$(request_status GET /employee/login "${SMOKE_TMP_DIR}/removed-employee-login-get.html")"
+expect_status "${removed_employee_get_status}" "404" "removed employee login GET"
+removed_employee_post_status="$(request_status POST /employee/login "${SMOKE_TMP_DIR}/removed-employee-login-post.html")"
+expect_status "${removed_employee_post_status}" "404" "removed employee login POST"
 
 echo "[5/8] checking provider authentication boundary"
 activate_status="$(request_status POST /api/provider/activate "${SMOKE_TMP_DIR}/activate.json" -H 'Content-Type: application/json' --data '{"activation_code":"invalid-smoke-code","fingerprint":"smoke-device"}')"

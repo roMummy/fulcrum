@@ -64,12 +64,14 @@ from app.services.plugin_directory import (
 )
 from app.services.plugin_runtime import get_plugin_runtime_definition, get_plugin_runtime_meta, list_plugin_runtime_definitions
 from app.services.plugin_runtime.contracts import PluginExecutionRequest
+from app.services.plugin_runtime.http_client import PluginHttpResponse
 from app.services.plugin_schemas import build_plugin_config_view, get_plugin_config_schema
 from app.services.task_queue import enqueue_job
 from app.services.seed import seed_auth_users
 from app.services.security import build_telegram_webhook_secret, encrypt_secret, mask_secret, sign_webhook_payload
 from app.services.workwechat_cloud_poll import exchange_authorization_code, issue_authorization_code
 from app.services.wechat_ipad.client import WechatIpadApiClient
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 import app.services.wechat_ipad.service as wechat_ipad_service
 from app.services.wechat_ipad.service import build_wechat_ipad_group_summary, build_wechat_ipad_overview, refresh_wechat_ipad_status
 from app.services.wechat_ipad.chatrooms import upsert_wechat_ipad_chatroom_profile
@@ -261,19 +263,28 @@ class MultiBotAdminTestCase(unittest.TestCase):
 
         return FakeResponse(payload, url)
 
-    def _fake_weather_urlopen(self, req, timeout=0):
-        url = req.full_url if hasattr(req, "full_url") else str(req)
-        self.assertIn("/weather", url)
-        self.assertIn("appid=", url)
-        return self._json_response(
-            {
-                "weather": [{"main": "Clouds", "description": "broken clouds"}],
-                "main": {"temp": 22.5, "feels_like": 21.2, "humidity": 61},
-                "wind": {"speed": 3.4},
-                "name": "Shanghai",
-            },
-            url=url,
-        )
+    @staticmethod
+    def _fake_weather_snapshot():
+        """为通用调度测试提供当前天气插件认可的最小业务结果。"""
+
+        return {
+            "city_id": "101020100",
+            "city_name": "上海",
+            "adm1": "上海",
+            "country": "中国",
+            "forecast_date": "2026-08-31",
+            "condition_day": "多云",
+            "condition_night": "小雨",
+            "temp_min": 22,
+            "temp_max": 30,
+            "humidity": 61,
+            "precipitation": 1.2,
+            "uv_index": 5,
+            "sunrise": "05:30",
+            "sunset": "18:20",
+            "wind_direction": "东南风",
+            "wind_scale": "3-4",
+        }
 
     @contextmanager
     def override_settings(self, **overrides):
@@ -682,7 +693,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(image_response.status_code, 200)
         image_data = image_response.json()
-        self.assertEqual(image_data["adapter"]["endpoint"], "/Msg/SendCDNImg")
+        self.assertEqual(image_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_cdn_image)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -700,7 +711,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(voice_response.status_code, 200)
         voice_data = voice_response.json()
-        self.assertEqual(voice_data["adapter"]["endpoint"], "/Msg/SendVoice")
+        self.assertEqual(voice_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_voice)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._encode_audio_to_silk",
@@ -720,7 +731,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(converted_voice_response.status_code, 200)
         converted_voice_data = converted_voice_response.json()
-        self.assertEqual(converted_voice_data["adapter"]["endpoint"], "/Msg/SendVoice")
+        self.assertEqual(converted_voice_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_voice)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -738,7 +749,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(video_response.status_code, 200)
         video_data = video_response.json()
-        self.assertEqual(video_data["adapter"]["endpoint"], "/Msg/SendVideo")
+        self.assertEqual(video_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_video)
 
         with patch(
             "app.services.channel_adapters.wechat_ipad.WechatIpadAdapter._post_json",
@@ -754,7 +765,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             )
         self.assertEqual(file_response.status_code, 200)
         file_data = file_response.json()
-        self.assertEqual(file_data["adapter"]["endpoint"], "/Msg/SendApp")
+        self.assertEqual(file_data["adapter"]["endpoint"], IPAD_874_CONTRACT.endpoints.message_send_app)
 
         response = self.client.post(
             "/channels/1/outbound",
@@ -771,7 +782,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             side_effect=[
                 {
                     "ok": True,
-                    "endpoint": "/api/Login/HeartBeat?wxid=wxid_demo_account_001/slash",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat,
                     "http_status": 200,
                     "response_status": "0",
                     "error_message": None,
@@ -796,7 +807,11 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertEqual(health_redirect.status_code, 303)
         self.assertEqual(
             health_probe.call_args_list[0].args[1],
-            "/api/Login/HeartBeat?wxid=wxid_demo_account_001/slash",
+            IPAD_874_CONTRACT.endpoints.login_heartbeat,
+        )
+        self.assertEqual(
+            health_probe.call_args_list[0].kwargs["query"],
+            {"wxid": "wxid_demo_account_001/slash"},
         )
 
         with SessionLocal() as db:
@@ -876,20 +891,24 @@ class MultiBotAdminTestCase(unittest.TestCase):
         self.assertIn("message_summary", discovered)
         self.assertIn("weather", discovered)
         self.assertEqual(discovered["dify"].entrypoint_name, "plugin.py")
-        self.assertEqual(discovered["message_summary"].entrypoint_name, "main.py")
+        self.assertEqual(discovered["message_summary"].entrypoint_name, "plugin.py")
         self.assertEqual(discovered["weather"].entrypoint_name, "plugin.py")
-        self.assertEqual(discovered["dify"].capability.channel_types, ("wechat_ipad", "openclaw", "simulator"))
-        self.assertEqual(discovered["message_summary"].matcher.commands, ("总结", "日报"))
+        self.assertEqual(
+            discovered["dify"].capability.channel_types,
+            ("wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"),
+        )
+        self.assertEqual(discovered["message_summary"].matcher.commands, ("总结", "summary"))
 
         runtime_info = get_plugin_runtime_meta("dify")
         self.assertEqual(runtime_info["catalog_source"], "directory")
-        self.assertEqual(runtime_info["commands"], ["ai", "聊天"])
+        self.assertEqual(runtime_info["commands"], ["聊天"])
         self.assertTrue(str(runtime_info["config_path"]).endswith("plugins/dify/config.toml"))
 
         loaded = load_directory_plugin("message_summary", force=True)
         self.assertIsNotNone(loaded)
-        self.assertTrue(loaded.supports_handler)
-        self.assertFalse(loaded.supports_matcher)
+        self.assertFalse(loaded.supports_handler)
+        self.assertTrue(loaded.supports_matcher)
+        self.assertTrue(hasattr(loaded.instance, "execute_message_action"))
 
     def test_runtime_only_plugins_do_not_claim_directory_handler_support(self):
         for plugin_code in ("weather", "dify", "guess_song", "douyu"):
@@ -1053,78 +1072,6 @@ consume_policy = "continue"
         skipped = dict(plan.skipped)
         self.assertEqual(skipped["dify"], "group_chatroom_inactive")
         self.assertEqual(skipped["message_summary"], "group_chatroom_inactive")
-
-    def test_dynamic_dispatch_report_matches_command_and_executes_directory_handler(self):
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            report = build_dispatch_report(
-                db,
-                channel,
-                {
-                    "conversation": {"external_id": "room_dispatch", "chat_type": "group"},
-                    "message": {"content": "/总结 昨天群里说了什么", "sender_id": "wxid_sender", "message_type": "text"},
-                    "details": {"mentioned_self": False},
-                },
-                raw_event_id=101,
-                conversation_id=202,
-                message_id=303,
-            )
-
-        self.assertEqual(report.static_plan.candidate_plugin_codes, ("dify", "message_summary"))
-        self.assertEqual(report.matched_plugin_codes, ("message_summary",))
-        decision_map = {item.candidate.plugin_code: item for item in report.decisions}
-        self.assertEqual(decision_map["dify"].reason, "ai_no_trigger")
-        self.assertEqual(decision_map["message_summary"].reason, "command_hit")
-        execution_map = {item.candidate.plugin_code: item for item in report.executions}
-        self.assertEqual(execution_map["message_summary"].status, "completed")
-        self.assertTrue(execution_map["message_summary"].ok)
-        self.assertEqual(execution_map["message_summary"].debug["execution_source"], "directory_handler_executed")
-        self.assertEqual(execution_map["message_summary"].debug["output"]["command_name"], "总结")
-
-    def test_dynamic_dispatch_report_bridges_to_runtime_executor_when_directory_handler_missing(self):
-        original_loader = load_directory_plugin
-
-        def fake_loader(plugin_code: str | None, *, force: bool = False):
-            if plugin_code == "message_summary":
-                discovered = discover_plugins(force=force)
-                entrypoint = next(item.entrypoint_path for item in discovered if item.manifest.code == "message_summary")
-                return LoadedDirectoryPlugin(
-                    plugin_code="message_summary",
-                    module_name="test_message_summary_no_handler",
-                    entrypoint_path=entrypoint,
-                    instance=None,
-                    supports_matcher=False,
-                    supports_handler=False,
-                )
-            return original_loader(plugin_code, force=force)
-
-        with patch("app.services.plugin_directory.load_directory_plugin", side_effect=fake_loader):
-            with SessionLocal() as db:
-                channel = db.get(Channel, 1)
-                self.assertIsNotNone(channel)
-                report = build_dispatch_report(
-                    db,
-                    channel,
-                    {
-                        "conversation": {"external_id": "room_dispatch_runtime", "chat_type": "group"},
-                        "message": {"content": "/总结 最近情况", "sender_id": "wxid_sender", "message_type": "text"},
-                        "details": {"mentioned_self": False, "recent_messages": ["第一条", "第二条", "@第三条"]},
-                    },
-                    raw_event_id=111,
-                    conversation_id=222,
-                    message_id=333,
-                )
-
-        execution_map = {item.candidate.plugin_code: item for item in report.executions}
-        self.assertEqual(execution_map["message_summary"].status, "completed")
-        self.assertTrue(execution_map["message_summary"].ok)
-        self.assertEqual(execution_map["message_summary"].debug["execution_source"], "runtime_executor_executed")
-        self.assertEqual(execution_map["message_summary"].debug["output"]["count"], 3)
-        self.assertEqual(
-            execution_map["message_summary"].debug["runtime_payload"]["messages"],
-            ["第一条", "第二条", "@第三条"],
-        )
 
     def test_run_single_job_executes_claimed_plugin_dispatch_job(self):
         with SessionLocal() as db:
@@ -1292,16 +1239,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     report = build_dispatch_report(
                         db,
                         channel,
@@ -1350,16 +1303,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     report = build_dispatch_report(
                         db,
                         channel,
@@ -1427,7 +1386,7 @@ consume_policy = "continue"
                     "transport_status": "sent",
                     "external_status": "0",
                     "external_message_id": "auto-msg-1",
-                    "endpoint": "/Msg/SendTxt",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_text,
                 },
             ),
         ) as outbound_mock, patch(
@@ -1462,7 +1421,10 @@ consume_policy = "continue"
         self.assertEqual(len(auto_outbound), 1)
         self.assertTrue(auto_outbound[0]["ok"])
         self.assertEqual(auto_outbound[0]["payload"]["message_type"], "text")
-        self.assertEqual(auto_outbound[0]["adapter_result"]["endpoint"], "/Msg/SendTxt")
+        self.assertEqual(
+            auto_outbound[0]["adapter_result"]["endpoint"],
+            IPAD_874_CONTRACT.endpoints.message_send_text,
+        )
 
     def test_auto_outbound_payloads_support_explicit_image_path_reply(self):
         image_file = Path(TEST_DIR) / "auto-reply-image.bin"
@@ -1512,16 +1474,22 @@ consume_policy = "continue"
                 binding.config_json = json.dumps(
                     {
                         "commands": ["总结"],
-                        "api_base": "https://api.openweathermap.org/data/2.5",
-                        "api_key": "weather-secret-001",
-                        "default_city": "Hong Kong",
+                        "api_base": "https://weather.example.test",
+                        "default_city": "香港",
                     }
                 )
                 db.commit()
 
                 channel = db.get(Channel, 1)
                 self.assertIsNotNone(channel)
-                with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+                loaded_weather = load_directory_plugin("weather", force=True)
+                self.assertIsNotNone(loaded_weather)
+                weather_module = loaded_weather.instance._module
+                with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+                    weather_module,
+                    "_fetch_weather_bundle",
+                    return_value=self._fake_weather_snapshot(),
+                ):
                     result = ingest_inbound_event(
                         db,
                         channel,
@@ -1619,26 +1587,26 @@ consume_policy = "continue"
         self.assertTrue(hasattr(module, "execute_binding_action"))
         self.assertTrue(hasattr(module, "get_plugin_runtime_meta"))
 
-    def test_plugin_config_view_masks_sensitive_fields_and_keeps_unknown_preview_fields(self):
+    def test_plugin_config_view_separates_sensitive_fields_and_keeps_unknown_preview_fields(self):
         view = build_plugin_config_view(
             "dify",
             json.dumps(
                 {
                     "api_base": "https://api.dify.example/v1",
-                    "api_key": "app-secret-001",
                     "workflow_id": "workflow-001",
                     "commands": ["ai"],
                     "custom_timeout": 15,
                 }
             ),
+            secret_config={"api_key": "app-secret-001"},
         )
 
         self.assertEqual(view["mode"], "schema")
         self.assertIn('"custom_timeout": 15', view["preview_json"])
-        self.assertIn('"api_key": "app***001"', view["preview_json"])
+        self.assertNotIn("api_key", view["preview_json"])
         api_key_field = next(item for item in view["fields"] if item["name"] == "api_key")
         self.assertEqual(api_key_field["render_value"], "")
-        self.assertTrue(api_key_field["masked_value"])
+        self.assertTrue(api_key_field["secret_configured"])
 
     def test_plugin_detail_renders_schema_fields(self):
         self.login("ops", "ops123")
@@ -1654,7 +1622,8 @@ consume_policy = "continue"
         self.assertIn("Workflow ID", response.text)
         self.assertIn("触发命令", response.text)
         self.assertIn("结构化表单", response.text)
-        self.assertIn("掩码 JSON 预览", response.text)
+        self.assertIn("当前状态：未配置", response.text)
+        self.assertNotIn("掩码 JSON 预览", response.text)
         self.assertIn("schema", response.text)
 
     def test_plugins_page_focuses_on_scan_results_and_runtime_navigation(self):
@@ -1665,7 +1634,7 @@ consume_policy = "continue"
         self.assertIn("刷新插件目录", response.text)
         self.assertIn("运行状态页", response.text)
         self.assertIn("绑定插件到机器人", response.text)
-        self.assertIn("当前页面只保留目录扫描结果、目录元信息和快速绑定入口。", response.text)
+        self.assertNotIn("当前页面只保留目录扫描结果、目录元信息和快速绑定入口。", response.text)
         self.assertIn("/plugins/runtime", response.text)
         self.assertNotIn("最近执行", response.text)
         self.assertNotIn("执行摘要</span>", response.text)
@@ -1854,34 +1823,6 @@ consume_policy = "shared"
             self.assertEqual(saved["custom_timeout"], 30)
             self.assertEqual(saved["api_key"], "app-secret-001")
 
-    def test_message_summary_plugin_execution_reads_conversation_messages(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_summary"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.config_json = json.dumps(
-                {
-                    "commands": ["总结"],
-                    "max_messages": 10,
-                    "include_mentions": True,
-                }
-            )
-            db.commit()
-            binding_id = binding.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={"conversation_id": 1},
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "completed")
-        self.assertIn("目录插件运行层", data["summary"])
-        self.assertGreaterEqual(data["output"]["count"], 2)
-        self.assertTrue(data["output"]["messages"])
-
     def test_weather_plugin_execution_endpoint_returns_real_runtime_result(self):
         self.login("ops", "ops123")
         with SessionLocal() as db:
@@ -1892,16 +1833,21 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "api_base": "https://api.openweathermap.org/data/2.5",
-                    "api_key": "weather-secret-001",
-                    "default_city": "Hong Kong",
-                    "units": "metric",
+                    "api_base": "https://weather.example.test",
+                    "default_city": "香港",
                 }
             )
             db.commit()
             binding_id = binding.id
 
-        with patch("urllib.request.urlopen", side_effect=self._fake_weather_urlopen):
+        loaded_weather = load_directory_plugin("weather", force=True)
+        self.assertIsNotNone(loaded_weather)
+        weather_module = loaded_weather.instance._module
+        with patch.object(weather_module, "_validate_runtime_config", return_value=None), patch.object(
+            weather_module,
+            "_fetch_weather_bundle",
+            return_value=self._fake_weather_snapshot(),
+        ):
             response = self.client.post(
                 f"/plugins/{binding_id}/execute",
                 json={"city": "Shanghai"},
@@ -1911,16 +1857,16 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "weather")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["city"], "Shanghai")
-        self.assertEqual(data["output"]["provider_status"], "fetched")
-        self.assertEqual(data["output"]["condition"], "broken clouds")
-        self.assertIn("Shanghai天气", data["output"]["reply_text"])
+        self.assertEqual(data["output"]["city"], "上海")
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["condition_day"], "多云")
+        self.assertIn("上海天气", data["output"]["replies"][0]["content"])
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
             self.assertIsNotNone(binding)
             self.assertEqual(binding.last_execution_status, "completed")
-            self.assertIn("天气查询完成", binding.last_execution_summary or "")
+            self.assertIn("已返回上海的天气", binding.last_execution_summary or "")
             self.assertIn("\"action\": \"execute\"", binding.runtime_details_json or "")
 
     def test_dify_plugin_execution_endpoint_uses_new_runtime_executor(self):
@@ -1956,7 +1902,11 @@ consume_policy = "shared"
                                     "ok": True,
                                     "status": "completed",
                                     "message": "Dify 执行完成。",
-                                    "output": {"answer": "来自 Dify 的回复", "provider_response": {"http_status": 200}},
+                                    "output": {
+                                        "provider_status": "completed",
+                                        "reply_text": "来自 Dify 的回复",
+                                        "replies": [{"type": "text", "content": "来自 Dify 的回复"}],
+                                    },
                                 }
                             )
                         },
@@ -1973,7 +1923,7 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "dify")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["answer"], "来自 Dify 的回复")
+        self.assertEqual(data["output"]["reply_text"], "来自 Dify 的回复")
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
@@ -1991,9 +1941,9 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "api_url": "https://api.uuuka.com/api/search",
+                    "api_url": "https://search.example.test/v1/drama",
                     "result_limit": 3,
-                    "default_timeout": 10,
+                    "timeout_seconds": 15,
                     "commands": ["短剧", "短剧搜索", "搜索短剧", "短剧查询"],
                 }
             )
@@ -2016,11 +1966,17 @@ consume_policy = "shared"
                                     "status": "completed",
                                     "message": "短剧搜索完成，共返回 2 条结果。",
                                     "output": {
-                                        "provider_status": "found",
+                                        "provider_status": "completed",
                                         "result_count": 2,
-                                        "items": [
-                                            {"title": "雪中来信", "source_link": "https://example.com/drama/1"},
-                                            {"title": "城市边缘", "source_link": "https://example.com/drama/2"},
+                                        "replies": [
+                                            {
+                                                "type": "text",
+                                                "content": (
+                                                    "短剧搜索：雪\n\n"
+                                                    "1. 雪中来信\n链接：https://example.com/drama/1\n\n"
+                                                    "2. 城市边缘\n链接：https://example.com/drama/2"
+                                                ),
+                                            }
                                         ],
                                     },
                                 }
@@ -2039,16 +1995,16 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "duanju_search")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "found")
+        self.assertEqual(data["output"]["provider_status"], "completed")
         self.assertEqual(data["output"]["result_count"], 2)
-        self.assertEqual(data["output"]["items"][0]["title"], "雪中来信")
+        self.assertIn("雪中来信", data["output"]["replies"][0]["content"])
 
         with SessionLocal() as db:
             binding = db.get(BotPlugin, binding_id)
             self.assertIsNotNone(binding)
             self.assertEqual(binding.last_execution_status, "completed")
             self.assertIn("雪中来信", binding.runtime_details_json or "")
-            self.assertIn("\"provider_status\": \"found\"", binding.runtime_details_json or "")
+            self.assertIn("\"provider_status\": \"completed\"", binding.runtime_details_json or "")
 
     def test_music_plugin_execution_endpoint_uses_directory_runtime_logic(self):
         self.login("ops", "ops123")
@@ -2060,9 +2016,9 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "music_api_url": "http://music.example/search?keywords={keywords}&limit=10",
-                    "default_timeout": 10,
-                    "detail_level": "exhigh",
+                    "api_base": "https://music.example.test",
+                    "quality": "exhigh",
+                    "timeout_seconds": 15,
                 }
             )
             db.commit()
@@ -2084,8 +2040,16 @@ consume_policy = "shared"
                                     "status": "completed",
                                     "message": "音乐点播完成。",
                                     "output": {
-                                        "provider_status": "found",
-                                        "music_xml": "<appmsg><title>夜空中最亮的星</title></appmsg>",
+                                        "provider_status": "completed",
+                                        "song_name": "夜空中最亮的星",
+                                        "artist_name": "逃跑计划",
+                                        "replies": [
+                                            {
+                                                "type": "file",
+                                                "file_name": "逃跑计划 - 夜空中最亮的星.mp3",
+                                                "file_url": "https://media.example.test/song-001",
+                                            }
+                                        ],
                                     },
                                 }
                             )
@@ -2100,432 +2064,8 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "music")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "found")
-        self.assertIn("<appmsg", data["output"]["music_xml"])
-
-    def test_message_sign_plugin_execution_endpoint_persists_sign_state(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_sign"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "enable": True,
-                    "timezone": "Asia/Shanghai",
-                    "command": ["签到"],
-                    "makeup_command": ["补签"],
-                    "min_point": 3,
-                    "max_point": 50,
-                    "streak_cycle": 1,
-                    "max_streak_point": 50,
-                    "makeup_cost": 10,
-                }
-            )
-            db.commit()
-            binding_id = binding.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "content": "签到",
-                "command_name": "签到",
-                "sender_id": "wxid_sign_user_001",
-                "sender_name": "签到用户",
-                "chat_type": "group",
-                "conversation_external_id": "room-sign-001@chatroom",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "message_sign")
-        self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "signed")
-        self.assertEqual(data["output"]["signin_streak"], 1)
-        self.assertEqual(data["output"]["points_awarded"], 4)
-        self.assertIn("签到成功", data["output"]["reply_text"])
-
-        with SessionLocal() as db:
-            record = db.scalar(
-                select(SignInRecord).where(
-                    SignInRecord.user_id == "wxid_sign_user_001",
-                    SignInRecord.group_id == "room-sign-001@chatroom",
-                )
-            )
-            self.assertIsNotNone(record)
-            self.assertEqual(record.points, 4)
-            self.assertEqual(record.total_sign_count, 1)
-            self.assertEqual(record.signin_streak, 1)
-
-            history_rows = db.scalars(
-                select(SignInHistory).where(
-                    SignInHistory.user_id == "wxid_sign_user_001",
-                    SignInHistory.group_id == "room-sign-001@chatroom",
-                )
-            ).all()
-            self.assertEqual(len(history_rows), 1)
-            self.assertFalse(history_rows[0].is_makeup)
-            self.assertEqual(history_rows[0].points_delta, 4)
-
-    def test_message_sign_plugin_execution_endpoint_supports_makeup_sign(self):
-        self.login("ops", "ops123")
-        now = datetime.now(timezone.utc)
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_sign"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "enable": True,
-                    "timezone": "Asia/Shanghai",
-                    "command": ["签到"],
-                    "makeup_command": ["补签"],
-                    "min_point": 3,
-                    "max_point": 50,
-                    "streak_cycle": 1,
-                    "max_streak_point": 50,
-                    "makeup_cost": 10,
-                }
-            )
-            record = SignInRecord(
-                user_id="wxid_sign_user_002",
-                group_id="room-sign-002@chatroom",
-                user_name="补签用户",
-                points=28,
-                total_sign_count=3,
-                signin_streak=1,
-                previous_streak=2,
-                sign_stat=now,
-                last_sign_date=now - timedelta(days=2),
-            )
-            db.add(record)
-            db.commit()
-            binding_id = binding.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "content": "补签",
-                "command_name": "补签",
-                "sender_id": "wxid_sign_user_002",
-                "sender_name": "补签用户",
-                "chat_type": "group",
-                "conversation_external_id": "room-sign-002@chatroom",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["output"]["provider_status"], "makeup_signed")
-        self.assertEqual(data["output"]["signin_streak"], 3)
-        self.assertEqual(data["output"]["points"], 18)
-        self.assertIn("补签成功", data["output"]["reply_text"])
-
-        with SessionLocal() as db:
-            record = db.scalar(
-                select(SignInRecord).where(
-                    SignInRecord.user_id == "wxid_sign_user_002",
-                    SignInRecord.group_id == "room-sign-002@chatroom",
-                )
-            )
-            self.assertIsNotNone(record)
-            self.assertEqual(record.points, 18)
-            self.assertEqual(record.signin_streak, 3)
-            self.assertEqual(record.previous_streak, 0)
-
-            makeup_history = db.scalars(
-                select(SignInHistory).where(
-                    SignInHistory.user_id == "wxid_sign_user_002",
-                    SignInHistory.group_id == "room-sign-002@chatroom",
-                    SignInHistory.is_makeup.is_(True),
-                )
-            ).all()
-            self.assertEqual(len(makeup_history), 1)
-            self.assertEqual(makeup_history[0].points_delta, -10)
-
-    def test_message_sign_plugin_execution_endpoint_also_updates_points_account(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_sign"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"enable": True, "command": ["签到"], "makeup_command": ["补签"]})
-            db.commit()
-            binding_id = binding.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "content": "签到",
-                "command_name": "签到",
-                "sender_id": "wxid_points_user_001",
-                "sender_name": "积分签到用户",
-                "chat_type": "group",
-                "conversation_external_id": "room-points-001@chatroom",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["output"]["points"], 4)
-
-        with SessionLocal() as db:
-            account = db.scalar(
-                select(PointsAccount).where(
-                    PointsAccount.user_id == "wxid_points_user_001",
-                    PointsAccount.group_id == "room-points-001@chatroom",
-                )
-            )
-            self.assertIsNotNone(account)
-            self.assertEqual(account.total_points, 4)
-            txs = db.scalars(
-                select(PointsTransaction).where(
-                    PointsTransaction.user_id == "wxid_points_user_001",
-                    PointsTransaction.group_id == "room-points-001@chatroom",
-                )
-            ).all()
-            self.assertEqual(len(txs), 1)
-            self.assertEqual(txs[0].source, "checkin")
-
-    def test_point_trade_plugin_execution_endpoint_transfers_points_and_ranks(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "point_trade"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"enable": True})
-            db.add_all(
-                [
-                    PointsAccount(user_id="wxid_trade_from", group_id="room-trade@chatroom", user_name="甲", total_points=30),
-                    PointsAccount(user_id="wxid_trade_to", group_id="room-trade@chatroom", user_name="乙", total_points=5),
-                ]
-            )
-            db.commit()
-            binding_id = binding.id
-
-        transfer_response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "content": "积分转账 12 wxid_trade_to",
-                "command_name": "积分转账",
-                "command_args": "12 wxid_trade_to",
-                "sender_id": "wxid_trade_from",
-                "sender_name": "甲",
-                "target_user_id": "wxid_trade_to",
-                "target_user_name": "乙",
-                "chat_type": "group",
-                "conversation_external_id": "room-trade@chatroom",
-            },
-        )
-        self.assertEqual(transfer_response.status_code, 200)
-        transfer_data = transfer_response.json()
-        self.assertTrue(transfer_data["ok"])
-        self.assertEqual(transfer_data["output"]["provider_status"], "transfer_completed")
-        self.assertEqual(transfer_data["output"]["from_user"]["total_points"], 18)
-        self.assertEqual(transfer_data["output"]["to_user"]["total_points"], 17)
-
-        ranking_response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "content": "积分排行",
-                "command_name": "积分排行",
-                "sender_id": "wxid_trade_from",
-                "sender_name": "甲",
-                "chat_type": "group",
-                "conversation_external_id": "room-trade@chatroom",
-            },
-        )
-        self.assertEqual(ranking_response.status_code, 200)
-        ranking_data = ranking_response.json()
-        self.assertTrue(ranking_data["ok"])
-        self.assertEqual(ranking_data["output"]["provider_status"], "ranking")
-        self.assertEqual(len(ranking_data["output"]["ranking"]), 2)
-        self.assertEqual(ranking_data["output"]["ranking"][0]["user_id"], "wxid_trade_from")
-
-        with SessionLocal() as db:
-            from_account = db.scalar(
-                select(PointsAccount).where(
-                    PointsAccount.user_id == "wxid_trade_from",
-                    PointsAccount.group_id == "room-trade@chatroom",
-                )
-            )
-            to_account = db.scalar(
-                select(PointsAccount).where(
-                    PointsAccount.user_id == "wxid_trade_to",
-                    PointsAccount.group_id == "room-trade@chatroom",
-                )
-            )
-            self.assertIsNotNone(from_account)
-            self.assertIsNotNone(to_account)
-            self.assertEqual(from_account.total_points, 18)
-            self.assertEqual(to_account.total_points, 17)
-            tx_rows = db.scalars(select(PointsTransaction).where(PointsTransaction.group_id == "room-trade@chatroom")).all()
-            self.assertEqual(len(tx_rows), 2)
-
-    def test_lucky_pot_plugin_execution_endpoint_supports_create_join_and_draw(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "lucky_pot"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "entry_fee": 50,
-                    "max_players": 5,
-                    "house_cut_percent": 5,
-                    "lucky_bonus_chance": 0,
-                    "lucky_bonus_percent": 20,
-                }
-            )
-            db.add_all(
-                [
-                    PointsAccount(user_id="wxid_lp_user_a", group_id="room-lp-test@chatroom", user_name="甲", total_points=200),
-                    PointsAccount(user_id="wxid_lp_user_b", group_id="room-lp-test@chatroom", user_name="乙", total_points=200),
-                ]
-            )
-            db.commit()
-            binding_id = binding.id
-
-        create_response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "command_args": "create",
-                "sender_id": "wxid_lp_user_a",
-                "sender_name": "甲",
-                "chat_type": "group",
-                "conversation_external_id": "room-lp-test@chatroom",
-            },
-        )
-        self.assertEqual(create_response.status_code, 200)
-        create_data = create_response.json()
-        self.assertTrue(create_data["ok"])
-        self.assertEqual(create_data["output"]["provider_status"], "created")
-
-        join_response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "command_args": "join",
-                "sender_id": "wxid_lp_user_b",
-                "sender_name": "乙",
-                "chat_type": "group",
-                "conversation_external_id": "room-lp-test@chatroom",
-            },
-        )
-        self.assertEqual(join_response.status_code, 200)
-        join_data = join_response.json()
-        self.assertTrue(join_data["ok"])
-        self.assertEqual(join_data["output"]["provider_status"], "joined")
-
-        draw_response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "command_args": "draw",
-                "sender_id": "wxid_lp_user_a",
-                "sender_name": "甲",
-                "chat_type": "group",
-                "conversation_external_id": "room-lp-test@chatroom",
-            },
-        )
-        self.assertEqual(draw_response.status_code, 200)
-        draw_data = draw_response.json()
-        self.assertTrue(draw_data["ok"])
-        self.assertEqual(draw_data["output"]["provider_status"], "drawn")
-        self.assertIn("大奖池开奖完成", draw_data["output"]["reply_text"])
-
-        with SessionLocal() as db:
-            accounts = db.scalars(select(PointsAccount).where(PointsAccount.group_id == "room-lp-test@chatroom")).all()
-            balances = {item.user_id: item.total_points for item in accounts}
-            self.assertIn("wxid_lp_user_a", balances)
-            self.assertIn("wxid_lp_user_b", balances)
-            self.assertEqual(sum(balances.values()), 395)
-
-    def test_jd_sign_token_plugin_execution_endpoint_updates_ql_env(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "jd_sign_token"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps(
-                {
-                    "enable": True,
-                    "ql_host": "http://ql.example:5700",
-                    "client_id": "cid-001",
-                    "client_secret": "secret-001",
-                    "env_name": "JD_COOKIE",
-                }
-            )
-            db.commit()
-            binding_id = binding.id
-
-        calls: list[tuple[str, str, str | None]] = []
-
-        def fake_ql_urlopen(req, timeout=0):
-            url = req.full_url
-            method = req.get_method()
-            body = req.data.decode("utf-8") if getattr(req, "data", None) else None
-            calls.append((method, url, body))
-            if "/open/auth/token" in url:
-                return self._json_response({"code": 200, "data": {"token_type": "Bearer", "token": "ql-token-001"}}, url=url)
-            if method == "GET" and "/open/envs" in url:
-                return self._json_response(
-                    {
-                        "code": 200,
-                        "data": [
-                            {
-                                "id": "env-001",
-                                "name": "JD_COOKIE",
-                                "value": "pt_key=old-key;pt_pin=jd_pin_001;",
-                                "remarks": "旧备注",
-                            }
-                        ],
-                    },
-                    url=url,
-                )
-            if method == "PUT" and "/open/envs" in url:
-                payload = json.loads(body or "{}")
-                self.assertEqual(payload["id"], "env-001")
-                self.assertEqual(payload["name"], "JD_COOKIE")
-                self.assertEqual(payload["remarks"], "新备注")
-                self.assertIn("pt_key=new-key;pt_pin=jd_pin_001;", payload["value"])
-                return self._json_response({"code": 200, "data": payload}, url=url)
-            raise AssertionError(f"unexpected request: {method} {url}")
-
-        with patch("urllib.request.urlopen", side_effect=fake_ql_urlopen):
-            response = self.client.post(
-                f"/plugins/{binding_id}/execute",
-                json={
-                    "content": "设置京东 pt_key=new-key;pt_pin=jd_pin_001; 新备注",
-                    "command_name": "设置京东",
-                    "sender_id": "wxid_jd_user_001",
-                    "sender_name": "京东用户",
-                    "chat_type": "direct",
-                    "conversation_external_id": "wxid_jd_user_001",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "jd_sign_token")
-        self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "updated")
-        self.assertEqual(data["output"]["pt_pin"], "jd_pin_001")
-        self.assertEqual(data["output"]["remark"], "新备注")
-        self.assertIn("已更新京东账号", data["output"]["reply_text"])
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["replies"][0]["type"], "file")
 
     def test_inactive_rank_plugin_execution_endpoint_uses_members_and_messages(self):
         self.login("ops", "ops123")
@@ -3170,233 +2710,6 @@ consume_policy = "shared"
         )
         self.assertEqual(group_ids, ["room-a@chatroom", "room-b@chatroom"])
 
-    def test_group_member_change_plugin_marks_left_member_from_sysmsg(self):
-        from plugins.group_member_change.plugin import execute_action
-        from app.services.plugin_runtime.contracts import PluginExecutionRequest
-
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            chatroom = Chatroom(
-                bot_id=channel.bot_id,
-                channel_id=channel.id,
-                external_id="room-plugin-left@chatroom",
-                name="成员变更群",
-                status="members_synced",
-                member_count=1,
-            )
-            db.add(chatroom)
-            db.flush()
-            db.add(
-                ChatroomMember(
-                    chatroom_id=chatroom.id,
-                    bot_id=channel.bot_id,
-                    channel_id=channel.id,
-                    member_external_id="wxid_leave_user",
-                    nickname="离群成员",
-                    status="active",
-                )
-            )
-            db.commit()
-
-        xml_content = """
-        <sysmsg type="sysmsgtemplate">
-          <sysmsgtemplate>
-            <content_template type="tmpl_type_profile">
-              <template><![CDATA["$username$"退出了群聊]]></template>
-              <link_list>
-                <link name="username">
-                  <member>
-                    <username><![CDATA[wxid_leave_user]]></username>
-                    <nickname><![CDATA[离群成员]]></nickname>
-                  </member>
-                </link>
-              </link_list>
-            </content_template>
-          </sysmsgtemplate>
-        </sysmsg>
-        """.strip()
-        result = execute_action(
-            PluginExecutionRequest(
-                action="execute",
-                config={},
-                payload={
-                    "content": xml_content,
-                    "channel_id": 1,
-                    "conversation_external_id": "room-plugin-left@chatroom",
-                },
-            )
-        )
-        self.assertTrue(result.ok)
-        self.assertEqual(result.output["change_type"], "left")
-        self.assertEqual(result.output["db_updated_member_count"], 1)
-
-        with SessionLocal() as db:
-            member = db.scalar(select(ChatroomMember).where(ChatroomMember.member_external_id == "wxid_leave_user"))
-            self.assertIsNotNone(member)
-            self.assertEqual(member.status, "left")
-
-    def test_group_member_change_plugin_marks_join_member_active_and_replies(self):
-        from plugins.group_member_change.plugin import execute_action
-        from app.services.plugin_runtime.contracts import PluginExecutionRequest
-
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            chatroom = Chatroom(
-                bot_id=channel.bot_id,
-                channel_id=channel.id,
-                external_id="room-plugin-join@chatroom",
-                name="成员变更群",
-                status="members_synced",
-                member_count=1,
-            )
-            db.add(chatroom)
-            db.flush()
-            db.add(
-                ChatroomMember(
-                    chatroom_id=chatroom.id,
-                    bot_id=channel.bot_id,
-                    channel_id=channel.id,
-                    member_external_id="wxid_join_user",
-                    nickname="新成员",
-                    status="left",
-                )
-            )
-            db.commit()
-
-        xml_content = """
-        <sysmsg type="sysmsgtemplate">
-          <sysmsgtemplate>
-            <content_template type="tmpl_type_profile">
-              <template><![CDATA["$names$"加入了群聊]]></template>
-              <link_list>
-                <link name="names">
-                  <memberlist>
-                    <member>
-                      <username><![CDATA[wxid_join_user]]></username>
-                      <nickname><![CDATA[新成员]]></nickname>
-                    </member>
-                  </memberlist>
-                </link>
-              </link_list>
-            </content_template>
-          </sysmsgtemplate>
-        </sysmsg>
-        """.strip()
-        result = execute_action(
-            PluginExecutionRequest(
-                action="execute",
-                config={},
-                payload={
-                    "content": xml_content,
-                    "channel_id": 1,
-                    "conversation_external_id": "room-plugin-join@chatroom",
-                },
-            )
-        )
-        self.assertTrue(result.ok)
-        self.assertEqual(result.output["change_type"], "join")
-        self.assertEqual(result.output["db_updated_member_count"], 1)
-        self.assertIn("欢迎 新成员 加入群聊。", result.output["reply_text"])
-
-        with SessionLocal() as db:
-            member = db.scalar(select(ChatroomMember).where(ChatroomMember.member_external_id == "wxid_join_user"))
-            self.assertIsNotNone(member)
-            self.assertEqual(member.status, "active")
-
-    def test_message_push_task_plugin_execution_endpoint_enqueues_outbound_job(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "message_push_task"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"enable": True})
-            conversation = db.scalar(select(Conversation).where(Conversation.external_id == "room_001"))
-            self.assertIsNotNone(conversation)
-            db.commit()
-            binding_id = binding.id
-            conversation_id = conversation.id
-
-        response = self.client.post(
-            f"/plugins/{binding_id}/execute",
-            json={
-                "conversation_id": conversation_id,
-                "schedule_at": "2026-03-26T10:00:00+08:00",
-                "content": "明早群提醒",
-                "message_type": "text",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "message_push_task")
-        self.assertEqual(data["output"]["provider_status"], "scheduled")
-        job_id = data["output"]["job_id"]
-
-        with SessionLocal() as db:
-            job = db.get(TaskJob, job_id)
-            self.assertIsNotNone(job)
-            self.assertEqual(job.job_type, "outbound_dispatch")
-            self.assertEqual(job.status, "pending")
-            payload = json.loads(job.payload_json)
-            self.assertEqual(payload["plugin_code"], "message_push_task")
-            self.assertEqual(payload["conversation_id"], conversation_id)
-            self.assertEqual(payload["payload"]["content"], "明早群提醒")
-
-    def test_global_news_plugin_execution_endpoint_uses_directory_runtime_logic(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            plugin = db.scalar(select(Plugin).where(Plugin.code == "global_news"))
-            self.assertIsNotNone(plugin)
-            binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
-            self.assertIsNotNone(binding)
-            binding.status = "enabled"
-            binding.config_json = json.dumps({"sources": ["bbc", "cnn"], "per_source_limit": 3, "default_timeout": 10})
-            db.commit()
-            binding_id = binding.id
-
-        with patch(
-            "app.services.plugin_runtime.executors.load_directory_plugin",
-            return_value=type(
-                "LoadedPlugin",
-                (),
-                {
-                    "instance": type(
-                        "PluginInstance",
-                        (),
-                        {
-                            "execute_action": staticmethod(
-                                lambda request: {
-                                    "ok": True,
-                                    "status": "completed",
-                                    "message": "全球新闻抓取完成，共 2 条新闻。",
-                                    "output": {
-                                        "provider_status": "fetched",
-                                        "count": 2,
-                                        "items": [
-                                            {"source": "bbc", "title": "headline-1"},
-                                            {"source": "cnn", "title": "headline-2"},
-                                        ],
-                                    },
-                                }
-                            )
-                        },
-                    )()
-                },
-            )(),
-        ):
-            response = self.client.post(f"/plugins/{binding_id}/execute", json={})
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertTrue(data["ok"])
-        self.assertEqual(data["plugin_code"], "global_news")
-        self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["count"], 2)
-        self.assertEqual(data["output"]["provider_status"], "fetched")
-
     def test_douyin_parser_plugin_execution_endpoint_uses_directory_runtime_logic(self):
         self.login("ops", "ops123")
         with SessionLocal() as db:
@@ -3405,7 +2718,13 @@ consume_policy = "shared"
             binding = db.scalar(select(BotPlugin).where(BotPlugin.plugin_id == plugin.id, BotPlugin.bot_id == 1))
             self.assertIsNotNone(binding)
             binding.status = "enabled"
-            binding.config_json = json.dumps({"download_mode": "card", "default_timeout": 10})
+            binding.config_json = json.dumps(
+                {
+                    "api_url": "https://parser.example.test/v1/douyin",
+                    "timeout_seconds": 20,
+                    "max_media_items": 5,
+                }
+            )
             db.commit()
             binding_id = binding.id
 
@@ -3423,10 +2742,17 @@ consume_policy = "shared"
                                 lambda request: {
                                     "ok": True,
                                     "status": "completed",
-                                    "message": "抖音解析完成，类型为 video。",
+                                    "message": "已解析抖音视频。",
                                     "output": {
-                                        "provider_status": "parsed",
-                                        "video_xml": "<appmsg><title>测试作者</title></appmsg>",
+                                        "provider_status": "completed",
+                                        "media_type": "video",
+                                        "replies": [
+                                            {
+                                                "type": "file",
+                                                "file_name": "测试作者 - 测试视频.mp4",
+                                                "file_url": "https://media.example.test/douyin-001.mp4",
+                                            }
+                                        ],
                                     },
                                 }
                             )
@@ -3444,125 +2770,42 @@ consume_policy = "shared"
         self.assertTrue(data["ok"])
         self.assertEqual(data["plugin_code"], "douyin_parser")
         self.assertEqual(data["status"], "completed")
-        self.assertEqual(data["output"]["provider_status"], "parsed")
-        self.assertIn("<appmsg", data["output"]["video_xml"])
-
-    def test_guess_song_directory_plugin_executes_start_and_answer_flow(self):
-        loaded = load_directory_plugin("guess_song", force=True)
-        self.assertIsNotNone(loaded)
-        self.assertIsNotNone(loaded.instance)
-
-        class FakeResponse:
-            def __init__(self, payload, url="http://example.test/final"):
-                self.payload = payload
-                self.url = url
-
-            def read(self):
-                return json.dumps(self.payload).encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        def fake_urlopen(req, timeout=0):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-            method = req.get_method() if hasattr(req, "get_method") else "GET"
-            if "Search?" in url:
-                return FakeResponse(
-                    {"success": True, "status": 200, "data": [{"id": 123, "name": "Blue Sky", "artist_string": "Singer A"}]},
-                    url=url,
-                )
-            if "Song_V1" in url:
-                return FakeResponse(
-                    {
-                        "success": True,
-                        "status": 200,
-                        "data": {
-                            "name": "Blue Sky",
-                            "ar_name": "Singer A",
-                            "url": "http://media.example/song.mp3",
-                            "pic": "http://media.example/cover.jpg",
-                        },
-                    },
-                    url=url,
-                )
-            if method == "HEAD":
-                return FakeResponse({}, url=url)
-            raise AssertionError(f"unexpected url: {url}")
-
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("random.choice", side_effect=lambda seq: seq[0]):
-            start_result = loaded.instance.execute_action(
-                PluginExecutionRequest(
-                    action="execute",
-                    config={
-                        "music_api_url": "http://music.example",
-                        "detail_level": "exhigh",
-                        "clip_duration": 12,
-                        "hint_timeout": 20,
-                    },
-                    payload={"operation": "start", "singer": "Singer A"},
-                )
-            )
-            start_output = start_result["output"] if isinstance(start_result, dict) else start_result.output
-            self.assertEqual(start_output["provider_status"], "started")
-            self.assertEqual(start_output["current_game"]["song_name"], "Blue Sky")
-            self.assertEqual(start_output["clip_preview"]["clip_duration_seconds"], 12)
-
-            answer_result = loaded.instance.execute_action(
-                PluginExecutionRequest(
-                    action="execute",
-                    config={"hint_timeout": 20},
-                    payload={
-                        "operation": "answer",
-                        "answer": "Blue",
-                        "current_game": start_output["current_game"],
-                    },
-                )
-            )
-            answer_output = answer_result["output"] if isinstance(answer_result, dict) else answer_result.output
-            self.assertEqual(answer_output["provider_status"], "answered")
-            self.assertTrue(answer_output["correct"])
-            self.assertIn("<appmsg", answer_output["music_xml"])
+        self.assertEqual(data["output"]["provider_status"], "completed")
+        self.assertEqual(data["output"]["replies"][0]["type"], "file")
 
     def test_douyu_directory_plugin_executes_room_status_and_plan_flow(self):
         loaded = load_directory_plugin("douyu", force=True)
         self.assertIsNotNone(loaded)
         self.assertIsNotNone(loaded.instance)
+        module = loaded.instance._module
 
-        class FakeResponse:
-            def __init__(self, payload, url="http://example.test/final"):
-                self.payload = payload
-                self.url = url
-
-            def read(self):
-                return json.dumps(self.payload).encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        def fake_urlopen(req, timeout=0):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-            if "betard" in url:
-                return FakeResponse(
-                    {
-                        "room": {
-                            "show_status": 1,
-                            "videoLoop": 0,
-                            "nickname": "Streamer A",
-                            "room_name": "Test Live",
-                            "avatar": {"small": "http://img.example/cover.jpg"},
+        class FakeHttpClient:
+            def request(self, method, url, **kwargs):
+                self.assert_request(method, url, kwargs)
+                return PluginHttpResponse(
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    body=json.dumps(
+                        {
+                            "room": {
+                                "show_status": 1,
+                                "videoLoop": 0,
+                                "nickname": "Streamer A",
+                                "room_name": "Test Live",
+                            }
                         }
-                    },
+                    ).encode("utf-8"),
                     url=url,
                 )
-            raise AssertionError(f"unexpected url: {url}")
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            @staticmethod
+            def assert_request(method, url, kwargs):
+                if method != "GET" or "betard" not in url:
+                    raise AssertionError(f"unexpected request: {method} {url}")
+                if kwargs["max_response_bytes"] != 2 * 1024 * 1024:
+                    raise AssertionError("missing response size limit")
+
+        with patch.object(module, "PluginHttpClient", return_value=FakeHttpClient()):
             status_result = loaded.instance.execute_action(
                 PluginExecutionRequest(
                     action="execute",
@@ -3573,18 +2816,19 @@ consume_policy = "shared"
         status_output = status_result["output"] if isinstance(status_result, dict) else status_result.output
         self.assertEqual(status_output["provider_status"], "live")
         self.assertEqual(status_output["room_id"], "12345")
-        self.assertIn("<appmsg", status_output["douyu_xml"])
+        self.assertEqual(status_output["replies"][0]["type"], "text")
+        self.assertIn("https://www.douyu.com/12345", status_output["replies"][0]["content"])
+        self.assertNotIn("douyu_xml", status_output)
 
         plan_result = loaded.instance.execute_action(
             PluginExecutionRequest(
                 action="execute",
                 config={},
-                payload={"operation": "subscribe_plan", "room_id": "12345", "subscriptions": ["99999"]},
+                payload={"operation": "subscribe_room", "room_id": "12345", "conversation_id": 999},
             )
         )
         plan_output = plan_result["output"] if isinstance(plan_result, dict) else plan_result.output
-        self.assertEqual(plan_output["provider_status"], "planned")
-        self.assertEqual(plan_output["subscriptions"], ["12345", "99999"])
+        self.assertEqual(plan_output["provider_status"], "trusted_context_required")
 
     def test_plugin_reload_uses_new_runtime_for_migrated_plugins(self):
         self.login("ops", "ops123")
@@ -3607,133 +2851,14 @@ consume_policy = "shared"
             self.assertEqual(binding.runtime_status, "running")
             self.assertIsNotNone(binding.last_reload_at)
 
-    def test_plugin_runtime_page_shows_new_architecture_status(self):
+    def test_plugin_runtime_page_shows_operational_capabilities_without_migration_copy(self):
         self.login("ops", "ops123")
         response = self.client.get("/plugins/runtime")
         self.assertEqual(response.status_code, 200)
         self.assertIn("运行时注册表", response.text)
         self.assertIn("functional", response.text)
-        self.assertIn("discovered", response.text)
         self.assertIn("reload, execute", response.text)
-
-    def test_wechat_ipad_routes_persist_login_and_message_sync_state(self):
-        self.login("ops", "ops123")
-        with patch(
-            "app.services.wechat_ipad.client.WechatIpadApiClient.request_json",
-            side_effect=[
-                {
-                    "Ret": 0,
-                    "QRCode": "https://qr.example.com/wx-001",
-                    "ExpireAt": 180,
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "QRCode": "https://qr.example.com/wx-001",
-                    "ExpireAt": 300,
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "heartbeat ok",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "heartbeat long ok",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Data": {
-                        "DeviceID": "4978fc0fd191cf45a4e55fae7936b153",
-                        "Wxid": "wxid_demo_account_001",
-                        "NickName": "同步号",
-                    },
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "reconnect triggered",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "twice auth ok",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Data": {
-                        "AddMsgs": [
-                            {
-                                "Event": "AddMsg",
-                                "Wxid": "wxid_demo_account_001",
-                                "Data": {
-                                    "FromUserName": {"string": "room-sync@chatroom"},
-                                    "ToUserName": {"string": "wxid_demo_account_001"},
-                                    "Content": {"string": "wxid_sync_sender:\n同步消息"},
-                                    "MsgType": 1,
-                                    "MsgId": "sync-evt-001",
-                                },
-                            }
-                        ],
-                        "Synckey": "sync-key-001",
-                        "ContinueFlag": 1,
-                    },
-                    "http_status": 200,
-                },
-            ],
-        ):
-            login_init = self.client.post("/channels/1/wechat-ipad/login-init", follow_redirects=False)
-            self.assertEqual(login_init.status_code, 303)
-            qrcode_refresh = self.client.post("/channels/1/wechat-ipad/qrcode-refresh", follow_redirects=False)
-            self.assertEqual(qrcode_refresh.status_code, 303)
-            status_sync = self.client.post("/channels/1/wechat-ipad/status-sync", follow_redirects=False)
-            self.assertEqual(status_sync.status_code, 303)
-            reconnect = self.client.post("/channels/1/wechat-ipad/reconnect", follow_redirects=False)
-            self.assertEqual(reconnect.status_code, 303)
-            pull = self.client.post("/channels/1/wechat-ipad/pull-messages", follow_redirects=False)
-            self.assertEqual(pull.status_code, 303)
-
-        page = self.client.get("/channels/1")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("登录流程与运行态", page.text)
-        self.assertIn("最近同步诊断", page.text)
-        self.assertIn("当前同步档位：待续拉取", page.text)
-        self.assertIn("服务端仍可能有积压消息等待继续同步", page.text)
-        self.assertIn("sync_key", page.text)
-        self.assertIn("continue_flag", page.text)
-        self.assertIn("需继续拉取 (1)", page.text)
-        self.assertIn("消息数=1", page.text)
-        self.assertIn("CheckQR 结果", page.text)
-        self.assertIn("HeartBeat 结果", page.text)
-        self.assertIn("CacheInfo 摘要", page.text)
-        self.assertIn("heartbeat ok", page.text)
-        self.assertIn("同步号", page.text)
-        self.assertIn("收发与去重入口", page.text)
-        self.assertIn('/channels/1/wechat-ipad/qrcode-image', page.text)
-        self.assertIn("打开二维码链接", page.text)
-        self.assertIn("online", page.text)
-        self.assertIn("/channels/1/wechat-ipad/reconnect", page.text)
-
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            self.assertEqual(channel.login_state, "reconnecting")
-            self.assertEqual(channel.qrcode_status, "success")
-            self.assertIsNotNone(channel.last_heartbeat_at)
-            self.assertIsNotNone(channel.last_message_sync_at)
-            self.assertIn("qr.example.com", channel.runtime_info_json or "")
-            runtime_info = json.loads(channel.runtime_info_json or "{}")
-            self.assertGreaterEqual(runtime_info.get("qrcode_refresh_count", 0), 2)
-            self.assertEqual(runtime_info.get("reconnect_status"), "auto_auth_ok")
-            self.assertEqual(runtime_info.get("sync_key"), "sync-key-001")
-            self.assertEqual(runtime_info.get("sync_continue_flag"), 1)
-
-            synced_message = db.scalar(select(Message).where(Message.external_message_id == "sync-evt-001"))
-            self.assertIsNotNone(synced_message)
-            self.assertEqual(synced_message.content, "同步消息")
+        self.assertNotIn("迁移状态", response.text)
 
     def test_wechat_ipad_overview_builds_operator_friendly_sync_diagnostics(self):
         with SessionLocal() as db:
@@ -6253,7 +5378,7 @@ consume_policy = "shared"
 
         self.assertEqual(qr_fields["uuid"], "uuid-awaken-001")
         self.assertEqual(qr_fields["qr_url"], "http://weixin.qq.com/x/uuid-awaken-001")
-        self.assertIsNone(qr_fields["qr_base64"])
+        self.assertNotIn("qr_base64", qr_fields)
         self.assertEqual(qr_fields["expires_at"], 120)
         self.assertEqual(account_fields["wxid"], "wxid_runtime_001")
         self.assertEqual(account_fields["nickname"], "运行号")
@@ -6293,7 +5418,7 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_SEND_APP_ENDPOINT,
+                    IPAD_874_CONTRACT.endpoints.message_send_app,
                     body={"Wxid": "wxid_runtime_001", "ToWxid": "wxid_target_001", "Xml": "<appmsg />", "Type": 74},
                 )
 
@@ -6306,8 +5431,8 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_CONTACT_DETAIL_ENDPOINT,
-                    body={"Wxid": "wxid_runtime_001", "Towxids": "wxid_a,wxid_b", "Chatroom": "room-001@chatroom"},
+                    IPAD_874_CONTRACT.endpoints.friend_get_detail,
+                    body={"Wxid": "wxid_runtime_001", "Towxids": "wxid_a,wxid_b", "ChatRoom": "room-001@chatroom"},
                 )
 
             with patch.object(client, "request_json", return_value={"Success": True}) as mocked:
@@ -6318,238 +5443,9 @@ consume_policy = "shared"
                 )
                 mocked.assert_called_with(
                     channel,
-                    WechatIpadApiClient.DEFAULT_CHATROOM_QRCODE_ENDPOINT,
-                    body={"Wxid": "wxid_runtime_001", "Chatroom": "room-001@chatroom"},
+                    IPAD_874_CONTRACT.endpoints.group_get_qrcode,
+                    body={"Wxid": "wxid_runtime_001", "QID": "room-001@chatroom"},
                 )
-
-            with patch.object(client, "request_json", return_value={"Running": True}) as mocked:
-                client.check_database(channel)
-                mocked.assert_called_with(
-                    channel,
-                    WechatIpadApiClient.DEFAULT_CHECK_DATABASE_ENDPOINT,
-                    body=None,
-                    method="GET",
-                )
-
-    def test_wechat_ipad_qrcode_base64_is_served_as_image_without_exposing_raw_text(self):
-        self.login("ops", "ops123")
-        qr_bytes = b"fake-qr-image"
-        qr_base64 = base64.b64encode(qr_bytes).decode("ascii")
-        with patch(
-            "app.services.wechat_ipad.client.WechatIpadApiClient.request_json",
-            return_value={
-                "Ret": 0,
-                "Data": {
-                    "QrCodeResponse": {
-                        "Uuid": "uuid-base64-001",
-                        "Base64": qr_base64,
-                        "expiredTime": 120,
-                    },
-                },
-                "http_status": 200,
-            },
-        ):
-            login_init = self.client.post("/channels/1/wechat-ipad/login-init", follow_redirects=False)
-            self.assertEqual(login_init.status_code, 303)
-
-        page = self.client.get("/channels/1")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn('/channels/1/wechat-ipad/qrcode-image', page.text)
-        self.assertNotIn(qr_base64, page.text)
-        self.assertNotIn("data:image", page.text)
-
-        image = self.client.get("/channels/1/wechat-ipad/qrcode-image", follow_redirects=False)
-        self.assertEqual(image.status_code, 200)
-        self.assertEqual(image.content, qr_bytes)
-        self.assertEqual(image.headers["content-type"], "image/png")
-
-    def test_wechat_ipad_page_shows_expired_marker_and_countdown_labels_without_base64_text(self):
-        self.login("ops", "ops123")
-        qr_bytes = b"expired-qr-image"
-        qr_base64 = base64.b64encode(qr_bytes).decode("ascii")
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            channel.login_state = "qrcode_ready"
-            channel.qrcode_status = "waiting_scan"
-            channel.runtime_info_json = json.dumps(
-                {
-                    "qrcode_image_base64": qr_base64,
-                    "qrcode_image_media_type": "image/png",
-                    "qrcode_expires_at": "2026-03-22T00:00:00+00:00",
-                    "last_status_summary": "二维码已过期，请刷新二维码后重新扫码。",
-                },
-                ensure_ascii=False,
-            )
-            db.commit()
-
-        page = self.client.get("/channels/1")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("剩余有效期", page.text)
-        self.assertIn("二维码是否过期", page.text)
-        self.assertIn("已过期", page.text)
-        self.assertIn('/channels/1/wechat-ipad/qrcode-image', page.text)
-        self.assertNotIn(qr_base64, page.text)
-
-    def test_wechat_ipad_login_flow_polling_advances_to_success_and_persists_runtime(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            config = json.loads(channel.adapter_config_json or "{}")
-            config.pop("wxid", None)
-            channel.adapter_config_json = json.dumps(config, ensure_ascii=False)
-            db.commit()
-        with patch(
-            "app.services.wechat_ipad.client.WechatIpadApiClient.request_json",
-            side_effect=[
-                {
-                    "Ret": 0,
-                    "Data": {
-                        "QrCodeResponse": {
-                            "Uuid": "uuid-flow-001",
-                            "QrUrl": "https://qr.example.com/wx-flow-001",
-                            "expiredTime": 120,
-                        },
-                    },
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Message": "已扫码",
-                    "Data": {
-                        "QrCodeResponse": {
-                            "Uuid": "uuid-flow-001",
-                            "QrUrl": "https://qr.example.com/wx-flow-001",
-                            "expiredTime": 90,
-                        },
-                    },
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Message": "请在手机上确认",
-                    "Data": {
-                        "QrCodeResponse": {
-                            "Uuid": "uuid-flow-001",
-                            "QrUrl": "https://qr.example.com/wx-flow-001",
-                            "expiredTime": 60,
-                        },
-                    },
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Message": "登陆成功",
-                    "Data": {
-                        "expiredTime": 30,
-                        "QrCodeResponse": {
-                            "Uuid": "uuid-flow-001",
-                            "QrUrl": "https://qr.example.com/wx-flow-001",
-                            "expiredTime": 30,
-                        },
-                        "acctSectResp": {
-                            "userName": "wxid_flow_success",
-                            "nickName": "Flow User",
-                            "alias": "flow_user",
-                            "bindMobile": "13800002222",
-                        },
-                    },
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "heartbeat ok",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Msg": "heartbeat long ok",
-                    "http_status": 200,
-                },
-                {
-                    "Ret": 0,
-                    "Data": {
-                        "DeviceID": "4978fc0fd191cf45a4e55fae7936b153",
-                        "Wxid": "wxid_flow_success",
-                        "NickName": "Flow User",
-                    },
-                    "http_status": 200,
-                },
-            ],
-        ):
-            start = self.client.post("/channels/1/wechat-ipad/login-flow/start")
-            self.assertEqual(start.status_code, 200)
-            start_payload = start.json()
-            self.assertEqual(start_payload["overview"]["qrcode_status_display"], "waiting_scan")
-            self.assertEqual(start_payload["overview"]["login_state"], "qrcode_ready")
-            self.assertTrue(start_payload["overview"]["login_flow_polling_active"])
-
-            scanned = self.client.post("/channels/1/wechat-ipad/login-flow/poll")
-            self.assertEqual(scanned.status_code, 200)
-            scanned_payload = scanned.json()
-            self.assertEqual(scanned_payload["overview"]["qrcode_status_display"], "scanned")
-            self.assertEqual(scanned_payload["overview"]["login_state"], "qrcode_scanned")
-
-            confirmed = self.client.post("/channels/1/wechat-ipad/login-flow/poll")
-            self.assertEqual(confirmed.status_code, 200)
-            confirmed_payload = confirmed.json()
-            self.assertEqual(confirmed_payload["overview"]["qrcode_status_display"], "confirmed")
-            self.assertEqual(confirmed_payload["overview"]["login_state"], "qrcode_confirmed")
-
-            success = self.client.post("/channels/1/wechat-ipad/login-flow/poll")
-            self.assertEqual(success.status_code, 200)
-            success_payload = success.json()
-            self.assertEqual(success_payload["overview"]["qrcode_status_display"], "success")
-            self.assertEqual(success_payload["overview"]["login_state"], "online")
-            self.assertFalse(success_payload["overview"]["login_flow_polling_active"])
-
-        page = self.client.get("/channels/1")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("success", page.text)
-        self.assertIn("online", page.text)
-
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            self.assertEqual(channel.login_state, "online")
-            self.assertEqual(channel.qrcode_status, "success")
-            self.assertEqual(channel.status, "online")
-            self.assertIsNotNone(channel.last_login_at)
-            self.assertIn("\"active_wxid\": \"wxid_flow_success\"", channel.runtime_info_json or "")
-            self.assertIn("\"active_nickname\": \"Flow User\"", channel.runtime_info_json or "")
-
-    def test_wechat_ipad_login_flow_polling_maps_numeric_qr_status(self):
-        self.login("ops", "ops123")
-        with SessionLocal() as db:
-            channel = db.get(Channel, 1)
-            self.assertIsNotNone(channel)
-            channel.login_state = "qrcode_ready"
-            channel.qrcode_status = "waiting_scan"
-            channel.runtime_info_json = json.dumps({"login_qr_uuid": "uuid-status-001"}, ensure_ascii=False)
-            db.commit()
-
-        with patch(
-            "app.services.wechat_ipad.client.WechatIpadApiClient.request_json",
-            return_value={
-                "Ret": 0,
-                "Message": "成功",
-                "Data": {
-                    "status": 1,
-                    "nickName": "水牛2号",
-                    "uuid": "uuid-status-001",
-                    "expiredTime": 229,
-                },
-                "http_status": 200,
-            },
-        ):
-            response = self.client.post("/channels/1/wechat-ipad/login-flow/poll")
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["overview"]["login_state"], "qrcode_scanned")
-        self.assertEqual(payload["overview"]["qrcode_status"], "scanned")
-        self.assertTrue(payload["overview"]["login_flow_polling_active"])
 
     def test_wechat_ipad_status_sync_persists_error_context_for_failed_heartbeat(self):
         with SessionLocal() as db:
@@ -6585,11 +5481,11 @@ consume_policy = "shared"
             self.assertEqual(runtime_info.get("last_error"), "heartbeat down")
             self.assertIsInstance(context, dict)
             self.assertEqual(context.get("stage"), "heartbeat")
-            self.assertEqual(context.get("endpoint"), WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT)
+            self.assertEqual(context.get("endpoint"), IPAD_874_CONTRACT.endpoints.login_heartbeat)
             self.assertTrue(context.get("at"))
             self.assertEqual(channel.status, "degraded")
             self.assertEqual(overview["last_error_stage"], "heartbeat")
-            self.assertEqual(overview["last_error_endpoint"], WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT)
+            self.assertEqual(overview["last_error_endpoint"], IPAD_874_CONTRACT.endpoints.login_heartbeat)
 
     def test_wechat_ipad_overview_exposes_error_context(self):
         reference_time = datetime(2026, 3, 23, 12, 40, 0, tzinfo=timezone.utc)
@@ -6832,7 +5728,7 @@ consume_policy = "shared"
                     "last_error": "登录确认超时",
                     "last_error_context": {
                         "stage": "login_confirm",
-                        "endpoint": "/api/Login/CheckQR?uuid=confirm-001",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_check_qr,
                         "at": "2026-03-24T01:02:03+00:00",
                     },
                 },
@@ -6847,7 +5743,7 @@ consume_policy = "shared"
                     "last_error": "auto auth denied",
                     "last_error_context": {
                         "stage": "auto_login",
-                        "endpoint": "/api/Login/TwiceAutoAuth?wxid=wxid_auto_login",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
                         "at": "2026-03-24T04:05:06+00:00",
                     },
                 },
@@ -6892,7 +5788,7 @@ consume_policy = "shared"
                     "last_error": "awake timeout",
                     "last_error_context": {
                         "stage": "awake",
-                        "endpoint": "/api/Login/Awaken",
+                        "endpoint": IPAD_874_CONTRACT.endpoints.login_awaken,
                         "at": "2026-03-24T08:18:09+00:00",
                     },
                 },

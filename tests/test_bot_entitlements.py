@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.time import now_shanghai
+from app.models.entities import Bot, Channel
 from app.models.saas import BotBinding, DeviceTrialClaim, PlatformAuditLog, PlatformUser, SaasPlan, Tenant, TenantSubscription
 from app.services.bot_entitlements import (
     BotEntitlementError,
+    add_verified_bot_binding,
     bind_bot_account,
     get_bot_quota,
     hash_device_fingerprint,
@@ -207,6 +209,49 @@ def test_expired_subscription_cannot_add_binding(db: Session) -> None:
                 bot_account_id="expired-bot",
                 device_fingerprint="expired-device",
             )
+
+
+def test_verified_binding_participates_in_outer_transaction(db: Session) -> None:
+    """账号接入失败时，机器人、渠道、额度绑定和试用领取必须一起回滚。"""
+
+    seeded = _seed_entitlements(db)
+    tenant = seeded["trial_tenant"]
+    with tenant_scope(tenant.id):
+        bot = Bot(
+            tenant_id=tenant.id,
+            name="事务机器人",
+            status="stopped",
+            is_enabled=False,
+        )
+        db.add(bot)
+        db.flush()
+        channel = Channel(
+            tenant_id=tenant.id,
+            bot_id=bot.id,
+            name="事务渠道",
+            channel_type="telegram",
+            status="draft",
+            is_enabled=False,
+        )
+        db.add(channel)
+        db.flush()
+        binding = add_verified_bot_binding(
+            db,
+            adapter_type="telegram",
+            bot_account_id="transaction-bot-001",
+            device_fingerprint_hash=hash_device_fingerprint("transaction-device-001"),
+            display_name="事务机器人",
+            bot_id=bot.id,
+            channel_id=channel.id,
+        )
+        assert binding.id is not None
+        assert binding.bot_id == bot.id
+        assert binding.channel_id == channel.id
+        db.rollback()
+
+    assert db.scalar(select(BotBinding.id)) is None
+    assert db.scalar(select(DeviceTrialClaim.id)) is None
+    assert db.scalar(select(Bot.id).where(Bot.name == "事务机器人")) is None
 
 
 def test_platform_release_preserves_history_audit_and_trial_claim(db: Session) -> None:

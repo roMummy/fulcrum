@@ -248,8 +248,9 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
         "supports_sync": True,
         "sync_action": f"/channels/{channel.id}/wechat-winauto/sync-chatrooms",
         "sync_button_label": "刷新群列表",
-        "intro_summary": "基于已观察到的 wxauto 群会话样本生成轻量群管理视图。",
-        "empty_state_message": "当前还没有观测到 wxauto 群消息，先让目标群产生一条消息即可出现在这里。",
+        # 产品页面使用个人微信业务名称，不把 wxauto 运行实现暴露给企业员工。
+        "intro_summary": "集中查看已连接的个人微信群聊和运营状态。",
+        "empty_state_message": "暂无个人微信群聊，收到群消息后会自动显示。",
     }
 
 

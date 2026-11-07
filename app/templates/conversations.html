@@ -1,26 +1,27 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>按机器人、渠道和会话类型定位群聊或私聊，进入详情后查看消息流和上下文。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <span class="chip chip-outline">当前结果 {{ conversations|length }}</span>
   <a class="btn btn-secondary" href="/messages">查看消息</a>
 </div>
 {% endblock %}
 {% block content %}
-{# 筛选与结果拆开，避免用户在同一张大卡片里混淆“设置条件”和“查看数据”。 #}
-<section class="card filter-card">
+<section class="work-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Conversation Filter</p>
-      <h2>会话筛选</h2>
-      <p class="muted-text">先缩小机器人和渠道范围，再进入会话详情排查消息流。</p>
+
+      <h2>会话列表</h2>
     </div>
-    <span class="chip chip-outline">群聊 / 私聊</span>
+    <span class="chip chip-muted">共 {{ conversations|length }} 条</span>
   </div>
-  <form method="get" action="/conversations" class="form-grid">
-    <label>
+  {# 会话筛选和结果属于同一任务表面，窄屏仅在存在有效条件时保持展开。 #}
+  {% set filter_active = bot_id or channel_id or chat_type %}
+  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
+    <summary class="compact-filter-summary">
+      <span>筛选会话</span>
+      <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}机器人 / 渠道 / 类型{% endif %}</span>
+    </summary>
+    <form method="get" action="/conversations" class="compact-filter-form">
+    <label class="compact-filter-field">
       <span>机器人</span>
       <select name="bot_id">
         <option value="0">全部</option>
@@ -29,7 +30,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>渠道</span>
       <select name="channel_id">
         <option value="0">全部</option>
@@ -38,7 +39,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>
+    <label class="compact-filter-field">
       <span>会话类型</span>
       <select name="chat_type">
         <option value="" {% if not chat_type %}selected{% endif %}>全部</option>
@@ -46,21 +47,12 @@
         <option value="direct" {% if chat_type == 'direct' %}selected{% endif %}>私聊</option>
       </select>
     </label>
-    <div class="full-row form-actions-inline">
+    <div class="compact-filter-actions">
       <button class="btn" type="submit">筛选</button>
       <a class="btn btn-secondary" href="/conversations">重置</a>
     </div>
-  </form>
-</section>
-
-<section class="card">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Conversation Inventory</p>
-      <h2>会话列表</h2>
-    </div>
-    <span class="chip chip-muted">共 {{ conversations|length }} 条</span>
-  </div>
+    </form>
+  </details>
   <table class="table">
     <thead><tr><th class="col-id">ID</th><th>Bot</th><th class="col-type">渠道</th><th>外部会话ID</th><th>标题</th><th class="col-type">类型</th><th class="col-time">最后消息时间</th><th class="col-action">操作</th></tr></thead>
     <tbody>

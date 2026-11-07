@@ -1,22 +1,18 @@
-{% extends 'marketing_base.html' %}
+{% extends 'auth_base.html' %}
+{% from '_auth_fields.html' import password_field %}
+{% block access_title_id %}enterprise-login-title{% endblock %}
 {% block content %}
-<section class="marketing-auth-shell" aria-labelledby="enterprise-login-title">
-  <div class="marketing-auth-layout marketing-auth-layout-login">
-    <div class="marketing-auth-context">
-      <p class="section-kicker">企业控制台</p>
-      <h1 id="enterprise-login-title">企业账号登录</h1>
-      <p>企业所有者和员工均使用绑定手机号进入所属企业工作台。</p>
-    </div>
-    <div class="marketing-auth-panel">
-      <h2>手机号登录</h2>
-      {# 企业身份只能由服务端根据全局唯一手机号恢复，表单不接收租户编码。 #}
-      <form method="post" action="/login" class="form-grid auth-form-grid">
-        <label class="full-row" for="enterprise-mobile"><span>手机号</span></label><input class="full-row" id="enterprise-mobile" name="mobile" type="tel" autocomplete="username" inputmode="tel" value="{{ prefill_mobile or '' }}" required />
-        <label class="full-row" for="enterprise-password"><span>密码</span></label><input class="full-row" id="enterprise-password" name="password" type="password" autocomplete="current-password" required />
-        <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">登录</button></div>
-      </form>
-      <div class="marketing-auth-links"><a href="/register">免费试用 7 天</a></div>
-    </div>
-  </div>
-</section>
+<div class="access-heading">
+  <span class="access-entry-label">企业工作台</span>
+  <h1 id="enterprise-login-title">欢迎回来</h1>
+  <p>登录账号，开始今天的工作。</p>
+</div>
+{# 企业身份只由手机号恢复，表单不接收租户编码；标签与输入同组，避免重复网格留白。 #}
+<form method="post" action="/login" class="form-grid auth-form-grid">
+  <label class="access-field" for="enterprise-mobile"><span>手机号</span><input id="enterprise-mobile" name="mobile" type="tel" autocomplete="username" inputmode="tel" value="{{ prefill_mobile or '' }}" placeholder="请输入手机号" required /></label>
+  {{ password_field('enterprise-password') }}
+  <div class="auth-form-actions"><button class="btn auth-submit" type="submit">登录工作台 <span aria-hidden="true">→</span></button></div>
+</form>
+<p class="access-switch">还没有企业账号？<a href="/register">免费试用 7 天 <span aria-hidden="true">↗</span></a></p>
+<p class="access-identity">企业所有者与员工均使用手机号登录</p>
 {% endblock %}

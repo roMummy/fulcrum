@@ -11,7 +11,7 @@ from .generic import GenericHttpAdapter
 
 
 class WechatWinAutoAdapter(GenericHttpAdapter):
-    provider = "wechat_winauto"
+    adapter_type = "wechat_winauto"
 
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
         normalized_payload = dict(payload)
@@ -25,7 +25,7 @@ class WechatWinAutoAdapter(GenericHttpAdapter):
         if not channel.api_base:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "缺少 API Base",
                 "details": {"reason": "missing_api_base"},
@@ -50,7 +50,7 @@ class WechatWinAutoAdapter(GenericHttpAdapter):
         except URLError as exc:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "Windows provider 不可达",
                 "details": {
@@ -63,7 +63,7 @@ class WechatWinAutoAdapter(GenericHttpAdapter):
         ok = self._response_indicates_success(parsed)
         return {
             "ok": ok,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "status": "online" if ok else "degraded",
             "summary": "Windows provider 在线" if ok else self._extract_error_message(parsed),
             "details": {
@@ -110,7 +110,7 @@ class WechatWinAutoAdapter(GenericHttpAdapter):
             merged_details["skip_plugin_dispatch"] = True
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": event_type,
             "should_persist_message": bool(content) and event_type == "message",

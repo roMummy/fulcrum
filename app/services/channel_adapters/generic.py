@@ -18,12 +18,12 @@ logger = get_logger(__name__)
 
 
 class GenericHttpAdapter(BaseChannelAdapter):
-    provider = "generic_http"
+    adapter_type = "generic_http"
 
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
         message_type = str(payload.get("message_type") or "text").strip().lower() or "text"
         if not channel.api_base:
-            logger.error("generic adapter missing api_base", extra={"channel_id": channel.id, "provider": self.provider})
+            logger.error("generic adapter missing api_base", extra={"channel_id": channel.id, "adapter_type": self.adapter_type})
             return self.build_result(
                 ok=False,
                 conversation=conversation,
@@ -47,7 +47,7 @@ class GenericHttpAdapter(BaseChannelAdapter):
         }
         logger.info(
             "generic adapter sending request",
-            extra={"channel_id": channel.id, "provider": self.provider, "target_url": target_url, "message_type": message_type},
+            extra={"channel_id": channel.id, "adapter_type": self.adapter_type, "target_url": target_url, "message_type": message_type},
         )
 
         try:
@@ -55,7 +55,7 @@ class GenericHttpAdapter(BaseChannelAdapter):
         except Exception as exc:
             logger.exception(
                 "generic adapter request failed",
-                extra={"channel_id": channel.id, "provider": self.provider, "target_url": target_url},
+                extra={"channel_id": channel.id, "adapter_type": self.adapter_type, "target_url": target_url},
             )
             return self.build_result(
                 ok=False,
@@ -71,7 +71,7 @@ class GenericHttpAdapter(BaseChannelAdapter):
         if not self._response_indicates_success(raw_response):
             logger.error(
                 "generic adapter response indicates failure",
-                extra={"channel_id": channel.id, "provider": self.provider, "target_url": target_url},
+                extra={"channel_id": channel.id, "adapter_type": self.adapter_type, "target_url": target_url},
             )
             return self.build_result(
                 ok=False,
@@ -88,7 +88,7 @@ class GenericHttpAdapter(BaseChannelAdapter):
 
         logger.info(
             "generic adapter request succeeded",
-            extra={"channel_id": channel.id, "provider": self.provider, "target_url": target_url},
+            extra={"channel_id": channel.id, "adapter_type": self.adapter_type, "target_url": target_url},
         )
         return self.build_result(
             ok=True,

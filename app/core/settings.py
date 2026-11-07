@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +18,9 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: int = 30
     plugins_dir: str = str(Path(__file__).resolve().parents[2] / "plugins")
     secret_key: str = "change-me"
+    # 插件外部服务密钥使用独立的 32 字节 URL-safe Base64 主密钥。
+    # 这里不提供默认值，也不复用登录会话 secret_key，避免不同安全边界共用同一把密钥。
+    plugin_secret_key: str = Field(default="", validation_alias="ABOT_PLUGIN_SECRET_KEY")
     log_level: str = "INFO"
     log_file_max_bytes: int = 10 * 1024 * 1024
     # RotatingFileHandler backupCount counts backup files only.
@@ -33,6 +37,9 @@ class Settings(BaseSettings):
     # 对外可访问的 MBA 基址。云端拉取模式下 provider 可能不在 MBA 同一台机器，
     # 如果后台通过 127.0.0.1 登录，必须用这个配置生成文件下载链接，避免 provider 下载时连到自己的本机。
     public_base_url: str = ""
+    # 本地连接器扫码期间使用的临时 SOCKS 中继监听地址；只服务登录会话，终态立即失效。
+    local_proxy_relay_host: str = "127.0.0.1"
+    local_proxy_relay_port: int = 9165
     # 首版计费只展示人工付款说明；二维码路径和银行信息均由部署环境配置，不写死到模板。
     billing_payment_title: str = "曜枢 AI 人工付款"
     billing_payment_instructions: str = "请完成转账后填写交易流水号并上传付款凭证。"

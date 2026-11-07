@@ -1,66 +1,61 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>查看当前企业的消息量、活跃度、插件使用和渠道状态。</p>
+{% from '_dashboard_chart.html' import trend_chart %}
+{% block hero_actions %}
+<div class="chip-row">
+  <span class="chip chip-outline">近 24 小时</span>
+  <span class="chip {% if alert_summary.total %}chip-outline{% else %}chip-success{% endif %}">告警 {{ alert_summary.total }}</span>
+</div>
 {% endblock %}
 {% block content %}
-<section class="card dashboard-hero-card">
-  <div class="section-head">
-    <div>
-      <p class="section-kicker">Operations Overview</p>
-      <h2>运营总览</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-outline">24 小时视角</span>
-      <span class="chip {% if alert_summary.total %}chip-outline{% else %}chip-success{% endif %}">告警 {{ alert_summary.total }}</span>
-    </div>
-  </div>
-  <div class="stats-grid metrics-grid dashboard-kpi-grid">
-    <div class="stat-card accent-card">
+{# 首屏指标使用等高紧凑网格，时间范围移到页头，避免重复总览标题挤占数据区。 #}
+<section class="dashboard-overview">
+  <div class="metric-band dashboard-kpi-grid">
+    <div class="metric-item">
       <span>今日入站</span>
       <strong>{{ dashboard_metrics.inbound_today }}</strong>
       <div class="muted-text">从今日 00:00 开始累计</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>24h 入站</span>
       <strong>{{ dashboard_metrics.inbound_24h }}</strong>
       <div class="muted-text">最近 24 小时入站消息</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>24h 出站</span>
       <strong>{{ dashboard_metrics.outbound_24h }}</strong>
       <div class="muted-text">最近 24 小时成功入库的出站消息</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>活跃机器人</span>
       <strong>{{ dashboard_metrics.active_bots_24h }}</strong>
       <div class="muted-text">最近 24 小时有消息流动</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>活跃用户</span>
       <strong>{{ dashboard_metrics.active_users_24h }}</strong>
       <div class="muted-text">按渠道内发送者 ID 去重</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>活跃群组</span>
       <strong>{{ dashboard_metrics.active_groups_24h }}</strong>
       <div class="muted-text">最近 24 小时有群聊入站</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>插件触发</span>
       <strong>{{ dashboard_metrics.plugin_triggers_24h }}</strong>
       <div class="muted-text">最近 24 小时插件调度次数</div>
     </div>
-    <div class="stat-card">
+    <div class="metric-item">
       <span>插件成功率</span>
       <strong>{{ dashboard_metrics.plugin_success_rate_24h }}%</strong>
       <div class="muted-text">按最近 24 小时已执行插件计算</div>
     </div>
-    <div class="stat-card danger-soft">
+    <div class="metric-item metric-item-danger">
       <span>异常渠道</span>
       <strong>{{ dashboard_metrics.abnormal_channels }}</strong>
       <div class="muted-text">启用中但状态异常的渠道</div>
     </div>
-    <div class="stat-card danger-soft">
+    <div class="metric-item metric-item-danger">
       <span>未恢复告警</span>
       <strong>{{ dashboard_metrics.open_alerts }}</strong>
       <div class="muted-text">需要持续关注的问题</div>
@@ -68,69 +63,43 @@
   </div>
 </section>
 
-<div class="panel-grid panel-grid-balanced dashboard-top-grid">
-  <section class="card">
+<div class="panel-grid panel-grid-balanced overview-card-grid dashboard-top-grid">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Inbound Trend</p>
+
         <h2>入站趋势</h2>
       </div>
       <span class="chip chip-outline">近 24 小时</span>
     </div>
-    <div class="dashboard-chart-card">
-      <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="{{ trend_series.inbound_chart.points }}" class="chart-line chart-line-primary"></polyline>
-      </svg>
-      <div class="dashboard-bar-strip">
-        {% for item in trend_series.inbound_chart["items"] %}
-        <div class="dashboard-bar-item">
-          <strong class="dashboard-bar-value">{{ item.value }}</strong>
-          <div class="dashboard-bar dashboard-bar-primary" style="height: {{ item.height_percent }}%;"></div>
-          <span>{{ item.label }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    <div class="stats-grid compact-grid">
-      <div class="stat-card nested-card">
+    {{ trend_chart(trend_series.inbound_chart, '最近 24 小时入站消息趋势') }}
+    <div class="metric-band metric-band-compact">
+      <div class="metric-item">
         <span>峰值</span>
         <strong>{{ trend_series.inbound_chart.max_value }}</strong>
       </div>
-      <div class="stat-card nested-card">
+      <div class="metric-item">
         <span>最新一小时</span>
         <strong>{{ trend_series["items"][-1].inbound if trend_series["items"] else 0 }}</strong>
       </div>
     </div>
   </section>
 
-  <section class="card">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Plugin Trend</p>
+
         <h2>插件使用趋势</h2>
       </div>
       <span class="chip chip-outline">近 24 小时</span>
     </div>
-    <div class="dashboard-chart-card">
-      <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="{{ trend_series.plugin_chart.points }}" class="chart-line chart-line-success"></polyline>
-      </svg>
-      <div class="dashboard-bar-strip">
-        {% for item in trend_series.plugin_chart["items"] %}
-        <div class="dashboard-bar-item">
-          <strong class="dashboard-bar-value">{{ item.value }}</strong>
-          <div class="dashboard-bar dashboard-bar-success" style="height: {{ item.height_percent }}%;"></div>
-          <span>{{ item.label }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-    <div class="stats-grid compact-grid">
-      <div class="stat-card nested-card">
+    {{ trend_chart(trend_series.plugin_chart, '最近 24 小时插件触发趋势', 'success') }}
+    <div class="metric-band metric-band-compact">
+      <div class="metric-item">
         <span>峰值</span>
         <strong>{{ trend_series.plugin_chart.max_value }}</strong>
       </div>
-      <div class="stat-card nested-card">
+      <div class="metric-item">
         <span>最新一小时</span>
         <strong>{{ trend_series["items"][-1].plugin_trigger if trend_series["items"] else 0 }}</strong>
       </div>
@@ -138,11 +107,11 @@
   </section>
 </div>
 
-<div class="panel-grid panel-grid-balanced">
-  <section class="card">
+<div class="panel-grid panel-grid-balanced overview-card-grid">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>热门插件</h2>
       </div>
     </div>
@@ -161,10 +130,10 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃机器人</h2>
       </div>
       <a class="chip chip-action" href="/bots">查看全部</a>
@@ -185,11 +154,11 @@
   </section>
 </div>
 
-<div class="panel-grid panel-grid-balanced">
-  <section class="card">
+<div class="panel-grid panel-grid-balanced overview-card-grid">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃用户</h2>
       </div>
     </div>
@@ -208,10 +177,10 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Ranking</p>
+
         <h2>活跃群组</h2>
       </div>
     </div>
@@ -231,24 +200,24 @@
   </section>
 </div>
 
-<div class="panel-grid panel-grid-balanced">
-  <section class="card">
+<div class="panel-grid panel-grid-balanced overview-card-grid">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Alerts</p>
+
         <h2>告警摘要</h2>
       </div>
     </div>
-    <div class="stats-grid compact-grid">
-      <div class="stat-card nested-card">
+    <div class="metric-band metric-band-compact">
+      <div class="metric-item">
         <span>严重</span>
         <strong>{{ alert_summary.level_counts.critical }}</strong>
       </div>
-      <div class="stat-card nested-card">
+      <div class="metric-item">
         <span>警告</span>
         <strong>{{ alert_summary.level_counts.warning }}</strong>
       </div>
-      <div class="stat-card nested-card">
+      <div class="metric-item">
         <span>提示</span>
         <strong>{{ alert_summary.level_counts.info }}</strong>
       </div>
@@ -274,10 +243,10 @@
     </ul>
   </section>
 
-  <section class="card">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Risk Queue</p>
+
         <h2>待处理风险</h2>
       </div>
     </div>
@@ -289,11 +258,11 @@
   </section>
 </div>
 
-<div class="panel-grid panel-grid-balanced">
-  <section class="card">
+<div class="panel-grid panel-grid-balanced overview-card-grid">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Signals</p>
+
         <h2>最近日志异常</h2>
       </div>
     </div>
@@ -318,10 +287,10 @@
     </ul>
   </section>
 
-  <section class="card">
+  <section class="page-section">
     <div class="section-head">
       <div>
-        <p class="section-kicker">Task Queue</p>
+
         <h2>最近任务状态</h2>
       </div>
     </div>
@@ -347,51 +316,51 @@
   </section>
 </div>
 
-<section class="card">
+<section class="page-section">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Operations Snapshot</p>
+
       <h2>实时运维态势</h2>
     </div>
   </div>
-  <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card">
-      <span>在线企业微信账号</span>
-      <strong>{{ ops_snapshot.online_workwechat }}</strong>
+  <div class="metric-band metric-band-compact">
+    <div class="metric-item">
+      <span>在线渠道</span>
+      <strong>{{ ops_snapshot.online_channels }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item">
       <span>异常渠道</span>
       <strong>{{ ops_snapshot.abnormal_channels }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item">
       <span>最近 24h 错误</span>
       <strong>{{ ops_snapshot.recent_errors_24h }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item">
       <span>失败任务</span>
       <strong>{{ ops_snapshot.failed_jobs }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item">
       <span>待处理任务</span>
       <strong>{{ ops_snapshot.pending_jobs }}</strong>
     </div>
-    <div class="stat-card nested-card">
+    <div class="metric-item">
       <span>启用渠道</span>
       <strong>{{ ops_snapshot.enabled_channels }}</strong>
     </div>
   </div>
 </section>
 
-<section class="card">
+<section class="page-section">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Bot Matrix</p>
+
       <h2>机器人总览</h2>
     </div>
     <a class="chip chip-action" href="/bots">进入详情</a>
   </div>
   <table class="table">
-    <thead><tr><th>机器人</th><th class="col-status">状态</th><th class="col-count">企业微信账号</th><th class="col-count">插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th>机器人</th><th class="col-status">状态</th><th class="col-count">渠道</th><th class="col-count">插件</th><th class="col-count">会话</th><th class="col-count">消息</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for row in bot_rows %}
       <tr>

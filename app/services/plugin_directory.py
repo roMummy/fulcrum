@@ -24,6 +24,7 @@ from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 
 
 ENTRYPOINT_CANDIDATES = ("plugin.py", "main.py", "plugin_main.py")
@@ -101,6 +102,7 @@ class DiscoveredPlugin:
     entrypoint_path: Path
     directory_path: Path
     runtime_config: Mapping[str, Any] = field(default_factory=dict)
+    secret_fields: tuple[str, ...] = ()
     admin_config: Mapping[str, Any] = field(default_factory=dict)
     validation_errors: tuple[str, ...] = ()
     validation_warnings: tuple[str, ...] = ()
@@ -318,7 +320,11 @@ def load_directory_plugin(plugin_code: str | None, *, force: bool = False) -> Lo
     instance = getattr(module, "plugin", None) or getattr(module, "PLUGIN", None)
     module_supports_matcher = bool(hasattr(module, "matches_event"))
     module_supports_handler = bool(hasattr(module, "handle_event"))
-    if instance is None and (module_supports_handler or hasattr(module, "execute_action")):
+    if instance is None and (
+        module_supports_handler
+        or hasattr(module, "execute_action")
+        or hasattr(module, "execute_message_action")
+    ):
         instance = _ModuleFunctionAdapter(module)
 
     loaded = LoadedDirectoryPlugin(
@@ -784,6 +790,26 @@ class _ModuleFunctionAdapter:
         handler = getattr(self._module, "execute_action")
         return handler(request)
 
+    def execute_message_action(self, db: Session, request: Any) -> Any:
+        """把消息动作交给插件显式入口；普通插件继续走原动作函数。"""
+
+        handler = getattr(self._module, "execute_message_action", None)
+        if callable(handler):
+            return handler(db, request)
+        return self.execute_action(request)
+
+    def execute_scheduled_action(self, db: Session, request: Any) -> Any:
+        """把统一调度请求转给插件模块；未声明入口时返回明确不支持。"""
+
+        handler = getattr(self._module, "execute_scheduled_action", None)
+        if not callable(handler):
+            return {
+                "ok": False,
+                "status": "unsupported",
+                "message": "目录插件未提供 execute_scheduled_action 定时入口。",
+            }
+        return handler(db, request)
+
 
 def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) -> PluginDispatchContext:
     conversation = normalized_event.get("conversation") or {}
@@ -796,7 +822,8 @@ def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) 
         channel_type=channel.channel_type,
         chat_type=str(conversation.get("chat_type") or "direct"),
         message_type=str(message.get("message_type") or "text"),
-        # SaaS 只提供统一的斜杠命令语法，避免每个机器人维护一套难以解释的前缀配置。
+        # SaaS 在目录层统一解析斜杠和井号命令，插件只声明业务命令名称，不能各自
+        # 维护一套前缀或把“#命令”伪装成第二个兼容命令。
         command_prefix="/",
         sender_id=_coerce_optional_text(message.get("sender_id")),
         conversation_external_id=_coerce_optional_text(conversation.get("external_id")),
@@ -928,7 +955,7 @@ def _execute_candidate(
     )
     loaded = load_directory_plugin(candidate.plugin_code)
     from app.services.plugin_runtime.registry import get_plugin_runtime_definition
-    from app.services.plugin_runtime.service import execute_configured_plugin_action
+    from app.services.plugin_runtime.service import execute_binding_message_action
 
     runtime_definition = get_plugin_runtime_definition(candidate.plugin_code)
     timeout_debug = _build_timeout_debug(candidate.timeout_ms)
@@ -1032,11 +1059,12 @@ def _execute_candidate(
                 runtime_payload["channel_adapter_config"] = _parse_config_json(channel.adapter_config_json)
             try:
                 runtime_result = _run_with_timeout(
-                    lambda: execute_configured_plugin_action(
-                        candidate.plugin_code,
+                    lambda: execute_binding_message_action(
+                        db,
+                        binding,
                         "execute",
-                        config=context.binding_config,
                         payload=runtime_payload,
+                        context=_build_runtime_execution_context(static_context, context),
                     ),
                     candidate.timeout_ms,
                 )
@@ -1110,13 +1138,12 @@ def _execute_candidate(
             candidate=candidate,
             attempted=False,
             ok=False,
-            status="deferred",
-            message="目录插件处理器未实现，runtime executor 也不可用。",
+            status="invalid",
+            message="插件缺少真实执行入口，已拒绝执行。",
             debug={
-                "execution_source": "deferred",
+                "execution_source": "invalid_plugin",
                 "duration_ms": int((time.perf_counter() - started_at) * 1000),
                 **timeout_debug,
-                "legacy_runtime_available": bool(runtime_definition and runtime_definition.supports_execution),
                 "entrypoint_name": candidate.entrypoint_name,
             },
         )
@@ -1421,6 +1448,36 @@ def _normalize_reply_item(item: Mapping[str, Any], *, channel_type: str = "") ->
         if play_length not in (None, ""):
             payload["play_length"] = play_length
         return payload
+    if reply_type == "link":
+        link_url = str(item.get("url") or item.get("link_url") or "").strip()
+        if not link_url:
+            return None
+        title = str(item.get("title") or item.get("link_title") or "").strip()
+        description = str(
+            item.get("description")
+            or item.get("desc")
+            or item.get("link_description")
+            or ""
+        ).strip()
+        thumb_url = str(item.get("thumb_url") or item.get("image_url") or "").strip()
+        if str(channel_type or "").strip().lower() == "telegram":
+            # Telegram 当前适配器只发送文本和图片。链接卡片在目录层转成业务可读文本，
+            # 保证插件仍然只输出一种通用链接结构，且不会把渠道能力判断散落到插件中。
+            text_parts = [part for part in (title, description, link_url) if part]
+            return {"message_type": "text", "content": "\n".join(text_parts)}
+        payload = {
+            "message_type": "link",
+            "content": title or link_url,
+            "title": title,
+            "desc": description,
+            "url": link_url,
+            "link_url": link_url,
+            "link_title": title,
+            "link_description": description,
+        }
+        if thumb_url:
+            payload["thumb_url"] = thumb_url
+        return payload
     return None
 
 
@@ -1484,6 +1541,19 @@ def _build_directory_context(
     default_config = dict(discovered.runtime_config) if discovered else {}
     binding_config = _parse_config_json(binding.config_json)
     scope_config = _parse_config_json(candidate.scope_config_override_json)
+    secret_fields = set(discovered.secret_fields) if discovered else set()
+    # 群作用域和历史普通 JSON 都不能覆盖绑定密文。敏感字段先从非密文配置中删除，
+    # 再把当前租户绑定的解密结果放到最终配置末尾。
+    for field_name in secret_fields:
+        binding_config.pop(field_name, None)
+        scope_config.pop(field_name, None)
+    secret_config = decrypt_plugin_secret_config(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        encrypted=binding.secret_config_encrypted,
+    )
+    effective_config = _deep_merge_config(_deep_merge_config(default_config, binding_config), scope_config)
+    effective_config.update(secret_config)
     return DirectoryPluginContext(
         plugin_code=candidate.plugin_code,
         binding_id=candidate.binding_id,
@@ -1498,7 +1568,7 @@ def _build_directory_context(
         conversation_external_id=static_context.conversation_external_id,
         mentioned_self=static_context.mentioned_self,
         attachments=static_context.attachments,
-        binding_config=_deep_merge_config(_deep_merge_config(default_config, binding_config), scope_config),
+        binding_config=effective_config,
         normalized_event=normalized_event,
         raw_event_id=raw_event_id,
         conversation_id=conversation_id,
@@ -1540,6 +1610,35 @@ def _build_runtime_bridge_payload(context: DirectoryPluginContext) -> dict[str, 
     if messages:
         payload["messages"] = messages
     return payload
+
+
+def _build_runtime_execution_context(
+    static_context: PluginDispatchContext,
+    directory_context: DirectoryPluginContext,
+) -> "PluginExecutionContext":
+    """把已落库的入站消息定位信息转换为插件可信运行上下文。
+
+    插件 payload 仍保留现有业务字段，供插件读取命令和消息内容；权限判断和后续
+    通用能力只能依赖这里显式构造的上下文，不能信任 payload 中的同名字段。
+    """
+
+    # 运行时包的注册表会反向读取目录插件。这里延迟导入契约类，避免模块初始化
+    # 阶段形成 plugin_directory -> plugin_runtime -> registry -> plugin_directory 环路。
+    from app.services.plugin_runtime.contracts import PluginExecutionContext
+
+    return PluginExecutionContext(
+        tenant_id=static_context.tenant_id,
+        binding_id=directory_context.binding_id,
+        bot_id=directory_context.bot_id,
+        channel_id=directory_context.channel_id,
+        conversation_id=directory_context.conversation_id,
+        message_id=directory_context.message_id,
+        raw_event_id=directory_context.raw_event_id,
+        sender_id=directory_context.sender_id,
+        channel_type=directory_context.channel_type,
+        chat_type=directory_context.chat_type,
+        message_type=directory_context.message_type,
+    )
 
 
 def _extract_event_attachments(normalized_event: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
@@ -1681,11 +1780,7 @@ def _await_if_needed(value: Any, timeout_seconds: float | None) -> Any:
 
 
 def _extract_command_name(message_text: str, prefix: str) -> str | None:
-    normalized = message_text.strip()
-    if not normalized:
-        return None
-    if prefix and normalized.startswith(prefix):
-        normalized = normalized[len(prefix) :].lstrip()
+    normalized = _strip_supported_command_prefix(message_text, prefix)
     if not normalized:
         return None
     first = normalized.split()[0].strip()
@@ -1693,11 +1788,7 @@ def _extract_command_name(message_text: str, prefix: str) -> str | None:
 
 
 def _extract_command_args(message_text: str, prefix: str, command_name: str | None) -> str:
-    normalized = message_text.strip()
-    if not normalized:
-        return ""
-    if prefix and normalized.startswith(prefix):
-        normalized = normalized[len(prefix) :].lstrip()
+    normalized = _strip_supported_command_prefix(message_text, prefix)
     if not normalized:
         return ""
     if command_name:
@@ -1719,11 +1810,31 @@ def _command_matches(commands: tuple[str, ...], command_name: str | None, messag
         return True
     normalized_text = message_text.strip().lower()
     for command in normalized_commands:
-        if prefix and normalized_text.startswith(f"{prefix}{command}"):
+        if any(normalized_text.startswith(f"{item}{command}") for item in _supported_command_prefixes(prefix)):
             return True
         if normalized_text == command:
             return True
     return False
+
+
+def _strip_supported_command_prefix(message_text: str, configured_prefix: str) -> str:
+    """统一移除平台允许的命令前缀，并保留无前缀命令的现有业务语义。"""
+
+    normalized = str(message_text or "").strip()
+    for prefix in _supported_command_prefixes(configured_prefix):
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].lstrip()
+    return normalized
+
+
+def _supported_command_prefixes(configured_prefix: str) -> tuple[str, ...]:
+    """返回去重后的平台命令前缀；当前产品只提供斜杠和井号两种入口。"""
+
+    ordered: list[str] = []
+    for item in (str(configured_prefix or "").strip(), "/", "#"):
+        if item and item not in ordered:
+            ordered.append(item)
+    return tuple(ordered)
 
 
 def _find_keyword(keywords: tuple[str, ...], message_text: str) -> str | None:
@@ -1861,11 +1972,18 @@ def _build_discovered_plugin(
     parsed: dict[str, Any],
 ) -> DiscoveredPlugin:
     errors, warnings = _validate_manifest(plugin_dir.name, parsed)
+    secret_fields = _extract_secret_fields(parsed)
+    runtime_config = _extract_runtime_config(parsed)
+    # 即使旧目录里仍残留可用密钥，扫描阶段也必须把显式敏感字段从默认运行配置中删除。
+    # 后续物理清理配置文件时不依赖这层防线，但当前提交开始就不能再执行共享凭证。
+    for field_name in secret_fields:
+        runtime_config.pop(field_name, None)
     return DiscoveredPlugin(
         manifest=_build_manifest(plugin_dir.name, parsed),
         capability=_build_capability(parsed),
         matcher=_build_matcher(parsed),
-        runtime_config=_extract_runtime_config(parsed),
+        runtime_config=runtime_config,
+        secret_fields=secret_fields,
         admin_config=_extract_admin_config(parsed),
         config_path=config_path,
         entrypoint_path=entrypoint_path,
@@ -1980,6 +2098,11 @@ def _validate_manifest(default_code: str, parsed: dict[str, Any]) -> tuple[list[
     _validate_text_sequence(capability_block.get("message_types"), "message_types", errors)
     _validate_text_sequence(matcher_block.get("commands"), "commands", errors)
     _validate_text_sequence(matcher_block.get("keywords"), "keywords", errors)
+    secrets_block = parsed.get("secrets")
+    if secrets_block is not None and not isinstance(secrets_block, dict):
+        errors.append("[secrets] 配置块类型非法。")
+    elif isinstance(secrets_block, dict):
+        _validate_text_sequence(secrets_block.get("fields"), "secrets.fields", errors)
     return errors, warnings
 
 
@@ -2019,11 +2142,20 @@ def _extract_runtime_config(parsed: dict[str, Any]) -> dict[str, Any]:
 
     defaults: dict[str, Any] = {}
     for key, value in parsed.items():
-        if key in {"plugin", "capability", "matcher"}:
+        if key in {"plugin", "capability", "matcher", "secrets", "admin"}:
             continue
         if isinstance(value, dict):
             defaults.update(value)
     return defaults
+
+
+def _extract_secret_fields(parsed: dict[str, Any]) -> tuple[str, ...]:
+    """读取插件显式敏感字段声明，字段名重复时保持首次出现顺序。"""
+
+    secrets_block = parsed.get("secrets")
+    if not isinstance(secrets_block, dict):
+        return ()
+    return tuple(dict.fromkeys(_normalize_text_tuple(secrets_block.get("fields"))))
 
 
 def _extract_admin_config(parsed: dict[str, Any]) -> dict[str, Any]:

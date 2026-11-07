@@ -79,7 +79,7 @@ def dispatch_outbound_message(
                 "conversation_id": conversation.id,
                 "message_id": message.id,
                 "ok": False,
-                "provider": adapter_result.get("provider"),
+                "adapter_type": adapter_result.get("adapter_type"),
                 "status": adapter_result.get("status"),
                 "error_code": adapter_result.get("error_code"),
                 "error_message": adapter_result.get("error_message"),

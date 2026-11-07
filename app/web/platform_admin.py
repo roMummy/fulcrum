@@ -16,7 +16,6 @@ from app.services.platform_admin import (
     PlatformAdminError,
     create_tenant_with_subscription,
     current_subscription,
-    dashboard_stats,
     get_tenant_detail,
     list_plans,
     list_tenants,
@@ -25,6 +24,7 @@ from app.services.platform_admin import (
     save_plan,
     set_tenant_status,
 )
+from app.services.platform_analytics import build_platform_analytics
 from app.services.platform_staff import (
     PlatformStaffError,
     create_platform_user,
@@ -34,11 +34,11 @@ from app.services.platform_staff import (
 )
 from app.web.auth_common import (
     PLATFORM_CSRF_COOKIE,
-    PLATFORM_LOGIN_PATH,
     PLATFORM_LOGOUT_PATH,
     PLATFORM_PASSWORD_PATH,
     require_platform_csrf,
 )
+from app.web.platform_navigation import build_platform_primary_navigation
 
 
 router = APIRouter(prefix="/platform", tags=["platform-admin"])
@@ -66,19 +66,11 @@ def _platform_context(
     """构造与租户工作台隔离的平台导航和身份操作上下文。"""
 
     principal = _require_platform_principal(request)
-    nav_items = [
-        {"label": "平台概览", "href": "/platform/dashboard", "active": active == "dashboard"},
-        {"label": "租户管理", "href": "/platform/tenants", "active": active == "tenants"},
-        {"label": "套餐管理", "href": "/platform/plans", "active": active == "plans"},
-        {"label": "订单审核", "href": "/platform/billing/orders", "active": active == "billing"},
-        {"label": "平台员工", "href": "/platform/users", "active": active == "users"},
-        {"label": "系统运维", "href": "/platform/operations", "active": active == "operations"},
-    ]
     context: dict[str, object] = {
         "request": request,
         "page_title": page_title,
         "current_user": principal,
-        "primary_nav_items": nav_items,
+        "primary_nav_items": build_platform_primary_navigation(active),
         "secondary_nav_items": [],
         "secondary_nav_active": False,
         "section_nav_items": [],
@@ -154,7 +146,7 @@ def _platform_staff_error_message(error: PlatformStaffError) -> str:
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def platform_dashboard_page(request: Request):
-    """展示平台关键统计和最近租户。"""
+    """展示平台跨租户使用、经营、渠道健康和待办数据。"""
 
     with SessionLocal() as db:
         context = _platform_context(
@@ -163,8 +155,8 @@ async def platform_dashboard_page(request: Request):
             active="dashboard",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
-            stats=dashboard_stats(db),
-            tenants=list_tenants(db)[:8],
+            # 时间范围只交给聚合服务规范化；路由不接受客户端 tenant_id，也不维护旧四指标双轨数据。
+            analytics=build_platform_analytics(db, range_key=request.query_params.get("range", "7d")),
         )
         return templates.TemplateResponse(request, "platform_dashboard.html", context)
 
@@ -294,16 +286,10 @@ async def platform_tenants_page(request: Request):
 @router.post("/tenants", response_class=HTMLResponse)
 async def platform_tenant_create_action(
     request: Request,
-    code: str = Form(""),
     name: str = Form(""),
     plan_id: int = Form(0),
     expires_on: str = Form(""),
-    admin_username: str = Form("admin"),
     admin_mobile: str = Form(""),
-    admin_display_name: str = Form("企业管理员"),
-    contact_name: str = Form(""),
-    contact_phone: str = Form(""),
-    notes: str = Form(""),
     csrf_token: str = Form(""),
 ):
     """开通租户并在当前响应页一次性展示初始密码。"""
@@ -314,16 +300,10 @@ async def platform_tenant_create_action(
         try:
             created = create_tenant_with_subscription(
                 db,
-                code=code,
                 name=name,
                 plan_id=plan_id,
                 expires_at=_parse_expiry(expires_on),
-                admin_username=admin_username,
                 admin_mobile=admin_mobile,
-                admin_display_name=admin_display_name,
-                contact_name=contact_name,
-                contact_phone=contact_phone,
-                notes=notes,
                 actor_user_id=principal.user_id,
             )
         except PlatformAdminError as exc:

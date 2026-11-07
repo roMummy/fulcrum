@@ -4,21 +4,23 @@
   {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
   <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">进入业务后台</a>
   {% endif %}
+  {% if plugin_runtime_info.supports_execution %}
   <button class="btn" type="button" data-modal-open="create-plugin-binding-modal">绑定到机器人</button>
+  {% endif %}
   <a class="btn btn-secondary" href="/plugins/runtime">查看全部运行状态</a>
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="plugin-detail-hero">
     <div>
       <div class="chip-row">
         <span class="chip chip-outline">{{ plugin.plugin_type or '插件' }}</span>
-        <span class="chip {% if plugin_runtime_info.manifest_valid %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '状态正常' if plugin_runtime_info.manifest_valid else '需要处理' }}
+        <span class="chip {% if plugin_runtime_info.migration_state == 'migrated' %}chip-success{% else %}chip-muted{% endif %}">
+          {{ '状态正常' if plugin_runtime_info.migration_state == 'migrated' else '需要处理' }}
         </span>
         <span class="chip {% if plugin_runtime_info.supports_execution %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '可执行' if plugin_runtime_info.supports_execution else '仅配置型' }}
+          {{ '可执行' if plugin_runtime_info.supports_execution else '不可执行' }}
         </span>
       </div>
       <h2 class="plugin-detail-title">{{ plugin.display_name }}</h2>
@@ -33,13 +35,13 @@
   </div>
 
   <div class="plugin-detail-meta-grid">
-    <div class="subcard">
+    <div class="subsection">
       <strong>适用范围</strong>
       <p class="muted-text">渠道：{{ plugin_runtime_info.channel_types|join('、') if plugin_runtime_info.channel_types else '未限制' }}</p>
       <p class="muted-text">会话：{{ plugin_runtime_info.chat_types|join('、') if plugin_runtime_info.chat_types else '未限制' }}</p>
       <p class="muted-text">消息：{{ plugin_runtime_info.message_types|join('、') if plugin_runtime_info.message_types else '未限制' }}</p>
     </div>
-    <div class="subcard">
+    <div class="subsection">
       <strong>触发方式</strong>
       <p class="muted-text">命令：{{ plugin_runtime_info.commands|join('、') if plugin_runtime_info.commands else '无固定命令' }}</p>
       <p class="muted-text">是否必须提及：{{ '是' if plugin_runtime_info.require_mention else '否' }}</p>
@@ -49,7 +51,7 @@
 </section>
 
 {% if plugin_runtime_info.manifest_errors or plugin_runtime_info.manifest_warnings %}
-<section class="card">
+<section class="work-surface">
   <h2>使用提醒</h2>
   {% if plugin_runtime_info.manifest_errors %}
   <div class="plugin-overview-alert plugin-overview-alert-danger">
@@ -66,13 +68,13 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
       <h2>当前绑定</h2>
-      <p class="muted-text">这里可以查看绑定状态、最近执行结果和配置入口。更多运行信息请到运行状态页查看。</p>
     </div>
   </div>
+  {# 绑定卡片必须直接使用运行视图对象，避免视觉类名替换影响模板循环变量。 #}
   {% for card in binding_cards %}
   {% set item = card.binding %}
   {% set dispatch_view = card.dispatch_view or {} %}
@@ -93,12 +95,12 @@
       </div>
     </div>
     <div class="plugin-detail-meta-grid">
-      <div class="subcard">
+      <div class="subsection">
         <strong>最近执行</strong>
         <p class="muted-text">时间：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}</p>
         <p class="muted-text">摘要：{{ card.runtime_view.last_execution_summary or '-' }}</p>
       </div>
-      <div class="subcard">
+      <div class="subsection">
         <strong>最近调度</strong>
         <p class="muted-text">状态：{{ dispatch_view.status or '-' }}</p>
         <p class="muted-text">说明：{{ dispatch_view.message or '-' }}</p>
@@ -141,7 +143,6 @@
     <div class="app-modal-head">
       <div>
         <h2>绑定到机器人</h2>
-        <p class="muted-text">这里给插件新建一个机器人绑定。日常只需要选择机器人和开关状态，详细配置可以后面再补。</p>
       </div>
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
@@ -160,19 +161,17 @@
   </div>
 </dialog>
 
-<section class="card">
+<section class="work-surface">
   <details>
     <summary><strong>查看技术信息</strong></summary>
     <div class="plugin-detail-tech">
       <div class="plugin-detail-meta-grid">
-        <div class="subcard">
-          <strong>目录与架构</strong>
+        <div class="subsection">
+          <strong>插件信息</strong>
           <p class="muted-text">插件分类：{{ plugin_runtime_info.plugin_category or '-' }}</p>
-          <p class="muted-text">迁移状态：{{ plugin_runtime_info.migration_state or '-' }}</p>
-          <p class="muted-text">架构来源：{{ plugin_runtime_info.architecture_source or '-' }}</p>
           <p class="muted-text">配置来源：{% if plugin_config_view.mode == 'schema' %}{{ plugin_config_view.title }} / {{ plugin_config_view.schema_version }}{% else %}仅 JSON 配置{% endif %}</p>
         </div>
-        <div class="subcard">
+        <div class="subsection">
           <strong>执行参数</strong>
           <p class="muted-text">执行能力：{{ plugin_runtime_info.execution_capability or '-' }}</p>
           <p class="muted-text">优先级：{{ plugin_runtime_info.priority or '-' }}</p>
@@ -181,13 +180,13 @@
         </div>
       </div>
       <div class="plugin-detail-meta-grid">
-        <div class="subcard">
+        <div class="subsection">
           <strong>文件位置</strong>
           <p class="muted-text">Config TOML：{{ plugin_runtime_info.config_path or '-' }}</p>
           <p class="muted-text">逻辑入口：{{ plugin_runtime_info.entrypoint_path or '-' }}</p>
           <p class="muted-text">后台页面：{{ plugin_runtime_info.admin_surfaces|join('、') if plugin_runtime_info.admin_surfaces else '-' }}</p>
         </div>
-        <div class="subcard">
+        <div class="subsection">
           <strong>Manifest</strong>
           <p class="muted-text">校验状态：{{ 'valid' if plugin_runtime_info.manifest_valid else 'invalid' }}</p>
           <p class="muted-text">错误：{{ plugin_runtime_info.manifest_errors|join('；') if plugin_runtime_info.manifest_errors else '-' }}</p>

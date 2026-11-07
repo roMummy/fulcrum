@@ -14,7 +14,7 @@ from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, Chatroom, Conversation, OpenApiApp, OpenApiAppChannel, TaskJob
-from app.services.channel_labels import SAAS_ENABLED_CHANNEL_TYPES
+from app.services.channel_catalog import list_supported_channel_types
 from app.services.open_api_auth import OpenApiAuthError, OpenApiAuthResult, authenticate_open_api_request
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job, parse_job_payload
@@ -22,6 +22,7 @@ from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolv
 
 
 router = APIRouter(tags=["open-api"])
+SUPPORTED_CHANNEL_TYPES = list_supported_channel_types()
 
 
 @router.post("/api/open/files")
@@ -434,7 +435,7 @@ def _load_default_channel(db: Session, app: OpenApiApp) -> Channel:
     if channel_id <= 0:
         raise HTTPException(status_code=400, detail="default_channel_not_configured")
     channel = db.get(Channel, channel_id)
-    if channel is None or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES or not channel.is_enabled:
+    if channel is None or channel.channel_type not in SUPPORTED_CHANNEL_TYPES or not channel.is_enabled:
         raise HTTPException(status_code=404, detail="channel_not_found")
     return channel
 
@@ -442,9 +443,9 @@ def _load_default_channel(db: Session, app: OpenApiApp) -> Channel:
 def _load_authorized_channels(db: Session, app: OpenApiApp) -> list[Channel]:
     """读取开放应用授权渠道。
 
-    一个 app_key 代表一个业务系统或客户公司，可以被授权访问多个企微渠道。
+    一个 app_key 代表一个业务系统或客户公司，可以被授权访问多个正式渠道。
     权限只按授权渠道表判断，不再额外按 Bot 过滤；同一企业可以把多个机器人下的
-    企微号授权给同一个收发单系统。
+    渠道授权给同一个业务系统。
     """
 
     rows = db.scalars(select(OpenApiAppChannel).where(OpenApiAppChannel.app_id == app.id)).all()
@@ -455,7 +456,7 @@ def _load_authorized_channels(db: Session, app: OpenApiApp) -> list[Channel]:
         select(Channel)
         .where(
             Channel.id.in_(channel_ids),
-            Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES),
+            Channel.channel_type.in_(SUPPORTED_CHANNEL_TYPES),
             Channel.is_enabled.is_(True),
         )
         .order_by(Channel.id.asc())

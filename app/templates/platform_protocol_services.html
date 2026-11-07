@@ -1,0 +1,21 @@
+{% extends 'platform_base.html' %}
+{% block content %}
+{% for service in protocol_services %}
+<section class="editor-surface">
+  <div class="section-head">
+    <div><h2>{{ service.label }}</h2></div>
+    <span class="chip {% if service.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '开放接入' if service.is_enabled else '暂停接入' }}</span>
+  </div>
+  {# 协议地址只在平台后台提交，租户接入页和租户高级设置都不提供同名输入。 #}
+  <form method="post" action="/platform/protocol-services/{{ service.channel_type }}" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ service.api_base }}" placeholder="http://协议服务地址:9064" required /></label>
+    <label><span>新账号接入</span><select name="is_enabled"><option value="true"{% if service.is_enabled %} selected{% endif %}>开放</option><option value="false"{% if not service.is_enabled %} selected{% endif %}>暂停</option></select></label>
+    <label><span>已同步账号</span><input value="{{ service.channel_count }}" disabled /></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">保存配置</button></div>
+  </form>
+</section>
+{% else %}
+<section class="page-section"><div class="empty-state"><strong>暂无平台托管协议</strong></div></section>
+{% endfor %}
+{% endblock %}

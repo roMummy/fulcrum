@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -102,16 +101,20 @@ def marketing_client(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_home_uses_yaoshu_brand_generic_positioning_and_real_console_asset(marketing_client: TestClient) -> None:
-    """首页必须突出曜枢 AI，并用真实控制台素材承载全渠道产品定位。"""
+def test_home_uses_yaoshu_brand_generic_positioning_and_interactive_soft_hero(marketing_client: TestClient) -> None:
+    """首页必须突出曜枢 AI，并用无截图 Soft UI 场景承载全渠道产品定位。"""
 
     response = marketing_client.get("/")
 
     assert response.status_code == 200
     assert '<h1>曜枢 AI</h1>' in response.text
     assert "一个后台，统一运营所有智能机器人" in response.text
+    assert "支持微信、企业微信、Telegram 等渠道" in response.text
     assert "免费试用 7 天" in response.text
-    assert "/static/images/yaoshu-console.webp" in response.text
+    assert 'class="marketing-hero-scene"' in response.text
+    assert "data-hero-scene" in response.text
+    assert "yaoshu-console.webp" not in response.text
+    assert "marketing-product-visual" not in response.text
     assert "仅企业微信" not in response.text
     assert "Provider" not in response.text
 
@@ -156,14 +159,3 @@ def test_public_auth_forms_have_labels_autocomplete_and_live_error_container(mar
     assert 'autocomplete="current-password"' in enterprise_login.text
     assert 'role="alert"' in enterprise_login.text
     assert 'name="tenant_code"' not in enterprise_login.text
-
-
-def test_console_marketing_asset_is_committed_webp() -> None:
-    """营销首屏依赖的控制台截图必须作为可部署 WebP 静态资产进入仓库。"""
-
-    asset = Path("app/static/images/yaoshu-console.webp")
-
-    assert asset.is_file()
-    header = asset.read_bytes()[:12]
-    assert header[:4] == b"RIFF"
-    assert header[8:12] == b"WEBP"

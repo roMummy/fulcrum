@@ -1,37 +1,15 @@
 {% extends 'base.html' %}
 {% block content %}
 <section class="auth-showcase auth-showcase-single">
-  <section class="card login-card auth-form-card auth-complete-card">
+  <section class="login-card auth-form-card auth-complete-card">
     <div class="auth-complete-mark">OK</div>
-    <p class="auth-eyebrow">Setup Finished</p>
-    <h1>安装已经完成</h1>
-    <p class="auth-lead">数据库、管理员账号和基础配置已经写入。现在先不要急着登录，先把当前服务重启一下。</p>
-
-    <div class="auth-feature-list auth-feature-list-compact auth-step-grid">
-      <div class="auth-feature-item">
-        <strong>01 停止当前服务</strong>
-        <span>先停止当前正在运行的 `Multi Bot Admin` 服务。</span>
-      </div>
-      <div class="auth-feature-item">
-        <strong>02 重新启动服务</strong>
-        <span>重新启动服务，让刚刚生成的新配置生效。</span>
-      </div>
-      <div class="auth-feature-item">
-        <strong>03 回来登录后台</strong>
-        <span>再次打开后台地址，然后用你刚创建的管理员账号登录。</span>
-      </div>
-    </div>
-
-    <div class="panel inset-panel auth-tip-panel">
-      <strong>怎么重启？</strong>
-      <p class="muted-text">如果你是在 Windows PowerShell 里手动启动的，先回到启动窗口按 `Ctrl + C` 停掉服务，再重新执行启动命令。</p>
-      <p class="muted-text">常用启动命令：`.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8180`</p>
-      <p class="muted-text">如果你是用 Docker 启动的，就在项目目录执行：`docker compose restart`</p>
-      <p class="muted-text">如果你现在不重启，当前进程可能还在使用旧配置，直接登录失败是正常现象。</p>
-    </div>
+    <p class="auth-eyebrow">设置完成</p>
+    <h1>平台管理员已创建</h1>
+    <p class="auth-lead">现在可以登录平台管理后台。</p>
 
     <div class="auth-form-actions">
-      <a class="btn auth-submit" href="/login">我已重启，去登录</a>
+      {# 首次安装创建的是平台管理员，完成后的唯一正确入口是独立的平台登录页。 #}
+      <a class="btn auth-submit" href="/platform/login">进入平台后台</a>
     </div>
   </section>
 </section>

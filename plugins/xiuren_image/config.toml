@@ -1,0 +1,35 @@
+[plugin]
+code = "xiuren_image"
+display_name = "秀人图片"
+plugin_type = "scheduled"
+version = "2.0.0"
+author = "abot"
+description = "从租户资源缓存中随机返回图片，并按计划刷新资源。"
+default_enabled = false
+
+[capability]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 30000
+
+[matcher]
+commands = ["图来", "秀人", "美图", "随机图片"]
+require_mention = false
+
+[runtime]
+enabled = false
+commands = ["图来", "秀人", "美图", "随机图片"]
+resource_dir = "images"
+cache_size = 10
+points_cost = 5
+rate_limit = 5
+rate_window_seconds = 60
+source_urls = []
+refresh_enabled = false
+refresh_interval_seconds = 86400
+max_refresh_images = 20
+request_timeout_seconds = 20
+max_image_bytes = 8388608

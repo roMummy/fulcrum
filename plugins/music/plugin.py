@@ -1,211 +1,291 @@
 from __future__ import annotations
 
-import json
-from html import escape
-import urllib.parse
-from urllib import request as urlrequest
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping
+from urllib.parse import urlencode, urlsplit
 
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
+from app.services.plugin_runtime.replies import file_reply, standard_replies, text_reply
 
 
-DEFAULT_TIMEOUT_SECONDS = 15
-DEFAULT_USER_AGENT = "multi-bot-admin/1.0"
-DEFAULT_COMMANDS = ("点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌")
-MUSIC_XML_TEMPLATE = """
-<appmsg appid="wx45116b30f23e0cc4" sdkver="0">
-    <title>{song_name}</title>
-    <des>{singer_name}-点击三角直接播放</des>
-    <action>view</action>
-    <type>3</type>
-    <showtype>0</showtype>
-    <content />
-    <url>{data_url}</url>
-    <dataurl>{play_url}</dataurl>
-    <songalbumurl>{singer_pic}</songalbumurl>
-</appmsg>
-<scene>0</scene>
-<appinfo>
-    <version>1</version>
-    <appname/>
-</appinfo>
-<commenturl />
-""".strip()
+COMMANDS = ("点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌")
+DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; MultiBotSaaS-Music/2.0)"
 
 
-def _xml_reply(xml: str) -> list[dict[str, str]]:
-    normalized = str(xml).strip()
-    return [{"type": "xml", "xml": normalized}] if normalized else []
+@dataclass(frozen=True)
+class MusicConfig:
+    """保存租户自备音乐聚合服务配置。"""
+
+    enabled: bool
+    api_base: str
+    api_key: str
+    quality: str
+    timeout_seconds: int
 
 
-def _text_reply(content: str) -> list[dict[str, str]]:
-    normalized = str(content).strip()
-    return [{"type": "text", "content": normalized}] if normalized else []
+@dataclass(frozen=True)
+class SongResult:
+    """插件可返回和持久化的最小歌曲结果，不包含上游完整响应。"""
+
+    song_id: str
+    song_name: str
+    artist_name: str
+    play_url: str
+    cover_url: str
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
-    music_api_url = str(request.config.get("music_api_url") or "http://192.168.2.240:5000").strip()
-    song_api_url = str(request.config.get("song_api_url") or "").strip()
-    timeout = int(request.config.get("default_timeout", 10) or 10)
-    detail_level = str(request.config.get("detail_level") or "exhigh").strip() or "exhigh"
+    """通过租户音乐服务搜索首条可播放结果，并返回跨渠道标准回复。"""
 
+    config = _load_config(request.config)
     if request.action == "reload":
         return PluginExecutionResult(
             ok=True,
             status="running",
-            message="音乐点播插件已就绪，可执行搜歌请求。",
+            message="音乐点播插件已就绪。",
             output={
-                "music_api_url": music_api_url,
-                "song_api_url": song_api_url,
-                "default_timeout": timeout,
-                "detail_level": detail_level,
-                "commands": list(DEFAULT_COMMANDS),
+                "enabled": config.enabled,
+                "api_base_configured": bool(config.api_base),
+                "api_key_configured": bool(config.api_key),
+                "quality": config.quality,
             },
         )
-
     if request.action != "execute":
-        return PluginExecutionResult(ok=False, status="unsupported", message=f"unsupported action: {request.action}")
+        return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
+    if not config.enabled:
+        return _error_result("音乐点播插件未启用。", provider_status="plugin_disabled")
+    if not config.api_base:
+        return _error_result("请先配置当前租户的音乐服务地址。", provider_status="music_not_configured")
 
     keyword = _resolve_keyword(request.payload)
     if not keyword:
-        reply_text = "命令格式错误，请使用：点歌 歌曲名"
-        return PluginExecutionResult(
-            ok=False,
-            status="error",
-            message="音乐点播执行缺少 keyword/query/content。",
-            output={"reply_text": reply_text, "replies": _text_reply(reply_text)},
-        )
-
+        return _error_result("请使用“点歌 歌曲名”搜索音乐。", provider_status="keyword_required")
     try:
-        song = _search_song(
-            keyword=keyword,
-            music_api_url=music_api_url,
-            song_api_url=song_api_url,
-            timeout=timeout,
-            detail_level=detail_level,
-        )
-    except Exception as exc:
-        return PluginExecutionResult(ok=False, status="error", message=f"音乐点播请求失败: {exc}")
-
-    if not song.get("play_url"):
-        reply_text = f"未找到可播放的歌曲：{keyword}"
+        song = _search_song(config, keyword=keyword)
+    except (PluginHttpError, ValueError):
+        return _error_result("音乐服务暂时不可用，请稍后重试。", provider_status="search_failed")
+    if song is None:
+        message = f"没有找到可播放的歌曲：{keyword}"
         return PluginExecutionResult(
             ok=True,
             status="completed",
-            message="未找到可播放的歌曲结果。",
+            message=message,
             output={
                 "provider_status": "empty",
                 "keyword": keyword,
-                "reply_text": reply_text,
-                "replies": _text_reply(reply_text),
+                "replies": standard_replies([text_reply(message)]),
             },
         )
 
-    music_xml = _build_music_xml(song)
-    reply_text = f"已命中歌曲：{song.get('singer_name') or '-'} - {song.get('song_name') or keyword}"
+    display_name = f"{song.artist_name} - {song.song_name}" if song.artist_name else song.song_name
+    reply_text = f"已找到：{display_name}\n播放地址：{song.play_url}"
+    file_name = _build_audio_file_name(song)
     return PluginExecutionResult(
         ok=True,
         status="completed",
-        message=f"音乐点播完成，已命中 {song.get('song_name') or keyword}。",
+        message=f"已找到歌曲 {song.song_name}。",
         output={
-            "provider_status": "found",
+            "provider_status": "completed",
             "keyword": keyword,
-            **song,
-            "reply_text": reply_text,
-            "music_xml": music_xml,
-            "replies": _xml_reply(music_xml),
+            "song_id": song.song_id,
+            "song_name": song.song_name,
+            "artist_name": song.artist_name,
+            "cover_url": song.cover_url,
+            "replies": standard_replies(
+                [
+                    text_reply(reply_text),
+                    file_reply(file_name=file_name, file_url=song.play_url),
+                ]
+            ),
         },
     )
 
 
-def _resolve_keyword(payload: dict[str, object]) -> str:
+def _search_song(config: MusicConfig, *, keyword: str) -> SongResult | None:
+    """固定使用 Search 和 Song_V1 两个业务接口，不接受任意 URL 模板。"""
+
+    client = PluginHttpClient()
+    search_payload = _request_json(
+        client,
+        config,
+        "/Search",
+        {"keyword": keyword, "limit": 10},
+    )
+    songs = search_payload.get("data")
+    if not isinstance(songs, list) or not songs or not isinstance(songs[0], Mapping):
+        return None
+    first_song = songs[0]
+    song_id = str(first_song.get("id") or "").strip()
+    if not song_id:
+        return None
+
+    detail_payload = _request_json(
+        client,
+        config,
+        "/Song_V1",
+        {"url": song_id, "level": config.quality, "type": "json"},
+    )
+    detail = detail_payload.get("data")
+    if not isinstance(detail, Mapping):
+        return None
+    play_url = _public_http_url(detail.get("url"))
+    if not play_url:
+        return None
+    return SongResult(
+        song_id=song_id,
+        song_name=_inline_text(detail.get("name") or first_song.get("name") or keyword),
+        artist_name=_inline_text(
+            detail.get("ar_name")
+            or first_song.get("artist_string")
+            or _normalize_artists(first_song.get("artists"))
+        ),
+        play_url=play_url,
+        cover_url=_public_http_url(detail.get("pic") or first_song.get("picUrl")),
+    )
+
+
+def _request_json(
+    client: PluginHttpClient,
+    config: MusicConfig,
+    path: str,
+    parameters: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    headers = {"User-Agent": DEFAULT_USER_AGENT}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    response = client.request(
+        "GET",
+        f"{config.api_base}{path}?{urlencode({key: str(value) for key, value in parameters.items()})}",
+        headers=headers,
+        connect_timeout_seconds=min(8, config.timeout_seconds),
+        total_timeout_seconds=config.timeout_seconds,
+        max_response_bytes=2 * 1024 * 1024,
+        max_redirects=2,
+        retry_count=1,
+    )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"music http {response.status_code}")
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("music response invalid") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("music response must be object")
+    if payload.get("success") is not True or int(payload.get("status") or 0) != 200:
+        raise ValueError("music service rejected request")
+    return payload
+
+
+def _resolve_keyword(payload: Mapping[str, Any]) -> str:
     explicit = str(payload.get("keyword") or payload.get("command_args") or "").strip()
     if explicit:
-        return explicit
-    for key in ("stripped_query", "stripped_content", "query", "content"):
-        normalized = _strip_music_command(str(payload.get(key) or "").strip())
+        return _inline_text(explicit)
+    for key in ("content", "message_text", "query"):
+        normalized = _strip_command(str(payload.get(key) or ""))
         if normalized:
             return normalized
     return ""
 
 
-def _strip_music_command(text: str) -> str:
-    normalized = str(text or "").strip()
-    if not normalized:
-        return ""
-    normalized = normalized.replace("\n", " ")
-    tokens = [item for item in normalized.split(" ") if item]
-    if not tokens:
-        return ""
-    first = tokens[0].lstrip("/").strip().lower()
-    if first in {"点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌"}:
-        return " ".join(tokens[1:]).strip()
+def _strip_command(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(value or "").strip())
+    if normalized.startswith(("/", "#")):
+        normalized = normalized[1:].lstrip()
+    for command in COMMANDS:
+        if normalized == command:
+            return ""
+        if normalized.startswith(f"{command} "):
+            return normalized[len(command) :].strip()
     return normalized
 
 
-def _search_song(*, keyword: str, music_api_url: str, song_api_url: str, timeout: int, detail_level: str) -> dict[str, str]:
-    if "{keywords}" in music_api_url:
-        search_url = music_api_url.format(keywords=urllib.parse.quote(keyword))
-    else:
-        base = music_api_url.split("?")[0].rstrip("/")
-        search_url = f"{base}/Search?keyword={urllib.parse.quote(keyword)}&limit=10"
-    search_data = _get_json(search_url, timeout)
-    if not bool(search_data.get("success")) or int(search_data.get("status") or 0) != 200:
-        raise ValueError(str(search_data.get("message") or "search provider returned unsuccessful response"))
-    songs = search_data.get("data") or []
-    if not isinstance(songs, list) or not songs:
-        return {}
-    first_song = songs[0] if isinstance(songs[0], dict) else {}
-    song_id = str(first_song.get("id") or "").strip()
-    if not song_id:
-        return {}
-    if song_api_url:
-        detail_url = song_api_url.format(url=song_id, level=detail_level, type="json")
-    else:
-        base = music_api_url.split("?")[0].rstrip("/")
-        detail_url = f"{base}/Song_V1?url={song_id}&level={urllib.parse.quote(detail_level)}&type=json"
-    detail_data = _get_json(detail_url, timeout)
-    if not bool(detail_data.get("success")) or int(detail_data.get("status") or 0) != 200:
-        raise ValueError(str(detail_data.get("message") or "song detail provider returned unsuccessful response"))
-    song_info = detail_data.get("data") or {}
-    if not isinstance(song_info, dict):
-        song_info = {}
-    song_url = str(song_info.get("url") or "").strip()
-    return {
-        "song_id": song_id,
-        "song_name": str(song_info.get("name") or first_song.get("name") or "").strip(),
-        "singer_name": str(song_info.get("ar_name") or first_song.get("artist_string") or first_song.get("artists") or "").strip(),
-        "play_url": _resolve_redirect(song_url),
-        "data_url": _resolve_redirect(song_url),
-        "pic_url": _resolve_redirect(str(song_info.get("pic") or first_song.get("picUrl") or "").strip()),
-    }
+def _build_audio_file_name(song: SongResult) -> str:
+    display_name = f"{song.artist_name} - {song.song_name}" if song.artist_name else song.song_name
+    # 文件名会进入多个渠道适配器，统一清除路径分隔符和控制字符，避免把歌曲名
+    # 解释为目录或协议载荷。平台回复层还会再次检查最大长度。
+    safe_name = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", "_", display_name).strip(" ._")
+    return f"{(safe_name or 'music')[:240]}.mp3"
 
 
-def _build_music_xml(song: dict[str, str]) -> str:
-    return MUSIC_XML_TEMPLATE.format(
-        song_name=escape(str(song.get("song_name") or "")),
-        singer_name=escape(str(song.get("singer_name") or "")),
-        data_url=escape(str(song.get("data_url") or "")),
-        play_url=escape(str(song.get("play_url") or "")),
-        singer_pic=escape(str(song.get("pic_url") or "")),
+def _normalize_artists(value: Any) -> str:
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            if isinstance(item, Mapping):
+                name = _inline_text(item.get("name"))
+            else:
+                name = _inline_text(item)
+            if name:
+                names.append(name)
+        return " / ".join(names)
+    return _inline_text(value)
+
+
+def _public_http_url(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    # file_reply 会执行最终 URL 校验；这里先过滤明显的非 HTTP 地址，便于把无效
+    # 播放结果按“未找到”处理，而不是在构造回复时暴露内部异常。
+    parsed = urlsplit(normalized)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return ""
+    return normalized
+
+
+def _inline_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _error_result(message: str, *, provider_status: str) -> PluginExecutionResult:
+    return PluginExecutionResult(
+        ok=False,
+        status="error",
+        message=message,
+        output={
+            "provider_status": provider_status,
+            "replies": standard_replies([text_reply(message)]),
+        },
     )
 
 
-def _resolve_redirect(url: str) -> str:
-    if not url:
-        return ""
-    req = urlrequest.Request(url, method="HEAD", headers={"User-Agent": DEFAULT_USER_AGENT})
+def _load_config(raw_config: Mapping[str, Any]) -> MusicConfig:
+    raw = dict(raw_config)
+    quality = str(raw.get("quality") or "exhigh").strip().lower()
+    if quality not in {"standard", "higher", "exhigh", "lossless", "hires"}:
+        quality = "exhigh"
+    return MusicConfig(
+        enabled=_as_bool(raw.get("enabled"), default=True),
+        api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
+        api_key=str(raw.get("api_key") or "").strip(),
+        quality=quality,
+        timeout_seconds=_bounded_int(raw.get("timeout_seconds"), default=15, minimum=5, maximum=60),
+    )
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     try:
-        with urlrequest.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
-            return getattr(response, "url", url) or url
-    except Exception:
-        return url
+        normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = default
+    return max(minimum, min(normalized, maximum))
 
 
-def _get_json(url: str, timeout: int) -> dict:
-    req = urlrequest.Request(url, method="GET", headers={"User-Agent": DEFAULT_USER_AGENT})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-    parsed = json.loads(raw) if raw else {}
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError("provider returned non-object json")
+def _as_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default

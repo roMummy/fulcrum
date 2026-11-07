@@ -1,207 +1,135 @@
-# Wechat iPad Provider 部署说明
+# 微信 iPad 874 接入说明
 
-本文档用于说明如何单独部署 `wechat_ipad provider`，并接入 `Multi Bot Admin`。
+当前微信 iPad 渠道使用 `ipad-874` HTTP 契约。协议服务由平台统一部署和维护，企业租户只负责选择登录网络并扫码，不需要填写协议地址、Token、UUID、设备 ID 或接口参数。
 
-当前项目不负责自动托管这个 provider。推荐方式是：
+协议依据：
 
-- 你自己单独启动 provider
-- 在后台渠道管理中填写 provider 的 `API Base`
+- 源仓库：`https://git.liulabinfo.org/liuwei/ipad-874`
+- 当前锁定提交：`d9d3def46f8b5793e4272ba713fcce24c7df6267`
+- 默认服务端口：`9064`
+- 代理类型：仅 SOCKS
 
-项目内附带的 provider 目录位置：
+## 架构边界
 
-- [vendors/wechat_ipad_provider](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider)
+平台侧负责：
 
-## 目录说明
+- 部署和维护 874 服务。
+- 在“系统运维 > 协议服务”维护服务地址和新账号接入状态。
+- 在“系统运维 > 代理池”维护可分配的 SOCKS 代理。
+- 观察服务日志、代理健康状态和平台审计。
 
-当前目录内主要文件如下：
+企业租户负责：
 
-- [vendors/wechat_ipad_provider/main.exe](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/main.exe)：Windows 可执行文件
-- [vendors/wechat_ipad_provider/ipad859go](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/ipad859go)：另一份可执行文件
-- [vendors/wechat_ipad_provider/conf/app.conf](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/conf/app.conf)：主配置文件
-- [vendors/wechat_ipad_provider/conf/app-http.conf](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/conf/app-http.conf)：HTTP 配置样例
-- [vendors/wechat_ipad_provider/conf/app-tcp.conf](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/conf/app-tcp.conf)：TCP 配置样例
+- 创建微信 iPad 账号。
+- 选择本次扫码使用的登录网络。
+- 扫码并在手机微信中确认。
+- 登录后使用消息、联系人和群聊能力。
 
-建议优先使用：
+租户页面不会展示或允许修改平台协议地址，也不会提供协议调用、二维码链接、CheckQR、探针和原始返回数据。
 
-- Windows：`main.exe`
+## 部署 874 服务
 
-## 前置要求
+874 服务作为独立进程部署，不嵌入 SaaS 应用容器。部署完成后至少确认：
 
-部署前请确认：
+1. 服务监听预期地址和 `9064` 端口。
+2. SaaS 应用容器可以访问服务根地址。
+3. 874 Swagger 中的登录、心跳、消息、联系人和群聊接口与当前锁定契约一致。
+4. 服务地址使用稳定的 HTTP 或 HTTPS 根地址，不带用户名、密码、查询参数或 URL 片段。
 
-- 机器上已经准备好 Redis
-- provider 监听端口可访问，默认建议 `8059`
-- `Multi Bot Admin` 所在机器能访问到 provider 的地址
+局域网示例：
 
-如果你把 provider 和后台部署在同一台机器上，常见填写方式是：
-
-- `http://127.0.0.1:8059`
-
-如果是局域网其他机器：
-
-- `http://<provider机器IP>:8059`
-
-## Redis 要求
-
-provider 依赖 Redis。
-
-你需要提前准备一个可用 Redis，然后在 [app.conf](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/conf/app.conf) 中配置：
-
-```conf
-redislink = "127.0.0.1:6379"
-redispass = ""
-redisdbnum = 1
+```text
+http://192.168.2.240:9064
 ```
 
-说明：
+本项目不会生成 874 Token。当前契约没有 Token 鉴权字段，不应在租户配置或渠道 `adapter_config` 中自行增加无效凭证。
 
-- `redislink`：Redis 地址，格式通常为 `host:port`
-- `redispass`：Redis 密码，没有就留空
-- `redisdbnum`：Redis DB 编号，建议单独分配一个库
+## 平台配置协议服务
 
-不要直接使用仓库里现成的默认值，先改成你自己的环境。
+平台员工登录平台后台后进入：
 
-## app.conf 推荐配置
-
-建议把 [app.conf](/d:/learn/multi-bot-admin/vendors/wechat_ipad_provider/conf/app.conf) 改成类似下面这样：
-
-```conf
-appname = "wxapi"
-httpaddr = "0.0.0.0"
-httpport = 8059
-runmode = "prod"
-viewspath = "template"
-autorender = false
-copyrequestbody = true
-EnableDocs = true
-redislink = "127.0.0.1:6379"
-redispass = ""
-redisdbnum = 1
-ocrurl = ""
-syncmessagebusinessuri = ""
-logoutbusinessuri = ""
-
-sessionon = true
-
-SessionName = "wxapi"
-ServerName = "wxapi"
-
-longlinkenabled = true
-longlinkconnecttimeout = "1m"
+```text
+系统运维 > 协议服务
 ```
 
-建议项：
+填写 874 服务根地址，并选择“开放”或“暂停”新账号接入。保存后平台会把地址同步到现有微信 iPad 渠道；租户不能反向覆盖该地址。
 
-- `httpaddr` 使用 `0.0.0.0`，方便其他机器访问
-- `httpport` 使用 `8059`
-- `runmode` 生产环境建议 `prod`
-- 如果你当前没有 OCR 或外部业务回调，`ocrurl`、`syncmessagebusinessuri`、`logoutbusinessuri` 可以先留空
+暂停新账号接入不会创建新的连接草稿。已有账号是否继续运行由协议服务实际可用性和渠道状态决定。
 
-## Windows 启动方式
+## 平台配置代理池
 
-在 Windows PowerShell 中进入 provider 目录：
+平台员工进入：
 
-```powershell
-cd D:\learn\multi-bot-admin\vendors\wechat_ipad_provider
+```text
+系统运维 > 代理池
 ```
 
-启动：
+可以手工新增代理，也可以导入 UTF-8 CSV。固定表头为：
 
-```powershell
-.\main.exe
+```text
+名称,省,市,主机,端口,用户名,密码
 ```
 
-如果你的环境里是另一份可执行文件可用，也可以尝试：
+平台代理规则：
 
-```powershell
-.\ipad859go
-```
+- 只分配已启用且健康的代理。
+- 只精确匹配租户选择的省和市，不跨地区降级。
+- 同一个代理同一时间只属于一个有效扫码会话。
+- 取码前连接失败时在同地区轮换，最多尝试三个代理。
+- 连续失败达到阈值后代理进入异常状态，检查通过后才能重新参与分配。
+- 平台列表显示脱敏地址，不返回密码原文。
 
-如果希望后台常驻，建议你自行使用以下任一方式托管：
+首版代理来源由平台员工维护，不依赖代理供应商接口。
 
-- Windows 任务计划程序
-- NSSM
-- 自己的守护脚本
+## 租户扫码登录
 
-## 启动后检查
+首次接入和账号详情中的“重新登录”使用同一流程。
 
-启动成功后，优先检查这几项：
+租户可以选择：
 
-- 控制台是否报错
-- `8059` 端口是否已经监听
-- 打开 Swagger 页面是否正常
+- 智能选择：选择省、市，由平台自动分配附近可用代理。
+- 自有代理：填写自己的 SOCKS 主机、端口、用户名和密码。
+- 直接登录：本次扫码不使用代理。
 
-常见地址：
+提交后页面自动准备二维码并轮询，只展示四类业务状态：
 
-- `http://127.0.0.1:8059/swagger/index.html`
+1. 准备二维码。
+2. 等待扫码。
+3. 请在手机确认。
+4. 登录成功。
 
-如果能打开接口文档页面，通常说明 provider 已经起来了。
+二维码生成后，本次会话固定当前代理，避免扫码与确认阶段发生 IP 变化。需要更换网络时点击“重新开始”，系统会取消旧会话、释放平台代理并生成新的二维码。
 
-## 在后台中接入
+## 代理会话生命周期
 
-在 `Multi Bot Admin` 后台新增或编辑 `wechat_ipad` 渠道时：
+登录代理不是渠道长期配置，不写入渠道 `adapter_config`。
 
-- 渠道类型选择 `wechat_ipad`
-- `API Base` 填写 provider 地址，例如 `http://127.0.0.1:8059`
-- `Adapter Config JSON` 中至少补齐 `wxid`
+- 每次扫码创建一个独立登录代理会话。
+- 会话有效期以二维码有效期为准，并设置十分钟绝对上限。
+- 登录成功、失败、取消、二维码过期或会话超时后立即释放平台代理。
+- 自有代理密码在会话终态立即清除，只保留模式、地区和脱敏结果摘要。
+- 下次登录可以重新选择地区、自有代理或直接登录。
 
-示例：
-
-```json
-{
-  "wxid": "wxid_xxx",
-  "device_id": "your-device-id"
-}
-```
-
-说明：
-
-- `wxid` 是当前登录微信号对应的标识
-- `device_id` 没有强制统一格式，但建议固定使用，避免登录态混乱
-
-## 后台里的验证步骤
-
-渠道配置完成后，建议按这个顺序检查：
-
-1. 在渠道详情页确认 `API Base` 已填写正确。
-2. 点击“健康检查”，确认接口可达。
-3. 再执行“初始化登录”或“刷新二维码”。
-4. 观察登录状态、二维码状态、心跳和最近拉取时间。
+普通心跳、消息同步、联系人同步和群聊同步不会继续使用扫码登录代理。
 
 ## 常见问题
 
-### 1. 健康检查失败
+### 所选地区没有可用代理
 
-优先检查：
+选择其他已开放地区，或改用自有代理、直接登录。系统不会自动跨省市分配。
 
-- provider 是否真的启动了
-- `API Base` 是否填写正确
-- 防火墙是否放行端口
-- provider 所在机器的 Redis 是否可用
+### 自有代理无法取码
 
-### 2. 二维码拉不出来
+确认代理类型是 SOCKS，主机和端口可达，用户名和密码正确。页面不会返回 874 原始错误或代理密码。
 
-优先检查：
+### 二维码已经生成，但需要换代理
 
-- `wxid`、`device_id` 是否合理
-- provider 控制台日志是否有报错
-- Redis 是否正常
+点击“重新开始”并重新选择网络。系统不会在已有二维码下热切换代理。
 
-### 3. Docker 里的后台访问不到 provider
+### 租户页面看不到协议服务地址
 
-如果后台跑在 Docker、provider 跑在宿主机，不要直接填 `127.0.0.1`，因为容器内的 `127.0.0.1` 指向容器自己。
+这是当前架构的正常行为。协议服务属于平台基础设施，只在平台后台“系统运维 > 协议服务”维护。
 
-你应该填写：
+### 874 服务不可用
 
-- 宿主机实际 IP
-- 或 Docker 可访问的宿主机地址
-
-## 建议
-
-推荐把 provider 看成独立服务：
-
-- 单独部署
-- 单独观察日志
-- 单独管理 Redis
-
-这样出问题时，边界最清晰，也最方便排查。
+平台员工先确认服务进程、`9064` 监听、网络连通和 Swagger 契约，再恢复新账号接入。不要在租户渠道中增加备用地址或旧端点兼容配置。

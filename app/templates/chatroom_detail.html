@@ -2,9 +2,6 @@
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
-{% block page_intro %}
-<p>查看单个群的资料、成员信息和插件配置，方便核对当前群的实际状态。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
@@ -19,12 +16,11 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Chatroom</p>
+
       <h2>{{ detail.name }}</h2>
-      <p class="muted-text">渠道 #{{ channel.id }} / {{ channel.name }}。这里可以查看群资料、成员信息和群内插件配置。</p>
     </div>
     <div class="chip-row">
       {{ tone_chip(detail.sync_depth_label, 'outline' if detail.member_record_count == 0 else 'success') }}
@@ -33,16 +29,19 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
-    <div class="stat-card"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
-    <div class="stat-card"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
-    <div class="stat-card"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
-    <div class="stat-card"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
-    <div class="stat-card"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
-    <div class="stat-card"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
+    {# 标识、时间和文字状态不是数量指标，用正文级字号保留完整信息，不抢占群配置空间。 #}
+    <div class="metric-item metric-item-text"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
+    <div class="metric-item metric-item-text"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
+    <div class="metric-item metric-item-text"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
+    <div class="metric-item metric-item-text"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
+    <div class="metric-item"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
+    <div class="metric-item"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
+    <div class="metric-item metric-item-time"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
   </div>
   <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="card subcard">
+    <div class="subsection">
+      {# 详情字段表格与后续编辑表单分开滚动，手机只滚动表格自身，不撑宽页面。 #}
+      <div class="table-scroll">
       <table class="table table-tight">
         <tbody>
           <tr><th>群名</th><td>{{ detail.name }}</td></tr>
@@ -51,10 +50,10 @@
           <tr><th>来源</th><td class="cell-break"><code>{{ detail.observed_source }}</code></td></tr>
           <tr><th>群管理</th><td>{{ detail.management_status_label }}</td></tr>
           <tr><th>附件自动下载</th><td>{{ detail.auto_download_media_label }}</td></tr>
-          <tr><th>当前说明</th><td>这里显示当前群的本地配置和插件开关状态，便于日常核对与调整。</td></tr>
         </tbody>
       </table>
-      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/management" style="margin-top:12px;">
+      </div>
+      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/management" class="form-grid top-gap">
         <label class="full-row">
           <span>群纳管状态</span>
           <select name="management_status">
@@ -80,8 +79,8 @@
       <p class="muted-text" style="margin-top:12px;">当前渠道暂不支持群级附件自动下载配置。</p>
       {% endif %}
     </div>
-    <div class="card subcard">
-      <p class="section-kicker">Member Snapshot</p>
+    <div class="subsection">
+
       <h3 style="margin:0 0 8px;">成员角色概览</h3>
       <div class="chip-row" style="margin-bottom:10px;">
         {% for role, count in detail.role_counts.items() %}
@@ -97,12 +96,11 @@
 </section>
 
 {% if detail.message_flow is defined %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Message Flow</p>
+
       <h2>群消息流水</h2>
-      <p class="muted-text">展示当前群最近 {{ detail.message_flow.limit }} 条本地消息记录，便于核对 Hook 入站和机器人出站。</p>
     </div>
     <div class="chip-row">
       <span class="chip chip-outline">{{ detail.message_flow.total }} 条</span>
@@ -164,12 +162,11 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Members</p>
+
       <h2>群成员快照</h2>
-      <p class="muted-text">这里会展示群成员头像、昵称、群内显示名、角色标记、邀请关系和地区信息。</p>
     </div>
     <span class="chip chip-outline">{{ detail.members|length }} 条记录</span>
   </div>
@@ -191,7 +188,7 @@
       <tr>
         <td>
           {% if item.has_avatar %}
-          <img src="{{ item.avatar_url }}" alt="{{ item.nickname }}" style="width:40px;height:40px;border-radius:999px;object-fit:cover;display:block;margin-bottom:6px;border:1px solid rgba(148,163,184,.25);" />
+          <img src="{{ item.avatar_url }}" alt="{{ item.nickname }}" style="width:40px;height:40px;border-radius:4px;object-fit:cover;display:block;margin-bottom:6px;border:1px solid rgba(148,163,184,.25);" />
           {% endif %}
           <div><code>{{ item.member_external_id }}</code></div>
           <div class="muted-text">{% if item.has_avatar %}有头像{% else %}暂无头像{% endif %}</div>
@@ -227,12 +224,11 @@
   {% endif %}
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">BotPlugin Scope</p>
+
       <h2>群级插件控制</h2>
-      <p class="muted-text">这里可以为当前群单独设置插件启用、停用、恢复继承，并维护群级配置覆盖。</p>
     </div>
     <div class="chip-row">
       <span class="chip chip-outline">总绑定 {{ detail.binding_summary.total }}</span>

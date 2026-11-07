@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
-{% block page_intro %}<p>查看当前订阅、机器人额度和可购买套餐。</p>{% endblock %}
 {% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">订单记录</a>{% endblock %}
 {% block content %}
-<section class="card">
-  <div class="section-head"><div><p class="section-kicker">Subscription</p><h2>当前套餐</h2></div></div>
+<section class="work-surface">
+  <div class="section-head"><div><h2>当前套餐</h2></div></div>
   {% if subscription %}
   <dl class="detail-grid">
     <div><dt>套餐</dt><dd>{{ subscription.plan.name }}</dd></div>
@@ -14,8 +13,8 @@
   {% else %}<div class="empty-state"><strong>当前没有订阅</strong></div>{% endif %}
 </section>
 
-<section class="card">
-  <div class="section-head"><div><p class="section-kicker">Plans</p><h2>购买套餐</h2></div></div>
+<section class="work-surface">
+  <div class="section-head"><div><h2>购买套餐</h2></div></div>
   <div class="marketing-plan-grid">
     {% for plan in plans %}
     <article class="marketing-plan-card{% if plan.is_featured %} is-featured{% endif %}">

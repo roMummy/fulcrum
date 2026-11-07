@@ -1,8 +1,17 @@
 import json
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.services.plugin_runtime.registry import PluginConfigSchema, get_plugin_schema
-from app.services.security import mask_secret
+
+
+@dataclass(frozen=True)
+class PluginConfigMergeResult:
+    """结构化配置保存结果，确保普通配置和敏感配置不会再次混入同一 JSON。"""
+
+    config_json: str | None
+    secret_patch: Mapping[str, Any] = field(default_factory=dict)
+    clear_secret_fields: tuple[str, ...] = ()
 
 
 def get_plugin_config_schema(plugin_code: str | None) -> PluginConfigSchema | None:
@@ -55,7 +64,12 @@ def diff_config_override(base: Mapping[str, Any], target: Mapping[str, Any]) -> 
     return diff
 
 
-def build_plugin_config_view(plugin_code: str | None, raw_config: str | None) -> dict[str, Any]:
+def build_plugin_config_view(
+    plugin_code: str | None,
+    raw_config: str | None,
+    *,
+    secret_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     schema = get_plugin_config_schema(plugin_code)
     normalized_raw = normalize_config_json(raw_config) or ""
     if not schema:
@@ -71,11 +85,14 @@ def build_plugin_config_view(plugin_code: str | None, raw_config: str | None) ->
         }
 
     current = parse_config_json(raw_config)
-    fields: list[dict[str, Any]] = []
-    masked_preview = dict(current)
+    configured_secrets = dict(secret_config or {})
+    # 历史普通 JSON 即使仍残留敏感字段，也不能进入页面预览或表单值。
     for item in schema.fields:
-        value = current.get(item.name, item.default)
-        masked_value = ""
+        if item.sensitive:
+            current.pop(item.name, None)
+    fields: list[dict[str, Any]] = []
+    for item in schema.fields:
+        value = "" if item.sensitive else current.get(item.name, item.default)
         render_value: str = ""
         if item.field_type == "list":
             value = value if isinstance(value, list) else (item.default or [])
@@ -89,8 +106,6 @@ def build_plugin_config_view(plugin_code: str | None, raw_config: str | None) ->
             render_value = "" if value is None else str(value)
 
         if item.sensitive:
-            masked_value = mask_secret(render_value) if render_value else ""
-            masked_preview[item.name] = masked_value if masked_value else None
             render_value = ""
 
         fields.append(
@@ -105,7 +120,7 @@ def build_plugin_config_view(plugin_code: str | None, raw_config: str | None) ->
                 "sensitive": item.sensitive,
                 "placeholder": item.placeholder,
                 "options": item.options,
-                "masked_value": masked_value,
+                "secret_configured": item.name in configured_secrets and configured_secrets.get(item.name) not in (None, ""),
             }
         )
 
@@ -116,9 +131,8 @@ def build_plugin_config_view(plugin_code: str | None, raw_config: str | None) ->
         "title": schema.title,
         "description": schema.description,
         "fields": fields,
-        "preview_json": dump_config_json(masked_preview) or "{}",
-        "raw_config_json": normalized_raw,
-        "masked_preview_json": dump_config_json(masked_preview) or "{}",
+        "preview_json": dump_config_json(current) or "{}",
+        "raw_config_json": dump_config_json(current) or "",
     }
 
 
@@ -128,47 +142,68 @@ def merge_schema_config(
     *,
     existing_config_json: str | None = None,
     fallback_config_json: str | None = None,
-) -> str | None:
+) -> PluginConfigMergeResult:
     schema = get_plugin_config_schema(plugin_code)
     if not schema:
-        return normalize_config_json(fallback_config_json)
+        return PluginConfigMergeResult(config_json=normalize_config_json(fallback_config_json))
 
     existing = parse_config_json(existing_config_json)
-    has_schema_fields = any(f"schema__{item.name}" in submitted_form for item in schema.fields)
+    sensitive_names = {item.name for item in schema.fields if item.sensitive}
+    # 普通配置读取阶段直接删除所有显式敏感字段，避免旧明文继续被保存或预览。
+    for field_name in sensitive_names:
+        existing.pop(field_name, None)
+
+    has_schema_fields = any(
+        f"schema__{item.name}" in submitted_form or f"schema_clear__{item.name}" in submitted_form
+        for item in schema.fields
+    )
     if not has_schema_fields:
-        return normalize_config_json(fallback_config_json) or dump_config_json(existing)
+        fallback = parse_config_json(fallback_config_json)
+        for field_name in sensitive_names:
+            fallback.pop(field_name, None)
+        return PluginConfigMergeResult(config_json=dump_config_json(fallback) or dump_config_json(existing))
 
     merged = dict(existing)
+    secret_patch: dict[str, Any] = {}
+    clear_secret_fields: list[str] = []
     for item in schema.fields:
         key = f"schema__{item.name}"
         raw_value = submitted_form.get(key)
+        if item.sensitive:
+            # 敏感字段没有默认值语义：空输入保留现有密文，显式清除才删除，
+            # 非空输入只进入 secret_patch，永远不进入普通 config_json。
+            if _parse_boolean(submitted_form.get(f"schema_clear__{item.name}"), False):
+                clear_secret_fields.append(item.name)
+                continue
+            normalized = "" if raw_value is None else str(raw_value).strip()
+            if normalized:
+                secret_patch[item.name] = normalized
+            continue
         if item.field_type == "boolean":
             merged[item.name] = _parse_boolean(raw_value, item.default)
             continue
 
         normalized = "" if raw_value is None else str(raw_value).strip()
-        if item.sensitive:
-            if normalized:
-                merged[item.name] = normalized
-            elif merged.get(item.name):
-                continue
-            elif item.default not in (None, ""):
-                merged[item.name] = item.default
-            else:
-                merged.pop(item.name, None)
-            continue
-
         parsed_value = _parse_field_value(item.field_type, normalized, item.default)
         if parsed_value in (None, "", []):
             merged.pop(item.name, None)
         else:
             merged[item.name] = parsed_value
 
-    return dump_config_json(merged)
+    return PluginConfigMergeResult(
+        config_json=dump_config_json(merged),
+        secret_patch=secret_patch,
+        clear_secret_fields=tuple(clear_secret_fields),
+    )
 
 
-def build_schema_view(plugin_code: str | None, raw_config: str | None) -> dict[str, Any] | None:
-    view = build_plugin_config_view(plugin_code, raw_config)
+def build_schema_view(
+    plugin_code: str | None,
+    raw_config: str | None,
+    *,
+    secret_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    view = build_plugin_config_view(plugin_code, raw_config, secret_config=secret_config)
     if view["mode"] != "schema":
         return None
     return view

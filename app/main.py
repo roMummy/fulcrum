@@ -3,7 +3,7 @@ import subprocess
 import time as time_module
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -16,28 +16,48 @@ from sqlalchemy.orm import Session
 from starlette.routing import Match
 
 from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_router, provider_router, tool_api_router, workwechat_provider_cloud_router
+from app.api.local_proxy_connector import router as local_proxy_connector_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
 from app.core.db import SessionLocal, TenantSessionLocal
-from app.core.tenant_context import tenant_scope
+from app.core.tenant_context import require_tenant_id, tenant_scope
 from app.core.tenant_db import open_tenant_session, platform_session, tenant_session
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
 from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
-from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
+from app.models.saas import BotBinding
+from app.schemas.forms import BotPluginBindCreate, BotUpdate, ChannelUpdate
 from app.services.auth import validate_password_change
-from app.services.async_workers import start_background_workers, stop_background_workers
-from app.services.channel_adapters import get_channel_adapter
-from app.services.channel_events import ingest_inbound_event
-from app.services.channel_labels import (
-    SAAS_ENABLED_CHANNEL_TYPES,
-    get_channel_type_label,
-    require_saas_enabled_channel_type,
+from app.services.account_connections import (
+    AccountConnectionError,
+    begin_account_connection,
+    finalize_account_connection,
+    verify_account_connection,
 )
+from app.services.async_workers import start_background_workers, stop_background_workers
+from app.services.bot_entitlements import BotEntitlementError, get_bot_quota
+from app.services.channel_adapters import get_channel_adapter
+from app.services.channel_catalog import (
+    ChannelConfigurationError,
+    get_channel_type_definition,
+    list_supported_channel_types,
+    require_supported_channel_type,
+    serialize_channel_type_definitions,
+    validate_enabled_channel_configuration,
+)
+from app.services.channel_events import ingest_inbound_event
+from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
+from app.services.login_proxy_pool import (
+    LoginProxyPoolError,
+    build_login_proxy_session_summary,
+    create_login_proxy_session,
+    get_active_login_proxy_session,
+    list_available_proxy_regions,
+)
+from app.services.local_proxy_relay import local_proxy_relay_server
+from app.services.local_proxy_connector import list_online_proxy_connectors
 from app.services.crud import (
     bind_plugin,
-    create_bot,
-    create_channel,
     delete_bot,
     get_binding,
     get_bot,
@@ -64,11 +84,23 @@ from app.services.plugin_schemas import (
     merge_schema_config,
     parse_config_json,
 )
-from app.services.plugin_runtime import execute_binding_action, get_plugin_runtime_meta
+from app.services.plugin_runtime import (
+    PluginExecutionContext,
+    execute_binding_action,
+    execute_binding_message_action,
+    get_plugin_runtime_meta,
+)
+from app.services.plugin_secrets import decrypt_plugin_secret_config
+from app.services.wechat_ipad.login_flow import (
+    WechatIpadLoginFlowError,
+    cancel_login_with_proxy_session,
+    poll_login_with_proxy_session,
+    start_login_with_proxy_session,
+)
 from app.services.provider_nodes import (
     ProviderNodeError,
     list_provider_nodes,
-    validate_workwechat_provider_binding,
+    validate_channel_executor_binding,
 )
 from app.services.init_db import database_readiness, init_db_with_seed
 from app.services.installer import (
@@ -102,18 +134,12 @@ from app.services.wechat_ipad import (
     build_wechat_ipad_contact_list,
     build_wechat_ipad_group_summary,
     build_wechat_ipad_overview,
-    logout_wechat_ipad,
-    poll_wechat_ipad_login_status,
     pull_wechat_ipad_messages,
     record_wechat_ipad_receive_event,
     record_wechat_ipad_send_event,
-    reconnect_wechat_ipad,
     run_wechat_ipad_action,
     reset_wechat_ipad_chatroom_scope,
     resolve_wechat_ipad_qrcode_image,
-    refresh_wechat_ipad_qrcode,
-    refresh_wechat_ipad_status,
-    start_wechat_ipad_login,
     sync_wechat_ipad_chatrooms,
     sync_wechat_ipad_contacts,
     update_wechat_ipad_chatroom_scope_config_override,
@@ -159,6 +185,7 @@ from app.web.auth_common import (
     require_tenant_csrf,
     tenant_must_change_password_redirect,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 configure_logging()
 logger = get_logger(__name__)
 
@@ -174,6 +201,7 @@ app.include_router(channel_inbound_router)
 app.include_router(customer_operations_router)
 app.include_router(open_api_router)
 app.include_router(workwechat_provider_cloud_router)
+app.include_router(local_proxy_connector_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
 app.include_router(public_site_router)
@@ -186,7 +214,9 @@ app.include_router(platform_operations_router)
 app.include_router(tenant_admin_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
-BUILTIN_CHANNEL_TYPES = SAAS_ENABLED_CHANNEL_TYPES
+BUILTIN_CHANNEL_TYPES = list_supported_channel_types()
+CHANNEL_TYPE_FORM_SCHEMA = serialize_channel_type_definitions()
+CHANNEL_TYPE_FORM_SCHEMA_BY_CODE = {item["code"]: item for item in CHANNEL_TYPE_FORM_SCHEMA}
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
 
@@ -224,11 +254,13 @@ async def startup_event() -> None:
     finally:
         db.close()
     start_background_workers()
+    await local_proxy_relay_server.start()
     log_startup_banner()
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    await local_proxy_relay_server.stop()
     stop_background_workers()
 
 
@@ -421,73 +453,7 @@ def render(request: Request, template: str, **context):
     notice_tone = context.get("notice_tone")
     if not notice_tone:
         notice_tone = "danger" if response_status >= 400 else infer_notice_tone(notice)
-    path = request.url.path
-
-    def is_path_active(prefixes: tuple[str, ...], *, exact_root: bool = False) -> bool:
-        """按任务流判断激活态，避免顶部菜单只按单一路由前缀高亮。"""
-        if exact_root:
-            return path == "/"
-        return any(path == prefix or (prefix != "/" and path.startswith(prefix)) for prefix in prefixes)
-
-    def nav_item(label: str, href: str, prefixes: tuple[str, ...], *, exact_root: bool = False) -> dict[str, str | bool]:
-        return {
-            "label": label,
-            "href": href,
-            "active": is_path_active(prefixes, exact_root=exact_root),
-        }
-
-    # 企业顶部菜单只保留租户业务能力，平台运维和全局日志使用独立平台后台。
-    primary_nav_items = [
-        nav_item("总览", "/dashboard", ("/dashboard",)),
-        nav_item("接入", "/channels", ("/channels", "/provider-nodes")),
-        nav_item("机器人", "/bots", ("/bots",)),
-        nav_item("插件", "/plugins", ("/plugins",)),
-        nav_item("消息", "/conversations", ("/conversations", "/messages")),
-        nav_item("套餐与额度", "/account/billing", ("/account",)),
-    ]
-    secondary_nav_items: list[dict[str, str | bool]] = [
-        nav_item("租户设置", "/tenant/users", ("/tenant",)),
-    ]
-    nav_items = [*primary_nav_items, *secondary_nav_items]
-    secondary_nav_active = any(bool(item["active"]) for item in secondary_nav_items)
-
-    # 二级入口只放当前任务域内的高频分支，避免顶部菜单横向堆满，同时让用户进入模块后能继续按业务路径切换。
-    section_nav_items: list[dict[str, str | bool]] = []
-    if is_path_active(("/channels", "/provider-nodes")):
-        section_nav_items = [
-            nav_item("渠道清单", "/channels", ("/channels",)),
-            nav_item("Provider 节点", "/provider-nodes", ("/provider-nodes",)),
-        ]
-    elif is_path_active(("/bots",)):
-        section_nav_items = [
-            nav_item("机器人", "/bots", ("/bots",)),
-        ]
-    elif is_path_active(("/plugins",)):
-        section_nav_items = [
-            {
-                "label": "插件开关",
-                "href": "/plugins",
-                "active": path == "/plugins" or (path.startswith("/plugins/") and not path.startswith("/plugins/runtime")),
-            },
-            nav_item("运行状态", "/plugins/runtime", ("/plugins/runtime",)),
-        ]
-    elif is_path_active(("/conversations", "/messages")):
-        section_nav_items = [
-            nav_item("会话", "/conversations", ("/conversations",)),
-            nav_item("消息", "/messages", ("/messages",)),
-        ]
-    elif is_path_active(("/tenant",)):
-        section_nav_items = [
-            nav_item("员工管理", "/tenant/users", ("/tenant/users",)),
-            nav_item("订阅信息", "/tenant/subscription", ("/tenant/subscription",)),
-        ]
-    elif is_path_active(("/account",)):
-        section_nav_items = [
-            nav_item("新手引导", "/account/onboarding", ("/account/onboarding",)),
-            nav_item("套餐与额度", "/account/billing", ("/account/billing",)),
-            nav_item("订单", "/account/orders", ("/account/orders",)),
-            nav_item("机器人绑定", "/account/bot-bindings", ("/account/bot-bindings",)),
-        ]
+    navigation_context = build_tenant_navigation(request.url.path)
     base_context = {
         "current_user": getattr(request.state, "current_user", None),
         # 所有租户页面共用同一个可信 CSRF Cookie；状态变更表单必须把原始值放入
@@ -497,13 +463,9 @@ def render(request: Request, template: str, **context):
         "password_action": TENANT_PASSWORD_PATH,
         "app_started_at": APP_STARTED_AT,
         "notice_tone": notice_tone,
-        "nav_items": nav_items,
-        "primary_nav_items": primary_nav_items,
-        "secondary_nav_items": secondary_nav_items,
-        "secondary_nav_active": secondary_nav_active,
-        "section_nav_items": section_nav_items,
         "module_links": build_module_links(),
     }
+    base_context.update(navigation_context)
     base_context.update(context)
     response = templates.TemplateResponse(request, template, base_context)
     response.status_code = response_status
@@ -545,62 +507,18 @@ def build_group_scope_effective_config(plugin_code: str | None, binding_config_j
     return deep_merge_config(deep_merge_config(base, binding_config), scope_config)
 
 
-def extract_wechat_ipad_proxy_form(adapter_config_json: str | None) -> dict[str, str]:
-    parsed, _ = parse_json_object(adapter_config_json or "")
-    proxy = parsed.get("proxy")
-    if not isinstance(proxy, dict):
-        return {
-            "host": "",
-            "port": "",
-            "username": "",
-            "password": "",
-            "proxy_ip": "",
-        }
-    proxy_ip = str(proxy.get("proxy_ip") or "").strip()
-    host = str(proxy.get("host") or proxy.get("ip") or "").strip()
-    port = str(proxy.get("port") or "").strip()
-    if (not host or not port) and proxy_ip and ":" in proxy_ip:
-        resolved_host, resolved_port = proxy_ip.rsplit(":", 1)
-        host = host or resolved_host.strip()
-        port = port or resolved_port.strip()
-    return {
-        "host": host,
-        "port": port,
-        "username": str(proxy.get("username") or proxy.get("user") or "").strip(),
-        "password": str(proxy.get("password") or "").strip(),
-        "proxy_ip": proxy_ip,
-    }
-
-
 def merge_channel_adapter_config(
     *,
     channel_type: str,
     adapter_config_json: str,
-    proxy_host: str = "",
-    proxy_port: str = "",
-    proxy_username: str = "",
-    proxy_password: str = "",
 ) -> tuple[str, str]:
+    """规范化渠道运行配置，并直接删除微信 iPad 已废弃的长期代理节点。"""
+
     parsed, error = parse_json_object(adapter_config_json)
     if error:
         return "", error
-    if str(channel_type or "").strip() != "wechat_ipad":
-        return json.dumps(parsed, ensure_ascii=False, sort_keys=True) if parsed else "", ""
-
-    host = str(proxy_host or "").strip()
-    port = str(proxy_port or "").strip()
-    username = str(proxy_username or "").strip()
-    password = str(proxy_password or "").strip()
-    proxy_ip = f"{host}:{port}" if host and port else ""
-    if any([host, port, username, password]):
-        parsed["proxy"] = {
-            "host": host,
-            "port": port,
-            "username": username,
-            "password": password,
-            "proxy_ip": proxy_ip,
-        }
-    else:
+    if str(channel_type or "").strip() == "wechat_ipad":
+        # 当前架构只允许 LoginProxySession 保存单次扫码代理，编辑历史账号时同步清理旧数据。
         parsed.pop("proxy", None)
     return json.dumps(parsed, ensure_ascii=False, sort_keys=True) if parsed else "", ""
 
@@ -682,7 +600,8 @@ def build_dashboard_trend_series(
         logger.info(
             "dashboard message hourly rows",
             extra={
-                "environment": environment or "all",
+                # 环境筛选已从当前 SaaS 架构移除；日志只记录已受租户会话约束的统计行，
+                # 避免有数据时访问已删除变量，导致整个企业总览返回 500。
                 "rows": [
                     {
                         "bucket_start": _normalize_dt_utc(row.bucket_start).isoformat(),
@@ -901,58 +820,47 @@ def build_dashboard_alert_summary(db: Session) -> dict[str, object]:
         "recent_items": recent_items,
     }
 
-def to_jsonable(value):
-    if isinstance(value, dict):
-        return {key: to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, tuple):
-        return [to_jsonable(item) for item in value]
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    return value
-
-
 def build_wechat_ipad_flow_payload(db: Session, channel: Channel) -> dict[str, object]:
-    group_summary = build_wechat_ipad_group_summary(db, channel)
-    overview = build_wechat_ipad_overview(channel, group_summary=group_summary)
+    """把协议运行态收口为扫码页面唯一需要的四类业务状态。"""
+
+    overview = build_wechat_ipad_overview(channel)
+    login_state = str(overview.get("login_state") or "").strip()
+    qrcode_status = str(overview.get("qrcode_status") or "").strip()
+    if login_state == "online" or qrcode_status == "success":
+        status = "success"
+        status_label = "登录成功"
+        message = "账号连接成功，正在进入下一步"
+        should_poll = False
+    elif qrcode_status in {"scanned", "confirmed"}:
+        status = "phone_confirm"
+        status_label = "请在手机确认"
+        message = "已识别扫码，请在手机微信中确认登录"
+        should_poll = True
+    elif qrcode_status == "waiting_scan" and overview.get("qrcode_image_url"):
+        status = "waiting_scan"
+        status_label = "等待扫码"
+        message = "请使用手机微信扫描二维码"
+        should_poll = True
+    elif qrcode_status in {"failed", "expired", "unavailable"}:
+        status = "failed"
+        status_label = "登录未完成"
+        message = "本次登录未完成，请重新开始"
+        should_poll = False
+    else:
+        status = "preparing"
+        status_label = "准备二维码"
+        message = "正在准备安全登录二维码"
+        should_poll = True
+    network = build_login_proxy_session_summary(db, channel_id=int(channel.id))
     return {
         "ok": True,
-        "overview": to_jsonable(overview),
-        "group_summary": to_jsonable(group_summary),
-        "group_summary_version": {
-            "chatroom_count": int(group_summary.get("chatroom_count") or 0),
-            "member_count": int(group_summary.get("member_count") or 0),
-            "scope_total": int((group_summary.get("persisted_scope_stats") or {}).get("total") or 0),
-            "recent_chatrooms_len": len(group_summary.get("recent_chatrooms") or []),
-        },
-        "message": str(overview.get("last_status_summary") or ""),
+        "status": status,
+        "status_label": status_label,
+        "message": message,
+        "qrcode_image_url": str(overview.get("qrcode_image_url") or ""),
+        "should_poll": should_poll,
+        "network_label": str(network.get("network_label") or ""),
     }
-
-
-async def resolve_wechat_ipad_login_profile(request: Request) -> str | None:
-    content_type = str(request.headers.get("content-type") or "").lower()
-    profile = None
-    if "application/json" in content_type:
-        try:
-            payload = await request.json()
-        except Exception:
-            payload = {}
-        if isinstance(payload, dict):
-            profile = payload.get("login_profile")
-    if profile in (None, ""):
-        try:
-            form = await request.form()
-        except Exception:
-            form = None
-        if form is not None:
-            profile = form.get("login_profile")
-    if profile in (None, ""):
-        profile = request.query_params.get("login_profile")
-    normalized = str(profile or "").strip().lower()
-    return normalized or None
 
 
 def get_session() -> Session:
@@ -1026,7 +934,18 @@ def build_binding_schema_cards(bindings: list[BotPlugin]) -> list[dict[str, obje
     cards: list[dict[str, object]] = []
     for binding in bindings:
         plugin_code = binding.plugin.code if binding.plugin else None
-        config_view = build_plugin_config_view(plugin_code, binding.config_json)
+        # 页面只需要知道哪些敏感字段已经配置。服务端在可信绑定范围内解密后仅传
+        # 布尔状态给模板，密钥原文不会进入 HTML、JSON 预览或浏览器表单值。
+        secret_config = decrypt_plugin_secret_config(
+            tenant_id=int(binding.tenant_id),
+            binding_id=int(binding.id),
+            encrypted=binding.secret_config_encrypted,
+        )
+        config_view = build_plugin_config_view(
+            plugin_code,
+            binding.config_json,
+            secret_config=secret_config,
+        )
         cards.append(
             {
                 "binding": binding,
@@ -1081,11 +1000,19 @@ def build_plugin_toggle_matrix(
     plugin_runtime_map: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     binding_map = {(binding.bot_id, binding.plugin_id): binding for binding in bindings}
+    # 插件开关是实际业务入口，只展示已经验证可执行的目录插件。损坏 manifest
+    # 或缺少真实入口的镜像仍留在下方诊断清单，但不能被租户绑定或启用。
+    executable_plugins = [
+        plugin
+        for plugin in plugins
+        if plugin_runtime_map.get(plugin.code, {}).get("migration_state") == "migrated"
+        and bool(plugin_runtime_map.get(plugin.code, {}).get("supports_execution"))
+    ]
     rows: list[dict[str, object]] = []
     for bot in bots:
         plugin_items: list[dict[str, object]] = []
         enabled_count = 0
-        for plugin in plugins:
+        for plugin in executable_plugins:
             runtime_info = plugin_runtime_map.get(plugin.code, {})
             binding = binding_map.get((bot.id, plugin.id))
             is_enabled = str(binding.status or "").strip() == "enabled" if binding else bool(plugin.default_enabled)
@@ -1226,32 +1153,6 @@ def build_channel_health_timeline(db: Session, channel_id: int) -> dict[str, obj
         "latest_failure_at": getattr(latest_failure, "created_at", None),
         "latest_failure_summary": getattr(latest_failure, "summary", None),
     }
-
-
-def build_execution_payload(db: Session, binding: BotPlugin, payload: dict[str, object]) -> dict[str, object]:
-    plugin_code = binding.plugin.code if binding.plugin else None
-    if plugin_code != "message_summary":
-        return payload
-
-    conversation_id_raw = payload.get("conversation_id")
-    try:
-        conversation_id = int(conversation_id_raw) if conversation_id_raw is not None else 0
-    except (TypeError, ValueError):
-        conversation_id = 0
-    if not conversation_id:
-        return payload
-
-    config = parse_config_json(binding.config_json)
-    limit = int(config.get("max_messages", 100) or 100)
-    messages = db.scalars(
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.id.desc())
-        .limit(limit)
-    ).all()
-    enriched = dict(payload)
-    enriched["messages"] = [item.content for item in reversed(messages) if (item.content or "").strip()]
-    return enriched
 
 
 @app.middleware("http")
@@ -1434,15 +1335,17 @@ async def dashboard(request: Request):
         ops_snapshot = {
             "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True))) or 0,
             "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True))) or 0,
-            "online_workwechat": db.scalar(
+            "online_channels": db.scalar(
                 select(func.count(Channel.id)).where(
-                    Channel.channel_type == "workwechat",
-                    Channel.login_state == "online",
+                    Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
+                    Channel.is_enabled.is_(True),
+                    Channel.status == "online",
                 )
             )
             or 0,
             "abnormal_channels": db.scalar(
                 select(func.count(Channel.id)).where(
+                    Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
                     Channel.is_enabled.is_(True),
                     Channel.status.in_(("degraded", "offline", "failed")),
                 )
@@ -1546,8 +1449,8 @@ async def dashboard(request: Request):
             risk_items.append(f"当前有 {ops_snapshot['abnormal_channels']} 个启用渠道状态异常，建议优先看渠道页和错误页。")
         if ops_snapshot["failed_jobs"]:
             risk_items.append(f"任务队列里有 {ops_snapshot['failed_jobs']} 个失败任务，可能影响插件或出站链路。")
-        if not ops_snapshot["online_workwechat"]:
-            risk_items.append("当前没有在线的企业微信账号，相关入站和心跳能力可能不可用。")
+        if not ops_snapshot["online_channels"]:
+            risk_items.append("当前没有在线渠道，相关入站、出站和状态同步能力可能不可用。")
         if alert_summary["total"]:
             risk_items.append(f"当前有 {alert_summary['total']} 条未恢复告警，请优先关注首页告警摘要和监控页。")
         if not risk_items:
@@ -1638,41 +1541,6 @@ async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
             notice_tone=request.query_params.get("tone", ""),
             back_href=safe_return_to(return_to, detail_fallback("/bots")),
         )
-    finally:
-        db.close()
-
-
-@app.post("/bots")
-async def create_bot_action(
-    request: Request,
-    name: str = Form(...),
-):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        cleaned_name = name.strip()
-        if not cleaned_name:
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称不能为空") + "&tone=danger",
-                status_code=303,
-            )
-        if db.scalar(select(Bot.id).where(Bot.name == cleaned_name)) is not None:
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
-                status_code=303,
-            )
-        try:
-            bot = create_bot(db, BotCreate(name=cleaned_name))
-        except IntegrityError:
-            # 数据库唯一约束负责并发兜底；回滚后只向用户返回业务提示，不暴露 SQL 细节。
-            db.rollback()
-            return RedirectResponse(
-                url="/bots?notice=" + quote("机器人名称已存在，请换一个名称") + "&tone=danger",
-                status_code=303,
-            )
-        record_audit(db, "bot.create", "bot", bot.id, f"创建机器人 {bot.name}")
-        notice = quote("机器人已创建，请继续添加企业微信账号")
-        return RedirectResponse(url=f"/bots/{bot.id}?notice={notice}", status_code=303)
     finally:
         db.close()
 
@@ -1805,27 +1673,386 @@ async def delete_bot_action(request: Request, bot_id: int, confirmation_name: st
 async def channels_page(request: Request):
     db = get_session()
     try:
-        # 历史数据库可能仍有旧渠道记录；SaaS 租户页面只展示当前产品允许的企业微信渠道。
+        tenant_id = require_tenant_id()
+        # “账号接入”列表仍以真实 Channel 为运行对象，但默认只展示业务状态，
+        # 不再把 API Base、Webhook、适配 JSON 和执行端主键平铺给租户。
         channels = db.scalars(
             select(Channel)
-            .where(Channel.channel_type.in_(SAAS_ENABLED_CHANNEL_TYPES))
+            .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES))
             .order_by(Channel.id.desc())
         ).all()
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
-        provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
+        bindings = db.scalars(
+            select(BotBinding)
+            .where(BotBinding.tenant_id == tenant_id)
+            .order_by(BotBinding.id.desc())
+        ).all()
+        binding_by_channel_id = {
+            int(binding.channel_id): binding
+            for binding in bindings
+            if binding.channel_id is not None
+        }
+        account_rows = [
+            {
+                "channel": channel,
+                "bot_name": bot_name_map.get(channel.bot_id, "机器人"),
+                "binding": binding_by_channel_id.get(channel.id),
+                "connection": _channel_connection_state(channel),
+                "last_online_at": channel.last_heartbeat_at or channel.last_message_sync_at or channel.last_login_at,
+            }
+            for channel in channels
+        ]
+        try:
+            quota = get_bot_quota(db)
+            quota_error = ""
+        except BotEntitlementError as exc:
+            quota = None
+            quota_error = _account_connection_error_message(str(exc))
         return render(
             request,
             "channels.html",
-            page_title="渠道管理",
-            channels=channels,
-            workwechat_cloud_poll_config_map=build_workwechat_cloud_poll_config_map(channels),
-            bots=bots,
-            bot_name_map=bot_name_map,
-            builtin_channel_types=BUILTIN_CHANNEL_TYPES,
-            provider_nodes=provider_nodes,
+            page_title="账号接入",
+            account_rows=account_rows,
+            quota=quota,
+            quota_error=quota_error,
             notice=request.query_params.get("notice", ""),
         )
+    finally:
+        db.close()
+
+
+def _channel_connection_state(channel: Channel) -> dict[str, object]:
+    """从服务端运行信息读取统一连接状态，不把协议原始响应交给页面。"""
+
+    try:
+        runtime_info = json.loads(channel.runtime_info_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        runtime_info = {}
+    connection = runtime_info.get("account_connection") if isinstance(runtime_info, dict) else None
+    if not isinstance(connection, dict):
+        connection = {}
+    state = str(connection.get("state") or ("active" if channel.is_enabled else channel.status or "draft")).strip()
+    labels = {
+        "active": "已接入",
+        "online": "已接入",
+        "verified": "待确认",
+        "connecting": "连接中",
+        "failed": "连接失败",
+        "draft": "待连接",
+        "offline": "已停用",
+    }
+    return {
+        "state": state,
+        "label": labels.get(state, state or "未知"),
+        "message": str(connection.get("message") or "").strip(),
+        "display_name": str(connection.get("display_name") or channel.name).strip(),
+    }
+
+
+def _account_connection_error_message(code: str) -> str:
+    """把连接和额度错误码转换为不泄露其他租户信息的操作提示。"""
+
+    messages = {
+        "bot_quota_exceeded": "机器人额度已用完，请先升级套餐",
+        "subscription_inactive": "当前订阅不可用",
+        "subscription_expired": "当前订阅已到期",
+        "bot_account_already_bound": "该账号已经绑定，请联系平台处理",
+        "bot_binding_conflict": "账号绑定冲突，请稍后重试",
+        "device_owned_by_other_tenant": "该设备已经绑定，请联系平台处理",
+        "device_trial_already_claimed": "该设备已经领取过试用权益",
+        "trial_device_already_claimed": "当前试用设备不能更换绑定账号",
+        "connection_not_verified": "请先完成账号验证",
+        "connection_already_active": "该账号已经完成接入",
+        "connection_not_found": "连接记录不存在",
+        "connection_type_not_supported": "暂不支持该接入方式",
+        "account_identity_missing": "客户端没有返回可验证的账号身份",
+        "platform_protocol_service_missing": "平台尚未配置该协议服务，请联系平台管理员",
+        "platform_protocol_service_disabled": "该协议服务已暂停新账号接入，请联系平台管理员",
+        "proxy_mode_invalid": "请选择本次登录使用的网络方式",
+        "proxy_province_required": "请选择代理所在省份",
+        "proxy_city_required": "请选择代理所在城市",
+        "proxy_host_required": "请输入自有代理地址",
+        "proxy_port_invalid": "请输入有效的自有代理端口",
+        "proxy_region_unavailable": "所选地区暂无可用代理，请选择其他地区或直接登录",
+        "proxy_connector_required": "请选择一个在线的本地代理连接器",
+        "proxy_connector_unavailable": "本地连接器当前不在线，请在 Windows 连接器中启动后重试",
+    }
+    normalized = str(code or "").strip()
+    return messages.get(normalized, normalized or "账号连接失败")
+
+
+@app.get("/channels/connect", response_class=HTMLResponse)
+async def channel_connect_page(request: Request):
+    """按选择平台、连接账号和确认启用三个阶段展示统一接入向导。"""
+
+    db = get_session()
+    try:
+        raw_channel_id = str(request.query_params.get("channel_id") or "").strip()
+        channel = None
+        if raw_channel_id:
+            try:
+                channel = get_channel(db, int(raw_channel_id))
+            except ValueError:
+                channel = None
+            if channel is None:
+                raise HTTPException(status_code=404, detail="Connection not found")
+        requested_type = str(
+            channel.channel_type if channel is not None else request.query_params.get("channel_type") or ""
+        ).strip()
+        if requested_type:
+            try:
+                requested_type = require_supported_channel_type(requested_type)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="Connection type not found") from exc
+        platform_choice = str(request.query_params.get("platform") or "").strip()
+        connection = _channel_connection_state(channel) if channel is not None else {}
+        network_setup = bool(channel is not None and request.query_params.get("network") == "1")
+        is_relogin = bool(
+            channel is not None
+            and (network_setup or request.query_params.get("relogin") == "1")
+        )
+        if network_setup:
+            stage = "configure"
+        elif channel is not None:
+            stage = "confirm" if connection.get("state") == "verified" else "progress"
+        elif requested_type:
+            stage = "configure"
+        elif platform_choice == "wechat":
+            stage = "wechat_method"
+        else:
+            stage = "choose"
+        try:
+            quota = get_bot_quota(db)
+            quota_error = ""
+        except BotEntitlementError as exc:
+            quota = None
+            quota_error = _account_connection_error_message(str(exc))
+        return render(
+            request,
+            "channel_connect.html",
+            page_title="接入账号",
+            stage=stage,
+            requested_type=requested_type,
+            channel=channel,
+            connection=connection,
+            quota=quota,
+            quota_error=quota_error,
+            provider_nodes=list_provider_nodes(db),
+            proxy_regions=(list_available_proxy_regions(db) if requested_type == "wechat_ipad" else []),
+            local_connectors=(list_online_proxy_connectors(db) if requested_type == "wechat_ipad" else []),
+            is_relogin=is_relogin,
+            login_network=(
+                build_login_proxy_session_summary(db, channel_id=int(channel.id))
+                if channel is not None and channel.channel_type == "wechat_ipad"
+                else {}
+            ),
+            wechat_ipad_overview=(build_wechat_ipad_overview(channel) if channel and channel.channel_type == "wechat_ipad" else None),
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+        )
+    finally:
+        db.close()
+
+
+@app.post("/channels/connect/start")
+async def channel_connect_start_action(
+    request: Request,
+    channel_type: str = Form(""),
+    display_name: str = Form(""),
+    api_base: str = Form(""),
+    bot_token: str = Form(""),
+    provider_node_id: int = Form(0),
+    provider_account_id: int = Form(0),
+    proxy_mode: str = Form("direct"),
+    proxy_province: str = Form(""),
+    proxy_city: str = Form(""),
+    custom_proxy_host: str = Form(""),
+    custom_proxy_port: str = Form(""),
+    custom_proxy_username: str = Form(""),
+    custom_proxy_password: str = Form(""),
+    proxy_connector_id: int = Form(0),
+    csrf_token: str = Form(""),
+):
+    """创建连接草稿；可信账号 ID 和设备键绝不从此表单接收。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            channel = begin_account_connection(
+                db,
+                channel_type=channel_type,
+                display_name=display_name,
+                connection_values={
+                    "api_base": api_base,
+                    "bot_token": bot_token,
+                    "provider_node_id": provider_node_id,
+                    "provider_account_id": provider_account_id,
+                },
+            )
+            if channel.channel_type == "wechat_ipad":
+                # 登录网络只保存为本次扫码会话快照；渠道 adapter_config 始终不接收代理字段。
+                create_login_proxy_session(
+                    db,
+                    channel=channel,
+                    mode=proxy_mode,
+                    values={
+                        "province": proxy_province,
+                        "city": proxy_city,
+                        "host": custom_proxy_host,
+                        "port": custom_proxy_port,
+                        "username": custom_proxy_username,
+                        "password": custom_proxy_password,
+                        "connector_id": proxy_connector_id,
+                    },
+                )
+            else:
+                verify_account_connection(db, channel_id=channel.id)
+        except (AccountConnectionError, BotEntitlementError, LoginProxyPoolError, ValueError) as exc:
+            message = quote(_account_connection_error_message(str(exc)))
+            if "channel" in locals() and channel.channel_type == "wechat_ipad":
+                return RedirectResponse(
+                    url=f"/channels/{channel.id}/wechat-ipad/login-session?notice={message}&tone=danger",
+                    status_code=303,
+                )
+            return RedirectResponse(url=f"/channels/connect?channel_type={quote(channel_type)}&notice={message}&tone=danger", status_code=303)
+        return RedirectResponse(url=f"/channels/connect?channel_id={channel.id}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.get("/channels/{channel_id}/wechat-ipad/login-session")
+async def configure_wechat_ipad_login_session(request: Request, channel_id: int):
+    """进入统一登录网络选择页，首次接入草稿和正式账号共用同一页面。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if channel is None or channel.channel_type != "wechat_ipad":
+            raise HTTPException(status_code=404, detail="Channel not found")
+        query = urlencode(
+            {
+                "channel_id": int(channel.id),
+                "network": "1",
+                "notice": request.query_params.get("notice", ""),
+                "tone": request.query_params.get("tone", ""),
+            }
+        )
+        return RedirectResponse(url=f"/channels/connect?{query}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/wechat-ipad/login-session")
+async def create_wechat_ipad_login_session_action(
+    request: Request,
+    channel_id: int,
+    proxy_mode: str = Form("direct"),
+    proxy_province: str = Form(""),
+    proxy_city: str = Form(""),
+    custom_proxy_host: str = Form(""),
+    custom_proxy_port: str = Form(""),
+    custom_proxy_username: str = Form(""),
+    custom_proxy_password: str = Form(""),
+    proxy_connector_id: int = Form(0),
+    csrf_token: str = Form(""),
+):
+    """替换当前扫码会话并跳转到业务化二维码页，旧会话租约同步释放。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if channel is None or channel.channel_type != "wechat_ipad":
+            raise HTTPException(status_code=404, detail="Channel not found")
+        try:
+            create_login_proxy_session(
+                db,
+                channel=channel,
+                mode=proxy_mode,
+                values={
+                    "province": proxy_province,
+                    "city": proxy_city,
+                    "host": custom_proxy_host,
+                    "port": custom_proxy_port,
+                    "username": custom_proxy_username,
+                    "password": custom_proxy_password,
+                    "connector_id": proxy_connector_id,
+                },
+            )
+        except LoginProxyPoolError as exc:
+            message = quote(_account_connection_error_message(str(exc)))
+            return RedirectResponse(
+                url=f"/channels/{channel.id}/wechat-ipad/login-session?notice={message}&tone=danger",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/channels/connect?channel_id={channel.id}&relogin=1",
+            status_code=303,
+        )
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/connect/verify")
+async def channel_connect_verify_action(
+    request: Request,
+    channel_id: int,
+    csrf_token: str = Form(""),
+):
+    """重新检查草稿连接状态并保存可信身份摘要。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            result = verify_account_connection(db, channel_id=channel_id)
+        except AccountConnectionError as exc:
+            message = quote(_account_connection_error_message(str(exc)))
+            return RedirectResponse(url=f"/channels/connect?channel_id={channel_id}&notice={message}&tone=danger", status_code=303)
+        tone = "danger" if result.state == "failed" else ""
+        return RedirectResponse(
+            url=f"/channels/connect?channel_id={channel_id}&notice={quote(result.message)}&tone={tone}",
+            status_code=303,
+        )
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/connect/finalize")
+async def channel_connect_finalize_action(
+    request: Request,
+    channel_id: int,
+    display_name: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """确认显示名称并原子启用机器人、渠道和额度绑定。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            account = finalize_account_connection(db, channel_id=channel_id, display_name=display_name)
+        except AccountConnectionError as exc:
+            message = quote(_account_connection_error_message(str(exc)))
+            return RedirectResponse(url=f"/channels/connect?channel_id={channel_id}&notice={message}&tone=danger", status_code=303)
+        return RedirectResponse(url=f"/channels/{account.channel.id}?notice={quote('账号已接入')}", status_code=303)
     finally:
         db.close()
 
@@ -1835,12 +2062,19 @@ async def channel_detail_page(request: Request, channel_id: int):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
+        if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
-        wechat_ipad_proxy_form = extract_wechat_ipad_proxy_form(channel.adapter_config_json)
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
+        binding = db.scalar(select(BotBinding).where(BotBinding.channel_id == channel.id))
+        connection = _channel_connection_state(channel)
+        try:
+            quota = get_bot_quota(db)
+            quota_error = ""
+        except BotEntitlementError as exc:
+            quota = None
+            quota_error = _account_connection_error_message(str(exc))
         message_page_size = 20
         raw_message_page = str(request.query_params.get("message_page", "1")).strip()
         try:
@@ -1907,11 +2141,21 @@ async def channel_detail_page(request: Request, channel_id: int):
         return render(
             request,
             "channel_detail.html",
-            page_title=f"渠道详情 · {channel.name}",
+            page_title=f"账号详情 · {channel.name}",
             channel=channel,
+            binding=binding,
+            connection=connection,
+            quota=quota,
+            quota_error=quota_error,
+            last_online_at=channel.last_heartbeat_at or channel.last_message_sync_at or channel.last_login_at,
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
+            channel_definition=CHANNEL_TYPE_FORM_SCHEMA_BY_CODE[channel.channel_type],
+            channel_config_field_map={
+                item["name"]: item
+                for item in CHANNEL_TYPE_FORM_SCHEMA_BY_CODE[channel.channel_type]["config_fields"]
+            },
             provider_nodes=provider_nodes,
             recent_channel_messages=recent_channel_messages,
             message_pagination=message_pagination,
@@ -1924,7 +2168,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             workwechat_contact_summary=workwechat_contact_summary,
             workwechat_cloud_poll_config=workwechat_cloud_poll_config,
             wechat_ipad_contact_list=wechat_ipad_contact_list,
-            wechat_ipad_proxy_form=wechat_ipad_proxy_form,
+            can_manage_channel=has_tenant_role(require_user(request), "tenant_admin"),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -2090,49 +2334,55 @@ async def start_wechat_ipad_login_flow(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        start_wechat_ipad_login(db, channel, login_profile=login_profile)
+        active_session = get_active_login_proxy_session(db, channel_id=int(channel.id))
+        connector_registry = None
+        if active_session is not None and active_session.mode == "local_connector":
+            from app.services.local_proxy_connector_ws import local_proxy_connector_ws_registry
+
+            connector_registry = local_proxy_connector_ws_registry
+            if not connector_registry.is_online(int(active_session.proxy_connector_id or 0)):
+                raise HTTPException(status_code=409, detail="proxy_connector_offline")
+        try:
+            start_login_with_proxy_session(db, channel)
+        except WechatIpadLoginFlowError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        active_session = get_active_login_proxy_session(db, channel_id=int(channel.id))
+        if active_session is not None and active_session.mode == "local_connector":
+            if connector_registry is None:
+                raise HTTPException(status_code=409, detail="proxy_connector_offline")
+            await connector_registry.bind_session(
+                int(active_session.proxy_connector_id or 0), active_session.session_key
+            )
+            await connector_registry.send_session_message(
+                active_session.session_key,
+                {"type": "session_bind", "session_key": active_session.session_key},
+            )
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:
         db.close()
 
 
-@app.post("/channels/{channel_id}/wechat-ipad/login-flow/refresh")
-async def refresh_wechat_ipad_login_flow(request: Request, channel_id: int):
+@app.post("/channels/{channel_id}/wechat-ipad/login-flow/cancel")
+async def cancel_wechat_ipad_login_flow(request: Request, channel_id: int):
+    """取消当前扫码会话；重新开始必须先创建新的服务端代理会话。"""
+
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        refresh_wechat_ipad_qrcode(db, channel, login_profile=login_profile)
-        db.refresh(channel)
-        return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/login-flow/logout")
-async def logout_wechat_ipad_login_flow(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        logout_wechat_ipad(db, channel, login_profile=login_profile)
+        cancel_login_with_proxy_session(db, channel)
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
     finally:
@@ -2144,88 +2394,18 @@ async def poll_wechat_ipad_login_flow(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
         if channel.channel_type != "wechat_ipad":
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        poll_wechat_ipad_login_status(db, channel)
+        try:
+            poll_login_with_proxy_session(db, channel)
+        except WechatIpadLoginFlowError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.refresh(channel)
         return JSONResponse(build_wechat_ipad_flow_payload(db, channel))
-    finally:
-        db.close()
-
-
-@app.post("/channels")
-async def create_channel_action(
-    request: Request,
-    bot_id: int = Form(...),
-    name: str = Form(...),
-    channel_type: str = Form(...),
-    api_base: str = Form(""),
-    bot_token: str = Form(""),
-    webhook_path: str = Form(""),
-    dm_policy: str = Form("allowlist"),
-    allow_from: str = Form(""),
-    adapter_config_json: str = Form(""),
-    proxy_host: str = Form(""),
-    proxy_port: str = Form(""),
-    proxy_username: str = Form(""),
-    proxy_password: str = Form(""),
-    provider_node_id: int = Form(0),
-    provider_account_id: int = Form(0),
-    csrf_token: str = Form(""),
-    is_enabled: str = Form("true"),
-):
-    principal = enforce_role(request, "ops")
-    db = get_session()
-    try:
-        try:
-            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not has_tenant_role(principal, "tenant_admin"):
-            raise HTTPException(status_code=403, detail="Permission denied")
-        require_tenant_csrf(db, request, csrf_token)
-        merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=normalized_channel_type,
-            adapter_config_json=adapter_config_json,
-            proxy_host=proxy_host,
-            proxy_port=proxy_port,
-            proxy_username=proxy_username,
-            proxy_password=proxy_password,
-        )
-        if adapter_error:
-            return RedirectResponse(url="/channels?notice=" + quote(adapter_error), status_code=303)
-        try:
-            provider_node, provider_account = validate_workwechat_provider_binding(
-                db,
-                channel_type=normalized_channel_type,
-                provider_node_id=provider_node_id,
-                provider_account_id=provider_account_id,
-            )
-        except ProviderNodeError as exc:
-            return RedirectResponse(
-                url="/channels?notice=" + quote(f"Provider 绑定失败：{exc}") + "&tone=danger",
-                status_code=303,
-            )
-        payload = ChannelCreate(
-            bot_id=bot_id,
-            name=name,
-            channel_type=normalized_channel_type,
-            api_base=api_base,
-            bot_token=bot_token,
-            webhook_path=webhook_path,
-            dm_policy=dm_policy,
-            allow_from=allow_from,
-            adapter_config_json=merged_adapter_config_json,
-            provider_node_id=provider_node.id if provider_node else None,
-            provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=is_enabled == "true",
-        )
-        channel = create_channel(db, payload)
-        record_audit(db, "channel.create", "channel", channel.id, f"创建渠道 {channel.name}")
-        return RedirectResponse(url="/channels", status_code=303)
     finally:
         db.close()
 
@@ -2234,73 +2414,96 @@ async def create_channel_action(
 async def edit_channel_action(
     request: Request,
     channel_id: int,
-    bot_id: int = Form(...),
     name: str = Form(...),
     channel_type: str = Form(...),
     api_base: str = Form(""),
     bot_token: str = Form(""),
-    webhook_path: str = Form(""),
+    webhook_path: str | None = Form(None),
     dm_policy: str = Form("allowlist"),
     allow_from: str = Form(""),
-    adapter_config_json: str = Form(""),
-    proxy_host: str = Form(""),
-    proxy_port: str = Form(""),
-    proxy_username: str = Form(""),
-    proxy_password: str = Form(""),
-    provider_node_id: int = Form(0),
-    provider_account_id: int = Form(0),
+    adapter_config_json: str | None = Form(None),
     csrf_token: str = Form(""),
-    is_enabled: str = Form("true"),
 ):
     principal = enforce_role(request, "ops")
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in SAAS_ENABLED_CHANNEL_TYPES:
+        if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         try:
-            normalized_channel_type = require_saas_enabled_channel_type(channel_type)
+            normalized_channel_type = require_supported_channel_type(channel_type)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not has_tenant_role(principal, "tenant_admin"):
             raise HTTPException(status_code=403, detail="Permission denied")
         require_tenant_csrf(db, request, csrf_token)
+        if normalized_channel_type != channel.channel_type:
+            return RedirectResponse(
+                url=f"/channels/{channel_id}?notice={quote('渠道类型不可修改，请新建渠道后停用旧渠道')}&tone=danger",
+                status_code=303,
+            )
+        channel_definition = get_channel_type_definition(channel.channel_type)
+        # 平台托管渠道的地址只能由平台后台同步。租户即使手工构造表单字段，保存时也必须保留服务端现值。
+        resolved_api_base = channel.api_base if channel_definition.platform_managed_endpoint else api_base
+        # 普通租户页面不回显原始适配 JSON；没有提交的高级字段保留服务端现值，
+        # 但 merge_channel_adapter_config 会明确删除 iPad 已废弃的长期代理节点。
+        adapter_config_source = channel.adapter_config_json if adapter_config_json is None else adapter_config_json
+        resolved_webhook_path = channel.webhook_path if webhook_path is None else webhook_path
         merged_adapter_config_json, adapter_error = merge_channel_adapter_config(
-            channel_type=normalized_channel_type,
-            adapter_config_json=adapter_config_json,
-            proxy_host=proxy_host,
-            proxy_port=proxy_port,
-            proxy_username=proxy_username,
-            proxy_password=proxy_password,
+            channel_type=channel.channel_type,
+            adapter_config_json=adapter_config_source or "",
         )
         if adapter_error:
             return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(adapter_error)}", status_code=303)
         try:
-            provider_node, provider_account = validate_workwechat_provider_binding(
+            # 机器人、外部账号和执行器共同构成商业绑定身份。高级设置只允许
+            # 调整运行配置，任何额外表单字段都不能把渠道改挂到另一账号或机器人。
+            provider_node, provider_account = validate_channel_executor_binding(
                 db,
-                channel_type=normalized_channel_type,
-                provider_node_id=provider_node_id,
-                provider_account_id=provider_account_id,
+                channel_type=channel.channel_type,
+                provider_node_id=channel.provider_node_id,
+                provider_account_id=channel.provider_account_id,
                 channel_id=channel.id,
             )
         except ProviderNodeError as exc:
             return RedirectResponse(
-                url=f"/channels/{channel_id}?notice={quote(f'Provider 绑定失败：{exc}')}&tone=danger",
+                url=f"/channels/{channel_id}?notice={quote(f'执行端绑定失败：{exc}')}&tone=danger",
+                status_code=303,
+            )
+        try:
+            validate_enabled_channel_configuration(
+                channel.channel_type,
+                is_enabled=channel.is_enabled,
+                field_values={
+                    "api_base": resolved_api_base,
+                    "bot_token": bot_token,
+                    "webhook_path": resolved_webhook_path,
+                    "dm_policy": dm_policy,
+                    "allow_from": allow_from,
+                    "adapter_config_json": merged_adapter_config_json,
+                    "provider_node_id": provider_node.id if provider_node else None,
+                    "provider_account_id": provider_account.id if provider_account else None,
+                },
+                configured_secret_fields={"bot_token"} if channel.bot_token_encrypted else (),
+            )
+        except ChannelConfigurationError as exc:
+            return RedirectResponse(
+                url=f"/channels/{channel_id}?notice={quote(str(exc))}&tone=danger",
                 status_code=303,
             )
         payload = ChannelUpdate(
-            bot_id=bot_id,
+            bot_id=channel.bot_id,
             name=name,
-            channel_type=normalized_channel_type,
-            api_base=api_base,
+            channel_type=channel.channel_type,
+            api_base=resolved_api_base,
             bot_token=bot_token,
-            webhook_path=webhook_path,
+            webhook_path=resolved_webhook_path,
             dm_policy=dm_policy,
             allow_from=allow_from,
             adapter_config_json=merged_adapter_config_json,
             provider_node_id=provider_node.id if provider_node else None,
             provider_account_id=provider_account.id if provider_account else None,
-            is_enabled=is_enabled == "true",
+            is_enabled=channel.is_enabled,
         )
         update_channel(db, channel, payload)
         record_audit(db, "channel.update", "channel", channel.id, f"更新渠道 {channel.name}")
@@ -2310,13 +2513,61 @@ async def edit_channel_action(
 
 
 @app.post("/channels/{channel_id}/toggle")
-async def toggle_channel_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
+async def toggle_channel_action(request: Request, channel_id: int, csrf_token: str = Form("")):
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
+        if not channel.is_enabled:
+            # 启用动作必须关联当前租户的有效商业绑定；仅有完整协议配置的草稿
+            # 仍不能进入调度，避免绕过可信身份验证、设备限制和机器人额度占用。
+            binding = db.scalar(
+                select(BotBinding).where(
+                    BotBinding.tenant_id == require_tenant_id(),
+                    BotBinding.bot_id == channel.bot_id,
+                    BotBinding.channel_id == channel.id,
+                    BotBinding.adapter_type == channel.channel_type,
+                    BotBinding.status.in_(("active", "disabled")),
+                )
+            )
+            if binding is None:
+                return RedirectResponse(
+                    url=f"/channels/{channel_id}?notice={quote('请通过账号接入完成身份验证和额度绑定')}&tone=danger",
+                    status_code=303,
+                )
+            try:
+                validate_channel_executor_binding(
+                    db,
+                    channel_type=channel.channel_type,
+                    provider_node_id=channel.provider_node_id,
+                    provider_account_id=channel.provider_account_id,
+                    channel_id=channel.id,
+                )
+                validate_enabled_channel_configuration(
+                    channel.channel_type,
+                    is_enabled=True,
+                    field_values={
+                        "api_base": channel.api_base,
+                        "bot_token": None,
+                        "webhook_path": channel.webhook_path,
+                        "dm_policy": channel.dm_policy,
+                        "allow_from": channel.allow_from,
+                        "adapter_config_json": channel.adapter_config_json,
+                        "provider_node_id": channel.provider_node_id,
+                        "provider_account_id": channel.provider_account_id,
+                    },
+                    configured_secret_fields={"bot_token"} if channel.bot_token_encrypted else (),
+                )
+            except (ChannelConfigurationError, ProviderNodeError) as exc:
+                return RedirectResponse(
+                    url=f"/channels/{channel_id}?notice={quote(str(exc))}&tone=danger",
+                    status_code=303,
+                )
         toggle_channel(db, channel)
         record_audit(db, "channel.toggle", "channel", channel.id, f"enabled={channel.is_enabled}")
         return RedirectResponse(url=f"/channels/{channel_id}", status_code=303)
@@ -2358,106 +2609,13 @@ async def check_channel_health_action(request: Request, channel_id: int):
             details={
                 "channel": channel.name,
                 "type": channel.channel_type,
-                "adapter_provider": adapter_result.get("provider"),
+                "adapter_type": adapter_result.get("adapter_type"),
                 "adapter_details": adapter_result.get("details"),
             },
         )
         if status != "online":
             create_alert(db, "channel-health", f"渠道 {channel.name} 健康异常", message, related_type="channel", related_id=channel.id)
         record_audit(db, "channel.health-check", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/login-init")
-async def start_wechat_ipad_login_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = start_wechat_ipad_login(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已触发微信 iPad 登录初始化")
-        record_audit(db, "channel.wechat-ipad.login-init", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/status-sync")
-async def refresh_wechat_ipad_status_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        overview = refresh_wechat_ipad_status(db, channel)
-        message = str(overview.get("last_status_summary") or "已同步微信 iPad 状态")
-        record_audit(db, "channel.wechat-ipad.status-sync", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/qrcode-refresh")
-async def refresh_wechat_ipad_qrcode_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = refresh_wechat_ipad_qrcode(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已刷新微信 iPad 二维码")
-        record_audit(db, "channel.wechat-ipad.qrcode-refresh", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/logout")
-async def logout_wechat_ipad_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        login_profile = await resolve_wechat_ipad_login_profile(request)
-        overview = logout_wechat_ipad(db, channel, login_profile=login_profile)
-        message = str(overview.get("last_status_summary") or "已退出微信登录")
-        record_audit(db, "channel.wechat-ipad.logout", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-ipad/reconnect")
-async def reconnect_wechat_ipad_action(request: Request, channel_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
-        overview = reconnect_wechat_ipad(db, channel)
-        message = str(overview.get("last_status_summary") or "已触发微信 iPad 重连")
-        record_audit(db, "channel.wechat-ipad.reconnect", "channel", channel.id, message)
         return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
     finally:
         db.close()
@@ -3627,13 +3785,23 @@ async def bind_plugin_action(
         if not plugin:
             raise HTTPException(status_code=404, detail="Plugin not found")
         form = await request.form()
-        effective_config_json = merge_schema_config(
+        merged_config = merge_schema_config(
             plugin.code,
             form,
             fallback_config_json=config_json or None,
         )
-        payload = BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status=status, config_json=effective_config_json)
-        binding = bind_plugin(db, payload)
+        payload = BotPluginBindCreate(
+            bot_id=bot_id,
+            plugin_id=plugin_id,
+            status=status,
+            config_json=merged_config.config_json,
+        )
+        binding = bind_plugin(
+            db,
+            payload,
+            secret_config_patch=merged_config.secret_patch,
+            clear_secret_fields=merged_config.clear_secret_fields,
+        )
         record_audit(db, "plugin.bind", "bot_plugin", binding.id, f"bot={binding.bot_id}, plugin={binding.plugin_id}")
         return RedirectResponse(url=f"/plugins/{plugin_id}?notice=" + quote("插件绑定已保存"), status_code=303)
     finally:
@@ -3732,13 +3900,20 @@ async def edit_plugin_binding_action(
             raise HTTPException(status_code=404, detail="Binding not found")
         form = await request.form()
         plugin_code = binding.plugin.code if binding.plugin else None
-        effective_config_json = merge_schema_config(
+        merged_config = merge_schema_config(
             plugin_code,
             form,
             existing_config_json=binding.config_json,
             fallback_config_json=config_json or None,
         )
-        update_binding_config(db, binding, status=status, config_json=effective_config_json)
+        update_binding_config(
+            db,
+            binding,
+            status=status,
+            config_json=merged_config.config_json,
+            secret_config_patch=merged_config.secret_patch,
+            clear_secret_fields=merged_config.clear_secret_fields,
+        )
         record_audit(db, "plugin.update", "bot_plugin", binding.id, f"status={status}")
         return RedirectResponse(url="/plugins/runtime?notice=插件绑定配置已保存", status_code=303)
     finally:
@@ -3769,7 +3944,14 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
         payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-        result = execute_binding_action(binding, "execute", payload=build_execution_payload(db, binding, payload))
+        context = _build_manual_plugin_execution_context(db, binding, payload)
+        result = execute_binding_message_action(
+            db,
+            binding,
+            "execute",
+            payload=payload,
+            context=context,
+        )
         if result is None:
             raise HTTPException(status_code=400, detail="Plugin execution not supported")
         persist_binding_execution(db, binding, result, action="execute")
@@ -3786,6 +3968,34 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         )
     finally:
         db.close()
+
+
+def _build_manual_plugin_execution_context(
+    db: Session,
+    binding: BotPlugin,
+    payload: Mapping[str, object],
+) -> PluginExecutionContext | None:
+    """把员工手工选择的会话校验为当前绑定资源，再构造可信插件上下文。"""
+
+    raw_conversation_id = payload.get("conversation_id")
+    if raw_conversation_id in (None, ""):
+        return None
+    try:
+        conversation_id = int(raw_conversation_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="会话编号不合法") from exc
+    conversation = db.get(Conversation, conversation_id)
+    if conversation is None or int(conversation.bot_id) != int(binding.bot_id):
+        raise HTTPException(status_code=400, detail="会话不属于当前插件机器人")
+    return PluginExecutionContext(
+        tenant_id=int(binding.tenant_id),
+        binding_id=int(binding.id),
+        bot_id=int(binding.bot_id),
+        channel_id=int(conversation.channel_id) if conversation.channel_id else None,
+        conversation_id=int(conversation.id),
+        channel_type=str(conversation.channel_type or "").strip() or None,
+        chat_type=str(conversation.chat_type or "").strip() or None,
+    )
 
 
 @app.get("/conversations", response_class=HTMLResponse)
@@ -4082,7 +4292,7 @@ async def inbound_webhook(channel_id: int, request: Request):
             details={
                 "event_key": event_key or "-",
                 "mapped": result["mapped"],
-                "provider": normalized.get("provider"),
+                "adapter_type": normalized.get("adapter_type"),
                 "event_type": normalized.get("event_type"),
                 "adapter_details": normalized.get("details"),
                 "dispatch": result.get("dispatch"),

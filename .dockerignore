@@ -7,6 +7,9 @@ __pycache__
 *.pyo
 *.pyd
 .pytest_cache
+# 环境文件由 Compose 在容器启动时注入，禁止复制进包含历史层的应用镜像。
+.env
+.env.docker
 logs
 data
 tmp

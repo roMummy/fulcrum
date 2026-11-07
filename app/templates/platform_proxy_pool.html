@@ -1,0 +1,119 @@
+{% extends 'platform_base.html' %}
+{% block page_intro %}<p>统一维护扫码登录可用的 SOCKS 代理。</p>{% endblock %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <button class="btn btn-secondary" type="button" data-modal-open="proxy-import-modal">批量导入</button>
+  <button class="btn" type="button" data-modal-open="proxy-create-modal">新增代理</button>
+</div>
+{% endblock %}
+{% block content %}
+<section class="metric-band proxy-metric-band" aria-label="代理池概览">
+  <div class="metric-item"><span>代理总数</span><strong>{{ proxy_summary.total }}</strong></div>
+  <div class="metric-item"><span>健康可用</span><strong>{{ proxy_summary.healthy }}</strong></div>
+  <div class="metric-item"><span>停用或异常</span><strong>{{ proxy_summary.unhealthy }}</strong></div>
+  <div class="metric-item"><span>当前占用</span><strong>{{ proxy_summary.leased }}</strong></div>
+</section>
+
+<section class="page-section">
+  <div class="section-head">
+    <div><h2>代理清单</h2></div>
+    <span class="chip chip-outline">{{ proxies|length }} 个节点</span>
+  </div>
+  <div class="record-list proxy-record-list">
+    {% for proxy in proxies %}
+    <article class="record-row proxy-record-row">
+      <div class="record-primary">
+        <strong>{{ proxy.name }}</strong>
+        <span>{{ proxy.province }} · {{ proxy.city }}</span>
+      </div>
+      <dl class="record-meta proxy-record-meta">
+        <div><dt>代理地址</dt><dd><code>{{ proxy.masked_host }}:{{ proxy.port }}</code></dd></div>
+        <div><dt>认证</dt><dd>{{ proxy.username or '免用户名' }}{% if proxy.has_password %} · 已配置密码{% endif %}</dd></div>
+        <div><dt>状态</dt><dd><span class="chip {% if not proxy.is_enabled %}chip-muted{% elif proxy.health_status == 'healthy' %}chip-success{% else %}badge-error{% endif %}">{% if not proxy.is_enabled %}已停用{% elif proxy.health_status == 'healthy' %}健康{% else %}异常{% endif %}</span></dd></div>
+        <div><dt>占用</dt><dd>{{ '登录中' if proxy.is_leased else '空闲' }}</dd></div>
+        <div><dt>最近使用</dt><dd>{{ proxy.last_assigned_at|bj_time if proxy.last_assigned_at else '-' }}</dd></div>
+        <div><dt>最近结果</dt><dd>{{ proxy.last_result_summary or '-' }}</dd></div>
+      </dl>
+      <div class="record-actions">
+        <details class="nav-more record-action-menu">
+          <summary class="record-action-trigger" aria-label="管理代理 {{ proxy.name }}" title="更多操作">&#8230;</summary>
+          <div class="nav-popover record-action-popover">
+            <button class="nav-popover-link" type="button" data-modal-open="proxy-edit-{{ proxy.id }}">编辑代理</button>
+            <form method="post" action="/platform/proxy-pool/{{ proxy.id }}/check">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="nav-popover-link" type="submit">立即检查</button>
+            </form>
+            <form method="post" action="/platform/proxy-pool/{{ proxy.id }}/toggle">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <input type="hidden" name="is_enabled" value="{{ 'false' if proxy.is_enabled else 'true' }}" />
+              <button class="nav-popover-link" type="submit">{{ '停用代理' if proxy.is_enabled else '启用代理' }}</button>
+            </form>
+          </div>
+        </details>
+      </div>
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>暂无代理</strong></div>
+    {% endfor %}
+  </div>
+</section>
+
+<dialog class="app-modal" id="proxy-create-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>新增代理</h2></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    {# 密码只随本次提交进入服务端加密流程，任何渲染路径都不设置 value。 #}
+    <form method="post" action="/platform/proxy-pool" class="form-grid proxy-form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>名称</span><input name="name" maxlength="100" required /></label>
+      <label><span>省</span><input name="province" maxlength="64" required /></label>
+      <label><span>市</span><input name="city" maxlength="64" required /></label>
+      <label><span>主机</span><input name="host" maxlength="255" autocomplete="off" required /></label>
+      <label><span>端口</span><input name="port" type="number" min="1" max="65535" inputmode="numeric" required /></label>
+      <label><span>用户名</span><input name="username" maxlength="191" autocomplete="off" /></label>
+      <label class="full-row"><span>密码</span><input name="password" type="password" maxlength="500" autocomplete="new-password" /></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存代理</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+
+<dialog class="app-modal" id="proxy-import-modal">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>批量导入</h2></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/platform/proxy-pool/import" enctype="multipart/form-data" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label class="full-row"><span>CSV 文件</span><input name="csv_file" type="file" accept=".csv,text/csv" required /></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">开始导入</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+
+{% for proxy in proxies %}
+<dialog class="app-modal" id="proxy-edit-{{ proxy.id }}">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2>编辑代理</h2><p class="muted-text">{{ proxy.province }} · {{ proxy.city }}</p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/platform/proxy-pool" class="form-grid proxy-form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="proxy_id" value="{{ proxy.id }}" />
+      <label><span>名称</span><input name="name" maxlength="100" value="{{ proxy.name }}" required /></label>
+      <label><span>省</span><input name="province" maxlength="64" value="{{ proxy.province }}" required /></label>
+      <label><span>市</span><input name="city" maxlength="64" value="{{ proxy.city }}" required /></label>
+      {# 完整主机只在受平台会话保护的编辑弹窗使用，列表主体继续显示脱敏地址。 #}
+      <label><span>主机</span><input name="host" maxlength="255" autocomplete="off" value="{{ proxy.host }}" required /></label>
+      <label><span>端口</span><input name="port" type="number" min="1" max="65535" inputmode="numeric" value="{{ proxy.port }}" required /></label>
+      <label><span>用户名</span><input name="username" maxlength="191" autocomplete="off" value="{{ proxy.username }}" /></label>
+      <label class="full-row"><span>密码</span><input name="password" type="password" maxlength="500" autocomplete="new-password" placeholder="留空保持当前密码" /></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存修改</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+{% endfor %}
+{% endblock %}

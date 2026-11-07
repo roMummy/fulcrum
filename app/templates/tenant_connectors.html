@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users">员工管理</a>{% endblock %}
+{% block content %}
+{% if activation_code %}
+<section class="notice-card"><strong>一次性激活码</strong><p><code>{{ activation_code }}</code></p><p class="muted-text">请复制到 Windows 本地代理连接器。离开本页后不再显示。</p></section>
+{% endif %}
+
+<section class="page-section">
+  <div class="section-head"><div><h2>新增 Windows 连接器</h2><p class="muted-text">连接器只在扫码登录阶段提供本地 SOCKS5，登录完成即可关闭。</p></div></div>
+  <form method="post" action="/tenant/connectors" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>连接器名称</span><input name="name" maxlength="100" placeholder="办公室 Windows 电脑" required /></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建并生成激活码</button></div>
+  </form>
+</section>
+
+<section class="page-section">
+  <div class="section-head"><div><h2>连接器清单</h2></div><span class="chip chip-outline">{{ connectors|length }} 个</span></div>
+  <div class="record-list">
+    {% for connector in connectors %}
+    <article class="record-row">
+      <div class="record-primary"><strong>{{ connector.name }}</strong><span>#{{ connector.id }}{% if connector.client_version %} · v{{ connector.client_version }}{% endif %}</span></div>
+      <dl class="record-meta"><div><dt>状态</dt><dd><span class="chip {% if connector.online %}chip-success{% elif connector.status == 'disabled' %}chip-muted{% else %}chip-outline{% endif %}">{{ '在线' if connector.online else ('已停用' if connector.status == 'disabled' else '离线') }}</span></dd></div><div><dt>本地代理</dt><dd>{{ connector.local_proxy_label or '未上报' }}</dd></div></dl>
+      {% if connector.status != 'disabled' %}<div class="record-actions"><form method="post" action="/tenant/connectors/{{ connector.id }}/disable"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-ghost" type="submit">停用</button></form></div>{% endif %}
+    </article>
+    {% else %}<div class="empty-state"><strong>暂无连接器</strong></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -10,10 +10,10 @@
 </div>
 {% endblock %}
 {% block content %}
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">WorkWechat Contacts</p>
+
       <h2>渠道联系人</h2>
       <p class="muted-text">{{ list_view.intro_summary }}</p>
     </div>
@@ -30,38 +30,43 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
-    <div class="stat-card nested-card"><span>联系人总数</span><strong>{{ list_view.total }}</strong></div>
-    <div class="stat-card nested-card"><span>有效</span><strong>{{ list_view.status_counts.get('active', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>已删除</span><strong>{{ list_view.status_counts.get('deleted', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>外部联系人</span><strong>{{ list_view.kind_counts.get('external_contact', 0) }}</strong></div>
-    <div class="stat-card nested-card"><span>内部成员</span><strong>{{ list_view.kind_counts.get('internal_member', 0) }}</strong></div>
+    <div class="metric-item "><span>联系人总数</span><strong>{{ list_view.total }}</strong></div>
+    <div class="metric-item "><span>有效</span><strong>{{ list_view.status_counts.get('active', 0) }}</strong></div>
+    <div class="metric-item "><span>已删除</span><strong>{{ list_view.status_counts.get('deleted', 0) }}</strong></div>
+    <div class="metric-item "><span>外部联系人</span><strong>{{ list_view.kind_counts.get('external_contact', 0) }}</strong></div>
+    <div class="metric-item "><span>内部成员</span><strong>{{ list_view.kind_counts.get('internal_member', 0) }}</strong></div>
   </div>
 </section>
 
-<section class="card">
-  <form method="get" action="/channels/{{ channel.id }}/workwechat/contacts" class="form-grid">
-    <label><span>搜索</span><input name="q" value="{{ list_view.filters.query }}" placeholder="姓名 / 手机 / 邮箱 / 公司 / ID" /></label>
-    <label><span>联系人类型</span><select name="contact_kind">
-      <option value="" {% if not list_view.filters.contact_kind %}selected{% endif %}>全部</option>
-      <option value="external_contact" {% if list_view.filters.contact_kind == 'external_contact' %}selected{% endif %}>外部联系人</option>
-      <option value="internal_member" {% if list_view.filters.contact_kind == 'internal_member' %}selected{% endif %}>内部成员</option>
-      <option value="unknown" {% if list_view.filters.contact_kind == 'unknown' %}selected{% endif %}>未知</option>
-    </select></label>
-    <label><span>同步状态</span><select name="sync_status">
-      <option value="" {% if not list_view.filters.sync_status %}selected{% endif %}>全部</option>
-      <option value="active" {% if list_view.filters.sync_status == 'active' %}selected{% endif %}>有效</option>
-      <option value="deleted" {% if list_view.filters.sync_status == 'deleted' %}selected{% endif %}>已删除</option>
-      <option value="missing" {% if list_view.filters.sync_status == 'missing' %}selected{% endif %}>同步缺失</option>
-      <option value="unknown" {% if list_view.filters.sync_status == 'unknown' %}selected{% endif %}>未知</option>
-    </select></label>
-    <div class="form-actions">
-      <button class="btn btn-secondary" type="submit">筛选</button>
-      <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">清空</a>
-    </div>
-  </form>
-</section>
-
-<section class="card">
+<section class="work-surface">
+  {# 联系人筛选直接服务于下方列表，窄屏仅在条件生效时保持展开。 #}
+  {% set filter_active = list_view.filters.query or list_view.filters.contact_kind or list_view.filters.sync_status %}
+  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
+    <summary class="compact-filter-summary">
+      <span>筛选联系人</span>
+      <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}姓名 / 类型 / 状态{% endif %}</span>
+    </summary>
+    <form method="get" action="/channels/{{ channel.id }}/workwechat/contacts" class="compact-filter-form">
+      <label class="compact-filter-field compact-filter-field-query"><span>搜索</span><input name="q" value="{{ list_view.filters.query }}" placeholder="姓名 / 手机 / 邮箱 / 公司 / ID" /></label>
+      <label class="compact-filter-field"><span>联系人类型</span><select name="contact_kind">
+        <option value="" {% if not list_view.filters.contact_kind %}selected{% endif %}>全部</option>
+        <option value="external_contact" {% if list_view.filters.contact_kind == 'external_contact' %}selected{% endif %}>外部联系人</option>
+        <option value="internal_member" {% if list_view.filters.contact_kind == 'internal_member' %}selected{% endif %}>内部成员</option>
+        <option value="unknown" {% if list_view.filters.contact_kind == 'unknown' %}selected{% endif %}>未知</option>
+      </select></label>
+      <label class="compact-filter-field"><span>同步状态</span><select name="sync_status">
+        <option value="" {% if not list_view.filters.sync_status %}selected{% endif %}>全部</option>
+        <option value="active" {% if list_view.filters.sync_status == 'active' %}selected{% endif %}>有效</option>
+        <option value="deleted" {% if list_view.filters.sync_status == 'deleted' %}selected{% endif %}>已删除</option>
+        <option value="missing" {% if list_view.filters.sync_status == 'missing' %}selected{% endif %}>同步缺失</option>
+        <option value="unknown" {% if list_view.filters.sync_status == 'unknown' %}selected{% endif %}>未知</option>
+      </select></label>
+      <div class="compact-filter-actions">
+        <button class="btn" type="submit">筛选</button>
+        <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">重置</a>
+      </div>
+    </form>
+  </details>
   {% if list_view['items'] %}
   <table class="table">
     <thead>

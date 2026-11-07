@@ -18,10 +18,10 @@ from app.models.entities import TaskJob
 logger = get_logger(__name__)
 
 PLUGIN_DISPATCH_JOB = "plugin_dispatch"
+PLUGIN_SCHEDULED_ACTION_JOB = "plugin_scheduled_action"
 OUTBOUND_DISPATCH_JOB = "outbound_dispatch"
 WORKWECHAT_CLOUD_OUTBOUND_JOB = "workwechat_cloud_outbound"
 WORKWECHAT_CLOUD_CONTROL_JOB = "workwechat_cloud_control"
-WEATHER_PUSH_JOB = "weather_push"
 INBOUND_MEDIA_FETCH_JOB = "inbound_media_fetch"
 OPEN_WEBHOOK_DELIVERY_JOB = "open_webhook_delivery"
 FINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -37,6 +37,7 @@ def enqueue_job(
     priority: int = 100,
     related_type: str | None = None,
     related_id: int | None = None,
+    dedupe_key: str | None = None,
     max_attempts: int = 3,
     available_at: datetime | None = None,
 ) -> TaskJob:
@@ -49,6 +50,7 @@ def enqueue_job(
         "max_attempts": max_attempts,
         "related_type": related_type,
         "related_id": related_id,
+        "dedupe_key": str(dedupe_key or "").strip() or None,
         "payload_json": payload_json,
     }
     if job_type in {WORKWECHAT_CLOUD_OUTBOUND_JOB, WORKWECHAT_CLOUD_CONTROL_JOB}:

@@ -2,14 +2,14 @@
 code = "group_auto_invite"
 display_name = "自动拉群"
 plugin_type = "command"
-version = "1.0.0"
+version = "2.0.0"
 author = "abot"
-description = "Migrated scaffold from abot group_auto_invite"
+description = "通过关键词邀请私聊用户加入当前机器人管理的群聊"
 default_enabled = false
 
 [capability]
-# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
-channel_types = ["wechat_ipad", "wechat_winauto", "workwechat"]
+# 当前只有 iPad 874 适配器实现了通用群邀请能力，其他渠道实现接口后再开放。
+channel_types = ["wechat_ipad"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 110
@@ -17,13 +17,10 @@ consume_policy = "continue"
 timeout_ms = 12000
 
 [matcher]
-commands = ["group_auto_invite"]
+commands = ["加群配置", "加群"]
 require_mention = false
 
 [runtime]
-enabled = true
 admin_user_ids = []
-invite_directly = true
 require_direct_chat = true
 response_prefix = ""
-mappings = {}

@@ -21,6 +21,7 @@ from app.services.billing import get_current_subscription
 
 
 ADAPTER_TYPE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
+DEVICE_FINGERPRINT_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class BotEntitlementError(ValueError):
@@ -70,6 +71,15 @@ def hash_device_fingerprint(raw_fingerprint: str) -> str:
         f"bot-device:{normalized}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def normalize_device_fingerprint_hash(value: str) -> str:
+    """校验只允许内部连接服务传入的固定长度设备摘要。"""
+
+    normalized = str(value or "").strip().lower()
+    if not DEVICE_FINGERPRINT_HASH_PATTERN.fullmatch(normalized):
+        raise BotEntitlementError("device_fingerprint_hash_invalid")
+    return normalized
 
 
 def get_bot_quota(db: Session) -> BotQuota:
@@ -127,15 +137,17 @@ def list_bot_bindings(db: Session) -> list[BotBinding]:
     ).all()
 
 
-def bind_bot_account(
+def add_verified_bot_binding(
     db: Session,
     *,
     adapter_type: str,
     bot_account_id: str,
-    device_fingerprint: str,
+    device_fingerprint_hash: str,
     display_name: str = "",
+    bot_id: int | None = None,
+    channel_id: int | None = None,
 ) -> BotBinding:
-    """按当前可信租户绑定机器人账号，并执行额度、设备和试用全局约束。"""
+    """把已验证账号加入当前事务，并执行额度、设备和试用全局约束。"""
 
     tenant_id = require_tenant_id()
     quota = get_bot_quota(db)
@@ -143,7 +155,7 @@ def bind_bot_account(
         raise BotEntitlementError("bot_quota_exceeded")
     normalized_adapter = normalize_adapter_type(adapter_type)
     normalized_account = normalize_bot_account_id(bot_account_id)
-    fingerprint_hash = hash_device_fingerprint(device_fingerprint)
+    fingerprint_hash = normalize_device_fingerprint_hash(device_fingerprint_hash)
     normalized_display_name = (display_name or "").strip()
     if len(normalized_display_name) > 150:
         raise BotEntitlementError("display_name_too_long")
@@ -182,6 +194,8 @@ def bind_bot_account(
 
     binding = BotBinding(
         tenant_id=tenant_id,
+        bot_id=bot_id,
+        channel_id=channel_id,
         adapter_type=normalized_adapter,
         bot_account_id=normalized_account,
         display_name=normalized_display_name or None,
@@ -191,13 +205,36 @@ def bind_bot_account(
     )
     db.add(binding)
     try:
-        db.commit()
-        db.refresh(binding)
+        # 这里只 flush，让账号接入服务可以把机器人、渠道、绑定和试用领取放进
+        # 同一个事务。并发唯一冲突会回滚整个外层事务，避免留下半成品。
+        db.flush()
         return binding
     except IntegrityError as exc:
-        # 并发绑定由数据库唯一约束最终裁决，公开错误不包含账号或设备原始值。
+        # 并发绑定由数据库唯一约束最终裁决，公开错误不包含账号或设备摘要。
         db.rollback()
         raise BotEntitlementError("bot_binding_conflict") from exc
+
+
+def bind_bot_account(
+    db: Session,
+    *,
+    adapter_type: str,
+    bot_account_id: str,
+    device_fingerprint: str,
+    display_name: str = "",
+) -> BotBinding:
+    """为独立服务调用完成设备哈希、绑定写入和提交。"""
+
+    binding = add_verified_bot_binding(
+        db,
+        adapter_type=adapter_type,
+        bot_account_id=bot_account_id,
+        device_fingerprint_hash=hash_device_fingerprint(device_fingerprint),
+        display_name=display_name,
+    )
+    db.commit()
+    db.refresh(binding)
+    return binding
 
 
 def list_all_bot_bindings(db: Session) -> list[BotBinding]:

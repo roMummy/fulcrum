@@ -1,0 +1,45 @@
+[plugin]
+code = "xiuxian"
+display_name = "文字修仙"
+plugin_type = "command"
+version = "2.0.0"
+author = "abot"
+description = "面向群聊的多租户文字修仙玩法，包含修炼、资产、突破、门派、历练与炼丹。"
+default_enabled = false
+
+[capability]
+# 插件只消费平台标准群文本，任何渠道协议差异都由统一适配层处理。
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat"]
+chat_types = ["group"]
+message_types = ["text"]
+priority = 112
+consume_policy = "stop"
+timeout_ms = 15000
+
+[matcher]
+commands = ["修仙帮助", "注册修仙", "我的状态", "闭关", "出关", "聚灵", "排行榜", "修仙签到", "坊市", "购买", "乾坤袋", "使用", "服用", "突破", "强行突破", "积分购石", "积分换灵石", "劫掠", "赠与", "赠送", "创建门派", "加入门派", "退出门派", "出门历练", "炼丹"]
+require_mention = false
+
+[runtime]
+enabled = true
+max_cultivate_hours = 8
+base_rate_per_hour = 100
+unstable_minutes = 15
+injured_minutes = 60
+point_to_stone_rate = 10
+ranking_limit = 10
+sign_reward_stones = 50
+expedition_cooldown_seconds = 86400
+alchemy_cooldown_seconds = 600
+
+# 写命令冷却存放在数据库中，多 Worker 和服务重启后共享同一限制。
+register_cooldown_seconds = 5
+inout_cooldown_seconds = 5
+gather_cooldown_seconds = 30
+buy_cooldown_seconds = 5
+use_cooldown_seconds = 3
+breakthrough_cooldown_seconds = 60
+rob_cooldown_seconds = 30
+gift_cooldown_seconds = 10
+clan_cooldown_seconds = 10
+points_exchange_cooldown_seconds = 10

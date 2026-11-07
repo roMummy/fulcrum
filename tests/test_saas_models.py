@@ -10,12 +10,17 @@ from sqlalchemy.orm import Session
 from app.core.db import Base
 from app.core.time import now_shanghai
 from app.models.saas import (
+    LOGIN_PROXY_MODES,
+    LOGIN_PROXY_SESSION_STATUSES,
     PLATFORM_ROLES,
     PLAN_STATUSES,
+    PROXY_HEALTH_STATUSES,
     SUBSCRIPTION_STATUSES,
     TENANT_ROLES,
     TENANT_STATUSES,
+    LoginProxySession,
     PlatformAuditLog,
+    PlatformProxy,
     PlatformSession,
     PlatformUser,
     SaasPlan,
@@ -68,6 +73,83 @@ def test_saas_identity_tables_are_registered_in_shared_metadata() -> None:
     assert TENANT_STATUSES == frozenset({"active", "disabled"})
     assert PLAN_STATUSES == frozenset({"active", "disabled"})
     assert SUBSCRIPTION_STATUSES == frozenset({"active", "expired", "suspended"})
+
+
+def test_login_proxy_pool_tables_and_status_sets_are_registered() -> None:
+    """平台代理和租户登录会话必须进入统一元数据，并使用唯一状态集合。"""
+
+    assert {
+        "platform_proxies",
+        "login_proxy_sessions",
+        "proxy_connectors",
+        "proxy_connector_activation_codes",
+        "proxy_connector_credentials",
+    }.issubset(Base.metadata.tables)
+    assert PROXY_HEALTH_STATUSES == frozenset({"healthy", "unhealthy"})
+    assert LOGIN_PROXY_MODES == frozenset({"direct", "platform_pool", "custom", "local_connector"})
+    assert LOGIN_PROXY_SESSION_STATUSES == frozenset(
+        {"preparing", "qrcode_ready", "completed", "failed", "cancelled", "expired"}
+    )
+
+
+def test_platform_proxy_endpoint_is_unique(db: Session) -> None:
+    """同一 SOCKS 端点和用户名只能进入代理池一次，避免批量导入重复分配。"""
+
+    db.add_all(
+        [
+            PlatformProxy(
+                name="杭州代理一",
+                province="浙江省",
+                city="杭州市",
+                host="127.0.0.1",
+                port=1080,
+                username="proxy-user",
+            ),
+            PlatformProxy(
+                name="杭州代理二",
+                province="浙江省",
+                city="杭州市",
+                host="127.0.0.1",
+                port=1080,
+                username="proxy-user",
+            ),
+        ]
+    )
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_platform_proxy_port_must_be_valid(db: Session) -> None:
+    """代理端口必须由数据库约束限制在网络端口范围内。"""
+
+    db.add(
+        PlatformProxy(
+            name="非法端口代理",
+            province="浙江省",
+            city="杭州市",
+            host="127.0.0.1",
+            port=70000,
+            username="",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_login_proxy_session_keeps_channel_and_tenant_ownership(db: Session) -> None:
+    """登录代理会话必须同时关联可信租户和渠道，不能成为平台范围的游离记录。"""
+
+    # SQLite 测试连接默认不强制外键，因此直接检查 ORM 和真实表结构；MariaDB
+    # 部署迁移还会通过外键阻止不存在的租户或渠道主键。
+    columns = {column["name"]: column for column in inspect(db.bind).get_columns("login_proxy_sessions")}
+    assert columns["tenant_id"]["nullable"] is False
+    assert columns["channel_id"]["nullable"] is False
+    assert LoginProxySession.__table__.c.tenant_id.foreign_keys
+    assert LoginProxySession.__table__.c.channel_id.foreign_keys
 
 
 def test_same_username_is_allowed_in_different_tenants(db: Session) -> None:
@@ -193,3 +275,5 @@ def test_subscription_and_session_models_keep_security_boundaries(db: Session) -
         "revoked_at",
         "revoke_reason",
     }.issubset(tenant_session_columns)
+    LoginProxySession,
+    PlatformProxy,

@@ -1,0 +1,60 @@
+{# 登录网络组件只提交本次扫码会话字段，不包含协议地址、设备标识或渠道长期代理配置。 #}
+{% set default_proxy_mode = 'platform_pool' if proxy_regions else ('local_connector' if local_connectors else 'direct') %}
+<fieldset class="login-network-fieldset full-row" data-login-network>
+  <legend>登录网络</legend>
+  <div class="login-network-segments" role="radiogroup" aria-label="登录网络方式">
+    <label class="login-network-segment">
+      <input type="radio" name="proxy_mode" value="platform_pool" {% if default_proxy_mode == 'platform_pool' %}checked{% endif %} />
+      <span><strong>智能选择</strong><small>按省市分配附近网络</small></span>
+    </label>
+    <label class="login-network-segment">
+      <input type="radio" name="proxy_mode" value="custom" />
+      <span><strong>自有代理</strong><small>使用自己的 SOCKS 代理</small></span>
+    </label>
+    <label class="login-network-segment">
+      <input type="radio" name="proxy_mode" value="direct" {% if default_proxy_mode == 'direct' %}checked{% endif %} />
+      <span><strong>直接登录</strong><small>不使用代理</small></span>
+    </label>
+    <label class="login-network-segment">
+      <input type="radio" name="proxy_mode" value="local_connector" {% if default_proxy_mode == 'local_connector' %}checked{% endif %} {% if not local_connectors %}disabled{% endif %} />
+      <span><strong>本地连接器</strong><small>扫码时使用电脑本地代理</small></span>
+    </label>
+  </div>
+
+  <div class="login-network-fields" data-network-panel="platform_pool">
+    <label>
+      <span>省份</span>
+      <select name="proxy_province" data-proxy-province autocomplete="off">
+        <option value="">请选择省份</option>
+      </select>
+    </label>
+    <label>
+      <span>城市</span>
+      <select name="proxy_city" data-proxy-city autocomplete="off">
+        <option value="">请选择城市</option>
+      </select>
+    </label>
+    {% if not proxy_regions %}<p class="muted-text full-row">当前暂无可用地区，可选择自有代理或直接登录。</p>{% endif %}
+  </div>
+
+  <div class="login-network-fields" data-network-panel="custom" hidden>
+    <label><span>SOCKS 主机</span><input name="custom_proxy_host" autocomplete="off" placeholder="proxy.example.com" /></label>
+    <label><span>端口</span><input name="custom_proxy_port" type="number" min="1" max="65535" inputmode="numeric" autocomplete="off" placeholder="1080" /></label>
+    <label><span>用户名</span><input name="custom_proxy_username" autocomplete="off" /></label>
+    <label><span>密码</span><input name="custom_proxy_password" type="password" autocomplete="new-password" /></label>
+  </div>
+
+  <div class="login-network-fields" data-network-panel="local_connector" hidden>
+    <label class="full-row"><span>在线连接器</span>
+      <select name="proxy_connector_id" data-proxy-connector autocomplete="off">
+        <option value="">请选择已在线的连接器</option>
+        {% for connector in local_connectors %}
+        <option value="{{ connector.id }}">{{ connector.name }}{% if connector.local_proxy_label %} · {{ connector.local_proxy_label }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if not local_connectors %}<p class="muted-text full-row">暂无在线连接器。请在 Windows 连接器中启动并完成激活。</p>{% endif %}
+  </div>
+</fieldset>
+
+<script type="application/json" data-proxy-regions>{{ proxy_regions|tojson }}</script>

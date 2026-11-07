@@ -17,8 +17,8 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
-from app.models.saas import ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
-from app.services.provider_nodes import ProviderNodeError, validate_workwechat_provider_binding
+from app.models.saas import BotBinding, PlatformProtocolService, ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.services.provider_nodes import ProviderNodeError, validate_channel_executor_binding
 from app.services.saas_auth import hash_password
 
 
@@ -68,7 +68,13 @@ def provider_page_context(tmp_path, monkeypatch):
     with factory() as db:
         alpha = Tenant(code="alpha", name="甲租户", status="active")
         beta = Tenant(code="beta", name="乙租户", status="active")
-        plan = SaasPlan(code="provider-pages", name="节点页面套餐", provider_node_limit=5, status="active")
+        plan = SaasPlan(
+            code="provider-pages",
+            name="节点页面套餐",
+            provider_node_limit=5,
+            bot_limit=5,
+            status="active",
+        )
         db.add_all([alpha, beta, plan])
         db.flush()
         db.add(
@@ -98,15 +104,32 @@ def provider_page_context(tmp_path, monkeypatch):
             )
         ]
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人")
-        active_node = ProviderNode(tenant_id=alpha.id, name="客服电脑A", status="active")
+        active_node = ProviderNode(
+            tenant_id=alpha.id,
+            name="客服电脑A",
+            status="active",
+            device_id="provider-pages-alpha-active",
+        )
         disabled_node = ProviderNode(tenant_id=alpha.id, name="停用电脑", status="disabled")
-        beta_node = ProviderNode(tenant_id=beta.id, name="乙节点", status="active")
-        db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node])
+        beta_node = ProviderNode(
+            tenant_id=beta.id,
+            name="乙节点",
+            status="active",
+            device_id="provider-pages-beta-active",
+        )
+        # 租户接入页使用平台托管 iPad 服务；页面夹具显式准备平台配置，避免测试依赖生产初始化数据。
+        ipad_protocol_service = PlatformProtocolService(
+            channel_type="wechat_ipad",
+            api_base="http://ipad.platform.internal:9064",
+            is_enabled=True,
+        )
+        db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node, ipad_protocol_service])
         db.flush()
         account_a = ProviderNodeAccount(
             tenant_id=alpha.id,
             provider_node_id=active_node.id,
             account_key="account-a",
+            external_user_id="workwechat-account-a",
             display_name="企微甲",
             status="online",
             last_seen_at=now_shanghai(),
@@ -226,7 +249,7 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
     assert client.get(f"/provider-nodes/{ids['beta_node']}").status_code == 404
 
     with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
-        node, account_a = validate_workwechat_provider_binding(
+        node, account_a = validate_channel_executor_binding(
             db,
             channel_type="workwechat",
             provider_node_id=ids["active_node"],
@@ -243,7 +266,7 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
         db.commit()
 
         # 同节点的另一个在线账号仍可绑定第二个企微渠道。
-        same_node, account_b = validate_workwechat_provider_binding(
+        same_node, account_b = validate_channel_executor_binding(
             db,
             channel_type="workwechat",
             provider_node_id=ids["active_node"],
@@ -253,21 +276,21 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
         assert account_b.id == ids["account_b"]
 
         with pytest.raises(ProviderNodeError, match="provider_account_already_bound"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["active_node"],
                 provider_account_id=ids["account_a"],
             )
         with pytest.raises(ProviderNodeError, match="provider_node_not_active"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["disabled_node"],
                 provider_account_id=ids["disabled_account"],
             )
         with pytest.raises(ProviderNodeError, match="provider_node_not_found"):
-            validate_workwechat_provider_binding(
+            validate_channel_executor_binding(
                 db,
                 channel_type="workwechat",
                 provider_node_id=ids["beta_node"],
@@ -275,32 +298,51 @@ def test_cross_tenant_node_is_hidden_and_channel_binding_is_strict(provider_page
             )
 
 
-def test_channel_create_route_persists_verified_node_account_binding(provider_page_context) -> None:
-    """渠道表单提交后保存服务端重新校验过的节点和账号主键。"""
+def test_tenant_cannot_unbind_commercial_account_from_provider_page(provider_page_context) -> None:
+    """租户节点页只能查看已绑定账号，商业绑定释放必须保留给平台管理员。"""
 
     client, ids = provider_page_context
     csrf_token = _login(client, "admin")
-    response = client.post(
-        "/channels",
-        data={
-            "bot_id": ids["bot"],
-            "name": "页面企微渠道",
-            "channel_type": "workwechat",
-            "provider_node_id": ids["active_node"],
-            "provider_account_id": ids["account_a"],
-            "csrf_token": csrf_token,
-            "api_base": "",
-            "bot_token": "",
-            "webhook_path": "",
-            "dm_policy": "allowlist",
-            "allow_from": "",
-            "adapter_config_json": '{"workwechat_delivery_mode":"cloud_poll"}',
-            "is_enabled": "true",
-        },
-    )
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        channel = Channel(
+            bot_id=ids["bot"],
+            name="正式企微账号",
+            channel_type="workwechat",
+            provider_node_id=ids["active_node"],
+            provider_account_id=ids["account_a"],
+            status="online",
+            is_enabled=True,
+        )
+        db.add(channel)
+        db.flush()
+        db.add(
+            BotBinding(
+                tenant_id=ids["alpha"],
+                bot_id=ids["bot"],
+                channel_id=channel.id,
+                adapter_type="workwechat",
+                bot_account_id="workwechat-account-a",
+                device_fingerprint_hash="a" * 64,
+                status="active",
+            )
+        )
+        db.commit()
+        channel_id = int(channel.id)
 
-    assert response.status_code == 303
+    page = client.get(f"/provider-nodes/{ids['active_node']}")
+    assert page.status_code == 200
+    assert f"/provider-nodes/{ids['active_node']}/channels/{channel_id}/unbind" not in page.text
+    assert "解绑" not in page.text
+
+    response = client.post(
+        f"/provider-nodes/{ids['active_node']}/channels/{channel_id}/unbind",
+        data={"csrf_token": csrf_token},
+    )
+    assert response.status_code in (404, 405)
+
     with ids["factory"]() as db:
-        channel = db.scalar(select(Channel).where(Channel.tenant_id == ids["alpha"], Channel.name == "页面企微渠道"))
+        channel = db.get(Channel, channel_id)
+        binding = db.scalar(select(BotBinding).where(BotBinding.channel_id == channel_id))
         assert channel.provider_node_id == ids["active_node"]
         assert channel.provider_account_id == ids["account_a"]
+        assert binding.status == "active"

@@ -205,7 +205,7 @@ async def outbound_upload_and_send_action(
             "file_size": stored["file_size"],
             "download_url": download_url,
             "payload": outbound_payload,
-            "adapter": {"provider": "queued", "transport_status": "queued", "status": "pending"},
+            "adapter": {"adapter_type": channel.channel_type, "transport_status": "queued", "status": "pending"},
         }
     finally:
         db.close()

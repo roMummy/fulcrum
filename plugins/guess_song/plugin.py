@@ -1,22 +1,28 @@
 from __future__ import annotations
 
-import base64
-import json
 import random
-import time
-import urllib.parse
-from html import escape
-from io import BytesIO
-from typing import Any
-from urllib import request as urlrequest
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping
+from urllib.parse import urlencode, urlsplit
 
-from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
+from sqlalchemy.orm import Session
+
+from app.core.time import now_shanghai
+from app.models.entities import Conversation
+from app.services.plugin_runtime.contracts import (
+    PluginExecutionContext,
+    PluginExecutionRequest,
+    PluginExecutionResult,
+)
+from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
+from app.services.plugin_runtime.replies import file_reply, standard_replies, text_reply
+from app.services.plugin_runtime.state_store import PluginStateStore
 
 
-DEFAULT_TIMEOUT_SECONDS = 15
-DEFAULT_USER_AGENT = "multi-bot-admin/1.0"
-DEFAULT_CLIP_DURATION_SECONDS = 10
-DEFAULT_HINT_TIMEOUT_SECONDS = 30
+STATE_NAMESPACE = "guess_song"
+STATE_KEY_PREFIX = "conversation"
+DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; MultiBotSaaS-GuessSong/2.0)"
 DEFAULT_SINGERS = (
     "周杰伦",
     "林俊杰",
@@ -29,576 +35,428 @@ DEFAULT_SINGERS = (
     "Beyond",
     "孙燕姿",
 )
-MUSIC_XML_TEMPLATE = """
-<appmsg appid="wx45116b30f23e0cc4" sdkver="0">
-    <title>{song_name}</title>
-    <des>{singer_name}-click to play</des>
-    <action>view</action>
-    <type>3</type>
-    <showtype>0</showtype>
-    <content />
-    <url>{data_url}</url>
-    <dataurl>{play_url}</dataurl>
-    <songalbumurl>{singer_pic}</songalbumurl>
-</appmsg>
-<scene>0</scene>
-<appinfo>
-    <version>1</version>
-    <appname/>
-</appinfo>
-<commenturl />
-""".strip()
+
+
+@dataclass(frozen=True)
+class GuessSongConfig:
+    """租户自备音乐服务及游戏时限配置。"""
+
+    api_base: str
+    api_key: str
+    quality: str
+    timeout_seconds: int
+    hint_seconds: int
+    game_ttl_seconds: int
+    popular_singers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SongResult:
+    """猜歌状态需要保存的最小歌曲信息。"""
+
+    song_id: str
+    song_name: str
+    artist_name: str
+    play_url: str
+    cover_url: str
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
-    config = request.config
-    payload = dict(request.payload)
-    music_api_url = str(config.get("music_api_url") or "http://192.168.2.240:5000").strip()
-    song_api_url = str(config.get("song_api_url") or "").strip()
-    detail_level = str(config.get("detail_level") or "exhigh").strip() or "exhigh"
-    timeout = _coerce_int(config.get("default_timeout"), 10)
-    clip_duration = max(3, _coerce_int(config.get("clip_duration"), DEFAULT_CLIP_DURATION_SECONDS))
-    hint_timeout = max(5, _coerce_int(config.get("hint_timeout"), DEFAULT_HINT_TIMEOUT_SECONDS))
-    popular_singers = _normalize_singers(config.get("popular_singers"))
-    sessions = _normalize_sessions(config.get("game_sessions"))
-    conversation_key = _resolve_conversation_key(payload)
-    current_game = _resolve_current_game(payload, sessions, conversation_key)
+    """普通入口只处理重载，游戏状态必须绑定可信租户会话。"""
 
+    config = _load_config(request.config)
     if request.action == "reload":
         return PluginExecutionResult(
             ok=True,
             status="running",
-            message="guess_song runtime is ready",
+            message="猜歌名插件已就绪。",
             output={
-                "music_api_url": music_api_url,
-                "song_api_url": song_api_url,
-                "detail_level": detail_level,
-                "default_timeout": timeout,
-                "clip_duration": clip_duration,
-                "hint_timeout": hint_timeout,
-                "popular_singers": list(popular_singers),
-                "active_session_count": len(sessions),
+                "api_base_configured": bool(config.api_base),
+                "api_key_configured": bool(config.api_key),
+                "quality": config.quality,
+                "hint_seconds": config.hint_seconds,
+                "game_ttl_seconds": config.game_ttl_seconds,
             },
         )
+    if request.action != "execute":
+        return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
+    return _error_result("猜歌名只能通过真实群聊会话执行。", "trusted_context_required")
+
+
+def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
+    """在当前群读取或更新一局游戏，不接受载荷指定其他会话。"""
 
     if request.action != "execute":
-        return PluginExecutionResult(ok=False, status="unsupported", message=f"unsupported action: {request.action}")
+        return execute_action(request)
+    context, conversation, error = _require_group_context(db, request.context)
+    if error is not None or context is None or conversation is None:
+        return error or _error_result("猜歌名缺少可信群聊上下文。", "trusted_context_required")
+    config = _load_config(request.config)
+    if not config.api_base:
+        return _error_result("请先配置当前租户的音乐服务地址。", "music_not_configured")
 
-    operation = str(payload.get("operation") or "").strip().lower()
-    if not operation:
-        operation = _infer_operation(payload, current_game)
+    store = PluginStateStore(db, context)
+    state_key = _state_key(context)
+    current_game = store.get(STATE_NAMESPACE, state_key)
+    arguments = _inline_text(request.payload.get("command_args"))
+    if current_game:
+        if arguments == "下一首":
+            return _start_round(
+                store,
+                state_key=state_key,
+                config=config,
+                singer_name=None,
+                previous_game=current_game,
+            )
+        if not arguments:
+            return _text_result("当前已有一局进行中，请发送“猜歌名 歌名”作答，或发送“猜歌名 下一首”。", "playing")
+        return _answer_round(
+            store,
+            state_key=state_key,
+            config=config,
+            current_game=current_game,
+            answer=arguments,
+        )
+    if arguments == "下一首":
+        return _text_result("当前没有进行中的猜歌游戏，请先发送“猜歌名”。", "empty")
+    return _start_round(
+        store,
+        state_key=state_key,
+        config=config,
+        singer_name=arguments or None,
+        previous_game=None,
+    )
+
+
+def _start_round(
+    store: PluginStateStore,
+    *,
+    state_key: str,
+    config: GuessSongConfig,
+    singer_name: str | None,
+    previous_game: Mapping[str, Any] | None,
+) -> PluginExecutionResult:
+    """从租户音乐服务随机选歌，覆盖当前群的旧局状态。"""
 
     try:
-        if operation in {"answer", "guess"}:
-            return _answer_game(
-                payload=payload,
-                current_game=current_game,
-                sessions=sessions,
-                conversation_key=conversation_key,
-                hint_timeout=hint_timeout,
-            )
-        if operation in {"next", "skip"}:
-            return _start_game(
-                singer_name=str(payload.get("singer") or payload.get("artist") or "").strip() or None,
-                previous_game=current_game,
-                sessions=sessions,
-                conversation_key=conversation_key,
-                music_api_url=music_api_url,
-                song_api_url=song_api_url,
-                detail_level=detail_level,
-                timeout=timeout,
-                clip_duration=clip_duration,
-                popular_singers=popular_singers,
-                provider_status="next_song",
-            )
-        return _start_game(
-            singer_name=_resolve_singer_name(payload),
-            previous_game=current_game,
-            sessions=sessions,
-            conversation_key=conversation_key,
-            music_api_url=music_api_url,
-            song_api_url=song_api_url,
-            detail_level=detail_level,
-            timeout=timeout,
-            clip_duration=clip_duration,
-            popular_singers=popular_singers,
-            provider_status="started",
-        )
-    except Exception as exc:
-        return PluginExecutionResult(ok=False, status="error", message=f"guess_song failed: {exc}")
+        song = _search_random_song(config, singer_name=singer_name)
+    except (PluginHttpError, ValueError):
+        return _error_result("音乐服务暂时不可用，请稍后重试。", "music_service_failed")
+    if song is None:
+        target = singer_name or "热门歌手"
+        return _text_result(f"没有找到“{target}”的可播放歌曲，请换个歌手再试。", "empty")
 
-
-def _start_game(
-    *,
-    singer_name: str | None,
-    previous_game: dict[str, Any],
-    sessions: dict[str, dict[str, Any]],
-    conversation_key: str,
-    music_api_url: str,
-    song_api_url: str,
-    detail_level: str,
-    timeout: int,
-    clip_duration: int,
-    popular_singers: tuple[str, ...],
-    provider_status: str,
-) -> PluginExecutionResult:
-    song = _search_random_song(
-        singer_name=singer_name,
-        music_api_url=music_api_url,
-        song_api_url=song_api_url,
-        detail_level=detail_level,
-        timeout=timeout,
-        popular_singers=popular_singers,
-    )
-    if not song.get("play_url"):
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message=f"no song found for {singer_name or 'random'}",
-            output={
-                "provider_status": "empty",
-                "singer_name": singer_name or "",
-                "reply_text": f"没有找到 {singer_name or '随机'} 歌曲，请稍后再试。",
-                "replies": _text_reply(f"没有找到 {singer_name or '随机'} 歌曲，请稍后再试。"),
-            },
-        )
-
-    current_game = {
-        "status": "playing",
-        "song_name": song.get("song_name", ""),
-        "singer_name": song.get("singer_name", ""),
-        "play_url": song.get("play_url", ""),
-        "data_url": song.get("data_url", ""),
-        "pic_url": song.get("pic_url", ""),
-        "clip_duration": clip_duration,
-        "started_at": int(time.time()),
-        "hint_given": False,
+    game = {
+        "song_id": song.song_id,
+        "song_name": song.song_name,
+        "artist_name": song.artist_name,
+        "play_url": song.play_url,
+        "cover_url": song.cover_url,
+        "started_at": int(now_shanghai().timestamp()),
     }
-    updated_sessions = dict(sessions)
-    updated_sessions[conversation_key] = current_game
+    store.put(
+        STATE_NAMESPACE,
+        state_key,
+        game,
+        ttl_seconds=config.game_ttl_seconds,
+    )
 
     replies: list[dict[str, Any]] = []
-    output: dict[str, Any] = {
-        "provider_status": provider_status,
-        "singer_name": current_game["singer_name"],
-        "song_name_mask": _mask_song_name(str(current_game["song_name"])),
-        "clip_preview": {
-            "source_url": current_game["play_url"],
-            "clip_duration_seconds": clip_duration,
-            "transport": "voice",
-        },
-        "current_game": current_game,
-        "config_patch": {"game_sessions": updated_sessions},
-    }
-
-    if previous_game and provider_status == "next_song":
-        previous_song_name = str(previous_game.get("song_name") or "").strip()
-        previous_singer_name = str(previous_game.get("singer_name") or "").strip()
-        previous_music_xml = _build_music_xml(previous_game)
-        previous_answer_text = f"已跳过上一首：{previous_singer_name} - {previous_song_name}".strip(" -")
-        output["previous_answer"] = {
-            "song_name": previous_song_name,
-            "singer_name": previous_singer_name,
-        }
-        output["previous_music_xml"] = previous_music_xml
-        replies.extend(_text_reply(previous_answer_text))
-        replies.extend(_xml_reply(previous_music_xml))
-
-    voice_reply = _build_clip_reply(current_game, timeout=timeout)
-    if voice_reply:
-        replies.append(voice_reply)
-        output["voice_available"] = True
-    else:
-        output["voice_available"] = False
-
-    reply_text = _build_round_prompt(
-        singer_name=str(current_game["singer_name"]),
-        song_name_mask=_mask_song_name(str(current_game["song_name"])),
-        clip_duration=clip_duration,
+    if previous_game:
+        previous_name = _song_display_name(previous_game)
+        replies.extend(
+            [
+                text_reply(f"上一首答案：{previous_name}"),
+                file_reply(
+                    file_name=_answer_file_name(previous_game),
+                    file_url=str(previous_game.get("play_url") or ""),
+                ),
+            ]
+        )
+    prompt = (
+        "猜歌名开始。请试听音频后发送“猜歌名 歌名”作答，发送“猜歌名 下一首”可跳过。\n"
+        f"歌手：{song.artist_name or '未知'}"
     )
-    output["reply_text"] = reply_text
-    replies.extend(_text_reply(reply_text))
-    output["replies"] = replies
+    replies.extend(
+        [
+            file_reply(file_name="guess-song-preview.mp3", file_url=song.play_url),
+            text_reply(prompt),
+        ]
+    )
     return PluginExecutionResult(
         ok=True,
         status="completed",
-        message="guess song round generated" if provider_status == "started" else "previous song skipped and next round generated",
-        output=output,
+        message="新一轮猜歌名已开始。",
+        output={
+            "provider_status": "next_round" if previous_game else "started",
+            "has_previous_answer": bool(previous_game),
+            # 歌名只保存在绑定状态表，执行输出不记录答案或完整上游响应。
+            "replies": standard_replies(replies),
+        },
     )
 
 
-def _answer_game(
+def _answer_round(
+    store: PluginStateStore,
     *,
-    payload: dict[str, Any],
-    current_game: dict[str, Any],
-    sessions: dict[str, dict[str, Any]],
-    conversation_key: str,
-    hint_timeout: int,
+    state_key: str,
+    config: GuessSongConfig,
+    current_game: Mapping[str, Any],
+    answer: str,
 ) -> PluginExecutionResult:
-    if not current_game:
-        text = "当前没有进行中的猜歌游戏，先发送“猜歌”开始吧。"
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="no active game",
-            output={"provider_status": "empty", "reply_text": text, "replies": _text_reply(text)},
-        )
+    """校验答案；答对后删除状态，答错后按时间决定是否给出提示。"""
 
-    answer = str(
-        payload.get("answer")
-        or payload.get("guess")
-        or payload.get("command_args")
-        or payload.get("stripped_content")
-        or payload.get("content")
-        or ""
-    ).strip()
-    if not answer:
-        text = "请直接回复歌名，例如：猜歌 稻香"
+    song_name = _inline_text(current_game.get("song_name"))
+    if not song_name or not _public_http_url(current_game.get("play_url")):
+        store.delete(STATE_NAMESPACE, state_key)
+        return _error_result("本局歌曲已失效，请重新发送“猜歌名”。", "state_invalid")
+    if _answer_matches(answer, song_name):
+        store.delete(STATE_NAMESPACE, state_key)
+        display_name = _song_display_name(current_game)
         return PluginExecutionResult(
             ok=True,
             status="completed",
-            message="missing answer",
-            output={"provider_status": "missing_answer", "reply_text": text, "replies": _text_reply(text)},
-        )
-
-    song_name = str(current_game.get("song_name") or "").strip()
-    singer_name = str(current_game.get("singer_name") or "").strip()
-    if answer.lower() and answer.lower() in song_name.lower():
-        updated_sessions = dict(sessions)
-        updated_sessions.pop(conversation_key, None)
-        music_xml = _build_music_xml(current_game)
-        reply_text = f"答对了，答案是：{singer_name} - {song_name}"
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="answer is correct",
+            message="猜歌名回答正确。",
             output={
-                "provider_status": "answered",
-                "correct": True,
-                "answer": answer,
-                "song_name": song_name,
-                "singer_name": singer_name,
-                "music_xml": music_xml,
-                "reply_text": reply_text,
-                "config_patch": {"game_sessions": updated_sessions},
-                "replies": _text_reply(reply_text) + _xml_reply(music_xml),
+                "provider_status": "correct",
+                "replies": standard_replies(
+                    [
+                        text_reply(f"答对了，答案是：{display_name}"),
+                        file_reply(
+                            file_name=_answer_file_name(current_game),
+                            file_url=str(current_game.get("play_url") or ""),
+                        ),
+                    ]
+                ),
             },
         )
 
-    started_at = _coerce_int(current_game.get("started_at"), 0)
-    elapsed_seconds = _coerce_int(payload.get("elapsed_seconds"), 0)
-    if elapsed_seconds <= 0 and started_at > 0:
-        elapsed_seconds = max(0, int(time.time()) - started_at)
-    hint_available = elapsed_seconds >= hint_timeout
-    hint_given = bool(current_game.get("hint_given"))
-    updated_game = dict(current_game)
-    updated_sessions = dict(sessions)
-    hint = ""
-    if hint_available:
-        hint = _mask_song_name(song_name)
-        if not hint_given:
-            updated_game["hint_given"] = True
-            updated_sessions[conversation_key] = updated_game
-    reply_text = _build_incorrect_answer_text(
-        singer_name=singer_name,
-        masked_name=_mask_song_name(song_name),
-        hint=hint,
+    started_at = _bounded_int(current_game.get("started_at"), default=0, minimum=0, maximum=4_102_444_800)
+    elapsed = max(0, int(now_shanghai().timestamp()) - started_at) if started_at else 0
+    if elapsed >= config.hint_seconds:
+        artist = _inline_text(current_game.get("artist_name")) or "未知歌手"
+        hint = f"提示：歌手是 {artist}，歌名是 {_mask_song_name(song_name)}。"
+        return _text_result(f"还不对。{hint}", "incorrect_with_hint")
+    remaining = max(config.hint_seconds - elapsed, 1)
+    return _text_result(f"还不对，继续猜吧。{remaining} 秒后可获得提示。", "incorrect")
+
+
+def _search_random_song(config: GuessSongConfig, *, singer_name: str | None) -> SongResult | None:
+    """固定调用 Search 与 Song_V1，不接受租户配置任意接口模板。"""
+
+    keyword = singer_name or random.choice(config.popular_singers)
+    client = PluginHttpClient()
+    search_payload = _request_json(
+        client,
+        config,
+        "/Search",
+        {"keywords": keyword, "limit": 10},
     )
-    output: dict[str, Any] = {
-        "provider_status": "answered",
-        "correct": False,
-        "answer": answer,
-        "song_name_mask": _mask_song_name(song_name),
-        "singer_name": singer_name,
-        "hint": hint,
-        "hint_available": hint_available,
-        "current_game": updated_game,
-        "reply_text": reply_text,
-        "replies": _text_reply(reply_text),
-    }
-    if hint and updated_sessions.get(conversation_key) != current_game:
-        output["config_patch"] = {"game_sessions": updated_sessions}
-    return PluginExecutionResult(ok=True, status="completed", message="answer is incorrect", output=output)
-
-
-def _search_random_song(
-    *,
-    singer_name: str | None,
-    music_api_url: str,
-    song_api_url: str,
-    detail_level: str,
-    timeout: int,
-    popular_singers: tuple[str, ...],
-) -> dict[str, str]:
-    keyword = singer_name or random.choice(popular_singers)
-    search_url = _build_search_url(music_api_url, keyword)
-    search_data = _get_json(search_url, timeout)
-    if not bool(search_data.get("success")) or int(search_data.get("status") or 0) != 200:
-        raise ValueError(str(search_data.get("message") or "search provider returned unsuccessful response"))
-    songs = search_data.get("data") or []
-    if not isinstance(songs, list) or not songs:
-        return {}
-    candidates = [item for item in songs if isinstance(item, dict)]
+    raw_songs = search_payload.get("data")
+    if not isinstance(raw_songs, list):
+        return None
+    candidates = [item for item in raw_songs if isinstance(item, Mapping) and str(item.get("id") or "").strip()]
     if not candidates:
-        return {}
+        return None
     selected = random.choice(candidates)
     song_id = str(selected.get("id") or "").strip()
-    if not song_id:
-        return {}
-
-    detail_url = _build_detail_url(music_api_url, song_api_url, song_id, detail_level)
-    detail_data = _get_json(detail_url, timeout)
-    if not bool(detail_data.get("success")) or int(detail_data.get("status") or 0) != 200:
-        raise ValueError(str(detail_data.get("message") or "song detail provider returned unsuccessful response"))
-    detail = detail_data.get("data") or {}
-    if not isinstance(detail, dict):
-        detail = {}
-
-    play_url = _resolve_redirect(str(detail.get("url") or ""))
-    pic_url = _resolve_redirect(str(detail.get("pic") or selected.get("picUrl") or ""))
-    return {
-        "song_id": song_id,
-        "song_name": str(detail.get("name") or selected.get("name") or "").strip(),
-        "singer_name": str(detail.get("ar_name") or selected.get("artist_string") or selected.get("artists") or keyword).strip(),
-        "play_url": play_url,
-        "data_url": play_url,
-        "pic_url": pic_url,
-    }
-
-
-def _build_search_url(music_api_url: str, keyword: str) -> str:
-    if "{keywords}" in music_api_url:
-        return music_api_url.format(keywords=urllib.parse.quote(keyword))
-    base = music_api_url.split("?")[0].rstrip("/")
-    return f"{base}/Search?keywords={urllib.parse.quote(keyword)}&limit=10"
-
-
-def _build_detail_url(music_api_url: str, song_api_url: str, song_id: str, detail_level: str) -> str:
-    if song_api_url:
-        return song_api_url.format(url=song_id, level=detail_level, type="json")
-    base = music_api_url.split("?")[0].rstrip("/")
-    return f"{base}/Song_V1?url={song_id}&level={urllib.parse.quote(detail_level)}&type=json"
-
-
-def _build_clip_reply(song: dict[str, Any], *, timeout: int) -> dict[str, Any] | None:
-    play_url = str(song.get("play_url") or "").strip()
+    detail_payload = _request_json(
+        client,
+        config,
+        "/Song_V1",
+        {"url": song_id, "level": config.quality, "type": "json"},
+    )
+    detail = detail_payload.get("data")
+    if not isinstance(detail, Mapping):
+        return None
+    play_url = _public_http_url(detail.get("url"))
     if not play_url:
         return None
-    clip_duration = max(3, _coerce_int(song.get("clip_duration"), DEFAULT_CLIP_DURATION_SECONDS))
-    try:
-        clip_payload = _download_and_clip_audio(play_url, clip_duration, timeout=timeout)
-    except Exception:
+    song_name = _inline_text(detail.get("name") or selected.get("name"))
+    if not song_name:
         return None
-    if not clip_payload:
-        return None
-    return {
-        "type": "voice",
-        "base64": clip_payload["base64"],
-        "voice_time": clip_payload["duration_ms"],
-        "voice_type": 4,
-    }
-
-
-def _download_and_clip_audio(play_url: str, clip_duration: int, *, timeout: int) -> dict[str, Any] | None:
-    audio_bytes = _download_binary(play_url, timeout=timeout)
-    if not audio_bytes:
-        return None
-    audio_format = _guess_audio_format(play_url)
-    clipped = _encode_clip_to_silk(audio_bytes, clip_duration=clip_duration, audio_format=audio_format)
-    if not clipped:
-        return None
-    return {
-        "base64": base64.b64encode(clipped["bytes"]).decode("ascii"),
-        "duration_ms": int(clipped["duration_ms"]),
-    }
-
-
-def _encode_clip_to_silk(audio_bytes: bytes, *, clip_duration: int, audio_format: str | None) -> dict[str, Any]:
-    try:
-        from pydub import AudioSegment
-    except ImportError as exc:
-        raise ValueError("pydub is required for guess_song voice rendering") from exc
-    try:
-        import pysilk
-    except ImportError as exc:
-        raise ValueError("pysilk is required for guess_song voice rendering") from exc
-
-    stream = BytesIO(audio_bytes)
-    audio = AudioSegment.from_file(stream, format=audio_format) if audio_format else AudioSegment.from_file(stream)
-    clip = audio[: clip_duration * 1000]
-    clip = clip.set_channels(1)
-    sample_rate = _get_closest_frame_rate(clip.frame_rate)
-    clip = clip.set_frame_rate(sample_rate).set_sample_width(2)
-    encoded_bytes = pysilk.encode(clip.raw_data, sample_rate=sample_rate)
-    return {"bytes": encoded_bytes, "duration_ms": len(clip)}
-
-
-def _build_music_xml(song: dict[str, Any]) -> str:
-    return MUSIC_XML_TEMPLATE.format(
-        song_name=escape(str(song.get("song_name") or "")),
-        singer_name=escape(str(song.get("singer_name") or "")),
-        data_url=escape(str(song.get("data_url") or "")),
-        play_url=escape(str(song.get("play_url") or "")),
-        singer_pic=escape(str(song.get("pic_url") or "")),
+    return SongResult(
+        song_id=song_id,
+        song_name=song_name,
+        artist_name=_inline_text(
+            detail.get("ar_name")
+            or selected.get("artist_string")
+            or _normalize_artists(selected.get("artists"))
+            or keyword
+        ),
+        play_url=play_url,
+        cover_url=_public_http_url(detail.get("pic") or selected.get("picUrl")),
     )
+
+
+def _request_json(
+    client: PluginHttpClient,
+    config: GuessSongConfig,
+    path: str,
+    parameters: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    headers = {"User-Agent": DEFAULT_USER_AGENT}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    response = client.request(
+        "GET",
+        f"{config.api_base}{path}?{urlencode({key: str(value) for key, value in parameters.items()})}",
+        headers=headers,
+        connect_timeout_seconds=min(8, config.timeout_seconds),
+        total_timeout_seconds=config.timeout_seconds,
+        max_response_bytes=2 * 1024 * 1024,
+        max_redirects=2,
+        retry_count=1,
+    )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise ValueError(f"music http {response.status_code}")
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("music response invalid") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("music response must be object")
+    if payload.get("success") is not True or int(payload.get("status") or 0) != 200:
+        raise ValueError("music service rejected request")
+    return payload
+
+
+def _require_group_context(
+    db: Session,
+    context: PluginExecutionContext | None,
+) -> tuple[PluginExecutionContext | None, Conversation | None, PluginExecutionResult | None]:
+    """验证当前群会话主键，状态键不从命令载荷读取。"""
+
+    if (
+        context is None
+        or context.channel_id is None
+        or context.conversation_id is None
+        or context.chat_type != "group"
+    ):
+        return None, None, _error_result("请在群聊中使用猜歌名。", "trusted_context_required")
+    conversation = db.get(Conversation, int(context.conversation_id))
+    if (
+        conversation is None
+        or int(conversation.tenant_id) != int(context.tenant_id)
+        or int(conversation.bot_id) != int(context.bot_id)
+        or int(conversation.channel_id or 0) != int(context.channel_id)
+        or conversation.chat_type != "group"
+    ):
+        return None, None, _error_result("当前群聊上下文无效。", "trusted_context_required")
+    return context, conversation, None
+
+
+def _state_key(context: PluginExecutionContext) -> str:
+    return f"{STATE_KEY_PREFIX}:{int(context.conversation_id or 0)}"
+
+
+def _answer_matches(answer: str, song_name: str) -> bool:
+    normalized_answer = _normalize_answer(answer)
+    normalized_song = _normalize_answer(song_name)
+    if not normalized_answer or not normalized_song:
+        return False
+    return normalized_answer == normalized_song or (
+        len(normalized_answer) >= 2 and normalized_answer in normalized_song
+    )
+
+
+def _normalize_answer(value: str) -> str:
+    return re.sub(r"[\s\-—_·,，.。!！?？:：()（）\[\]【】]+", "", str(value or "").strip().lower())
 
 
 def _mask_song_name(song_name: str) -> str:
-    normalized = song_name.strip()
-    if not normalized:
-        return ""
-    if len(normalized) == 1:
+    normalized = _inline_text(song_name)
+    if len(normalized) <= 1:
         return normalized
     return normalized[0] + "*" * (len(normalized) - 1)
 
 
-def _resolve_singer_name(payload: dict[str, Any]) -> str | None:
-    singer = str(payload.get("singer") or payload.get("artist") or "").strip()
-    if singer:
-        return singer
-    query = str(
-        payload.get("command_args")
-        or payload.get("stripped_query")
-        or payload.get("query")
-        or payload.get("keyword")
-        or ""
-    ).strip()
-    if query in {"下一首", "跳过"}:
-        return None
-    return query or None
+def _song_display_name(song: Mapping[str, Any]) -> str:
+    song_name = _inline_text(song.get("song_name")) or "未知歌曲"
+    artist_name = _inline_text(song.get("artist_name"))
+    return f"{artist_name} - {song_name}" if artist_name else song_name
 
 
-def _infer_operation(payload: dict[str, Any], current_game: dict[str, Any]) -> str:
-    raw = str(
-        payload.get("command_args")
-        or payload.get("stripped_content")
-        or payload.get("stripped_query")
-        or payload.get("content")
-        or payload.get("query")
-        or payload.get("keyword")
-        or ""
-    ).strip().lower()
-    if raw in {"next", "skip", "下一首", "跳过"}:
-        return "next"
-    if current_game and raw:
-        return "answer"
-    return "start"
+def _answer_file_name(song: Mapping[str, Any]) -> str:
+    safe_name = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", "_", _song_display_name(song)).strip(" ._")
+    return f"{(safe_name or 'guess-song-answer')[:240]}.mp3"
 
 
-def _resolve_current_game(payload: dict[str, Any], sessions: dict[str, dict[str, Any]], conversation_key: str) -> dict[str, Any]:
-    payload_game = payload.get("current_game")
-    if isinstance(payload_game, dict):
-        return dict(payload_game)
-    return dict(sessions.get(conversation_key) or {})
+def _normalize_artists(value: Any) -> str:
+    if not isinstance(value, list):
+        return _inline_text(value)
+    names: list[str] = []
+    for item in value:
+        name = _inline_text(item.get("name")) if isinstance(item, Mapping) else _inline_text(item)
+        if name:
+            names.append(name)
+    return " / ".join(names)
 
 
-def _resolve_conversation_key(payload: dict[str, Any]) -> str:
-    return str(
-        payload.get("conversation_external_id")
-        or payload.get("conversation_id")
-        or payload.get("room_id")
-        or payload.get("roomid")
-        or payload.get("sender_id")
-        or payload.get("user")
-        or "global"
-    ).strip()
-
-
-def _normalize_sessions(raw_value: object) -> dict[str, dict[str, Any]]:
-    if isinstance(raw_value, str):
-        try:
-            raw_value = json.loads(raw_value)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(raw_value, dict):
-        return {}
-    sessions: dict[str, dict[str, Any]] = {}
-    for key, value in raw_value.items():
-        if not isinstance(value, dict):
-            continue
-        normalized_key = str(key).strip()
-        if normalized_key:
-            sessions[normalized_key] = dict(value)
-    return sessions
-
-
-def _normalize_singers(raw_value: object) -> tuple[str, ...]:
-    if isinstance(raw_value, list):
-        singers = tuple(str(item).strip() for item in raw_value if str(item).strip())
-        return singers or DEFAULT_SINGERS
-    if isinstance(raw_value, str):
-        singers = tuple(item.strip() for item in raw_value.split(",") if item.strip())
-        return singers or DEFAULT_SINGERS
-    return DEFAULT_SINGERS
-
-
-def _resolve_redirect(url: str) -> str:
-    if not url:
+def _public_http_url(value: Any) -> str:
+    normalized = str(value or "").strip()
+    parsed = urlsplit(normalized)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         return ""
-    req = urlrequest.Request(url, method="HEAD", headers={"User-Agent": DEFAULT_USER_AGENT})
+    return normalized
+
+
+def _inline_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _load_config(raw: Mapping[str, Any]) -> GuessSongConfig:
+    quality = str(raw.get("quality") or "exhigh").strip().lower()
+    if quality not in {"standard", "higher", "exhigh", "lossless", "hires"}:
+        quality = "exhigh"
+    raw_singers = raw.get("popular_singers")
+    if isinstance(raw_singers, (list, tuple)):
+        singers = tuple(_inline_text(item) for item in raw_singers if _inline_text(item))
+    else:
+        singers = ()
+    return GuessSongConfig(
+        api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
+        api_key=str(raw.get("api_key") or "").strip(),
+        quality=quality,
+        timeout_seconds=_bounded_int(raw.get("timeout_seconds"), default=15, minimum=5, maximum=60),
+        hint_seconds=_bounded_int(raw.get("hint_seconds"), default=30, minimum=10, maximum=300),
+        game_ttl_seconds=_bounded_int(raw.get("game_ttl_seconds"), default=1800, minimum=300, maximum=86400),
+        popular_singers=singers or DEFAULT_SINGERS,
+    )
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     try:
-        with urlrequest.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
-            return getattr(response, "url", url) or url
-    except Exception:
-        return url
-
-
-def _download_binary(url: str, *, timeout: int) -> bytes:
-    req = urlrequest.Request(url, method="GET", headers={"User-Agent": DEFAULT_USER_AGENT})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        return response.read()
-
-
-def _get_json(url: str, timeout: int) -> dict[str, Any]:
-    req = urlrequest.Request(url, method="GET", headers={"accept": "application/json", "User-Agent": DEFAULT_USER_AGENT})
-    with urlrequest.urlopen(req, timeout=timeout) as response:
-        raw = response.read().decode("utf-8", errors="replace")
-    parsed = json.loads(raw) if raw else {}
-    if isinstance(parsed, dict):
-        return parsed
-    raise ValueError("provider returned non-object json")
-
-
-def _guess_audio_format(url: str) -> str | None:
-    path = urllib.parse.urlparse(url).path
-    if "." not in path:
-        return None
-    extension = path.rsplit(".", 1)[-1].strip().lower()
-    if extension in {"mp3", "wav", "ogg", "flac", "m4a", "aac"}:
-        return extension
-    return None
-
-
-def _get_closest_frame_rate(frame_rate: int) -> int:
-    supported = [8000, 12000, 16000, 24000]
-    return min(supported, key=lambda candidate: abs(candidate - frame_rate))
-
-
-def _coerce_int(value: object, default: int) -> int:
-    try:
-        return int(value)
+        normalized = int(value)
     except (TypeError, ValueError):
-        return default
+        normalized = default
+    return max(minimum, min(normalized, maximum))
 
 
-def _text_reply(content: str) -> list[dict[str, str]]:
-    normalized = str(content).strip()
-    return [{"type": "text", "content": normalized}] if normalized else []
+def _text_result(message: str, provider_status: str) -> PluginExecutionResult:
+    return PluginExecutionResult(
+        ok=True,
+        status="completed",
+        message=message,
+        output={
+            "provider_status": provider_status,
+            "replies": standard_replies([text_reply(message)]),
+        },
+    )
 
 
-def _xml_reply(xml: str) -> list[dict[str, str]]:
-    normalized = str(xml).strip()
-    return [{"type": "xml", "xml": normalized}] if normalized else []
-
-
-def _build_round_prompt(*, singer_name: str, song_name_mask: str, clip_duration: int) -> str:
-    lines = ["猜歌开始", f"歌手：{singer_name}", f"歌名：{song_name_mask}", f"片段时长：{clip_duration}s"]
-    lines.append("请直接回复“猜歌 歌名”来作答，或发送“猜歌 下一首”跳过。")
-    return "\n".join(line for line in lines if line.strip())
-
-
-def _build_incorrect_answer_text(*, singer_name: str, masked_name: str, hint: str) -> str:
-    lines = ["答案不对，再试试", f"歌手：{singer_name}", f"歌名：{masked_name}"]
-    if hint:
-        lines.append(f"提示：{hint}")
-    return "\n".join(line for line in lines if line.strip())
+def _error_result(message: str, provider_status: str) -> PluginExecutionResult:
+    return PluginExecutionResult(
+        ok=False,
+        status="error",
+        message=message,
+        output={
+            "provider_status": provider_status,
+            "replies": standard_replies([text_reply(message)]),
+        },
+    )

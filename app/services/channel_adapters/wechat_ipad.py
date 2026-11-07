@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 
 from app.models.entities import Channel, Conversation
 from app.services.wechat_ipad.client import WechatIpadApiClient
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 
 from .base import BaseChannelAdapter
 
@@ -21,7 +22,7 @@ DEFAULT_TIMEOUT_SECONDS = 12
 
 
 class WechatIpadAdapter(BaseChannelAdapter):
-    provider = "wechat_ipad"
+    adapter_type = "wechat_ipad"
 
     MSG_TYPE_MAP = {
         1: "text",
@@ -58,7 +59,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         body = request_spec["body"]
 
         base_url = channel.api_base.rstrip("/")
-        target_url = f"{base_url}/api{endpoint}"
+        target_url = f"{base_url}{endpoint}"
         raw_request = {
             "url": target_url,
             "method": "POST",
@@ -106,6 +107,64 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 error_code="request_failed",
                 error_message=str(exc),
             )
+
+    def invite_group_members(
+        self,
+        channel: Channel,
+        *,
+        chatroom_external_id: str,
+        member_external_ids: list[str],
+    ) -> dict[str, Any]:
+        """通过 874 协议执行群邀请，并返回统一渠道动作结果。"""
+
+        adapter_config = self._load_adapter_config(channel)
+        wxid = str(adapter_config.get("wxid") or "").strip()
+        target_room = str(chatroom_external_id or "").strip()
+        target_members = [str(item or "").strip() for item in member_external_ids if str(item or "").strip()]
+        if not channel.api_base:
+            return self._group_invite_error("missing_api_base", "渠道未配置 API Base")
+        if not wxid:
+            return self._group_invite_error("missing_wxid", "渠道缺少登录账号标识")
+        if not target_room or not target_members:
+            return self._group_invite_error("invalid_target", "群聊或待邀请成员为空")
+
+        try:
+            response = WechatIpadApiClient().invite_chatroom_member(
+                channel,
+                wxid=wxid,
+                chatroom_id=target_room,
+                to_wxids=target_members,
+            )
+        except Exception as exc:
+            return self._group_invite_error("request_failed", str(exc))
+        ok = self._response_indicates_success(response)
+        result: dict[str, Any] = {
+            "ok": ok,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "sent" if ok else "failed",
+            "external_status": self._pick_response_status(response) if ok else "failed",
+            "chatroom_external_id": target_room,
+            "member_count": len(target_members),
+            "raw_response": response,
+        }
+        if not ok:
+            result["error_code"] = self._extract_error_code(response)
+            result["error_message"] = self._extract_error_message(response)
+        return result
+
+    def _group_invite_error(self, error_code: str, error_message: str) -> dict[str, Any]:
+        """构造不依赖会话消息的群邀请错误结果。"""
+
+        return {
+            "ok": False,
+            "adapter_type": self.adapter_type,
+            "action": "invite_group_members",
+            "status": "failed",
+            "external_status": "failed",
+            "error_code": error_code,
+            "error_message": error_message,
+        }
 
     def normalize_inbound_payload(
         self,
@@ -189,7 +248,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         timestamp = self._coerce_int(self._pick_value(envelope, "CreateTime", "CreateTimestamp"))
 
         return {
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "event_key": event_key,
             "event_type": event_type,
             "should_persist_message": bool(content),
@@ -234,7 +293,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         if not channel.api_base:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "缺少 API Base",
                 "details": {"reason": "missing_api_base"},
@@ -242,7 +301,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         if not wxid:
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "offline",
                 "summary": "缺少 wxid",
                 "details": {"reason": "missing_wxid"},
@@ -251,14 +310,14 @@ class WechatIpadAdapter(BaseChannelAdapter):
         probes = [
             {
                 "name": "heartbeat",
-                "endpoint": f"/api/Login/HeartBeat?wxid={wxid}",
-                "body": None,
+                "endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat,
+                "query": {"wxid": wxid},
                 "required": True,
             },
             {
                 "name": "cache_info",
-                "endpoint": "/api/Login/GetCacheInfo",
-                "body": {"Wxid": wxid, "DeviceID": device_id} if device_id else {"Wxid": wxid},
+                "endpoint": IPAD_874_CONTRACT.endpoints.login_get_cache_info,
+                "query": {"wxid": wxid},
                 "required": False,
             },
         ]
@@ -266,7 +325,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         required_failed = False
         optional_failed = False
         for probe in probes:
-            result = self._run_health_probe(channel, probe["endpoint"], body=probe["body"])
+            result = self._run_health_probe(channel, probe["endpoint"], query=probe["query"])
             result["name"] = probe["name"]
             probe_results.append(result)
             if result["ok"]:
@@ -280,7 +339,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             failed_probe = next((item for item in probe_results if not item["ok"]), {})
             return {
                 "ok": False,
-                "provider": self.provider,
+                "adapter_type": self.adapter_type,
                 "status": "degraded",
                 "summary": f"微信渠道关键探针失败：{failed_probe.get('name') or 'heartbeat'}",
                 "details": {
@@ -293,7 +352,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
         summary = "微信渠道心跳与缓存探针通过" if not optional_failed else "微信渠道心跳通过，缓存探针异常"
         return {
             "ok": not optional_failed,
-            "provider": self.provider,
+            "adapter_type": self.adapter_type,
             "status": "online" if not optional_failed else "degraded",
             "summary": summary,
             "details": {
@@ -357,7 +416,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not content:
                 return None
             return {
-                "endpoint": "/Msg/SendTxt",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_text,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -370,7 +429,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             base64_data = self._first_non_empty(payload, "base64", "image_base64")
             if base64_data:
                 return {
-                    "endpoint": "/Msg/UploadImg",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_upload_image,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -380,7 +439,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             cdn_xml = self._first_non_empty(payload, "content", "xml", "cdn_xml", "content_xml")
             if cdn_xml:
                 return {
-                    "endpoint": "/Msg/SendCDNImg",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_cdn_image,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -393,7 +452,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not prepared_voice:
                 return None
             return {
-                "endpoint": "/Msg/SendVoice",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_voice,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -406,7 +465,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             cdn_xml = self._first_non_empty(payload, "content", "xml", "cdn_xml", "content_xml")
             if cdn_xml:
                 return {
-                    "endpoint": "/Msg/SendCDNVideo",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_cdn_video,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -419,7 +478,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 return None
             play_length = self._coerce_int(payload.get("play_length") or payload.get("duration") or payload.get("duration_seconds"))
             return {
-                "endpoint": "/Msg/SendVideo",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_video,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -435,7 +494,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
                 if app_type is None:
                     return None
                 return {
-                    "endpoint": "/Msg/SendApp",
+                    "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
                     "body": {
                         "Wxid": wxid,
                         "ToWxid": to_wxid,
@@ -447,7 +506,7 @@ class WechatIpadAdapter(BaseChannelAdapter):
             if not generated_xml:
                 return None
             return {
-                "endpoint": "/Msg/SendApp",
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
                 "body": {
                     "Wxid": wxid,
                     "ToWxid": to_wxid,
@@ -455,18 +514,32 @@ class WechatIpadAdapter(BaseChannelAdapter):
                     "Type": app_type or 6,
                 },
             }
+        if message_type == "link":
+            generated_xml = self._build_link_app_xml(payload)
+            if not generated_xml:
+                return None
+            return {
+                "endpoint": IPAD_874_CONTRACT.endpoints.message_send_app,
+                "body": {
+                    "Wxid": wxid,
+                    "ToWxid": to_wxid,
+                    "Xml": generated_xml,
+                    "Type": 5,
+                },
+            }
         return None
 
-    def _run_health_probe(self, channel: Channel, endpoint: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        target_url = f"{channel.api_base.rstrip('/')}{endpoint}"
+    def _run_health_probe(
+        self,
+        channel: Channel,
+        endpoint: str,
+        *,
+        query: dict[str, Any],
+    ) -> dict[str, Any]:
+        """通过统一 874 客户端执行探针，确保健康检查与业务调用共享查询参数编码。"""
+
         try:
-            if body is None:
-                req = urlrequest.Request(target_url, method="POST")
-                with urlrequest.urlopen(req, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
-                    raw_body = response.read().decode("utf-8", errors="replace")
-                    parsed = self._parse_json_like(raw_body, getattr(response, "status", 200))
-            else:
-                parsed = self._post_json(target_url, body)
+            parsed = WechatIpadApiClient().request_json(channel, endpoint, query=query)
             response_status = int(parsed.get("http_status") or 200)
             ok = response_status < 400 and self._response_indicates_success(parsed)
             return {
@@ -562,6 +635,8 @@ class WechatIpadAdapter(BaseChannelAdapter):
             return "video 消息缺少可用载荷，需提供 xml/cdn_xml 或 video_base64 + image_base64/cover_base64，可选 play_length"
         if message_type == "file":
             return "file 消息缺少可用载荷，需提供 xml 或 file_name + file_url/download_url；SendApp 需带真实 Type 或可从 xml.type 推导"
+        if message_type == "link":
+            return "link 消息缺少可用载荷，需提供 url/link_url，可选 title、desc 和 thumb_url"
         return f"暂不支持的消息类型: {message_type}"
 
     def _build_file_app_xml(self, payload: dict[str, Any]) -> str | None:
@@ -585,6 +660,26 @@ class WechatIpadAdapter(BaseChannelAdapter):
             f"<aeskey>{escape(aes_key)}</aeskey>"
             f"<fileext>{escape(self._guess_file_ext(file_name))}</fileext>"
             "</appattach>"
+            "</appmsg>"
+        )
+
+    def _build_link_app_xml(self, payload: dict[str, Any]) -> str | None:
+        """把平台通用链接卡片转换为 874 SendApp 所需的 type=5 XML。"""
+
+        link_url = self._first_non_empty(payload, "url", "link_url")
+        if not link_url:
+            return None
+        title = self._first_non_empty(payload, "title", "link_title") or link_url
+        description = self._first_non_empty(payload, "desc", "description", "link_description") or ""
+        thumb_url = self._first_non_empty(payload, "thumb_url", "image_url") or ""
+        # 所有租户可编辑字段都先做 XML 转义，避免标题或 URL 中的特殊字符破坏消息结构。
+        return (
+            "<appmsg appid='' sdkver='0'>"
+            f"<title>{escape(title)}</title>"
+            f"<des>{escape(description)}</des>"
+            "<type>5</type>"
+            f"<url>{escape(link_url)}</url>"
+            f"<thumburl>{escape(thumb_url)}</thumburl>"
             "</appmsg>"
         )
 
@@ -711,22 +806,48 @@ class WechatIpadAdapter(BaseChannelAdapter):
         }
 
     def _extract_voice_info(self, payload: dict[str, Any]) -> dict[str, str] | None:
-        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "NewMsgId", "msg_id"))
-        voice_url = self._clean_string(self._pick_value(payload, "VoiceUrl", "voice_url", "Voiceurl", "voiceurl"))
-        length = self._clean_string(self._pick_value(payload, "Length", "length", "VoiceLength", "voice_length"))
-        if not msg_id or not voice_url or not length:
+        """从 874 同步消息的语音 XML 生成下载接口需要的四项元数据。"""
+
+        content = self._extract_text_content(payload)
+        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "msg_id"))
+        from_user_name = self._clean_string(self._pick_value(payload, "FromUserName", "from_user_name"))
+        bufid = self._extract_xml_attribute(content, "bufid")
+        # DownloadVoice 的 Length 表示需要下载的字节数，不能使用 voicelength 播放时长。
+        length = self._extract_xml_attribute(content, "length")
+        if not msg_id or not from_user_name or not bufid or not length:
             return None
         return {
             "msg_id": msg_id,
-            "voice_url": voice_url,
+            "from_user_name": from_user_name,
+            "bufid": bufid,
             "length": length,
         }
 
     def _extract_video_info(self, payload: dict[str, Any]) -> dict[str, str] | None:
-        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "NewMsgId", "msg_id"))
-        if not msg_id:
+        """从 874 视频 XML 读取总字节数，并初始化首个下载分片。"""
+
+        content = self._extract_text_content(payload)
+        msg_id = self._clean_string(self._pick_value(payload, "MsgId", "msg_id"))
+        to_wxid = self._clean_string(self._pick_value(payload, "FromUserName", "from_user_name"))
+        data_len = self._extract_xml_attribute(content, "length")
+        if not msg_id or not to_wxid or not data_len:
             return None
-        return {"msg_id": msg_id}
+        return {
+            "msg_id": msg_id,
+            "to_wxid": to_wxid,
+            "data_len": data_len,
+            "start_pos": "0",
+            "section_length": data_len,
+            "compress_type": "0",
+        }
+
+    def _extract_xml_attribute(self, content: str, attribute: str) -> str | None:
+        """从 874 消息 XML 中提取媒体下载字段，属性名按协议原样匹配。"""
+
+        if not content:
+            return None
+        matched = re.search(rf'\b{re.escape(attribute)}=["\']([^"\']+)["\']', content, flags=re.IGNORECASE)
+        return self._clean_string(matched.group(1)) if matched else None
 
     def _pick_value(self, payload: dict[str, Any], *keys: str, **named_paths: tuple[str, ...]) -> Any:
         for key in keys:

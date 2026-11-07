@@ -1,20 +1,17 @@
 {% extends 'base.html' %}
-{% block page_intro %}
-<p>查看节点连接状态、已发现企微账号和渠道绑定。</p>
-{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/provider-nodes">返回节点列表</a>
-  <span class="chip chip-outline">节点 #{{ node.id }}</span>
+  <a class="btn btn-secondary" href="/provider-nodes">返回客户端列表</a>
+  <span class="chip chip-outline">客户端 #{{ node.id }}</span>
   <span class="chip {% if node.status == 'active' %}chip-success{% elif node.status == 'pending' %}chip-outline{% else %}chip-muted{% endif %}">{{ {'active':'已激活','pending':'待激活','disabled':'已停用'}.get(node.status, node.status) }}</span>
 </div>
 {% endblock %}
 {% block content %}
 {% if activation_code %}
-<section class="card" style="border-color:#f0b429;">
+<section class="work-surface" style="border-color:#f0b429;">
   <div class="section-head">
     <div>
-      <p class="section-kicker">One-time activation</p>
+
       <h2>一次性激活码</h2>
     </div>
     <span class="chip chip-outline">{{ format_time(activation_expires_at) }} 前有效</span>
@@ -24,10 +21,10 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="work-surface">
   <div class="toolbar">
     <div>
-      <p class="section-kicker">Node status</p>
+
       <h2 class="provider-node-breakable">{{ node.name }}</h2>
       <p class="muted-text">{{ node.notes or '未填写备注' }}</p>
     </div>
@@ -46,92 +43,83 @@
       </form>
       {% endif %}
       {% if node.status in ['active', 'disabled'] %}
-      <form method="post" action="/provider-nodes/{{ node.id }}/reactivate" data-confirm-mode="confirm" data-confirm-title="重新激活节点" data-confirm-message="旧设备密钥将被吊销，并生成新的短期激活码。">
+      <form method="post" action="/provider-nodes/{{ node.id }}/reactivate" data-confirm-mode="confirm" data-confirm-title="重新激活客户端" data-confirm-message="旧设备密钥将被吊销，并生成新的短期激活码。">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <button class="btn btn-secondary" type="submit">重新激活</button>
       </form>
       {% endif %}
       {% if node.status != 'disabled' %}
-      <form method="post" action="/provider-nodes/{{ node.id }}/disable" data-confirm-mode="confirm" data-confirm-title="停用 Provider 节点" data-confirm-message="节点设备密钥会立即失效，已绑定渠道将保留等待处理。">
+      <form method="post" action="/provider-nodes/{{ node.id }}/disable" data-confirm-mode="confirm" data-confirm-title="停用企业微信客户端" data-confirm-message="客户端设备密钥会立即失效，已关联账号将保留等待处理。">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn" type="submit">停用节点</button>
+        <button class="btn" type="submit">停用客户端</button>
       </form>
       {% endif %}
     </div>
     {% endif %}
   </div>
   <div class="stats-grid compact-grid time-metric-grid">
-    <div class="stat-card nested-card"><span>发现账号</span><strong>{{ node.accounts|length }}</strong></div>
-    <div class="stat-card nested-card"><span>绑定渠道</span><strong>{{ bound_channel_count }}</strong></div>
-    <div class="stat-card nested-card"><span>客户端版本</span><strong>{{ node.client_version or '-' }}</strong></div>
-    <div class="stat-card stat-card-time nested-card"><span>最近心跳</span><strong class="stat-value stat-value-time">{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</strong></div>
+    <div class="metric-item "><span>发现账号</span><strong>{{ node.accounts|length }}</strong></div>
+    <div class="metric-item "><span>关联账号</span><strong>{{ bound_channel_count }}</strong></div>
+    <div class="metric-item "><span>客户端版本</span><strong>{{ node.client_version or '-' }}</strong></div>
+    <div class="metric-item metric-item-time "><span>最近心跳</span><strong class="stat-value stat-value-time">{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</strong></div>
   </div>
   <div class="table-scroll" style="margin-top:16px;">
     <table class="table table-tight">
       <tbody>
         <tr><th>设备状态</th><td>{{ {'active':'已激活','pending':'待激活','disabled':'已停用'}.get(node.status, node.status) }}</td></tr>
         <tr><th>激活时间</th><td>{{ format_time(node.activated_at) if node.activated_at else '-' }}</td></tr>
-        <tr><th>Hook 状态</th><td>{{ latest_heartbeat.hook_status if latest_heartbeat else '-' }}</td></tr>
+        <tr><th>连接状态</th><td>{{ latest_heartbeat.hook_status if latest_heartbeat else '-' }}</td></tr>
         <tr><th>企微进程</th><td>{{ latest_heartbeat.workwechat_status if latest_heartbeat else '-' }}</td></tr>
       </tbody>
     </table>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Discovered accounts</p>
+
       <h2>企微账号</h2>
     </div>
-    <span class="chip chip-outline">由节点心跳发现</span>
+    <span class="chip chip-outline">由客户端自动发现</span>
   </div>
   <div class="table-scroll">
     <table class="table">
-      <thead><tr><th>账号</th><th>稳定账号键</th><th>状态</th><th>最近在线</th></tr></thead>
+      <thead><tr><th>账号</th><th>状态</th><th>最近在线</th></tr></thead>
       <tbody>
         {% for account in node.accounts %}
         <tr>
           <td>{{ account.display_name or account.external_user_id or account.account_key }}</td>
-          <td><code>{{ account.account_key }}</code></td>
           <td><span class="chip {% if account.status == 'online' %}chip-success{% else %}chip-muted{% endif %}">{{ {'online':'在线','offline':'离线','unknown':'未知'}.get(account.status, account.status) }}</span></td>
           <td>{{ format_time(account.last_seen_at) if account.last_seen_at else '-' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4"><span class="muted-text">节点激活并上报心跳后，账号会显示在这里。</span></td></tr>
+        <tr><td colspan="3"><span class="muted-text">客户端激活并在线后，账号会显示在这里。</span></td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 
-<section class="card">
+<section class="work-surface">
   <div class="section-head">
     <div>
-      <p class="section-kicker">Channel binding</p>
-      <h2>已绑定渠道</h2>
+
+      <h2>已关联账号</h2>
     </div>
   </div>
   <div class="table-scroll">
     <table class="table">
-      <thead><tr><th>渠道</th><th>企微账号</th><th>状态</th><th class="col-action">操作</th></tr></thead>
+      <thead><tr><th>账号名称</th><th>企微账号</th><th>状态</th></tr></thead>
       <tbody>
         {% for channel in bound_channels %}
         <tr>
           <td><a href="/channels/{{ channel.id }}">{{ channel.name }}</a><div class="muted-text">#{{ channel.id }}</div></td>
           <td>{% if channel.provider_account %}{{ channel.provider_account.display_name or channel.provider_account.account_key }}{% else %}-{% endif %}</td>
           <td><span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span></td>
-          <td class="col-action">
-            {% if can_manage_provider_nodes %}
-            <form method="post" action="/provider-nodes/{{ node.id }}/channels/{{ channel.id }}/unbind" data-confirm-mode="confirm" data-confirm-title="解绑渠道" data-confirm-message="解绑后该渠道不能领取新任务或接收入站事件。">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-              <button class="btn btn-small btn-secondary" type="submit">解绑</button>
-            </form>
-            {% else %}-{% endif %}
-          </td>
         </tr>
         {% else %}
-        <tr><td colspan="4"><span class="muted-text">当前节点还没有绑定企业微信渠道。</span></td></tr>
+        <tr><td colspan="3"><span class="muted-text">当前客户端还没有关联企业微信账号。</span></td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -50,7 +50,7 @@ class WorkWechatAdapterTests(unittest.TestCase):
         adapter = get_channel_adapter(channel)
 
         self.assertIsInstance(adapter, WorkWechatAdapter)
-        self.assertEqual(adapter.provider, "workwechat")
+        self.assertEqual(adapter.adapter_type, "workwechat")
 
     def test_send_message_posts_to_workwechat_provider(self):
         channel = Channel(
@@ -107,7 +107,7 @@ class WorkWechatAdapterTests(unittest.TestCase):
             )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["provider"], "workwechat")
+        self.assertEqual(result["adapter_type"], "workwechat")
         self.assertEqual(result["external_message_id"], "ww-msg-1")
 
     def test_raw_hook_text_message_normalizes_to_inbound_event(self):
@@ -128,7 +128,7 @@ class WorkWechatAdapterTests(unittest.TestCase):
 
         normalized = WorkWechatAdapter().normalize_inbound_payload(channel, payload, headers={"X-Debug": "1"})
 
-        self.assertEqual(normalized["provider"], "workwechat")
+        self.assertEqual(normalized["adapter_type"], "workwechat")
         self.assertEqual(normalized["event_key"], "srv-001")
         self.assertEqual(normalized["conversation"]["external_id"], "R:room-001")
         self.assertEqual(normalized["conversation"]["chat_type"], "group")

@@ -2,14 +2,14 @@
 code = "dify"
 display_name = "Dify 对话"
 plugin_type = "ai"
-version = "1.0.0"
+version = "2.0.0"
 author = "abot"
 description = "AI 对话插件"
 default_enabled = true
 
 [capability]
-# workwechat 复用微信系文本/群消息适配，允许企微 Hook 渠道进入插件候选。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "workwechat"]
+# 文本、引用和媒体统一使用平台标准事件与回复，不绑定某一个消息协议。
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 120
@@ -17,13 +17,17 @@ consume_policy = "continue"
 timeout_ms = 45000
 
 [matcher]
-commands = ["ai", "聊天"]
+commands = ["聊天"]
 require_mention = false
 
+[secrets]
+fields = ["api_key"]
+
 [runtime]
-api_base = "http://192.168.2.240/v1"
-api_key = "app-u5EnYq3ill19bm6pWJwGkY4D"
+# Dify 应用成本由租户承担，平台不提供共享服务地址或密钥。
+enabled = true
+api_base = ""
+api_key = ""
 app_mode = "workflow"
-workflow_input_key = "query"
-workflow_session_key = "conversation_id"
 request_timeout_seconds = 40
+max_history_messages = 10

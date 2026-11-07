@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, TaskJob
+from app.models.entities import Channel
 from app.models.saas import (
     ProviderActivationCode,
     ProviderCredential,
@@ -24,6 +24,7 @@ from app.models.saas import (
     Tenant,
     TenantSubscription,
 )
+from app.services.channel_catalog import get_channel_type_definition
 from app.services.saas_auth import credential_matches, hash_credential
 
 
@@ -419,7 +420,7 @@ def reactivate_provider_node(
     )
 
 
-def validate_workwechat_provider_binding(
+def validate_channel_executor_binding(
     db: Session,
     *,
     channel_type: str,
@@ -427,17 +428,18 @@ def validate_workwechat_provider_binding(
     provider_account_id: int | None,
     channel_id: int | None = None,
 ) -> tuple[ProviderNode | None, ProviderNodeAccount | None]:
-    """校验企微渠道绑定的租户、节点、账号、在线状态和唯一占用关系。"""
+    """按渠道能力校验执行器绑定；不需要远端执行器的渠道始终清空绑定字段。"""
 
     normalized_type = (channel_type or "").strip()
     node_id = int(provider_node_id or 0)
     account_id = int(provider_account_id or 0)
-    if normalized_type != "workwechat":
-        if node_id or account_id:
-            raise ProviderNodeError("workwechat_provider_binding_not_allowed")
+    definition = get_channel_type_definition(normalized_type)
+    if not definition.requires_executor_binding:
+        # 浏览器提交内容不构成可信绑定依据。直连、Webhook 和平台轮询渠道无论
+        # 是否夹带节点主键，都必须在服务端归一为空，避免误占企业微信执行账号。
         return None, None
     if not node_id or not account_id:
-        raise ProviderNodeError("workwechat_provider_binding_required")
+        raise ProviderNodeError("channel_executor_binding_required")
 
     tenant_id = require_tenant_id()
     node = get_provider_node(db, node_id)
@@ -474,36 +476,6 @@ def validate_workwechat_provider_binding(
         # 因此即使另一个渠道已停用，也必须先显式解绑再重新分配。
         raise ProviderNodeError("provider_account_already_bound")
     return node, account
-
-
-def unbind_provider_channel(db: Session, node_id: int, channel_id: int) -> Channel:
-    """从节点详情页解绑渠道；存在运行中租约时拒绝，避免任务回报失去绑定依据。"""
-
-    node = get_provider_node(db, node_id)
-    if node is None:
-        raise ProviderNodeError("provider_node_not_found")
-    channel = db.scalar(
-        select(Channel).where(
-            Channel.id == int(channel_id),
-            Channel.provider_node_id == node.id,
-        )
-    )
-    if channel is None:
-        raise ProviderNodeError("provider_channel_not_found")
-    running_job = db.scalar(
-        select(TaskJob.id).where(
-            TaskJob.provider_node_id == node.id,
-            TaskJob.provider_account_id == channel.provider_account_id,
-            TaskJob.status == "running",
-        )
-    )
-    if running_job is not None:
-        raise ProviderNodeError("provider_channel_has_running_job")
-    channel.provider_node_id = None
-    channel.provider_account_id = None
-    db.commit()
-    db.refresh(channel)
-    return channel
 
 
 def provider_poll_allowed(db: Session, tenant_id: int) -> bool:

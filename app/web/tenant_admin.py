@@ -21,12 +21,20 @@ from app.services.tenant_admin import (
     reset_tenant_user_password,
     update_tenant_user,
 )
+from app.services.local_proxy_connector import (
+    LocalProxyConnectorError,
+    create_proxy_connector,
+    disable_proxy_connector,
+    issue_activation_code,
+    list_proxy_connectors,
+)
 from app.web.auth_common import (
     TENANT_CSRF_COOKIE,
     TENANT_LOGOUT_PATH,
     TENANT_PASSWORD_PATH,
     require_tenant_csrf,
 )
+from app.web.tenant_navigation import build_tenant_navigation
 
 
 router = APIRouter(prefix="/tenant", tags=["tenant-admin"])
@@ -55,7 +63,6 @@ def _tenant_context(
     request: Request,
     *,
     page_title: str,
-    active: str,
     notice: str = "",
     notice_tone: str = "",
     **extra,
@@ -63,26 +70,10 @@ def _tenant_context(
     """构造租户治理页面上下文，并保持与业务工作台一致的身份操作。"""
 
     principal = _require_principal(request)
-    primary_nav_items = [
-        {"label": "总览", "href": "/dashboard", "active": False},
-        {"label": "接入", "href": "/channels", "active": False},
-        {"label": "机器人", "href": "/bots", "active": False},
-        {"label": "插件", "href": "/plugins", "active": False},
-        {"label": "消息", "href": "/conversations", "active": False},
-        {"label": "套餐与额度", "href": "/account/billing", "active": False},
-        {"label": "租户设置", "href": "/tenant/users", "active": True},
-    ]
     context: dict[str, object] = {
         "request": request,
         "page_title": page_title,
         "current_user": principal,
-        "primary_nav_items": primary_nav_items,
-        "secondary_nav_items": [],
-        "secondary_nav_active": False,
-        "section_nav_items": [
-            {"label": "员工管理", "href": "/tenant/users", "active": active == "users"},
-            {"label": "订阅信息", "href": "/tenant/subscription", "active": active == "subscription"},
-        ],
         "module_links": {},
         "notice": notice,
         "notice_tone": notice_tone or ("danger" if notice and "成功" not in notice else "info"),
@@ -92,6 +83,7 @@ def _tenant_context(
         "format_time": format_shanghai_time,
         "can_manage_users": has_tenant_role(principal, "tenant_admin"),
     }
+    context.update(build_tenant_navigation(request.url.path))
     context.update(extra)
     return context
 
@@ -130,7 +122,6 @@ async def tenant_users_page(request: Request):
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             users=list_tenant_users(db),
@@ -139,6 +130,80 @@ async def tenant_users_page(request: Request):
         return templates.TemplateResponse(request, "tenant_users.html", context)
     finally:
         db.close()
+
+
+@router.get("/connectors", response_class=HTMLResponse)
+async def tenant_connectors_page(request: Request):
+    """租户管理员管理 Windows 本地代理连接器和一次性激活码。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        context = _tenant_context(
+            request,
+            page_title="本地代理连接器",
+            notice=request.query_params.get("notice", ""),
+            notice_tone=request.query_params.get("tone", ""),
+            connectors=list_proxy_connectors(db),
+            activation_code=request.query_params.get("activation_code", ""),
+        )
+        return templates.TemplateResponse(request, "tenant_connectors.html", context)
+    finally:
+        db.close()
+
+
+@router.post("/connectors")
+async def tenant_connector_create_action(
+    request: Request,
+    name: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """创建连接器并在当前响应中一次性展示激活码。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            connector = create_proxy_connector(db, name=name)
+            code = issue_activation_code(db, connector_id=connector.id)
+        except LocalProxyConnectorError as exc:
+            return _redirect("/tenant/connectors", f"连接器创建失败：{exc}", danger=True)
+        return templates.TemplateResponse(
+            request,
+            "tenant_connectors.html",
+            _tenant_context(
+                request,
+                page_title="本地代理连接器",
+                notice="连接器已创建，请复制本次激活码。离开本页后无法再次查看。",
+                connectors=list_proxy_connectors(db),
+                activation_code=code,
+            ),
+            status_code=201,
+        )
+    finally:
+        db.close()
+
+
+@router.post("/connectors/{connector_id}/disable")
+async def tenant_connector_disable_action(
+    connector_id: int,
+    request: Request,
+    csrf_token: str = Form(""),
+):
+    """停用连接器并吊销设备密钥，断开后的登录会话由统一回收逻辑结束。"""
+
+    _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        try:
+            disable_proxy_connector(db, connector_id=connector_id)
+        except LocalProxyConnectorError as exc:
+            return _redirect("/tenant/connectors", f"连接器停用失败：{exc}", danger=True)
+    finally:
+        db.close()
+    return _redirect("/tenant/connectors", "连接器已停用")
 
 
 @router.post("/users", response_class=HTMLResponse)
@@ -169,7 +234,6 @@ async def tenant_user_create_action(
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice="员工创建成功。请立即安全交付初始密码，离开本页后无法再次查看。",
             users=list_tenant_users(db),
             initial_password=created.initial_password,
@@ -230,7 +294,6 @@ async def tenant_user_reset_password_action(
         context = _tenant_context(
             request,
             page_title="员工管理",
-            active="users",
             notice="员工密码已重置。请立即安全交付，离开本页后无法再次查看。",
             users=list_tenant_users(db),
             initial_password=initial_password,
@@ -253,7 +316,6 @@ async def tenant_subscription_page(request: Request):
         context = _tenant_context(
             request,
             page_title="订阅信息",
-            active="subscription",
             tenant=tenant,
         )
         return templates.TemplateResponse(request, "tenant_subscription.html", context)

@@ -1,0 +1,23 @@
+{# 趋势只绘制一条数据曲线与三处时间刻度，避免 24 个小时柱在窄卡片中折成两行。 #}
+{% macro trend_chart(chart, label, tone='primary') %}
+<div class="dashboard-chart-card">
+  <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="{{ label }}，峰值 {{ chart.max_value }}">
+    <line class="analytics-chart-grid-line" x1="0" y1="50" x2="100" y2="50"></line>
+    <line class="analytics-chart-baseline" x1="0" y1="100" x2="100" y2="100"></line>
+    <polyline points="{{ chart.points }}" class="chart-line chart-line-{{ tone }}"></polyline>
+  </svg>
+  {% set items = chart['items'] %}
+  {% if items %}
+  <div class="dashboard-chart-axis" aria-label="时间范围">
+    <span>{{ items[0].label }}</span><span>{{ items[(items|length) // 2].label }}</span><span>{{ items[-1].label }}</span>
+  </div>
+  {# 收起逐小时数值以控制首屏密度，但保留全部原始读数；键盘与触屏均可按需展开。 #}
+  <details class="dashboard-chart-detail">
+    <summary>查看每小时数据</summary>
+    <dl class="dashboard-chart-values" aria-label="{{ label }}明细">
+      {% for item in items %}<div><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>{% endfor %}
+    </dl>
+  </details>
+  {% endif %}
+</div>
+{% endmacro %}

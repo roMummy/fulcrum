@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from base64 import b64decode
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,6 +17,7 @@ from app.services.chatroom_registry import format_chatroom_management_status, ma
 from app.services.plugin_runtime.registry import get_plugin_schema
 from app.services.plugin_schemas import deep_merge_config, dump_config_json, parse_config_json
 from app.services.wechat_ipad.client import WechatIpadApiClient
+from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 from app.services.wechat_ipad.chatrooms import (
     materialize_group_plugin_scopes_for_chatroom,
     reset_group_plugin_scope_to_inherited,
@@ -60,6 +60,22 @@ def _summarize_wechat_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _summarize_provider_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """把协议回包压缩为运行诊断所需字段，禁止把大体积业务载荷写入渠道表。"""
+
+    # 已经压缩过的摘要会在后续状态写入中被重复使用；保持原字段清单，避免每次持久化继续丢失信息。
+    if isinstance(payload.get("top_level_keys"), list) and isinstance(payload.get("data_keys"), list):
+        return {
+            "top_level_keys": list(payload.get("top_level_keys") or [])[:20],
+            "data_keys": list(payload.get("data_keys") or [])[:20],
+            "message": str(payload.get("message") or ""),
+            "code": payload.get("code"),
+            "http_status": payload.get("http_status"),
+            "success": (
+                payload.get("success")
+                if isinstance(payload.get("success"), bool)
+                else WechatIpadApiClient.is_success(payload)
+            ),
+        }
     data = WechatIpadApiClient.extract_data(payload)
     return {
         "top_level_keys": sorted(list(payload.keys()))[:20],
@@ -67,7 +83,21 @@ def _summarize_provider_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "message": WechatIpadApiClient.extract_message(payload) or "",
         "code": WechatIpadApiClient.extract_code(payload),
         "http_status": payload.get("http_status"),
+        "success": WechatIpadApiClient.is_success(payload),
     }
+
+
+def _compact_wechat_ipad_runtime_info(runtime_info: dict[str, Any]) -> dict[str, Any]:
+    """清除二维码图片和原始取码回包，只保留可长期写入 MariaDB TEXT 的短运行状态。"""
+
+    compacted = dict(runtime_info)
+    # 二维码图片由 874 返回的短 URL 展示，Base64 与媒体类型不属于渠道长期运行状态。
+    compacted.pop("qrcode_image_base64", None)
+    compacted.pop("qrcode_image_media_type", None)
+    login_init_response = compacted.get("last_login_init_response")
+    if isinstance(login_init_response, dict):
+        compacted["last_login_init_response"] = _summarize_provider_payload(login_init_response)
+    return compacted
 
 
 def build_wechat_ipad_overview(
@@ -280,7 +310,10 @@ def build_wechat_ipad_overview(
         "qrcode_visible": login_state != "online" and qrcode_status != "success",
         "qrcode_uuid": runtime_info.get("login_qr_uuid"),
         "qrcode_message": runtime_info.get("login_qr_message"),
-        "login_init_endpoint": str(runtime_info.get("last_login_init_endpoint") or _resolve_login_init_endpoint(adapter_config, selected_login_profile)),
+        "login_init_endpoint": str(
+            runtime_info.get("last_login_init_endpoint")
+            or _login_init_endpoint_for_profile(selected_login_profile)
+        ),
         "qrcode_expires_at": expiry["expires_at"],
         "qrcode_expires_at_display": expiry["expires_at_display"],
         "qrcode_remaining_seconds": expiry["remaining_seconds"],
@@ -325,28 +358,21 @@ def build_wechat_ipad_overview(
         "sync_diagnostics": sync_diagnostics,
         "recent_message_flow": recent_message_flow,
         "entrypoints": {
-            "login_init": f"/channels/{channel.id}/wechat-ipad/login-init",
-            "qrcode_refresh": f"/channels/{channel.id}/wechat-ipad/qrcode-refresh",
-            "status_sync": f"/channels/{channel.id}/wechat-ipad/status-sync",
-            "reconnect": f"/channels/{channel.id}/wechat-ipad/reconnect",
             "message_pull": f"/channels/{channel.id}/wechat-ipad/pull-messages",
             "inbound_receive": f"/webhooks/{channel.id}/inbound",
             "outbound_send": f"/channels/{channel.id}/outbound",
         },
         "hooks": {
-            "login_init_endpoint": str(adapter_config.get("login_init_endpoint") or WechatIpadApiClient.DEFAULT_LOGIN_INIT_ENDPOINT),
-            "login_init_car_endpoint": str(
-                adapter_config.get("login_init_car_endpoint")
-                or adapter_config.get("car_login_init_endpoint")
-                or WechatIpadApiClient.DEFAULT_LOGIN_INIT_CAR_ENDPOINT
-            ),
-            "check_qr_endpoint": str(adapter_config.get("check_qr_endpoint") or WechatIpadApiClient.DEFAULT_CHECK_QR_ENDPOINT),
-            "heartbeat_endpoint": str(adapter_config.get("heartbeat_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT),
-            "heartbeat_long_endpoint": str(adapter_config.get("heartbeat_long_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_LONG_ENDPOINT),
-            "user_profile_endpoint": str(adapter_config.get("user_profile_endpoint") or WechatIpadApiClient.DEFAULT_USER_PROFILE_ENDPOINT),
-            "awaken_endpoint": str(adapter_config.get("awaken_endpoint") or WechatIpadApiClient.DEFAULT_AWAKEN_ENDPOINT),
-            "twice_auto_auth_endpoint": str(adapter_config.get("twice_auto_auth_endpoint") or WechatIpadApiClient.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT),
-            "message_sync_endpoint": str(adapter_config.get("message_sync_endpoint") or WechatIpadApiClient.DEFAULT_MESSAGE_SYNC_ENDPOINT),
+            # 运行概览只展示固定 874 契约，旧配置中的端点键不会再影响真实调用。
+            "login_init_endpoint": IPAD_874_CONTRACT.endpoints.login_get_qr,
+            "login_init_car_endpoint": IPAD_874_CONTRACT.endpoints.login_get_qr_car,
+            "check_qr_endpoint": IPAD_874_CONTRACT.endpoints.login_check_qr,
+            "heartbeat_endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat,
+            "heartbeat_long_endpoint": IPAD_874_CONTRACT.endpoints.login_heartbeat_long,
+            "user_profile_endpoint": IPAD_874_CONTRACT.endpoints.user_get_profile,
+            "awaken_endpoint": IPAD_874_CONTRACT.endpoints.login_awaken,
+            "twice_auto_auth_endpoint": IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
+            "message_sync_endpoint": IPAD_874_CONTRACT.endpoints.message_sync,
         },
         "runtime_info": runtime_info,
         "adapter_config": adapter_config,
@@ -439,26 +465,26 @@ def _build_wechat_ipad_action_console(channel: Channel, runtime_info: dict[str, 
             {
                 "key": "download_voice",
                 "label": "下载语音附件",
-                "description": "按消息 ID、语音地址和时长下载语音。",
+                "description": "按消息 ID、发送方、缓冲区标识和语音长度下载语音。",
                 "sample_payload": {
                     "msg_id": "1234567890",
-                    "voice_url": "https://voice.example/path",
+                    "from_user_name": "room-001@chatroom",
+                    "bufid": "99887766",
                     "length": 3200,
                 },
             },
             {
                 "key": "download_video",
                 "label": "下载视频附件",
-                "description": "按消息 ID 触发视频下载。",
+                "description": "按消息 ID、发送方和分片范围下载视频。",
                 "sample_payload": {
                     "msg_id": "1234567890",
+                    "to_wxid": "wxid_sender",
+                    "data_len": 65536,
+                    "start_pos": 0,
+                    "section_length": 32768,
+                    "compress_type": 0,
                 },
-            },
-            {
-                "key": "check_database",
-                "label": "检查数据库状态",
-                "description": "不依赖 wxid，用于快速判断 provider 的数据库检查接口是否可用。",
-                "sample_payload": {},
             },
         ],
         "last_action_name": runtime_info.get("last_action_name"),
@@ -494,7 +520,7 @@ def sync_wechat_ipad_contacts(
     list_result = _safe_call(
         api_client.get_contact_list,
         stage="contact_sync",
-        trace_endpoint=WechatIpadApiClient.DEFAULT_CONTACT_LIST_ENDPOINT,
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.friend_get_list,
         channel=channel,
         wxid=wxid,
         current_wxcontact_seq=0,
@@ -526,7 +552,7 @@ def sync_wechat_ipad_contacts(
         detail_result = _safe_call(
             api_client.get_contact_detail,
             stage="contact_detail",
-            trace_endpoint=WechatIpadApiClient.DEFAULT_CONTACT_DETAIL_ENDPOINT,
+            trace_endpoint=IPAD_874_CONTRACT.endpoints.friend_get_detail,
             channel=channel,
             wxid=wxid,
             to_wxids=wxids_for_detail,
@@ -2459,14 +2485,12 @@ def _apply_login_profile_selection(
     return profile_key, device_name, device_id
 
 
-def _resolve_login_init_endpoint(adapter_config: dict[str, Any], profile_key: str) -> str:
+def _login_init_endpoint_for_profile(profile_key: str) -> str:
+    """按已确认的登录终端选择固定 874 取码接口，不读取任何旧端点覆盖。"""
+
     if profile_key == "car":
-        return str(
-            adapter_config.get("login_init_car_endpoint")
-            or adapter_config.get("car_login_init_endpoint")
-            or WechatIpadApiClient.DEFAULT_LOGIN_INIT_CAR_ENDPOINT
-        )
-    return str(adapter_config.get("login_init_endpoint") or WechatIpadApiClient.DEFAULT_LOGIN_INIT_ENDPOINT)
+        return IPAD_874_CONTRACT.endpoints.login_get_qr_car
+    return IPAD_874_CONTRACT.endpoints.login_get_qr
 
 
 def start_wechat_ipad_login(
@@ -2474,8 +2498,11 @@ def start_wechat_ipad_login(
     channel: Channel,
     *,
     login_profile: str | None = None,
+    proxy: dict[str, str] | None = None,
     client: WechatIpadApiClient | None = None,
 ) -> dict[str, Any]:
+    """使用调用方已经解析好的单次登录代理获取二维码，不读取渠道长期代理配置。"""
+
     api_client = client or WechatIpadApiClient()
     adapter_config = _parse_json(channel.adapter_config_json)
     runtime_info = _parse_json(getattr(channel, "runtime_info_json", None))
@@ -2485,7 +2512,8 @@ def start_wechat_ipad_login(
         runtime_info,
         requested_profile=login_profile,
     )
-    login_init_endpoint = _resolve_login_init_endpoint(adapter_config, login_profile_key)
+    runtime_info = _compact_wechat_ipad_runtime_info(runtime_info)
+    login_init_endpoint = _login_init_endpoint_for_profile(login_profile_key)
     channel.adapter_config_json = json.dumps(adapter_config, ensure_ascii=False, sort_keys=True)
     channel.runtime_info_json = json.dumps(runtime_info, ensure_ascii=False, sort_keys=True)
     db.commit()
@@ -2520,8 +2548,8 @@ def start_wechat_ipad_login(
         channel=channel,
         device_name=device_name,
         device_id=device_id,
-        proxy=_proxy_from_config(adapter_config),
-        endpoint=login_init_endpoint,
+        proxy=proxy,
+        login_profile=login_profile_key,
     )
     if not response["ok"]:
         logger.warning(
@@ -2547,7 +2575,7 @@ def start_wechat_ipad_login(
             error_context=response.get("error_context"),
             extra={
                 "reconnect_status": "idle",
-                "last_login_init_response": response.get("payload"),
+                "last_login_init_response": _summarize_provider_payload(response.get("payload") or {}),
                 "last_login_init_endpoint": login_init_endpoint,
                 "selected_login_profile": login_profile_key,
                 "last_login_profile": login_profile_key,
@@ -2556,17 +2584,31 @@ def start_wechat_ipad_login(
 
     payload = response["payload"]
     qr_fields = WechatIpadApiClient.extract_qr_fields(payload)
+    provider_summary = _summarize_provider_payload(payload)
+    if not qr_fields["qr_url"]:
+        return _persist_runtime(
+            db,
+            channel,
+            login_state="login_init_failed",
+            qrcode_status="failed",
+            summary="协议服务未返回可展示的二维码链接。",
+            error="qrcode_url_missing",
+            extra={
+                "last_login_init_response": provider_summary,
+                "last_login_init_endpoint": login_init_endpoint,
+                "selected_login_profile": login_profile_key,
+                "last_login_profile": login_profile_key,
+            },
+        )
     previous_refresh_count = int(_parse_json(getattr(channel, "runtime_info_json", None)).get("qrcode_refresh_count") or 0)
     runtime_info = {
         "login_qr_uuid": qr_fields["uuid"],
         "qrcode_url": qr_fields["qr_url"],
-        "qrcode_image_base64": qr_fields["qr_base64"],
-        "qrcode_image_media_type": qr_fields["qr_image_media_type"],
         "qrcode_expires_at": _normalize_qrcode_expires_at(qr_fields["expires_at"]),
         "qrcode_refresh_count": previous_refresh_count + 1,
         "login_qr_message": response["message"] or "waiting_scan",
         "last_qrcode_at": _utcnow_iso(),
-        "last_login_init_response": payload,
+        "last_login_init_response": provider_summary,
         "last_login_init_endpoint": login_init_endpoint,
         "last_login_init_request": {"DeviceName": device_name, "DeviceID": device_id},
         "selected_login_profile": login_profile_key,
@@ -2582,7 +2624,6 @@ def start_wechat_ipad_login(
             "login_init_endpoint": login_init_endpoint,
             "qr_uuid": qr_fields["uuid"] or "",
             "has_qr_url": bool(qr_fields["qr_url"]),
-            "has_qr_base64": bool(qr_fields["qr_base64"]),
             "expires_at": str(runtime_info.get("qrcode_expires_at") or ""),
             "provider_message": response.get("message") or "",
         },
@@ -2591,8 +2632,8 @@ def start_wechat_ipad_login(
         db,
         channel,
         login_state="qrcode_ready",
-        qrcode_status="waiting_scan" if qr_fields["qr_url"] or qr_fields["qr_base64"] else "unknown",
-        summary="已按 abot GetQR 获取登录二维码。",
+        qrcode_status="waiting_scan",
+        summary="已获取登录二维码。",
         extra=runtime_info,
         error=None,
     )
@@ -2603,9 +2644,18 @@ def refresh_wechat_ipad_qrcode(
     channel: Channel,
     *,
     login_profile: str | None = None,
+    proxy: dict[str, str] | None = None,
     client: WechatIpadApiClient | None = None,
 ) -> dict[str, Any]:
-    overview = start_wechat_ipad_login(db, channel, login_profile=login_profile, client=client)
+    """刷新二维码时继续使用当前登录会话已经锁定的代理。"""
+
+    overview = start_wechat_ipad_login(
+        db,
+        channel,
+        login_profile=login_profile,
+        proxy=proxy,
+        client=client,
+    )
     return _persist_runtime(
         db,
         channel,
@@ -2642,10 +2692,9 @@ def logout_wechat_ipad(
         logout_result = _safe_call(
             api_client.log_out,
             stage="logout",
-            trace_endpoint=str(adapter_config.get("logout_endpoint") or WechatIpadApiClient.DEFAULT_LOGOUT_ENDPOINT),
+            trace_endpoint=IPAD_874_CONTRACT.endpoints.login_logout,
             channel=channel,
             wxid=wxid,
-            endpoint=str(adapter_config.get("logout_endpoint") or WechatIpadApiClient.DEFAULT_LOGOUT_ENDPOINT),
         )
     extra = {
         "selected_login_profile": selected_profile,
@@ -2658,8 +2707,6 @@ def logout_wechat_ipad(
         "active_bind_mobile": "",
         "login_qr_uuid": "",
         "qrcode_url": "",
-        "qrcode_image_base64": "",
-        "qrcode_image_media_type": "",
         "qrcode_expires_at": "",
         "heartbeat_status": "unknown",
         "heartbeat_long_status": "unknown",
@@ -2727,10 +2774,9 @@ def refresh_wechat_ipad_status(
         qr_result = _safe_call(
             api_client.check_qr,
             stage="check_qr",
-            trace_endpoint=str(adapter_config.get("check_qr_endpoint") or WechatIpadApiClient.DEFAULT_CHECK_QR_ENDPOINT),
+            trace_endpoint=IPAD_874_CONTRACT.endpoints.login_check_qr,
             channel=channel,
             uuid=qr_uuid,
-            endpoint=str(adapter_config.get("check_qr_endpoint") or WechatIpadApiClient.DEFAULT_CHECK_QR_ENDPOINT),
         )
         runtime_info["last_check_qr_at"] = probe_at
         runtime_info["last_check_qr_response"] = qr_result.get("payload")
@@ -2738,9 +2784,6 @@ def refresh_wechat_ipad_status(
         qr_fields = WechatIpadApiClient.extract_qr_fields(qr_result.get("payload") or {})
         if qr_fields["qr_url"]:
             runtime_info["qrcode_url"] = qr_fields["qr_url"]
-        if qr_fields["qr_base64"]:
-            runtime_info["qrcode_image_base64"] = qr_fields["qr_base64"]
-            runtime_info["qrcode_image_media_type"] = qr_fields["qr_image_media_type"] or runtime_info.get("qrcode_image_media_type")
         if qr_fields["expires_at"] not in (None, ""):
             runtime_info["qrcode_expires_at"] = _normalize_qrcode_expires_at(qr_fields["expires_at"])
         if _qr_login_succeeded(qr_result):
@@ -2785,28 +2828,25 @@ def refresh_wechat_ipad_status(
     heartbeat = _safe_call(
         api_client.heartbeat,
         stage="heartbeat",
-        trace_endpoint=str(adapter_config.get("heartbeat_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_heartbeat,
         channel=channel,
         wxid=wxid,
-        endpoint=str(adapter_config.get("heartbeat_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT),
     )
     heartbeat_long = _safe_call(
         api_client.heartbeat,
         stage="heartbeat_long",
-        trace_endpoint=str(adapter_config.get("heartbeat_long_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_LONG_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_heartbeat_long,
         channel=channel,
         wxid=wxid,
         long=True,
-        endpoint=str(adapter_config.get("heartbeat_long_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_LONG_ENDPOINT),
     )
     user_profile = _safe_call(
         api_client.get_profile,
         stage="user_profile",
-        trace_endpoint=str(adapter_config.get("user_profile_endpoint") or WechatIpadApiClient.DEFAULT_USER_PROFILE_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.user_get_profile,
         channel=channel,
         wxid=wxid,
         target_wxid=wxid,
-        endpoint=str(adapter_config.get("user_profile_endpoint") or WechatIpadApiClient.DEFAULT_USER_PROFILE_ENDPOINT),
     )
 
     login_ok = heartbeat["ok"]
@@ -2932,10 +2972,9 @@ def heartbeat_wechat_ipad_channel(
         heartbeat_result = _safe_call(
             api_client.heartbeat,
             stage="heartbeat",
-            trace_endpoint=str(adapter_config.get("heartbeat_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT),
+            trace_endpoint=IPAD_874_CONTRACT.endpoints.login_heartbeat,
             channel=channel,
             wxid=wxid,
-            endpoint=str(adapter_config.get("heartbeat_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_ENDPOINT),
         )
         runtime_info["last_heartbeat_response"] = heartbeat_result["payload"]
         runtime_info["heartbeat_status"] = "ok" if heartbeat_result["ok"] else "failed"
@@ -2944,11 +2983,10 @@ def heartbeat_wechat_ipad_channel(
         heartbeat_long_result = _safe_call(
             api_client.heartbeat,
             stage="heartbeat_long",
-            trace_endpoint=str(adapter_config.get("heartbeat_long_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_LONG_ENDPOINT),
+            trace_endpoint=IPAD_874_CONTRACT.endpoints.login_heartbeat_long,
             channel=channel,
             wxid=wxid,
             long=True,
-            endpoint=str(adapter_config.get("heartbeat_long_endpoint") or WechatIpadApiClient.DEFAULT_HEARTBEAT_LONG_ENDPOINT),
         )
         runtime_info["last_heartbeat_long_response"] = heartbeat_long_result["payload"]
         runtime_info["heartbeat_long_status"] = "ok" if heartbeat_long_result["ok"] else "failed"
@@ -3073,10 +3111,9 @@ def _maybe_run_twice_auto_auth_after_heartbeat_failure(
     result = _safe_call(
         api_client.twice_auto_auth,
         stage="twice_auto_auth",
-        trace_endpoint=str(adapter_config.get("twice_auto_auth_endpoint") or WechatIpadApiClient.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
         channel=channel,
         wxid=wxid,
-        endpoint=str(adapter_config.get("twice_auto_auth_endpoint") or WechatIpadApiClient.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT),
     )
     runtime_info["last_twice_auto_auth_at"] = _utcnow_iso()
     runtime_info["last_twice_auto_auth_response"] = result.get("payload")
@@ -3143,10 +3180,9 @@ def poll_wechat_ipad_login_status(
     qr_result = _safe_call(
         api_client.check_qr,
         stage="check_qr",
-        trace_endpoint=str(adapter_config.get("check_qr_endpoint") or WechatIpadApiClient.DEFAULT_CHECK_QR_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_check_qr,
         channel=channel,
         uuid=qr_uuid,
-        endpoint=str(adapter_config.get("check_qr_endpoint") or WechatIpadApiClient.DEFAULT_CHECK_QR_ENDPOINT),
     )
     runtime_info["last_check_qr_at"] = probe_at
     runtime_info["last_check_qr_response"] = qr_result.get("payload")
@@ -3154,9 +3190,6 @@ def poll_wechat_ipad_login_status(
     qr_fields = WechatIpadApiClient.extract_qr_fields(qr_result.get("payload") or {})
     if qr_fields["qr_url"]:
         runtime_info["qrcode_url"] = qr_fields["qr_url"]
-    if qr_fields["qr_base64"]:
-        runtime_info["qrcode_image_base64"] = qr_fields["qr_base64"]
-        runtime_info["qrcode_image_media_type"] = qr_fields["qr_image_media_type"] or runtime_info.get("qrcode_image_media_type")
     if qr_fields["expires_at"] not in (None, ""):
         runtime_info["qrcode_expires_at"] = _normalize_qrcode_expires_at(qr_fields["expires_at"])
 
@@ -3247,10 +3280,9 @@ def reconnect_wechat_ipad(
     awaken = _safe_call(
         api_client.awaken_login,
         stage="awaken",
-        trace_endpoint=str(adapter_config.get("awaken_endpoint") or WechatIpadApiClient.DEFAULT_AWAKEN_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_awaken,
         channel=channel,
         wxid=wxid,
-        endpoint=str(adapter_config.get("awaken_endpoint") or WechatIpadApiClient.DEFAULT_AWAKEN_ENDPOINT),
     )
     extra = {
         "last_reconnect_response": awaken["payload"],
@@ -3280,10 +3312,9 @@ def reconnect_wechat_ipad(
     twice_auth = _safe_call(
         api_client.twice_auto_auth,
         stage="twice_auto_auth",
-        trace_endpoint=str(adapter_config.get("twice_auto_auth_endpoint") or WechatIpadApiClient.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.login_twice_auto_auth,
         channel=channel,
         wxid=wxid,
-        endpoint=str(adapter_config.get("twice_auto_auth_endpoint") or WechatIpadApiClient.DEFAULT_TWICE_AUTO_AUTH_ENDPOINT),
     )
     extra["last_twice_auto_auth_response"] = twice_auth["payload"]
     extra["reconnect_status"] = "auto_auth_ok" if twice_auth["ok"] else extra.get("reconnect_status", "awakened")
@@ -3325,12 +3356,11 @@ def pull_wechat_ipad_messages(
     response = _safe_call(
         api_client.sync_message,
         stage="message_sync",
-        trace_endpoint=str(adapter_config.get("message_sync_endpoint") or WechatIpadApiClient.DEFAULT_MESSAGE_SYNC_ENDPOINT),
+        trace_endpoint=IPAD_874_CONTRACT.endpoints.message_sync,
         channel=channel,
         wxid=wxid,
         scene=int(adapter_config.get("message_sync_scene") or 0),
         synckey=str(runtime_info.get("sync_key") or ""),
-        endpoint=str(adapter_config.get("message_sync_endpoint") or WechatIpadApiClient.DEFAULT_MESSAGE_SYNC_ENDPOINT),
     )
     if not response["ok"]:
         return _persist_runtime(
@@ -3467,10 +3497,9 @@ def sync_wechat_ipad_chatrooms(
             extra={"last_chatroom_sync_summary": "群资料同步未执行：没有可同步的群样本。"},
         )
 
-    info_endpoint = str(adapter_config.get("chatroom_info_endpoint") or WechatIpadApiClient.DEFAULT_CHATROOM_INFO_ENDPOINT)
-    member_endpoint = str(
-        adapter_config.get("chatroom_member_detail_endpoint") or WechatIpadApiClient.DEFAULT_CHATROOM_MEMBER_DETAIL_ENDPOINT
-    )
+    # 群资料同步固定使用 874 群接口，租户配置不能再覆盖到旧协议路由。
+    info_endpoint = IPAD_874_CONTRACT.endpoints.group_get_info
+    member_endpoint = IPAD_874_CONTRACT.endpoints.group_get_member_detail
     synced_profiles = 0
     synced_members = 0
     failed_targets: list[dict[str, str]] = []
@@ -3488,7 +3517,6 @@ def sync_wechat_ipad_chatrooms(
             channel=channel,
             wxid=wxid,
             chatroom_id=chatroom_id,
-            endpoint=info_endpoint,
         )
         if not info_result["ok"]:
             logger.warning(
@@ -3505,7 +3533,6 @@ def sync_wechat_ipad_chatrooms(
             channel=channel,
             wxid=wxid,
             chatroom_id=chatroom_id,
-            endpoint=member_endpoint,
         )
         upsert_wechat_ipad_chatroom_profile(
             db,
@@ -3581,13 +3608,6 @@ def run_wechat_ipad_action(
     action_key = str(action or "").strip().lower()
 
     action_specs: dict[str, dict[str, Any]] = {
-        "check_database": {
-            "func": api_client.check_database,
-            "kwargs": {},
-            "stage": "tool_check_database",
-            "endpoint": WechatIpadApiClient.DEFAULT_CHECK_DATABASE_ENDPOINT,
-            "requires_wxid": False,
-        },
         "get_contact_list": {
             "func": api_client.get_contact_list,
             "kwargs": {
@@ -3596,7 +3616,7 @@ def run_wechat_ipad_action(
                 "current_chatroom_contact_seq": int(payload.get("current_chatroom_contact_seq") or 0),
             },
             "stage": "contact_list",
-            "endpoint": WechatIpadApiClient.DEFAULT_CONTACT_LIST_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.friend_get_list,
             "requires_wxid": True,
         },
         "get_contact_detail": {
@@ -3607,7 +3627,7 @@ def run_wechat_ipad_action(
                 "chatroom_id": str(payload.get("chatroom_id") or ""),
             },
             "stage": "contact_detail",
-            "endpoint": WechatIpadApiClient.DEFAULT_CONTACT_DETAIL_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.friend_get_detail,
             "requires_wxid": True,
         },
         "get_profile": {
@@ -3617,7 +3637,7 @@ def run_wechat_ipad_action(
                 "target_wxid": str(payload.get("target_wxid") or payload.get("wxid") or wxid),
             },
             "stage": "user_profile",
-            "endpoint": WechatIpadApiClient.DEFAULT_USER_PROFILE_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.user_get_profile,
             "requires_wxid": True,
         },
         "get_my_qrcode": {
@@ -3627,7 +3647,7 @@ def run_wechat_ipad_action(
                 "style": int(payload.get("style") or 0),
             },
             "stage": "my_qrcode",
-            "endpoint": WechatIpadApiClient.DEFAULT_MY_QRCODE_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.user_get_qrcode,
             "requires_wxid": True,
         },
         "get_chatroom_qrcode": {
@@ -3637,7 +3657,7 @@ def run_wechat_ipad_action(
                 "chatroom_id": str(payload.get("chatroom_id") or ""),
             },
             "stage": "chatroom_qrcode",
-            "endpoint": WechatIpadApiClient.DEFAULT_CHATROOM_QRCODE_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.group_get_qrcode,
             "requires_wxid": True,
         },
         "get_chatroom_announce": {
@@ -3647,7 +3667,7 @@ def run_wechat_ipad_action(
                 "chatroom_id": str(payload.get("chatroom_id") or ""),
             },
             "stage": "chatroom_announce",
-            "endpoint": WechatIpadApiClient.DEFAULT_CHATROOM_INFO_DETAIL_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.group_get_info_detail,
             "requires_wxid": True,
         },
         "invite_chatroom_member": {
@@ -3658,7 +3678,7 @@ def run_wechat_ipad_action(
                 "to_wxids": payload.get("to_wxids") or payload.get("wxids") or [],
             },
             "stage": "chatroom_invite",
-            "endpoint": WechatIpadApiClient.DEFAULT_CHATROOM_INVITE_MEMBER_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.group_invite_member,
             "requires_wxid": True,
         },
         "accept_friend": {
@@ -3670,7 +3690,7 @@ def run_wechat_ipad_action(
                 "v2": str(payload.get("v2") or ""),
             },
             "stage": "accept_friend",
-            "endpoint": WechatIpadApiClient.DEFAULT_ACCEPT_FRIEND_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.friend_pass_verify,
             "requires_wxid": True,
         },
         "download_image": {
@@ -3681,7 +3701,7 @@ def run_wechat_ipad_action(
                 "file_no": str(payload.get("file_no") or payload.get("cdnmidimgurl") or ""),
             },
             "stage": "download_image",
-            "endpoint": WechatIpadApiClient.DEFAULT_TOOL_DOWNLOAD_IMAGE_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.tools_download_image,
             "requires_wxid": True,
         },
         "download_voice": {
@@ -3689,11 +3709,12 @@ def run_wechat_ipad_action(
             "kwargs": {
                 "wxid": wxid,
                 "msg_id": str(payload.get("msg_id") or ""),
-                "voice_url": str(payload.get("voice_url") or payload.get("voiceurl") or ""),
+                "from_user_name": str(payload.get("from_user_name") or ""),
+                "bufid": str(payload.get("bufid") or ""),
                 "length": int(payload.get("length") or 0),
             },
             "stage": "download_voice",
-            "endpoint": WechatIpadApiClient.DEFAULT_TOOL_DOWNLOAD_VOICE_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.tools_download_voice,
             "requires_wxid": True,
         },
         "download_video": {
@@ -3701,9 +3722,14 @@ def run_wechat_ipad_action(
             "kwargs": {
                 "wxid": wxid,
                 "msg_id": str(payload.get("msg_id") or ""),
+                "to_wxid": str(payload.get("to_wxid") or ""),
+                "data_len": int(payload.get("data_len") or 0),
+                "start_pos": int(payload.get("start_pos") or 0),
+                "section_length": int(payload.get("section_length") or payload.get("data_len") or 0),
+                "compress_type": int(payload.get("compress_type") or 0),
             },
             "stage": "download_video",
-            "endpoint": WechatIpadApiClient.DEFAULT_TOOL_DOWNLOAD_VIDEO_ENDPOINT,
+            "endpoint": IPAD_874_CONTRACT.endpoints.tools_download_video,
             "requires_wxid": True,
         },
     }
@@ -3905,6 +3931,7 @@ def _persist_runtime(
         runtime_info.pop("last_error_context", None)
     if extra:
         runtime_info.update(extra)
+    runtime_info = _compact_wechat_ipad_runtime_info(runtime_info)
     channel.runtime_info_json = json.dumps(runtime_info, ensure_ascii=False, sort_keys=True)
     if login_state is not None:
         channel.login_state = login_state
@@ -4002,8 +4029,8 @@ def _detect_wechat_ipad_action_missing_field(action: str, kwargs: dict[str, Any]
         "invite_chatroom_member": ("chatroom_id", "to_wxids"),
         "accept_friend": ("scene", "v1", "v2"),
         "download_image": ("file_aes_key", "file_no"),
-        "download_voice": ("msg_id", "voice_url", "length"),
-        "download_video": ("msg_id",),
+        "download_voice": ("msg_id", "from_user_name", "bufid", "length"),
+        "download_video": ("msg_id", "to_wxid", "data_len", "section_length"),
     }
     for field in required_fields.get(action, ()):
         value = kwargs.get(field)
@@ -5450,7 +5477,17 @@ def _build_recent_call_view(
     code = WechatIpadApiClient.extract_code(payload)
     http_status = payload.get("http_status")
     has_payload = bool(payload)
-    is_success = has_payload and code in (None, "", 0, "0", 200, "200") and http_status in (None, "", 200, "200")
+    # 874 的成功取码回包是 Success=true、Code=1；结构化成功标记优先于不同接口各自的返回码约定。
+    reported_success = payload.get("success")
+    is_success = (
+        has_payload
+        and (
+            bool(reported_success)
+            if isinstance(reported_success, bool)
+            else WechatIpadApiClient.is_success(payload)
+        )
+        and http_status in (None, "", 200, "200")
+    )
     has_structured_summary = message != "-"
     if is_success and has_structured_summary:
         state = "healthy"
@@ -6537,27 +6574,13 @@ def _resolve_wxid(channel: Channel, runtime_info: dict[str, Any], adapter_config
 
 
 def resolve_wechat_ipad_qrcode_image(channel: Channel) -> dict[str, Any]:
+    """返回当前二维码短链接，图片内容不再从渠道运行状态中解码。"""
+
     runtime_info = _parse_json(getattr(channel, "runtime_info_json", None))
     resolved = _resolve_qrcode_image(runtime_info)
     if not resolved:
         return {"available": False}
-    if resolved["kind"] == "url":
-        return {"available": True, "kind": "url", "url": resolved["url"]}
-    try:
-        content = b64decode(resolved["base64"], validate=True)
-    except Exception:
-        return {"available": False}
-    return {
-        "available": True,
-        "kind": "base64",
-        "content": content,
-        "media_type": resolved["media_type"] or "image/png",
-    }
-
-
-def _proxy_from_config(adapter_config: dict[str, Any]) -> dict[str, Any] | None:
-    proxy = adapter_config.get("proxy")
-    return proxy if isinstance(proxy, dict) else None
+    return {"available": True, "kind": "url", "url": resolved["url"]}
 
 
 def _extract_contact_items(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -6792,17 +6815,9 @@ def _resolve_qrcode_link_url(runtime_info: dict[str, Any]) -> str | None:
 
 
 def _resolve_qrcode_image(runtime_info: dict[str, Any]) -> dict[str, str] | None:
-    direct_base64 = str(runtime_info.get("qrcode_image_base64") or "").strip()
-    direct_media_type = str(runtime_info.get("qrcode_image_media_type") or "").strip() or "image/png"
-    if WechatIpadApiClient.is_base64_payload(direct_base64):
-        return {"kind": "base64", "base64": direct_base64, "media_type": direct_media_type}
+    """只解析 874 当前提供的二维码 URL，不接受历史 Base64 运行字段。"""
+
     normalized = WechatIpadApiClient.normalize_qr_image_source(runtime_info.get("qrcode_url"))
     if normalized["url"]:
         return {"kind": "url", "url": normalized["url"]}
-    if normalized["base64"]:
-        return {
-            "kind": "base64",
-            "base64": normalized["base64"],
-            "media_type": normalized["media_type"] or direct_media_type,
-        }
     return None

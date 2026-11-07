@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
-{% block page_intro %}<p>试用已开通，按顺序完成账户和机器人接入。</p>{% endblock %}
-{% block hero_actions %}<a class="btn" href="/account/billing">查看套餐与额度</a>{% endblock %}
+{% block hero_actions %}<a class="btn" href="/channels/connect">接入账号</a>{% endblock %}
 {% block content %}
-<section class="card">
-  <div class="section-head"><div><p class="section-kicker">Trial</p><h2>当前试用</h2></div></div>
+<section class="page-section">
+  <div class="section-head"><div><h2>当前试用</h2></div></div>
   {% if subscription %}
   <dl class="detail-grid">
     <div><dt>套餐</dt><dd>{{ subscription.plan.name }}</dd></div>
@@ -13,12 +12,11 @@
   {% else %}<div class="empty-state"><strong>当前没有可用订阅</strong></div>{% endif %}
 </section>
 
-<section class="card">
-  <div class="section-head"><div><p class="section-kicker">Next</p><h2>开始使用</h2></div></div>
-  <ol class="marketing-steps">
-    <li><strong>确认套餐额度</strong><span><a href="/account/billing">查看当前套餐与可用机器人数量</a></span></li>
-    <li><strong>接入机器人账号</strong><span>在机器人额度页完成通用账号绑定。</span></li>
-    <li><strong>配置运营能力</strong><span><a href="/channels">进入接入管理</a>并配置渠道与自动化任务。</span></li>
-  </ol>
+<section class="page-section">
+  <div class="section-head"><div><h2>开始使用</h2></div></div>
+  <div class="form-actions-inline">
+    <a class="btn" href="/channels/connect">接入第一个账号</a>
+    <a class="btn btn-secondary" href="/account/billing">查看套餐</a>
+  </div>
 </section>
 {% endblock %}

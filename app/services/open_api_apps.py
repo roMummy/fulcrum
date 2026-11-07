@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.entities import Channel, OpenApiApp, OpenApiAppChannel
-from app.services.channel_labels import require_saas_enabled_channel_type
+from app.services.channel_catalog import list_supported_channel_types, require_supported_channel_type
 from app.services.open_api_auth import set_open_api_secret
 
 
@@ -32,7 +32,7 @@ def list_open_api_apps(db: Session) -> list[OpenApiApp]:
 
 
 def list_authorized_channel_ids(db: Session, app_id: int) -> list[int]:
-    """列出开放应用当前仍可用的企业微信授权渠道 ID。"""
+    """列出开放应用当前仍可用的正式授权渠道 ID。"""
 
     app = db.get(OpenApiApp, int(app_id or 0))
     if app is None:
@@ -42,7 +42,7 @@ def list_authorized_channel_ids(db: Session, app_id: int) -> list[int]:
         .join(Channel, Channel.id == OpenApiAppChannel.channel_id)
         .where(
             OpenApiAppChannel.app_id == app.id,
-            Channel.channel_type == "workwechat",
+            Channel.channel_type.in_(list_supported_channel_types()),
         )
     ).all()
     return [int(channel_id) for channel_id in rows]
@@ -64,7 +64,7 @@ def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> Open
     channel = db.get(Channel, int(data.default_channel_id or 0))
     if channel is None:
         raise ValueError("默认渠道不存在")
-    require_saas_enabled_channel_type(channel.channel_type)
+    require_supported_channel_type(channel.channel_type)
     existing = db.scalar(select(OpenApiApp).where(OpenApiApp.app_key == normalized_key))
     if existing is not None and (app is None or int(existing.id) != int(app.id)):
         raise ValueError("app_key 已存在")
@@ -74,7 +74,7 @@ def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> Open
     app.name = data.name.strip()
     app.app_key = normalized_key
     # 开放应用的真实权限边界是 open_api_app_channels 授权渠道表；
-    # 不再默认绑定主渠道所属 Bot，避免一个企业多企微号、多机器人时被 Bot 维度误拦截。
+    # 不再默认绑定主渠道所属 Bot，避免一个企业多渠道、多机器人时被 Bot 维度误拦截。
     app.bot_id = int(data.bot_id or 0) or None
     app.default_channel_id = channel.id
     app.status = "disabled" if data.status.strip() == "disabled" else "active"
@@ -95,7 +95,7 @@ def _sync_authorized_channels(db: Session, *, app: OpenApiApp, primary_channel_i
     """同步开放应用授权渠道。
 
     主渠道用于后台识别应用归属，保存时自动纳入授权范围；发送接口仍必须显式传 channel_id。
-    授权渠道可以来自不同 Bot，适配一个企业使用多个企微号共同服务同一业务系统。
+    授权渠道可以来自不同 Bot，适配一个企业使用多个渠道共同服务同一业务系统。
     """
 
     normalized_ids = {int(item) for item in channel_ids if int(item or 0) > 0}
@@ -105,8 +105,8 @@ def _sync_authorized_channels(db: Session, *, app: OpenApiApp, primary_channel_i
     if valid_ids != normalized_ids:
         raise ValueError("授权渠道不存在")
     for channel in valid_channels:
-        # 不能通过多选授权字段把历史旧渠道重新暴露给外部系统。
-        require_saas_enabled_channel_type(channel.channel_type)
+        # 开放接口只能授权已经进入正式目录的渠道，未知类型不得借多选字段进入运行链路。
+        require_supported_channel_type(channel.channel_type)
     existing = db.scalars(select(OpenApiAppChannel).where(OpenApiAppChannel.app_id == app.id)).all()
     existing_by_channel = {int(row.channel_id): row for row in existing}
     for row in existing:

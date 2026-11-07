@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f5f6fa" />
+  <title>{{ page_title }} · 曜枢 AI</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+{% set platform_access = request.url.path.startswith('/platform') %}
+{# 认证页共享视觉壳，不共享账号字段、表单提交地址或会话；身份由当前路由明确决定。 #}
+<body class="access-page{% if request.url.path == '/register' %} access-page-register{% endif %}">
+  <a class="skip-link" href="#access-main">跳到主内容</a>
+  <header class="access-topbar">
+    <a class="brand" href="/" aria-label="曜枢 AI 首页">
+      <img class="brand-mark" src="/static/brand-mark.svg" width="40" height="40" alt="" />
+      <span class="brand-copy"><strong>曜枢 AI</strong><small>全渠道智能机器人运营平台</small></span>
+    </a>
+    <a class="access-back" href="/">返回首页 <span aria-hidden="true">↗</span></a>
+  </header>
+  <main class="access-main" id="access-main" tabindex="-1">
+    <div class="access-layout">
+      <aside class="access-context" aria-label="{% if platform_access %}平台管理{% else %}企业工作台{% endif %}">
+        <span class="access-context-label"><span class="access-label-dot" aria-hidden="true"></span>{% if platform_access %}平台管理空间{% else %}你的智能工作空间{% endif %}</span>
+        <h2>{% block access_headline %}连接每个渠道，<br />让协作自然发生。{% endblock %}</h2>
+        <p class="access-context-summary">{% block access_summary %}消息、机器人与业务，在这里有序运转。{% endblock %}</p>
+        {% include '_auth_visual.html' %}
+        <div class="access-context-points" aria-label="产品能力">
+          {% if platform_access %}<span>租户管理</span><span>经营分析</span><span>系统运维</span>{% else %}<span>多渠道接入</span><span>灵活扩展</span><span>独立工作台</span>{% endif %}
+        </div>
+      </aside>
+      <section class="access-form" aria-labelledby="{% block access_title_id %}access-title{% endblock %}">
+        {# 错误必须位于表单所在列，避免把通知插入双栏网格导致表单移位。 #}
+        {% if notice %}<div class="notice-card{% if notice_tone == 'danger' %} notice-card-danger{% endif %}" role="alert" aria-live="polite">{{ notice }}</div>{% endif %}
+        {% block content %}{% endblock %}
+      </section>
+    </div>
+  </main>
+  <footer class="access-footer"><span>曜枢 AI</span><span>连接业务的每一种可能</span></footer>
+  <script src="/static/js/auth.js" defer></script>
+</body>
+</html>
