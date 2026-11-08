@@ -16,6 +16,8 @@ from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, Chatroom, Conversation, OpenApiApp, OpenApiAppChannel, TaskJob
 from app.services.channel_catalog import list_supported_channel_types
 from app.services.open_api_auth import OpenApiAuthError, OpenApiAuthResult, authenticate_open_api_request
+from app.services.open_api_guard import OpenApiGuardError, OpenApiGuardResult, guard_open_api_request
+from app.services.open_api_quotas import finalize_open_api_usage
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job, parse_job_payload
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
@@ -39,7 +41,16 @@ async def open_send_file_api(request: Request):
     with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
         app = _load_authenticated_app(db, credential)
         payload = _parse_json_body(raw_body)
+        channel_id = int(payload.get("channel_id") or 0) or None
+        request_id = str(payload.get("request_id") or "").strip()
+        guard = _guard_request(
+            db,
+            app=app,
+            request_id=request_id,
+            channel_id=channel_id,
+        )
         result = enqueue_open_file_request(db, app=app, payload=payload, public_base_url=build_public_base_url(request))
+        finalize_open_api_usage(db, reservation=guard.reservation, status="committed")
         db.commit()
         return result
 
@@ -58,7 +69,17 @@ async def open_send_message_api(request: Request):
     with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
         app = _load_authenticated_app(db, credential)
         payload = _parse_json_body(raw_body)
+        channel_id = int(payload.get("channel_id") or 0) or None
+        request_id = str(payload.get("request_id") or "").strip()
+        guard = _guard_request(
+            db,
+            app=app,
+            request_id=request_id,
+            usage={"api_requests": 1, "messages": 1},
+            channel_id=channel_id,
+        )
         result = enqueue_open_message_request(db, app=app, payload=payload)
+        finalize_open_api_usage(db, reservation=guard.reservation, status="committed")
         db.commit()
         return result
 
@@ -72,9 +93,16 @@ async def open_job_status_api(request_id: str, request: Request):
         credential = _authenticate_request(auth_db, request, raw_body)
     with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
         app = _load_authenticated_app(db, credential)
+        guard = _guard_request(
+            db,
+            app=app,
+            request_id=request_id,
+        )
         job = find_open_api_job(db, app=app, request_id=request_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job_not_found")
+        finalize_open_api_usage(db, reservation=guard.reservation, status="committed")
+        db.commit()
         return {"ok": True, "request_id": request_id, "job": serialize_open_api_job(job)}
 
 
@@ -91,7 +119,14 @@ async def open_conversations_api(request: Request, chat_type: str = "", q: str =
         credential = _authenticate_request(auth_db, request, raw_body)
     with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
         app = _load_authenticated_app(db, credential)
+        guard = _guard_request(
+            db,
+            app=app,
+            request_id=request.headers.get("X-Request-ID"),
+        )
         items = list_open_conversation_options(db, app=app, chat_type=chat_type, q=q, limit=limit)
+        finalize_open_api_usage(db, reservation=guard.reservation, status="committed")
+        db.commit()
         return {"ok": True, "items": items}
 
 
@@ -108,7 +143,14 @@ async def open_chatrooms_api(request: Request, q: str = "", limit: int = 500):
         credential = _authenticate_request(auth_db, request, raw_body)
     with tenant_scope(credential.tenant_id), tenant_session(TenantSessionLocal) as db:
         app = _load_authenticated_app(db, credential)
+        guard = _guard_request(
+            db,
+            app=app,
+            request_id=request.headers.get("X-Request-ID"),
+        )
         items = list_open_chatroom_options(db, app=app, q=q, limit=limit)
+        finalize_open_api_usage(db, reservation=guard.reservation, status="committed")
+        db.commit()
         return {"ok": True, "items": items}
 
 
@@ -409,6 +451,30 @@ def _authenticate_request(db: Session, request: Request, raw_body: bytes) -> Ope
         return authenticate_open_api_request(db, headers=dict(request.headers), raw_body=raw_body)
     except OpenApiAuthError as exc:
         raise HTTPException(status_code=401, detail=exc.code) from exc
+
+
+def _guard_request(
+    db: Session,
+    *,
+    app: OpenApiApp,
+    request_id: str | None,
+    usage: dict[str, int] | None = None,
+    capability: str | None = None,
+    channel_id: int | None = None,
+) -> OpenApiGuardResult:
+    """把统一门禁错误转换为稳定 HTTP 错误，不向外泄露 874 原始异常。"""
+
+    try:
+        return guard_open_api_request(
+            db,
+            app=app,
+            request_id=request_id,
+            usage=usage,
+            capability=capability,
+            channel_id=channel_id,
+        )
+    except OpenApiGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
 
 
 def _load_authenticated_app(db: Session, credential: OpenApiAuthResult) -> OpenApiApp:
