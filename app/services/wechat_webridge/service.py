@@ -128,8 +128,26 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         job.attempts = int(job.attempts or 0) + 1
         job.started_at = current
         job.locked_at = current
+        # 现有统一出站入口把内容放在 payload 字段；这里在协议边界转换成 WeBridge 命令。
         command = as_object(data.get("command"))
-        if command:
+        if not command:
+            outbound = as_object(data.get("payload"))
+            message_type = text(outbound.get("message_type") or "text")
+            if message_type != "text":
+                job.status = "failed"
+                job.error_message = "WeBridge 首期只支持文本消息"
+                job.finished_at = current
+                continue
+            receiver = text(outbound.get("receiver_id") or outbound.get("external_id"))
+            content = str(outbound.get("content") or outbound.get("text") or "").strip()
+            command = {
+                "request_id": f"job_{int(job.id)}",
+                "type": "send_message",
+                "params": {"receiver": receiver, "content": content},
+            }
+        else:
+            command["request_id"] = text(command.get("request_id")) or f"job_{int(job.id)}"
+        if command.get("params", {}).get("receiver") and command.get("params", {}).get("content"):
             commands.append(command)
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
@@ -146,10 +164,21 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
     request_id = text(payload.get("request_id") or command.get("request_id"))
     if not request_id:
         raise ValueError("missing_webridge_request_id")
-    jobs = db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("running", "completed", "failed")))).all()
+    job_id = 0
+    if request_id.startswith("job_"):
+        try:
+            job_id = int(request_id[4:])
+        except ValueError:
+            job_id = 0
+    jobs = [db.get(TaskJob, job_id)] if job_id > 0 else db.scalars(
+        select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("running", "completed", "failed")))
+    ).all()
     for job in jobs:
+        if job is None or str(job.job_type or "") != JOB_TYPE:
+            continue
         data = parse_job_payload(job)
-        if text(as_object(data.get("command")).get("request_id")) != request_id:
+        stored_request_id = text(as_object(data.get("command")).get("request_id"))
+        if stored_request_id and stored_request_id != request_id and int(job.id) != job_id:
             continue
         if job.status in {"completed", "failed"}:
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
