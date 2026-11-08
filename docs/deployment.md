@@ -244,9 +244,10 @@ MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
 
 ```bash
 git pull --ff-only origin main
-docker compose build app
-docker compose run --rm app alembic upgrade head
-docker compose up -d --no-deps app
+docker compose --env-file .env.docker build app
+docker compose --env-file .env.docker run --rm app alembic upgrade head
+docker compose --env-file .env.docker up -d --no-deps app
+docker compose --env-file .env.docker ps
 curl -fsS http://127.0.0.1:8280/healthz
 curl -fsS http://127.0.0.1:8280/readyz
 ```
