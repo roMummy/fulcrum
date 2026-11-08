@@ -1878,6 +1878,7 @@ async def channel_connect_start_action(
     display_name: str = Form(""),
     api_base: str = Form(""),
     bot_token: str = Form(""),
+    adapter_config_json: str = Form(""),
     provider_node_id: int = Form(0),
     provider_account_id: int = Form(0),
     proxy_mode: str = Form("direct"),
@@ -1906,6 +1907,7 @@ async def channel_connect_start_action(
                 connection_values={
                     "api_base": api_base,
                     "bot_token": bot_token,
+                    "adapter_config_json": adapter_config_json,
                     "provider_node_id": provider_node_id,
                     "provider_account_id": provider_account_id,
                 },

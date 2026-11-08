@@ -38,6 +38,11 @@
       <span><strong>Telegram</strong><small>使用 Bot Token 验证机器人身份</small></span>
       <span aria-hidden="true">&#8250;</span>
     </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=wechat_webridge">
+      <span class="connection-choice-mark">桥</span>
+      <span><strong>微桥 WeBridge</strong><small>通过手机长轮询接入个人微信并管理好友、群组和消息</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
   </div>
 </section>
 {% elif stage == 'wechat_method' %}
@@ -56,6 +61,11 @@
       <span><strong>Windows 客户端</strong><small>连接本地客户端并读取当前微信账号</small></span>
       <span aria-hidden="true">&#8250;</span>
     </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=wechat_webridge">
+      <span class="connection-choice-mark">桥</span>
+      <span><strong>微桥 WeBridge</strong><small>服务端长轮询，适合手机微信渠道</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
   </div>
   <div class="form-actions-inline top-gap"><a class="btn btn-secondary" href="/channels/connect">上一步</a></div>
 </section>
@@ -68,6 +78,7 @@
         {% if requested_type == 'telegram' %}连接 Telegram
         {% elif requested_type == 'workwechat' %}连接企业微信
         {% elif requested_type == 'wechat_ipad' %}连接微信 iPad 协议
+        {% elif requested_type == 'wechat_webridge' %}连接微桥 WeBridge
         {% else %}连接微信 Windows 客户端{% endif %}
       </h2>
     </div>
@@ -108,6 +119,10 @@
     </label>
     {% elif requested_type == 'wechat_ipad' %}
     {% include '_wechat_ipad_login_network.html' %}
+    {% elif requested_type == 'wechat_webridge' %}
+    <label class="full-row"><span>WeBridge 服务端地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com/api/wechat-webridge/CHANNEL_ID" required /></label>
+    <label class="full-row"><span>适配配置 JSON（可选）</span><textarea name="adapter_config_json" rows="4" placeholder='{"upload_url":"https://example.com/api/wechat-webridge/CHANNEL_ID/agent/upload_media"}'></textarea></label>
+    <p class="muted-text full-row">保存后，请把同一个地址配置到微桥插件；完成一次 register 后，系统会自动验证微信账号身份。</p>
     {% endif %}
     <div class="full-row form-actions-inline">
       <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% else %}验证账号{% endif %}</button>
