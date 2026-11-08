@@ -4,27 +4,17 @@
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
   <a class="btn btn-secondary" href="/api/wechat-webridge/{{ channel.id }}/capabilities">能力目录</a>
-  <span class="chip chip-outline">{{ channel.name }}</span>
-  <span class="chip chip-outline">渠道 ID #{{ channel.id }}</span>
 </div>
 {% endblock %}
 {% block content %}
 {% set base = '/channels/' ~ channel.id ~ '/wechat-webridge' %}
 <section class="work-surface">
-  <div class="toolbar"><div><h2>微桥后台</h2><p class="muted-text">管理这个微信账号下的好友、群组、群成员和全部聊天记录。</p></div></div>
-  <div class="stats-grid compact-grid">
-    <div class="metric-item"><span>好友</span><strong>{{ dashboard.counts.contacts }}</strong></div>
-    <div class="metric-item"><span>群组</span><strong>{{ dashboard.counts.groups }}</strong></div>
-    <div class="metric-item"><span>群成员记录</span><strong>{{ dashboard.counts.members }}</strong></div>
-    <div class="metric-item"><span>消息</span><strong>{{ dashboard.counts.messages }}</strong></div>
-  </div>
-</section>
-
-<section class="work-surface">
-  <div class="toolbar"><div><h2>资料同步</h2><p class="muted-text">命令会进入手机长轮询队列，执行结果返回后自动出现在下方资料卡片。</p></div></div>
-  <div class="chip-row">
-    <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="friends_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步全部好友</button></form>
-    <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="groups_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步全部群组</button></form>
+  <div class="toolbar">
+    <div><h2>{{ channel.name }}</h2></div>
+    <div class="actions">
+      <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="friends_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步好友</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="groups_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步群组</button></form>
+    </div>
   </div>
 </section>
 

@@ -12,9 +12,10 @@
   {% if can_manage_channel %}
   <button class="btn btn-secondary" type="button" data-modal-open="edit-channel-modal">账号设置</button>
   {% endif %}
-  <span class="chip chip-outline">渠道 ID #{{ channel.id }}</span>
-  <span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span>
-  <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span>
+  {% if channel.channel_type == 'wechat_webridge' %}
+  <a class="btn" href="/channels/{{ channel.id }}/wechat-webridge">微桥后台</a>
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+  {% endif %}
 </div>
 {% endblock %}
 
@@ -40,13 +41,13 @@
       {% endif %}
     </div>
   </div>
-  <div class="stats-grid compact-grid time-metric-grid">
-    <div class="metric-item"><span>连接状态</span><strong>{{ connection.label }}</strong></div>
-    <div class="metric-item"><span>平台</span><strong>{{ channel.channel_type|channel_type_label }}</strong></div>
-    <div class="metric-item"><span>机器人</span><strong>{{ bot_name_map.get(channel.bot_id, '机器人') }}</strong></div>
-    <div class="metric-item"><span>额度</span><strong>{{ '已占用' if binding and binding.status == 'active' else '未占用' }}</strong></div>
-    <div class="metric-item"><span>可用余额</span><strong>{{ quota.remaining if quota else '-' }}</strong></div>
-    <div class="metric-item metric-item-time"><span>最近在线</span><strong class="stat-value stat-value-time">{{ last_online_at|bj_time if last_online_at else '-' }}</strong></div>
+  {# 状态信息压缩为一行标签,避免占用首屏。 #}
+  <div class="chip-row">
+    <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ connection.label }}</span>
+    <span class="chip chip-outline">{{ channel.channel_type|channel_type_label }}</span>
+    <span class="chip chip-outline">机器人 {{ bot_name_map.get(channel.bot_id, '机器人') }}</span>
+    <span class="chip chip-outline">额度 {{ '已占用' if binding and binding.status == 'active' else '未占用' }} · 余额 {{ quota.remaining if quota else '-' }}</span>
+    <span class="chip chip-muted">最近在线 {{ last_online_at|bj_time if last_online_at else '-' }}</span>
   </div>
   {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
 </section>
@@ -146,12 +147,6 @@
     <div class="metric-item"><span>已启用管理</span><strong>{{ channel_chatroom_summary.active_chatroom_count }}</strong></div>
     <div class="metric-item"><span>已有成员</span><strong>{{ channel_chatroom_summary.member_snapshot_chatroom_count }}</strong></div>
   </div>
-</section>
-{% endif %}
-
-{% if channel.channel_type == 'wechat_webridge' %}
-<section class="work-surface">
-  <div class="toolbar"><div><h2>微桥后台</h2><p class="muted-text">好友、群组、成员和消息记录统一查看。</p></div><a class="btn btn-secondary" href="/channels/{{ channel.id }}/wechat-webridge">进入微桥后台</a></div>
 </section>
 {% endif %}
 
