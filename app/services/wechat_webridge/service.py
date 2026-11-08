@@ -61,6 +61,9 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
             contact.last_seen_at = now
             contact.last_synced_at = now
             contact.raw_contact_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            conversation = db.scalar(select(Conversation).where(Conversation.channel_id == channel.id, Conversation.external_id == external_id))
+            if conversation is not None:
+                conversation.title = contact.display_name
             counts["contacts"] += 1
     elif command_name == "groups_all":
         for item in _result_items(result, "groups", "items", "rooms"):
@@ -79,6 +82,9 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
             room.last_synced_at = now
             room.member_count = int(item.get("member_count") or item.get("member_total") or item.get("member_num") or room.member_count or 0)
             room.extra_json = json.dumps({"source": "wechat_webridge", "avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
+            conversation = db.scalar(select(Conversation).where(Conversation.channel_id == channel.id, Conversation.external_id == external_id))
+            if conversation is not None:
+                conversation.title = room.name
             counts["groups"] += 1
     elif command_name == "room_members":
         params = as_object(command.get("params") or command.get("args"))
