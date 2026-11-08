@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
-from app.services.saas_auth import TenantPrincipal
-from app.web.developer_docs import developer_docs_page
+def _load_route():
+    """在独立运行时准备可写测试环境，合并运行时复用先加载的隔离数据库。"""
+
+    if "app.core.db" not in sys.modules:
+        test_root = Path(".run/test-runtime/developer-docs").resolve()
+        test_root.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("DATA_DIR", str(test_root))
+        os.environ.setdefault("DATABASE_URL", f"sqlite:///{test_root / 'test.db'}")
+        log_dir = test_root / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("LOG_DIR", str(log_dir))
+    from app.web.developer_docs import developer_docs_page
+
+    return developer_docs_page
 
 
 def _request(path: str = "/developer/docs") -> Request:
@@ -26,10 +42,10 @@ def _request(path: str = "/developer/docs") -> Request:
     )
 
 
-def _principal() -> TenantPrincipal:
+def _principal() -> SimpleNamespace:
     """构造页面渲染所需的可信租户身份快照。"""
 
-    return TenantPrincipal(
+    return SimpleNamespace(
         session_id=1,
         tenant_id=1,
         user_id=1,
@@ -40,6 +56,7 @@ def _principal() -> TenantPrincipal:
         tenant_status="active",
         subscription_status="active",
         subscription_expires_at=None,
+        is_owner=True,
     )
 
 
@@ -49,7 +66,7 @@ def test_developer_docs_requires_tenant_login() -> None:
     request = _request()
     request.state.current_user = None
 
-    response = asyncio.run(developer_docs_page(request))
+    response = asyncio.run(_load_route()(request))
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -63,7 +80,7 @@ def test_developer_docs_renders_bridge_api_content() -> None:
     request.state.current_user = _principal()
     request._cookies = {"mbs_tenant_csrf": "test-csrf"}
 
-    response = asyncio.run(developer_docs_page(request))
+    response = asyncio.run(_load_route()(request))
 
     assert response.status_code == 200
     assert response.template.name == "developer_docs.html"

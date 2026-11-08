@@ -2,6 +2,23 @@
 
 All notable changes to this project should be documented in this file.
 
+## 2026-11-08
+
+### Added
+
+- 新增企业登录后的“开发文档”入口和桥接接口文档中心
+- 新增 `/api/open/*` 推荐协议说明，覆盖 HMAC 鉴权、群/会话查询、消息和文件发送、任务状态及 Webhook
+- 明确插件只用于功能演示，外部业务系统可以自行维护订单、客服和自动化流程
+
+### Changed
+
+- 将 `/api/tool/*` 定位为已有内部工具的兼容接口，新业务优先使用按开放应用隔离的 `/api/open/*`
+
+### Validation
+
+- 已执行桥接文档页面定向测试 2 项、Markdown 解析检查、Python 语法检查和 `git diff --check`
+- 未执行完整历史回归或真实第三方业务系统联调
+
 ## 2026-09-01
 
 ### Added

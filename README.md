@@ -431,12 +431,16 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 如果你希望让 OSM 之类的第三方系统直接接入，而不依赖后台登录 Cookie，可以使用工具 API：
 
 - [Tool API For OSM](/data/multi-bot-saas/docs/tool_api_for_osm.md)
+- 登录企业工作台后，也可以从“开发文档”进入桥接接口中心，查看推荐的按开放应用签名的 `/api/open/*` 协议：
+  [桥接接口开发文档](/data/multi-bot-saas/docs/bridge-api.md)
 
 这组 API 使用 `X-API-Key` 鉴权，典型用途：
 
 - 上传 Excel 并发送到指定群
 - 查询发送任务状态
 - 查询指定群的新消息
+
+新业务系统优先使用 `/api/open/*`。它按开放应用隔离密钥和授权渠道，支持会话/群查询、文本和文件发送、任务查询以及 Webhook 事件；业务系统不需要实现微信扫码登录，只使用平台已经配置好的渠道。
 
 ### workwechat Provider
 
