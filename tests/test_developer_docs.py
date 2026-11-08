@@ -88,6 +88,10 @@ def test_developer_docs_renders_bridge_api_content() -> None:
     assert "/api/open/messages" in html
     assert "X-Signature" in html
     assert "扫码登录" in html
+    # 左侧目录的每个条目都必须能在正文里找到对应锚点，保证点击可跳转。
+    toc = str(response.context["document_toc"])
+    assert 'href="#鉴权hmac-sha256"' in toc
+    assert 'id="鉴权hmac-sha256"' in html
     navigation = response.context["primary_nav_items"]
     docs_item = next(item for item in navigation if item["href"] == "/developer/docs")
     assert docs_item["active"] is True
