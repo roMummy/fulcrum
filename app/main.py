@@ -2205,6 +2205,8 @@ async def channel_detail_page(request: Request, channel_id: int):
 async def wechat_webridge_dashboard_page(request: Request, channel_id: int):
     """展示 WeBridge 渠道内已落库的好友、群组和消息信息。"""
 
+    # 后台页面必须先恢复当前租户身份，避免匿名请求或错误租户上下文读取渠道数据。
+    enforce_role(request, "ops")
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
