@@ -19,3 +19,10 @@
 ## 资源提供
 1. 部署目标服务为 `192.168.2.201`，账号是 `liuwei`，请使用 SSH 访问
 2. 部署需要先连接目标远程服务器，再同步代码并完成部署；后续不得默认发布到 `192.168.2.142`
+3. 部署凭据统一保存在仓库根目录的 `.env.deploy`（已被 `.gitignore` 忽略，权限 600，禁止提交）。部署前先读取该文件，不需要用户再次提供：
+   - 加载方式：`set -a; . ./.env.deploy; set +a`
+   - 变量：`DEPLOY_SSH_HOST`、`DEPLOY_SSH_USER`、`DEPLOY_SSH_PASSWORD`（201 的 SSH 密码登录）、`DEPLOY_PATH`、`DEPLOY_PORT`、`DEPLOY_GIT_USER`、`DEPLOY_GIT_PASSWORD`（Git 服务 `http://192.168.2.32:3000` 的账号，供 201 上 `git pull` 使用）
+   - SSH 使用 `SSHPASS="$DEPLOY_SSH_PASSWORD" sshpass -e ssh -o PubkeyAuthentication=no "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" ...`，本机默认密钥未授权，不要再逐个试密钥
+   - 服务器档案在 `/data/servers/servers/192.168.2.201/`，操作前阅读其中 `server.md`，操作后按该目录要求追加维护记录
+   - 不得在回复、日志、提交说明或命令行回显中输出密码；Git 凭据不得写入远端仓库配置或 `.git/config`，用一次性方式传入
+   - 若 `.env.deploy` 不存在，才向用户索取，并按上述变量名重新创建

@@ -35,3 +35,6 @@ vendors/workwechat_provider/*.spec
 vendors/workwechat_provider/data/
 
 *.exe
+
+# 本机部署凭据（201 服务器与 Git 账号），禁止进入版本库。
+.env.deploy
