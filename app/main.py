@@ -153,6 +153,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_config_override,
     update_wechat_winauto_chatroom_scope_enabled,
 )
+from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard
 from app.services.identity_directory import IdentityDirectory
 from app.services.wechat_webridge.service import enqueue_command
@@ -2359,8 +2360,10 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             detail = build_wechat_winauto_chatroom_detail(db, channel, chatroom)
         elif channel.channel_type == "workwechat":
             detail = build_workwechat_chatroom_detail(db, channel, chatroom)
+        elif channel.channel_type == "wechat_webridge":
+            detail = build_webridge_chatroom_detail(db, channel, chatroom)
         else:
-            raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat channels")
+            raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge channels")
         return render(
             request,
             "chatroom_detail.html",
@@ -2387,8 +2390,14 @@ async def channel_chatroom_list_page(request: Request, channel_id: int):
             list_view = build_wechat_winauto_chatroom_list(db, channel)
         elif channel.channel_type == "workwechat":
             list_view = build_workwechat_chatroom_list(db, channel)
+        elif channel.channel_type == "wechat_webridge":
+            list_view = build_workwechat_chatroom_list(db, channel)
+            # 微桥群列表的同步入口在微桥后台（带 CSRF 的命令表单），这里不提供同步按钮。
+            list_view["sync_action"] = ""
+            list_view["intro_summary"] = "集中查看微桥已同步的微信群聊和运营状态。"
+            list_view["empty_state_message"] = "暂无微信群聊，请到微桥后台同步群组。"
         else:
-            raise HTTPException(status_code=400, detail="Chatroom list only supported for wechat_ipad / wechat_winauto / workwechat channels")
+            raise HTTPException(status_code=400, detail="Chatroom list only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge channels")
         return render(
             request,
             "chatroom_list.html",
@@ -3230,8 +3239,15 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             message = "；".join(part for part in (profile_summary, member_summary) if part) or "已刷新当前企微群资料和成员"
             record_audit(db, "channel.workwechat.sync-chatroom", "chatroom", chatroom.id, message)
             return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        elif channel.channel_type == "wechat_webridge":
+            # 微桥由手机插件执行：入队 room_members 命令，结果回传后由目录持久化写入成员快照。
+            job = enqueue_command(db, channel, command_name="room_members", args={"room_id": chatroom.external_id})
+            db.commit()
+            message = f"已下发群成员同步，任务 #{job.id}，稍后刷新本页查看"
+            record_audit(db, "channel.wechat-webridge.sync-chatroom", "chatroom", chatroom.id, message)
+            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
         else:
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat")
+            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat / wechat_webridge")
         return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
     finally:
         db.close()
