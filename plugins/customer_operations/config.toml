@@ -8,7 +8,7 @@ description = "统一接收业务系统客户触达请求，校验企微渠道�
 default_enabled = false
 
 [capability]
-channel_types = ["workwechat"]
+channel_types = ["workwechat", "wechat_webridge"]
 chat_types = ["direct"]
 message_types = ["text", "image", "file", "link_card", "mini_program"]
 priority = 120

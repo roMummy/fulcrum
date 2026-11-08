@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 当前只有 iPad 874 适配器实现了通用群邀请能力，其他渠道实现接口后再开放。
-channel_types = ["wechat_ipad"]
+channel_types = ["wechat_ipad", "wechat_webridge"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 110

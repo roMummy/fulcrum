@@ -8,7 +8,7 @@ description = "收发单独立系统的轻量桥接插件；业务闭环由 supp
 default_enabled = false
 
 [capability]
-channel_types = ["workwechat"]
+channel_types = ["workwechat", "wechat_webridge"]
 chat_types = ["group"]
 message_types = ["text", "file"]
 priority = 80
