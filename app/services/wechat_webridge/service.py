@@ -82,6 +82,52 @@ def accept_state(db: Session, channel: Channel, payload: dict[str, Any]) -> dict
     return {"ok": True}
 
 
+
+def enqueue_message_command(db: Session, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> TaskJob:
+    """把统一消息类型映射为 WeBridge 原生命令，供普通出站接口直接使用。"""
+
+    message_type = text(payload.get("message_type") or "text").lower()
+    receiver = text(payload.get("receiver_id") or payload.get("external_id") or conversation.external_id)
+    if not receiver:
+        raise ValueError("webridge_message_requires_receiver")
+    command_type = {
+        "text": "send_message",
+        "image": "send_image",
+        "emoji": "send_emoji",
+        "voice": "send_voice",
+        "video": "send_video_from_url",
+        "file": "send_file_from_url",
+        "link": "send_link_card",
+        "card": "send_contact_card",
+        "location": "send_location",
+        "app": "send_xml",
+        "mini_program": "send_xml",
+    }.get(message_type)
+    if not command_type:
+        raise ValueError(f"webridge_message_type_unsupported:{message_type}")
+    params: dict[str, Any] = {"receiver": receiver}
+    if message_type == "text":
+        params["content"] = str(payload.get("content") or payload.get("text") or "").strip()
+    elif message_type == "image":
+        params["source"] = payload.get("image_url") or payload.get("base64") or payload.get("image_base64") or payload.get("content")
+    elif message_type in {"voice", "video"}:
+        params["source"] = payload.get("voice_url") or payload.get("video_url") or payload.get("base64") or payload.get("voice_base64") or payload.get("video_base64")
+    elif message_type == "file":
+        params["file_url"] = payload.get("file_url") or payload.get("file_path")
+    elif message_type == "emoji":
+        params["source"] = payload.get("emoji") or payload.get("image_url") or payload.get("base64")
+    elif message_type == "link":
+        params.update({"title": payload.get("link_title") or payload.get("title") or "", "url": payload.get("link_url") or "", "description": payload.get("link_description") or "", "thumb_url": payload.get("thumb_url") or ""})
+    elif message_type == "card":
+        params["contact_id"] = payload.get("card_user_id") or payload.get("contact_id") or ""
+    elif message_type == "location":
+        params.update({key: payload[key] for key in ("latitude", "longitude", "title", "address") if key in payload})
+    else:
+        params["xml"] = payload.get("xml") or payload.get("cdn_xml") or payload.get("content") or ""
+    if not any(value not in (None, "") for key, value in params.items() if key != "receiver"):
+        raise ValueError("webridge_message_payload_missing")
+    return enqueue_job(db, job_type=JOB_TYPE, payload={"channel_id": int(channel.id), "conversation_id": int(conversation.id), "command": {"request_id": f"job_{uuid.uuid4().hex}", "type": command_type, "params": params}}, priority=90, related_type="conversation", related_id=int(conversation.id))
+
 def enqueue_text_message(db: Session, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> TaskJob:
     """把统一文本消息转换为 WeBridge 命令任务，任务归属固定到渠道。"""
 

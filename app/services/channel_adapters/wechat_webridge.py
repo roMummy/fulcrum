@@ -31,21 +31,11 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
         """返回协议服务待入队的文本命令，真正发送由手机 poll 执行。"""
 
-        from app.services.wechat_webridge.service import enqueue_text_message
+        from app.services.wechat_webridge.service import enqueue_message_command
 
         message_type = str(payload.get("message_type") or "text").strip().lower() or "text"
-        if message_type != "text":
-            return self.build_result(
-                ok=False,
-                conversation=conversation,
-                message_type=message_type,
-                transport_status="rejected",
-                status="failed",
-                error_code="unsupported_message_type",
-                error_message="WeBridge 首期只支持文本消息",
-            )
         try:
-            job = enqueue_text_message(channel._sa_instance_state.session, channel, conversation, payload)
+            job = enqueue_message_command(channel._sa_instance_state.session, channel, conversation, payload)
         except Exception as exc:
             return self.build_result(
                 ok=False,
@@ -63,7 +53,7 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             transport_status="queued",
             status="pending",
             external_status="pending",
-            extra={"job_id": int(job.id), "command_type": "send_message"},
+            extra={"job_id": int(job.id), "command_type": message_type},
         )
 
     def normalize_inbound_payload(self, channel: Channel, payload: dict[str, Any], *, headers: dict[str, str] | None = None) -> dict[str, Any]:
