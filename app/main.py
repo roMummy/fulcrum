@@ -2153,14 +2153,7 @@ async def channel_detail_page(request: Request, channel_id: int):
         elif channel.channel_type == "workwechat":
             # workwechat 群摘要来自独立群服务，包含 Hook 群列表和消息观测落库后的本地样本。
             channel_chatroom_summary = build_channel_chatroom_summary(build_workwechat_chatroom_list(db, channel))
-        elif channel.channel_type == "wechat_webridge":
-            channel_chatroom_summary = {
-                "total": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id)) or 0),
-                "active_chatroom_count": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id, Chatroom.is_active.is_(True))) or 0),
-                "member_snapshot_chatroom_count": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id, Chatroom.member_count > 0)) or 0),
-                "sync_action": "",
-                "sync_button_label": "",
-            }
+        # WeBridge 的群组信息统一放在微桥后台，账号详情页不再重复展示群聊概览卡片。
         workwechat_contact_summary = build_workwechat_contact_summary(db, channel) if channel.channel_type == "workwechat" else None
         # 企微云端拉取配置只在渠道详情页展示摘要；授权码明文不落库，生成后只通过一次性提示展示。
         wechat_ipad_contact_list = build_wechat_ipad_contact_list(channel) if channel.channel_type == "wechat_ipad" else None
