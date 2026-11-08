@@ -783,6 +783,7 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
     ).all()
     chatroom_rows = db.execute(
         select(
+            Conversation.channel_id,
             Conversation.external_id,
             Conversation.title,
             func.count(Message.id).label("message_count"),
@@ -794,13 +795,14 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
             Message.direction == "in",
             Message.created_at >= since_24h,
         )
-        .group_by(Conversation.external_id, Conversation.title)
+        .group_by(Conversation.channel_id, Conversation.external_id, Conversation.title)
         .order_by(func.count(Message.id).desc(), Conversation.external_id.asc())
         .limit(10)
     ).all()
 
     user_rows = db.execute(
         select(
+            Conversation.channel_id,
             Message.sender_id,
             func.max(Message.sender_name).label("sender_name"),
             func.count(Message.id).label("message_count"),
@@ -812,10 +814,23 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
             Message.sender_id.is_not(None),
             Message.created_at >= since_24h,
         )
-        .group_by(Message.sender_id)
+        # 同一个 wxid 只在所属渠道内才有意义，按渠道+发送者分组才能正确解析昵称头像。
+        .group_by(Conversation.channel_id, Message.sender_id)
         .order_by(func.count(Message.id).desc(), Message.sender_id.asc())
         .limit(10)
     ).all()
+    # 活跃用户统一解析昵称头像，wxid 只作为弱信息显示在第二行。
+    identity_directory = IdentityDirectory(db)
+    room_ids_by_channel: dict[int, set[str]] = {}
+    for row in chatroom_rows:
+        room_ids_by_channel.setdefault(int(row.channel_id or 0), set()).add(str(row.external_id))
+    for channel_id_value, room_ids in room_ids_by_channel.items():
+        identity_directory.preload(channel_id_value, room_ids)
+    user_ids_by_channel: dict[int, set[str]] = {}
+    for row in user_rows:
+        user_ids_by_channel.setdefault(int(row.channel_id or 0), set()).add(str(row.sender_id))
+    for channel_id_value, sender_ids in user_ids_by_channel.items():
+        identity_directory.preload(channel_id_value, sender_ids)
 
     plugin_rows = db.execute(
         select(
@@ -839,11 +854,18 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
             for row in bot_rows[:10]
         ],
         "chatrooms": [
-            {"label": str(row.title or row.external_id or "-"), "sub_label": str(row.external_id or "-"), "value": int(row.message_count or 0)}
+            {
+                # 群名优先取群档案，其次会话标题；两者都没有时才退回群 ID。
+                "identity": identity_directory.get(int(row.channel_id or 0), row.external_id, row.title),
+                "value": int(row.message_count or 0),
+            }
             for row in chatroom_rows
         ],
         "users": [
-            {"label": str(row.sender_name or row.sender_id or "-"), "sub_label": str(row.sender_id or "-"), "value": int(row.message_count or 0)}
+            {
+                "identity": identity_directory.get(int(row.channel_id or 0), row.sender_id, row.sender_name),
+                "value": int(row.message_count or 0),
+            }
             for row in user_rows
         ],
         "plugins": [

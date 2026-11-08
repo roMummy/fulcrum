@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_dashboard_chart.html' import trend_chart %}
+{% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="chip-row">
   <span class="chip chip-outline">近 24 小时</span>
@@ -165,10 +166,7 @@
     <div class="dashboard-ranking-list">
       {% for item in rankings.users %}
       <div class="dashboard-ranking-row">
-        <div>
-          <strong>{{ item.label }}</strong>
-          <p class="muted-text">{{ item.sub_label }}</p>
-        </div>
+        <div>{{ identity(item.identity) }}</div>
         <span class="chip chip-outline">{{ item.value }}</span>
       </div>
       {% else %}
@@ -187,10 +185,7 @@
     <div class="dashboard-ranking-list">
       {% for item in rankings.chatrooms %}
       <div class="dashboard-ranking-row">
-        <div>
-          <strong>{{ item.label }}</strong>
-          <p class="muted-text">{{ item.sub_label }}</p>
-        </div>
+        <div>{{ identity(item.identity) }}</div>
         <span class="chip chip-outline">{{ item.value }}</span>
       </div>
       {% else %}
