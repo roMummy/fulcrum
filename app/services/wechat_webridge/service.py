@@ -339,6 +339,9 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
             command["type"] = text(command.get("type") or command.get("command_name"))
             command["params"] = as_object(command.get("params") or command.get("args"))
             if command["type"]:
+                # 微桥 8080 插件按 command_name/args 读取任务；保留 type/params 供旧客户端和内部调试使用。
+                command["command_name"] = command["type"]
+                command["args"] = command["params"]
                 commands.append(command)
         else:
             outbound = as_object(data.get("payload"))
