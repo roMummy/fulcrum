@@ -4,16 +4,20 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
 from app.core.db import SessionLocal, TenantSessionLocal
-from app.core.tenant_db import platform_session, tenant_session
+from app.core.tenant_db import open_tenant_session, platform_session, tenant_session
 from app.core.tenant_context import tenant_scope
 from app.models.entities import Channel
 from app.services.channel_events import ingest_inbound_event
+from app.services.saas_auth import has_tenant_role
+from app.services.crud import get_channel
 from app.services.wechat_webridge.service import (
     accept_command_result,
     accept_state,
     claim_commands,
     mark_event_seen,
     register_device,
+    enqueue_command,
+    get_command_result,
 )
 
 router = APIRouter(prefix="/api/wechat-webridge", tags=["wechat-webridge"])
@@ -109,3 +113,48 @@ async def command_result(channel_id: int, request: Request):
             return accept_command_result(db, db.get(Channel, int(channel_id)), body)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{channel_id}/commands")
+async def enqueue_generic_command(channel_id: int, request: Request):
+    """供已登录租户操作员提交 WeBridge 全量命令；手机侧仍只通过 poll 收取。"""
+
+    user = getattr(request.state, "current_user", None)
+    if user is None or not has_tenant_role(user, "operator"):
+        raise HTTPException(status_code=403, detail="operator_role_required")
+    body = await _json(request)
+    tenant_id, _ = _channel_tenant(channel_id)
+    if int(getattr(user, "tenant_id", 0) or 0) != tenant_id:
+        raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        try:
+            job = enqueue_command(
+                db,
+                channel,
+                command_name=str(body.get("command_name") or body.get("type") or ""),
+                args=body.get("args") if isinstance(body.get("args"), dict) else {},
+                request_id=str(body.get("request_id") or ""),
+            )
+            db.commit()
+            payload = __import__("app.services.task_queue", fromlist=["parse_job_payload"]).parse_job_payload(job)
+            return {"ok": True, "job_id": int(job.id), "request_id": payload.get("command", {}).get("request_id"), "status": job.status}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{channel_id}/commands/{request_id}")
+async def command_result_query(channel_id: int, request_id: str, request: Request):
+    """查询通用命令的排队、执行或失败结果。"""
+
+    user = getattr(request.state, "current_user", None)
+    if user is None or not has_tenant_role(user, "operator"):
+        raise HTTPException(status_code=403, detail="operator_role_required")
+    tenant_id, _ = _channel_tenant(channel_id)
+    if int(getattr(user, "tenant_id", 0) or 0) != tenant_id:
+        raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        result = get_command_result(db, db.get(Channel, int(channel_id)), request_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="webridge_command_not_found")
+        return {"ok": True, **result}

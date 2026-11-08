@@ -107,6 +107,48 @@ def enqueue_text_message(db: Session, channel: Channel, conversation: Conversati
     )
 
 
+
+def enqueue_command(db: Session, channel: Channel, *, command_name: str, args: dict[str, Any], request_id: str = "") -> TaskJob:
+    """把任意 WeBridge 命令放入当前渠道队列，供联系人、群组、媒体和高级能力复用。"""
+
+    normalized_name = text(command_name)
+    if not normalized_name or normalized_name.startswith("/") or len(normalized_name) > 100:
+        raise ValueError("invalid_webridge_command_name")
+    if not isinstance(args, dict):
+        raise ValueError("webridge_command_args_must_be_object")
+    normalized_request_id = text(request_id) or f"cmd_{uuid.uuid4().hex}"
+    return enqueue_job(
+        db,
+        job_type=JOB_TYPE,
+        payload={
+            "channel_id": int(channel.id),
+            "command": {"request_id": normalized_request_id, "type": normalized_name, "params": args},
+        },
+        priority=90,
+        dedupe_key=f"webridge:{channel.id}:{normalized_request_id}",
+    )
+
+
+def get_command_result(db: Session, channel: Channel, request_id: str) -> dict[str, Any] | None:
+    """读取指定命令的最终任务结果，未知或尚未回报时返回 None。"""
+
+    normalized = text(request_id)
+    if not normalized:
+        return None
+    jobs = db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.tenant_id == channel.tenant_id)).all()
+    for job in jobs:
+        payload = parse_job_payload(job)
+        command = as_object(payload.get("command"))
+        if text(command.get("request_id")) != normalized and normalized != f"job_{int(job.id)}":
+            continue
+        raw_result = {}
+        try:
+            raw_result = json.loads(job.result_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_result = {}
+        return {"request_id": normalized, "job_id": int(job.id), "status": job.status, "result": raw_result, "error": job.error_message}
+    return None
+
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
     """领取当前设备的待发送命令，并将任务置为 running 防止重复下发。"""
 

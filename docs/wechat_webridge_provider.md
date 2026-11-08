@@ -21,3 +21,26 @@ https://your-domain.example/api/wechat-webridge/12
 首期支持文本消息、在线状态、事件去重和发送结果幂等。图片、语音、视频、文件、朋友圈、红包、收藏、联系人高级操作和 WebSocket 暂未接入，调用这些能力会返回明确的不支持结果。
 
 真实手机验收需要在 WeBridge 插件中启用长轮询并填写上述地址，然后验证注册、状态、测试事件、文本发送和断线恢复。当前代码验证只覆盖协议服务、目录注册、路由编译和任务边界，未代替真机验收。
+
+## 通用命令桥
+
+租户操作员可以通过以下接口提交微桥文档中的任意命令，命令会按渠道进入手机长轮询队列：
+
+```http
+POST /api/wechat-webridge/{channel_id}/commands
+Content-Type: application/json
+
+{
+  "command_name": "friends",
+  "args": {"limit": 100},
+  "request_id": "friends-20261108-001"
+}
+```
+
+手机执行后使用 `command_result` 回报，平台通过下列接口查询结果：
+
+```http
+GET /api/wechat-webridge/{channel_id}/commands/{request_id}
+```
+
+该桥覆盖微桥协议中的消息、媒体、联系人、群聊、资料、红包转账、朋友圈、收藏、公众号和诊断命令。平台只对已建模的业务结果做本地落库，其余命令保留原始结果摘要，避免把插件层成功误报成 SaaS 业务完成。
