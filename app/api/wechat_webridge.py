@@ -20,6 +20,8 @@ from app.services.wechat_webridge.service import (
     command_catalog,
     list_command_results,
 )
+from app.services.account_connections import finalize_account_connection, verify_account_connection
+from app.services.account_connections.contracts import AccountConnectionError
 from app.models.entities import MessageAttachment
 from app.services.inbound_media import store_uploaded_media_attachment
 
@@ -76,7 +78,27 @@ async def register(channel_id: int, request: Request):
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
         try:
-            return register_device(db, channel, body)
+            result = register_device(db, channel, body)
+            # 微桥完成首次注册后已经提供了可信设备和微信账号身份，直接完成验证、额度绑定和启用，
+            # 用户不需要再回到后台手动点击“验证账号”“确认并启用”或“启用账号”。
+            verified = verify_account_connection(db, channel_id=int(channel.id))
+            if verified.state != "verified":
+                return {**result, "connection_state": verified.state, "message": verified.message}
+            finalized = finalize_account_connection(
+                db,
+                channel_id=int(channel.id),
+                display_name=verified.identity.display_name if verified.identity else "",
+            )
+            return {
+                **result,
+                "connection_state": "active",
+                "message": "WeBridge 已自动完成身份验证、额度绑定并启用",
+                "bot_id": int(finalized.bot.id),
+                "binding_id": int(finalized.binding.id),
+            }
+        except AccountConnectionError as exc:
+            # 注册本身已经成功时，保留设备快照并返回可读状态，手机端仍可继续心跳和轮询。
+            return {"ok": True, "channel_id": int(channel.id), "connection_state": "pending", "message": str(exc)}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

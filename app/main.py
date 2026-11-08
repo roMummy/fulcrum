@@ -2615,8 +2615,22 @@ async def toggle_channel_action(request: Request, channel_id: int, csrf_token: s
                 )
             )
             if binding is None:
+                # WeBridge 已经从手机注册快照取得可信身份时，启用动作自动补齐验证和额度绑定，
+                # 避免用户被迫理解后台的中间状态；尚未注册时才返回下一步操作提示。
+                if channel.channel_type == "wechat_webridge":
+                    try:
+                        result = verify_account_connection(db, channel_id=channel.id)
+                        if result.state == "verified":
+                            finalize_account_connection(
+                                db,
+                                channel_id=channel.id,
+                                display_name=result.identity.display_name if result.identity else channel.name,
+                            )
+                            return RedirectResponse(url=f"/channels/{channel_id}?notice={quote('微桥已自动完成身份验证和额度绑定')}", status_code=303)
+                    except AccountConnectionError:
+                        pass
                 return RedirectResponse(
-                    url=f"/channels/{channel_id}?notice={quote('请通过账号接入完成身份验证和额度绑定')}&tone=danger",
+                    url=f"/channels/{channel_id}?notice={quote('请先把系统生成的地址粘贴到手机微桥插件，完成首次注册')}&tone=danger",
                     status_code=303,
                 )
             try:
