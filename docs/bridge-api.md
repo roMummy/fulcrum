@@ -1,5 +1,32 @@
 # 桥接接口开发文档
 
+> 文档版本：2026-11-08。本文按当前 `main` 分支的开放接口实现维护。
+
+## 接入边界和能力清单
+
+开放接口的目标是让业务系统直接使用已经接入平台的渠道能力。业务系统不需要实现微信扫码、代理配置、874 登录、心跳、登出或设备管理；这些动作由平台连接器和渠道服务负责。企业管理员只需要在后台购买有效套餐、创建开放应用并授权渠道，之后把应用密钥配置到自己的服务端。
+
+当前已实现的业务接口如下：
+
+| 能力 | 接口 | 说明 |
+| --- | --- | --- |
+| 账号 | `GET /api/open/accounts` | 查询应用已授权账号及其能力 |
+| 账号详情 | `GET /api/open/accounts/{account_id}` | 查询单个渠道账号状态 |
+| 能力发现 | `GET /api/open/accounts/{account_id}/capabilities` | 根据账号返回可用能力 |
+| 联系人 | `GET /api/open/contacts`、`GET /api/open/contacts/{contact_external_id}` | 游标分页和详情查询 |
+| 群 | `GET /api/open/groups` | 查询授权渠道的群快照 |
+| 群成员 | `GET /api/open/groups/{external_id}/members` | 查询群成员快照 |
+| 群二维码 | `GET /api/open/groups/{external_id}/qrcode` | 读取已经缓存的二维码引用 |
+| 会话和群候选 | `GET /api/open/conversations`、`GET /api/open/chatrooms` | 绑定业务目标时使用 |
+| 消息发送 | `POST /api/open/messages` | 文本、图片、语音、视频、表情、链接、名片、小程序和应用消息 |
+| 文件发送 | `POST /api/open/files` | 通过 URL 或 Base64 创建文件发送任务 |
+| 消息同步 | `GET /api/open/messages/sync` | 按消息主键游标读取增量 |
+| 媒体 | `POST /api/open/media`、`GET /api/open/media/{media_id}` | 上传媒体并取得受控下载入口 |
+| 任务 | `GET /api/open/jobs/{request_id}` | 查询异步发送任务 |
+| 事件 | Webhook | 接收消息、文件、账号和任务事件 |
+
+好友申请接受、群成员写入和消息撤回已经纳入能力目录，但当前版本只提供能力声明，尚未形成完整的外部异步写入路由。调用方应先读取账号能力，不要自行拼接 874 原始路径。
+
 这组接口把曜枢 AI 已经接入的渠道能力桥接给你的业务系统。平台负责渠道连接、消息投递和任务状态；你的系统负责订单、客服、通知、分单、对账和业务重试。
 
 文档面向已经完成企业账号、渠道和开放应用配置的开发者。这里不包含微信扫码登录、874 协议、Windows 本地代理连接器或 Provider 的实现方式。你的业务系统不需要实现登录流程，只需要调用已经授权的接口。
@@ -512,4 +539,185 @@ timestamp + "\n" + 原始请求体
 3. Webhook 先验签和落库，再异步更新订单或客服状态。
 4. 对 `message.sent` 中 `delivery.confirmed=false` 的事件进行人工关注，不要自动无限重发。
 5. 自己保存 `channel_id` 和 `conversation_external_id` 的映射，群名变化时重新查询群列表。
+
+## 账号、联系人和群资源
+
+所有资源查询都只返回开放应用已经授权的渠道。资源接口使用数据库快照，返回的是稳定业务字段，不会返回设备指纹、874 原始响应、登录票据或代理信息。
+
+### 账号和能力
+
+```http
+GET /api/open/accounts
+GET /api/open/accounts/{account_id}
+GET /api/open/accounts/{account_id}/capabilities
+```
+
+账号对象示例：
+
+```json
+{
+  "id": 3,
+  "name": "企微客服号",
+  "channel_type": "workwechat",
+  "status": "active",
+  "login_state": "online",
+  "last_login_at": "2026-11-08T10:00:00+08:00",
+  "last_message_sync_at": "2026-11-08T10:00:03+08:00",
+  "capabilities": [
+    {
+      "code": "message.send.text",
+      "title": "发送文本消息",
+      "operation": "write",
+      "status": "available"
+    }
+  ]
+}
+```
+
+### 联系人
+
+```http
+GET /api/open/contacts?channel_id=3&cursor=0&limit=50&q=张
+GET /api/open/contacts/wxid:zhangsan?channel_id=3
+```
+
+列表响应使用 `next_cursor`。当没有下一页时返回 `null`。`contact_external_id` 是渠道外部标识，业务系统应保存它，不要使用内部 `id` 作为跨系统主键。
+
+### 群和群成员
+
+```http
+GET /api/open/groups?channel_id=3&cursor=0&limit=50&q=供应商
+GET /api/open/groups/group:供应商群/members?channel_id=3&cursor=0&limit=100
+GET /api/open/groups/group:供应商群/qrcode?channel_id=3
+```
+
+群二维码接口只读取已经缓存的二维码。如果平台没有缓存数据，会返回 `503 group_qrcode_unavailable`；这不表示账号离线，也不应被业务系统当作登录入口。
+
+## 消息同步
+
+```http
+GET /api/open/messages/sync?channel_id=3&cursor=1000&limit=100
+```
+
+响应中的 `next_cursor` 是本次返回最后一条消息的内部游标，下一次请求直接传回即可。消息对象包含 `id`、`external_id`、`channel_id`、`conversation_external_id`、`chat_type`、`direction`、`message_type`、`content`、`status` 和 `created_at`。游标同步只读取开放应用授权渠道范围内的数据。
+
+## 媒体上传和下载
+
+### 上传媒体
+
+```http
+POST /api/open/media
+Content-Type: application/json
+```
+
+请求体使用 `file_content_base64` 提交内容：
+
+```json
+{
+  "request_id": "media-20261108-0001",
+  "channel_id": 3,
+  "file_name": "报价单.pdf",
+  "content_type": "application/pdf",
+  "media_type": "file",
+  "file_content_base64": "JVBERi0xLjQK..."
+}
+```
+
+成功响应会返回 `media_id`、文件大小和 `url`。公共媒体接口明确拒绝 `file_path`，不能借此读取网关服务器任意本地文件。需要发送文件时，可以直接使用 `/api/open/files` 的 `file_url` 或 Base64 字段，也可以先上传媒体再把返回 URL 作为消息内容的一部分。
+
+### 取得受控下载入口
+
+```http
+GET /api/open/media/{media_id}?channel_id=3&file_name=报价单.pdf
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "media_id": "a1b2c3...",
+  "download_url": "https://your-saas.example.com/outbound-files/3/a1b2c3.../%E6%8A%A5%E4%BB%B7%E5%8D%95.pdf"
+}
+```
+
+业务系统应保存上传响应中的完整文件名和 `media_id`，不要自行改写下载路径。下载入口仍受租户和渠道目录约束。
+
+## 套餐、额度和幂等
+
+开放 API 使用当前租户的有效订阅。套餐包含以下独立额度：
+
+| 字段 | 含义 |
+| --- | --- |
+| `open_api_app_limit` | 可启用的开放应用数量 |
+| `open_api_channel_limit` | 所有开放应用合计授权渠道数量 |
+| `monthly_api_request_limit` | 自然月 API 请求次数 |
+| `monthly_message_limit` | 自然月消息发送次数 |
+| `monthly_media_bytes_limit` | 自然月媒体字节数 |
+
+额度按北京时间自然月统计。配置为 `0` 表示该项不设上限。发送消息、发送文件和上传媒体会在请求事务内预扣额度；任务明确失败时由任务链路返还，成功则确认使用。相同开放应用、同一自然月、同一 `request_id` 的重复请求只会命中原预扣记录，不会重复扣费。
+
+需要重试时必须复用原 `request_id`。查询类接口如果没有业务幂等键，可以使用 `X-Request-ID`；发送和上传接口必须在 JSON 中提交 `request_id`。
+
+额度或订阅失败示例：
+
+```json
+{"detail": "subscription_required"}
+```
+
+```json
+{"detail": "quota_exceeded"}
+```
+
+常见门禁状态码：`402` 表示需要有效订阅或额度不足，`403` 表示应用、能力或渠道不允许，`409` 表示幂等预扣冲突，`429` 仅在网关频率策略启用时使用。不要解析 874 原始错误文本。
+
+## Webhook 事件目录
+
+应用配置 Webhook 后，平台异步投递以下稳定事件：
+
+`message.received`、`message.sent`、`message.failed`、`file.received`、`account.online`、`account.offline`、`account.reconnected`、`job.completed`、`job.failed`。
+
+每个事件都有 `event_id`、`event_type`、`occurred_at`、`channel`、`conversation` 等统一字段。`event_id` 是确定性的，接收方必须先验签、落库并按 `event_id` 去重，再异步执行业务处理。投递失败由平台后台重试，不应阻塞你的 HTTP 接收线程。
+
+Webhook 请求头：
+
+```text
+X-MBA-Event-ID: evt_message.sent_3_102
+X-MBA-Timestamp: 1762560000
+X-MBA-Signature: <hex encoded HMAC-SHA256>
+```
+
+签名原文仍然是 `timestamp + "\n" + 原始请求体`，密钥是开放应用的 Webhook 密钥。发送结果事件的 `open_api.request_id` 用来关联你的订单或 outbox 记录。
+
+## 支付成功自动履约
+
+套餐购买可以通过平台现有订单流程完成。若接入第三方支付自动回调，支付平台向以下地址发送 JSON：
+
+```http
+POST /api/payment/webhook
+X-Payment-Timestamp: 1762560000
+X-Payment-Signature: <hex encoded HMAC-SHA256>
+Content-Type: application/json
+```
+
+签名原文是 `timestamp + "\n" + 原始请求体`，服务端只接受约 5 分钟内的时间戳。回调体至少包含：
+
+```json
+{
+  "status": "paid",
+  "order_no": "ORD-20261108-0001",
+  "amount_cents": 9900,
+  "transaction_id": "provider-tx-001"
+}
+```
+
+平台会校验订单号、订单金额和支付状态，并在同一业务事务内创建或续期订阅。重复回调返回原订单履约结果，不会重复延长订阅。服务端通过 `PAYMENT_WEBHOOK_SECRET` 配置回调密钥；密钥只放在部署环境，不写入开放应用配置和业务日志。
+
+## 不开放的内部接口
+
+以下接口不属于对外桥接协议，业务系统不要调用：
+
+- `/api/open` 之外的 874 原始端点、扫码登录、代理、心跳和设备控制接口。
+- `/api/tool/*` 全局工具接口。它仍用于历史内部工具，使用全局 `X-API-Key`，新项目应使用按开放应用隔离的 `/api/open/*`。
+- 本地代理连接器的激活、心跳和 WebSocket 接口。连接器登录完成后即可退出，后续业务由平台已建立的渠道连接执行。
 

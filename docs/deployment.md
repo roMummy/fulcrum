@@ -1,5 +1,11 @@
 # 曜枢 AI（multi-bot-saas）部署指南
 
+## 当前正式部署目标
+
+当前正式服务统一部署在 `192.168.2.201` 的 `/data/multi-bot-saas`，SSH 账号为 `liuwei`。后续发布不得默认使用旧的 `192.168.2.142`；旧主机上的历史文档和旧服务说明不属于当前发布目标。
+
+推荐发布顺序：本地完成提交并推送 `main`，SSH 登录 `192.168.2.201`，在目标目录执行 `git pull --ff-only`，完成迁移、依赖检查、应用重启和健康探针验证。不得把密码、支付密钥或其他环境文件提交到 Git。
+
 ## Overview
 
 曜枢 AI 对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `multi-bot-saas`。支持两种部署模式：
@@ -39,6 +45,8 @@ AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
 BILLING_PAYMENT_TITLE=曜枢 AI 人工付款
 BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 BILLING_PAYMENT_PROOF_MAX_BYTES=5242880
+# 第三方支付自动回调使用；未配置时 /api/payment/webhook 会返回 503。
+PAYMENT_WEBHOOK_SECRET=change-this-payment-webhook-secret
 ```
 
 `SECRET_KEY` 同时参与会话安全和设备指纹 HMAC。已经产生机器人绑定后不得直接更换该值，否则同一设备会计算出不同摘要，破坏设备归属和试用防重复判断。若必须轮换，应先实现双密钥过渡或摘要迁移。
@@ -179,6 +187,8 @@ The default compose stack starts:
 8. 迁移和清理成功后执行 `docker compose up -d --no-deps app`，只重建 SaaS 应用容器；
 9. 验证健康探针、公开入口、注册试用、订单审核、机器人额度和插件绑定，再清理旧镜像。
 
+本轮开放接口扩展对应 Alembic 迁移 `20261108_0021`，包含套餐开放应用、渠道、调用、消息和媒体额度字段，以及 `open_api_usage_records` 月度账本。迁移前先确认当前 revision，再执行 `alembic upgrade head`；迁移成功后才替换应用进程。该迁移不会删除历史订单、订阅、渠道或消息记录。
+
 部署主机如果还运行旧 `8180` 服务，不得执行整组 Compose 重启或端口清理；上线后必须单独确认旧服务仍然可用。
 
 ### 基础冒烟验证
@@ -217,6 +227,39 @@ Recommended production layout:
 - app behind Nginx / Caddy / Traefik
 - TLS terminated at proxy layer
 - persistent storage mounted for `logs/` and database volume
+
+## 192.168.2.201 发布命令
+
+非容器部署使用仓库脚本，目标主机执行：
+
+```bash
+cd /data/multi-bot-saas
+git pull --ff-only origin main
+MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
+```
+
+脚本会依次安装依赖、执行插件完整性探针、运行 `alembic upgrade head`、清理历史插件明文配置、重启 8280 端口的应用进程，并检查本机 `/healthz` 和 `/readyz`。迁移或密钥探针失败时旧进程不会被停止。
+
+容器部署则在同一目录执行：
+
+```bash
+git pull --ff-only origin main
+docker compose build app
+docker compose run --rm app alembic upgrade head
+docker compose up -d --no-deps app
+curl -fsS http://127.0.0.1:8280/healthz
+curl -fsS http://127.0.0.1:8280/readyz
+```
+
+MariaDB 容器不需要因为本轮应用代码更新而重启。若 201 的 Git HTTP 凭据不可用，应从已有认证工作区生成增量 Git bundle 传到目标主机，再在目标目录快进到 `main`；不得把新凭据写入仓库、命令行记录或日志。
+
+发布完成后至少验证：
+
+- `http://192.168.2.201:8280/healthz` 返回成功；
+- `http://192.168.2.201:8280/readyz` 返回成功；
+- 未登录访问 `/developer/docs` 重定向 `/login`；
+- 登录后文档页面包含 `/api/open/accounts`、`/api/open/messages/sync`、额度和 Webhook 章节；
+- `/api/payment/webhook` 在未配置密钥时不误报成功，配置密钥后能按签名校验回调。
 
 ## Persistent Data
 
