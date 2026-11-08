@@ -73,6 +73,11 @@ def is_cloud_poll_enabled(channel: Channel) -> bool:
 
 
 def resolve_outbound_job_type(channel: Channel) -> str:
+    # 远端手机渠道必须由手机 poll 领取，不能交给云端 worker 直接调用不存在的本地 HTTP。
+    if str(channel.channel_type or "").strip() == "wechat_webridge":
+        from app.services.wechat_webridge.contract import JOB_TYPE
+
+        return JOB_TYPE
     # cloud_poll 模式的任务由企业本地 provider 通过 WS/HTTP 领取，不能被云端 worker 直接发送。
     return WORKWECHAT_CLOUD_OUTBOUND_JOB if is_cloud_poll_enabled(channel) else OUTBOUND_DISPATCH_JOB
 

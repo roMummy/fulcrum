@@ -21,4 +21,7 @@ __all__ = [
     "payment_webhook_router",
     "workwechat_provider_cloud_router",
     "provider_router",
+    "wechat_webridge_router",
 ]
+
+from .wechat_webridge import router as wechat_webridge_router

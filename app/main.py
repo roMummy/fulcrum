@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.routing import Match
 
-from app.api import channel_inbound_router, channel_outbound_router, customer_operations_router, open_api_router, open_media_router, open_messages_router, open_resources_router, payment_webhook_router, provider_router, tool_api_router, workwechat_provider_cloud_router
+from app.api import channel_inbound_router, channel_outbound_router, wechat_webridge_router, customer_operations_router, open_api_router, open_media_router, open_messages_router, open_resources_router, payment_webhook_router, provider_router, tool_api_router, workwechat_provider_cloud_router
 from app.api.local_proxy_connector import router as local_proxy_connector_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
@@ -205,6 +205,7 @@ app.include_router(open_messages_router)
 app.include_router(open_media_router)
 app.include_router(payment_webhook_router)
 app.include_router(workwechat_provider_cloud_router)
+app.include_router(wechat_webridge_router)
 app.include_router(local_proxy_connector_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。

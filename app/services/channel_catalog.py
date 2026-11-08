@@ -70,6 +70,12 @@ def _build_wechat_winauto_adapter():
     return WechatWinAutoAdapter()
 
 
+def _build_wechat_webridge_adapter():
+    from app.services.channel_adapters.wechat_webridge import WechatWeBridgeAdapter
+
+    return WechatWeBridgeAdapter()
+
+
 def _build_telegram_adapter():
     from app.services.channel_adapters.telegram import TelegramAdapter
 
@@ -130,6 +136,18 @@ CHANNEL_TYPE_DEFINITIONS = (
             *COMMON_POLICY_FIELDS,
         ),
         adapter_factory=_build_wechat_winauto_adapter,
+    ),
+    ChannelTypeDefinition(
+        code="wechat_webridge",
+        label="微桥 WeBridge",
+        summary="通过 iPhone 微信微桥插件的服务端长轮询接入个人微信消息。",
+        runtime_mode="platform_polling",
+        capabilities=frozenset({"send", "inbound", "health", "polling"}),
+        config_fields=(
+            ChannelConfigField("api_base", "WeBridge 服务端地址", placeholder="https://example.com/api/webridge/CHANNEL_ID", required_when_enabled=True),
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_wechat_webridge_adapter,
     ),
     ChannelTypeDefinition(
         code="telegram",

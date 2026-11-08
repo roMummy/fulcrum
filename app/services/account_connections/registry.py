@@ -25,4 +25,8 @@ def get_account_connector(channel_type: str | None) -> AccountConnector:
         from .wechat_winauto import WechatWinAutoAccountConnector
 
         return WechatWinAutoAccountConnector()
+    if normalized == "wechat_webridge":
+        from .wechat_webridge import WechatWeBridgeAccountConnector
+
+        return WechatWeBridgeAccountConnector()
     raise AccountConnectionError("connection_type_not_supported")
