@@ -154,6 +154,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard
+from app.services.wechat_webridge.service import enqueue_command
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
     build_workwechat_chatroom_list,
@@ -2215,6 +2216,38 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int):
             dashboard=build_webridge_dashboard(db, channel),
             notice=request.query_params.get("notice", ""),
         )
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/wechat-webridge/command")
+async def wechat_webridge_dashboard_command_action(
+    request: Request,
+    channel_id: int,
+    command_name: str = Form(""),
+    args_json: str = Form("{}"),
+    csrf_token: str = Form(""),
+):
+    """从后台直接发起好友、群组和成员同步命令。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type != "wechat_webridge":
+            raise HTTPException(status_code=404, detail="WeBridge channel not found")
+        try:
+            args = json.loads(args_json or "{}")
+        except json.JSONDecodeError as exc:
+            return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote('参数 JSON 无效')}", status_code=303)
+        if not isinstance(args, dict):
+            return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote('参数必须是 JSON 对象')}", status_code=303)
+        job = enqueue_command(db, channel, command_name=command_name, args=args)
+        db.commit()
+        return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote(f'已提交 {command_name}，任务 #{job.id}')}", status_code=303)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote(str(exc))}", status_code=303)
     finally:
         db.close()
 
