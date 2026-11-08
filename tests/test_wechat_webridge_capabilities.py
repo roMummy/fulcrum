@@ -267,3 +267,28 @@ def test_accept_command_result_matches_request_id_strictly(tmp_path) -> None:
     assert db.get(TaskJob, target.id).status == "completed"
     assert db.get(TaskJob, other_channel.id).status == "running"
     assert db.get(TaskJob, plain_failed.id).status == "failed"
+
+
+def test_persist_room_members_maps_owner_admin_roles() -> None:
+    """room_members 返回的成员项带 is_owner / is_admin，必须落成 owner / admin / member 角色。"""
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    room = SimpleNamespace(id=5, external_id="r@chatroom", member_count=0, last_synced_at=None)
+
+    class _DB(_FakeDirectoryDB):
+        """让群查询命中固定群，成员查询返回空以便新建。"""
+
+        def scalar(self, stmt):
+            return room if "chatrooms" in str(stmt) else None
+
+    db = _DB()
+    counts = service.persist_directory_result(
+        db, channel, {"type": "room_members", "params": {"room_id": "r@chatroom"}},
+        {"members": [
+            {"account_id": "a", "nick_name": "群主", "is_owner": True, "is_admin": True},
+            {"account_id": "b", "nick_name": "管理", "is_owner": False, "is_admin": True},
+            {"account_id": "c", "nick_name": "成员", "is_owner": False, "is_admin": False},
+        ]},
+    )
+    assert counts["members"] == 3
+    assert [m.role for m in db.added] == ["owner", "admin", "member"]

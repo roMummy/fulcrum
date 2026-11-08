@@ -128,6 +128,8 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 member.nickname = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or external_id)[:255]
                 member.display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or external_id)[:255]
                 member.status = "active"
+                # 微桥成员项自带 is_owner / is_admin，群详情的角色概览依赖 role 字段。
+                member.role = "owner" if item.get("is_owner") else ("admin" if item.get("is_admin") else "member")
                 member.last_synced_at = now
                 member.extra_json = json.dumps({"avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
                 counts["members"] += 1
