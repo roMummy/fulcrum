@@ -893,6 +893,8 @@ def _build_binding_items(bindings: list[BotPlugin], scope_rows: list[GroupPlugin
                 "binding_id": binding.id,
                 "plugin_code": plugin.code if plugin else "-",
                 "plugin_name": plugin.display_name if plugin else f"Plugin #{binding.plugin_id}",
+                # 群详情插件列表只展示一句话说明，技术字段默认折叠。
+                "plugin_description": (plugin.description or "").strip() if plugin else "",
                 "binding_status": binding.status or "unknown",
                 "binding_status_label": "已启用" if binding_enabled else "已停用",
                 "binding_status_tone": "success" if binding_enabled else "muted",

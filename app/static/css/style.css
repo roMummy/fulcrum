@@ -4715,3 +4715,14 @@ code {
 .identity-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity-id { color: var(--muted, #64748b); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 群详情标签栏：插件 / 成员 / 消息 / 资料 */
+.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border, #e5e7eb); margin: 0 0 16px; flex-wrap: wrap; }
+.tab-bar a { padding: 8px 16px; color: inherit; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab-bar a.active { border-bottom-color: #2563eb; font-weight: 600; }
+.plugin-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.plugin-row h3 { margin: 0; font-size: 15px; }
+.plugin-row-actions { display: flex; gap: 8px; align-items: center; }
+.plugin-row details { grid-column: 1 / -1; }
+.plugin-row details summary { cursor: pointer; font-size: 13px; }
+@media (max-width: 720px) { .plugin-row { grid-template-columns: 1fr; } }

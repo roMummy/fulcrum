@@ -2371,7 +2371,7 @@ async def setup_action(
 
 
 @app.get("/channels/{channel_id}/chatrooms/{chatroom_id}", response_class=HTMLResponse)
-async def channel_chatroom_detail_page(request: Request, channel_id: int, chatroom_id: int):
+async def channel_chatroom_detail_page(request: Request, channel_id: int, chatroom_id: int, tab: str = "plugins"):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
@@ -2397,6 +2397,8 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             channel=channel,
             chatroom=chatroom,
             detail=detail,
+            # 群详情分为 插件/成员/消息/资料 四个标签，非法值回落到插件。
+            tab=tab if tab in ("plugins", "members", "messages", "profile") else "plugins",
             notice=request.query_params.get("notice", ""),
         )
     finally:

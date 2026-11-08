@@ -1,368 +1,178 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{% macro tone_chip(label, tone) -%}
-<span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
-{%- endmacro %}
+{# 群详情：插件 / 成员 / 消息 / 资料 四个标签，默认进入插件；技术字段统一折叠到“技术信息”。 #}
+{% set base_url = '/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">返回群列表</a>
   {% if detail.sync_action or channel.channel_type == 'wechat_ipad' or channel.channel_type == 'workwechat' %}
-  <form method="post" action="{{ detail.sync_action or ('/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id ~ '/sync') }}">
+  <form method="post" action="{{ detail.sync_action or (base_url ~ '/sync') }}">
     <button class="btn btn-secondary" type="submit">{{ detail.sync_button_label or '同步当前群' }}</button>
   </form>
   {% endif %}
-  <span class="chip chip-outline">群 #{{ detail.chatroom_id }}</span>
-  <span class="chip chip-muted">{{ detail.status_label }}</span>
-  {{ tone_chip(detail.management_status_label, detail.management_status_tone) }}
 </div>
 {% endblock %}
 {% block content %}
 <section class="work-surface">
   <div class="toolbar">
-    <div>
-
-      <h2>{{ detail.name }}</h2>
-    </div>
+    <div>{{ identity({'name': detail.name, 'external_id': detail.chatroom_external_id, 'avatar_url': detail.avatar_url|default(''), 'initial': (detail.name or '?')[:1], 'show_id': false}, 'lg') }}</div>
     <div class="chip-row">
-      {{ tone_chip(detail.sync_depth_label, 'outline' if detail.member_record_count == 0 else 'success') }}
-      <span class="chip chip-outline">{{ detail.observed_source }}</span>
-      {{ tone_chip(detail.management_status_label, detail.management_status_tone) }}
+      <span class="chip chip-outline">{{ detail.member_record_count }} 名成员</span>
+      <span class="chip {% if detail.management_status == 'enabled' %}chip-success{% else %}chip-muted{% endif %}">{{ detail.management_status_label }}</span>
+      <span class="chip chip-outline">最近同步 {{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</span>
     </div>
   </div>
-  <div class="stats-grid compact-grid">
-    {# 标识、时间和文字状态不是数量指标，用正文级字号保留完整信息，不抢占群配置空间。 #}
-    <div class="metric-item metric-item-text"><span>群外部 ID</span><strong class="value-break">{{ detail.chatroom_external_id }}</strong></div>
-    <div class="metric-item metric-item-text"><span>本地状态</span><strong>{{ detail.status_label }}</strong></div>
-    <div class="metric-item metric-item-text"><span>管理状态</span><strong>{{ detail.management_status_label }}</strong></div>
-    <div class="metric-item metric-item-text"><span>同步深度</span><strong>{{ detail.sync_depth_label }}</strong></div>
-    <div class="metric-item"><span>成员数字段</span><strong>{{ detail.member_count }}</strong></div>
-    <div class="metric-item"><span>成员记录数</span><strong>{{ detail.member_record_count }}</strong></div>
-    <div class="metric-item metric-item-time"><span>最近同步</span><strong>{{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</strong></div>
-  </div>
-  <div class="panel-grid panel-grid-balanced" style="margin-top:16px;">
-    <div class="subsection">
-      {# 详情字段表格与后续编辑表单分开滚动，手机只滚动表格自身，不撑宽页面。 #}
-      <div class="table-scroll">
-      <table class="table table-tight">
-        <tbody>
-          <tr><th>群名</th><td>{{ detail.name }}</td></tr>
-          <tr><th>备注</th><td>{{ detail.remark }}</td></tr>
-          <tr><th>群主外部 ID</th><td class="cell-break"><code>{{ detail.owner_external_id }}</code></td></tr>
-          <tr><th>来源</th><td class="cell-break"><code>{{ detail.observed_source }}</code></td></tr>
-          <tr><th>群管理</th><td>{{ detail.management_status_label }}</td></tr>
-          <tr><th>附件自动下载</th><td>{{ detail.auto_download_media_label }}</td></tr>
-        </tbody>
-      </table>
-      </div>
-      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/management" class="form-grid top-gap">
-        <label class="full-row">
-          <span>群纳管状态</span>
-          <select name="management_status">
-            <option value="discovered" {% if detail.management_status == 'discovered' %}selected{% endif %}>待启用</option>
-            <option value="enabled" {% if detail.management_status == 'enabled' %}selected{% endif %}>已启用管理</option>
-            <option value="disabled" {% if detail.management_status == 'disabled' %}selected{% endif %}>已停用</option>
-            <option value="archived" {% if detail.management_status == 'archived' %}selected{% endif %}>已归档</option>
-          </select>
-        </label>
-        <p class="muted-text" style="margin:8px 0 0;">只有“已启用管理”的群会参与插件调度。被动发现和手动登记默认都是待启用。</p>
-        <button class="btn btn-secondary" type="submit" style="margin-top:10px;">保存纳管状态</button>
+
+  <nav class="tab-bar">
+    <a href="{{ base_url }}?tab=plugins" class="{{ 'active' if tab == 'plugins' }}">插件 ({{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }})</a>
+    <a href="{{ base_url }}?tab=members" class="{{ 'active' if tab == 'members' }}">成员 ({{ detail.members|length }})</a>
+    <a href="{{ base_url }}?tab=messages" class="{{ 'active' if tab == 'messages' }}">消息</a>
+    <a href="{{ base_url }}?tab=profile" class="{{ 'active' if tab == 'profile' }}">资料</a>
+  </nav>
+
+  {% if tab == 'plugins' %}
+  {% if detail.bindings %}
+  {% for item in detail.bindings %}
+  <div class="plugin-row">
+    <div>
+      <h3>{{ item.plugin_name }}
+        {% if item.group_scope_status != 'inherited' %}<span class="chip chip-success">本群已自定义</span>{% endif %}
+      </h3>
+      {% if item.plugin_description %}<p class="muted-text" style="margin:2px 0 0;">{{ item.plugin_description }}</p>{% endif %}
+    </div>
+    <div class="plugin-row-actions">
+      {# 开关沿用 mode 接口：已启用则切为强制停用，反之切为强制启用；“恢复默认”回到继承。 #}
+      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode">
+        <input type="hidden" name="mode" value="{{ 'disabled' if item.group_scope_enabled else 'enabled' }}" />
+        <button class="btn {% if item.group_scope_enabled %}btn-secondary{% endif %}" type="submit">{{ '已启用，点击停用' if item.group_scope_enabled else '已停用，点击启用' }}</button>
       </form>
-      {% if detail.supports_media_download or channel.channel_type == 'wechat_ipad' %}
-      <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/media-download" style="margin-top:12px;">
-        <label style="display:flex;gap:8px;align-items:center;">
-          <input type="checkbox" name="enabled" value="true"{% if detail.auto_download_media_enabled %} checked{% endif %} />
-          <span>为当前群开启附件自动下载</span>
-        </label>
-        <p class="muted-text" style="margin:8px 0 0;">默认关闭。开启后仅当前群会自动下载收到的图片、语音、视频附件。</p>
-        <button class="btn btn-secondary" type="submit" style="margin-top:10px;">保存附件设置</button>
+      {% if item.group_scope_status != 'inherited' %}
+      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode">
+        <input type="hidden" name="mode" value="inherited" />
+        <button class="btn btn-secondary" type="submit">恢复默认</button>
       </form>
-      {% else %}
-      <p class="muted-text" style="margin-top:12px;">当前渠道暂不支持群级附件自动下载配置。</p>
       {% endif %}
     </div>
-    <div class="subsection">
-
-      <h3 style="margin:0 0 8px;">成员角色概览</h3>
-      <div class="chip-row" style="margin-bottom:10px;">
-        {% for role, count in detail.role_counts.items() %}
-        <span class="chip chip-outline">{{ role }} {{ count }}</span>
-        {% endfor %}
-        {% if not detail.role_counts %}
-        <span class="chip chip-muted">暂无成员快照</span>
-        {% endif %}
-      </div>
-  <p class="muted-text" style="margin:0;">{{ detail.member_section_hint or '成员列表来自本地同步结果；如果这里为空，说明该群的成员信息还没有同步到本地。' }}</p>
-    </div>
+    <details>
+      <summary class="muted-text">高级配置与技术信息</summary>
+      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/config" class="chatroom-scope-config-form top-gap">
+        <span class="chatroom-scope-label">本群配置覆盖（JSON，仅保存与默认不同的部分）</span>
+        <textarea name="config_override_json" rows="8" class="chatroom-json-editor-textarea" spellcheck="false" data-json-editor>{{ item.group_scope_effective_config_json }}</textarea>
+        <div class="chatroom-scope-editor-actions" style="margin-top:8px;">
+          <button class="btn btn-secondary btn-small" type="button" data-json-format>格式化</button>
+          <button class="btn btn-secondary btn-small" type="button" data-json-clear>清空</button>
+          <button class="btn" type="submit">保存覆盖</button>
+        </div>
+      </form>
+      <p class="muted-text">
+        插件 <code>{{ item.plugin_code }}</code> · Binding #{{ item.binding_id }} · runtime={{ item.runtime_status }} ·
+        mode={{ item.group_scope_mode }} · effect={{ item.group_scope_effect }} · scope={{ item.group_scope_action_scope }} ·
+        最近执行 {{ item.last_execution_status }} {{ item.last_execution_at|bj_time if item.last_execution_at else '' }}
+      </p>
+    </details>
   </div>
-</section>
-
-{% if detail.message_flow is defined %}
-<section class="work-surface">
-  <div class="toolbar">
-    <div>
-
-      <h2>群消息流水</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-outline">{{ detail.message_flow.total }} 条</span>
-      {% if detail.message_flow.conversation_id %}
-      <a class="btn btn-secondary" href="/conversations/{{ detail.message_flow.conversation_id }}">打开会话</a>
-      {% endif %}
-    </div>
-  </div>
-  {% if detail.message_flow['items'] %}
-  <table class="table">
-    <thead>
-      <tr>
-        <th class="col-id">ID</th>
-        <th class="col-dir">方向</th>
-        <th class="col-time">时间</th>
-        <th>发送者</th>
-        <th class="col-type">类型</th>
-        <th class="col-status">状态</th>
-        <th>内容</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in detail.message_flow['items']|reverse %}
-      <tr>
-        <td class="col-id">#{{ item.id }}</td>
-        <td class="col-dir"><span class="chip {% if item.direction == 'in' %}chip-success{% else %}chip-outline{% endif %}">{{ item.direction }}</span></td>
-        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>
-          {{ identity(item.identity) }}
-        </td>
-        <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
-        <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
-        <td>
-          {% set message_content = item.content or '' %}
-          {% set message_short = message_content[:120] ~ ('...' if message_content|length > 120 else '') %}
-          {% if message_content|length > 120 %}
-          <details class="message-preview-card">
-            <summary class="message-preview-toggle">
-              <span class="message-preview-short">{{ message_short }}</span>
-              <span class="message-preview-toggle-collapsed">展开全文</span>
-              <span class="message-preview-toggle-expanded">收起</span>
-            </summary>
-            <div class="message-preview message-preview-full">{{ message_content }}</div>
-          </details>
-          {% else %}
-          <div class="message-preview">{{ message_content }}</div>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% endfor %}
   {% else %}
-  <p class="muted-text">当前群还没有本地消息流水；收到 Hook 回调并成功入站后会自动出现在这里。</p>
+  <p class="muted-text">当前机器人还没有绑定插件，请先到“运营能力”中为机器人添加插件。</p>
   {% endif %}
-</section>
-{% endif %}
 
-<section class="work-surface">
-  <div class="toolbar">
-    <div>
-
-      <h2>群成员快照</h2>
-    </div>
-    <span class="chip chip-outline">{{ detail.members|length }} 条记录</span>
-  </div>
+  {% elif tab == 'members' %}
   {% if detail.members %}
+  <div class="chip-row" style="margin-bottom:10px;">
+    {% for role, count in detail.role_counts.items() %}<span class="chip chip-outline">{{ role }} {{ count }}</span>{% endfor %}
+  </div>
+  <div class="table-scroll">
   <table class="table">
-    <thead>
-      <tr>
-        <th>头像 / ID</th>
-        <th>昵称</th>
-        <th>群内显示名</th>
-        <th>角色 / 标记</th>
-        <th>补充信息</th>
-        <th class="col-time">最后活跃</th>
-        <th class="col-time">最近同步</th>
-      </tr>
-    </thead>
+    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th><th class="col-time">最后活跃</th></tr></thead>
     <tbody>
       {% for item in detail.members %}
       <tr>
-        <td>
-          {{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}
-        </td>
-        <td>
-          <div>{{ item.nickname }}</div>
-          <div class="muted-text">alias={{ item.alias }}</div>
-          <div class="muted-text">remark={{ item.remark }}</div>
-        </td>
-        <td>
-          <div>{{ item.display_name }}</div>
-          <div class="muted-text">inviter={{ item.inviter_user_name }}</div>
-        </td>
-        <td>
-          <div>{{ item.role_label }}</div>
-          <div class="muted-text">{{ item.member_flag_label }}{% if item.member_flag != '-' %} / {{ item.member_flag }}{% endif %}</div>
-        </td>
-        <td>
-          <div>{{ item.status_label }}</div>
-          <div class="muted-text">region={{ item.region_label }}</div>
-          <div class="muted-text">mobile={{ item.mobile }}</div>
-          <div class="muted-text">email={{ item.email }}</div>
-          <div class="muted-text">join={{ item.join_time }}</div>
-        </td>
+        <td>{{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}</td>
+        <td>{{ item.display_name }}</td>
+        <td>{{ item.role_label }}</td>
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}</td>
-        <td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
-  <p class="muted-text">{{ detail.member_section_hint or '当前还没有本地成员信息，可以继续执行群成员同步。' }}</p>
+  <p class="muted-text">{{ detail.member_section_hint or '还没有成员信息，请点击右上角同步。' }}</p>
   {% endif %}
-</section>
 
-<section class="work-surface">
-  <div class="toolbar">
-    <div>
-
-      <h2>群级插件控制</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-outline">总绑定 {{ detail.binding_summary.total }}</span>
-      {{ tone_chip('继承 ' ~ detail.binding_summary.inherited_scope_count, 'outline') }}
-      {{ tone_chip('覆盖 ' ~ detail.binding_summary.overridden_scope_count, 'success' if detail.binding_summary.overridden_scope_count else 'muted') }}
-      {{ tone_chip('有效启用 ' ~ detail.binding_summary.effective_enabled_count, 'success') }}
-      {{ tone_chip('有效停用 ' ~ detail.binding_summary.effective_disabled_count, 'muted') }}
-    </div>
-  </div>
-  <p class="muted-text" style="margin:0 0 14px;">{{ detail.binding_summary.operator_summary }}</p>
-  {% if detail.bindings %}
-  <div class="chatroom-scope-grid">
-    {% for item in detail.bindings %}
-    <article class="chatroom-scope-card">
-      <div class="chatroom-scope-card-head">
-        <div class="chatroom-scope-card-title">
-          <p class="section-kicker">Binding #{{ item.binding_id }}</p>
-          <h3>{{ item.plugin_name }}</h3>
-          <p class="muted-text"><code>{{ item.plugin_code }}</code></p>
-        </div>
-        <div class="chatroom-scope-badges">
-          {{ tone_chip(item.binding_status_label, item.binding_status_tone) }}
-          {{ tone_chip(item.group_scope_status_label, item.group_scope_status_tone) }}
-          <span class="chip {% if item.group_scope_has_config_override %}chip-success{% else %}chip-muted{% endif %}">
-            {{ '有配置覆盖' if item.group_scope_has_config_override else '继承默认配置' }}
-          </span>
-        </div>
-      </div>
-
-      <div class="chatroom-scope-facts">
-        <div>
-          <span>bot_plugin</span>
-          <strong>{{ item.binding_status_label }}</strong>
-          <p>runtime={{ item.runtime_status }}</p>
-        </div>
-        <div>
-          <span>当前群内效果</span>
-          <strong>{{ item.group_scope_enabled_label }}</strong>
-          <p>mode={{ item.group_scope_mode }} / effect={{ item.group_scope_effect }}</p>
-        </div>
-        <div>
-          <span>作用范围</span>
-          <strong>{{ item.group_scope_action_scope }}</strong>
-          <p>{{ item.group_scope_summary }}</p>
-        </div>
-        <div>
-          <span>最近执行</span>
-          <strong>{{ item.last_execution_status }}</strong>
-          <p>{{ item.last_execution_at|bj_time if item.last_execution_at else '-' }}</p>
-        </div>
-      </div>
-
-      <div class="chatroom-scope-notes">
-        <p>{{ item.group_scope_boundary_note }}</p>
-        <p>{{ item.last_execution_summary }}</p>
-      </div>
-
-      <div class="chatroom-scope-editor">
-        <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/scopes/{{ item.binding_id }}/mode" class="chatroom-scope-mode-form">
-          <label>
-            <span class="chatroom-scope-label">群内开关模式</span>
-            <select name="mode" class="chatroom-scope-select">
-              <option value="inherited" {% if item.group_scope_mode == 'inherited' %}selected{% endif %}>继承 bot 默认</option>
-              <option value="enabled" {% if item.group_scope_mode == 'enabled' %}selected{% endif %}>群内强制启用</option>
-              <option value="disabled" {% if item.group_scope_mode == 'disabled' %}selected{% endif %}>群内强制停用</option>
-            </select>
-          </label>
-          <button class="btn btn-secondary" type="submit">保存模式</button>
-        </form>
-
-        <form method="post" action="/channels/{{ channel.id }}/chatrooms/{{ detail.chatroom_id }}/scopes/{{ item.binding_id }}/config" class="chatroom-scope-config-form">
-          <div class="chatroom-scope-editor-head">
-            <div>
-              <span class="chatroom-scope-label">群级配置覆盖</span>
-              <p class="muted-text">编辑器默认加载当前生效配置。保存时会自动回算为当前群的差异覆盖，避免整份配置都写进 override。</p>
-            </div>
-            <div class="chatroom-scope-editor-actions">
-              <button class="btn btn-secondary btn-small" type="button" data-json-format>格式化</button>
-              <button class="btn btn-secondary btn-small" type="button" data-json-clear>清空</button>
-            </div>
-          </div>
-          <div class="chatroom-json-editor">
-            <div class="chatroom-json-editor-bar">
-              <span>override.json</span>
-              <span>{{ '已设置覆盖' if item.group_scope_has_config_override else 'inherit' }}</span>
-            </div>
-            <textarea
-              name="config_override_json"
-              rows="8"
-              class="chatroom-json-editor-textarea"
-              spellcheck="false"
-              data-json-editor
-              placeholder='例如：{"templates":{"join":"欢迎 {names} 来到本群"}}'
-            >{{ item.group_scope_effective_config_json }}</textarea>
-          </div>
-          <div class="chatroom-json-hint-row">
-            <span>{% if item.group_scope_effective_config_has_values %}已载入当前生效配置，可直接在此基础上改。{% else %}当前还没有配置项，保存后会从你填写的 JSON 生成群级覆盖。{% endif %}</span>
-            <button class="btn" type="submit">保存覆盖</button>
-          </div>
-        </form>
-      </div>
-    </article>
-    {% endfor %}
+  {% elif tab == 'messages' %}
+  {% set flow = detail.message_flow if detail.message_flow is defined else none %}
+  {% if flow and flow['items'] %}
+  {# 只展示最近 30 条，最新的在底部；完整检索走“消息”主入口。 #}
+  <div class="table-scroll">
+  <table class="table">
+    <thead><tr><th class="col-time">时间</th><th>发送者</th><th>内容</th></tr></thead>
+    <tbody>
+      {% for item in (flow['items'][:30])|reverse %}
+      <tr>
+        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+        <td>{{ identity(item.identity) }}</td>
+        <td><div class="message-preview">{{ (item.content or '')[:200] }}{{ '...' if (item.content or '')|length > 200 }}</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
   </div>
   {% else %}
-  <p class="muted-text">当前 bot 还没有插件绑定，因此该群也还没有可继承的 `bot_plugin` 作用域。</p>
+  <p class="muted-text">本群还没有消息记录。</p>
+  {% endif %}
+
+  {% else %}
+  <table class="table table-tight">
+    <tbody>
+      <tr><th>群名</th><td>{{ detail.name }}</td></tr>
+      <tr><th>备注</th><td>{{ detail.remark }}</td></tr>
+      <tr><th>本地状态</th><td>{{ detail.status_label }}</td></tr>
+    </tbody>
+  </table>
+  <form method="post" action="{{ base_url }}/management" class="form-grid top-gap">
+    <label class="full-row">
+      <span>群纳管状态（只有“已启用管理”的群会运行插件）</span>
+      <select name="management_status">
+        <option value="discovered" {% if detail.management_status == 'discovered' %}selected{% endif %}>待启用</option>
+        <option value="enabled" {% if detail.management_status == 'enabled' %}selected{% endif %}>已启用管理</option>
+        <option value="disabled" {% if detail.management_status == 'disabled' %}selected{% endif %}>已停用</option>
+        <option value="archived" {% if detail.management_status == 'archived' %}selected{% endif %}>已归档</option>
+      </select>
+    </label>
+    <button class="btn btn-secondary" type="submit">保存</button>
+  </form>
+  {% if detail.supports_media_download or channel.channel_type == 'wechat_ipad' %}
+  <form method="post" action="{{ base_url }}/media-download" style="margin-top:12px;">
+    <label style="display:flex;gap:8px;align-items:center;">
+      <input type="checkbox" name="enabled" value="true"{% if detail.auto_download_media_enabled %} checked{% endif %} />
+      <span>自动下载本群收到的图片、语音、视频</span>
+    </label>
+    <button class="btn btn-secondary" type="submit" style="margin-top:10px;">保存附件设置</button>
+  </form>
+  {% endif %}
+  <details style="margin-top:16px;">
+    <summary class="muted-text">技术信息</summary>
+    <p class="muted-text">群 #{{ detail.chatroom_id }} · 外部 ID <code>{{ detail.chatroom_external_id }}</code> · 群主 <code>{{ detail.owner_external_id }}</code> · 来源 {{ detail.observed_source }} · 同步深度 {{ detail.sync_depth_label }}</p>
+  </details>
   {% endif %}
 </section>
 {% endblock %}
 {% block scripts %}
 <script>
   (() => {
-    const forms = document.querySelectorAll(".chatroom-scope-config-form");
-    if (!forms.length) return;
-
-    forms.forEach((form) => {
+    document.querySelectorAll(".chatroom-scope-config-form").forEach((form) => {
       const textarea = form.querySelector("[data-json-editor]");
       const formatButton = form.querySelector("[data-json-format]");
       const clearButton = form.querySelector("[data-json-clear]");
       if (!textarea) return;
-
-      if (formatButton) {
-        formatButton.addEventListener("click", () => {
-          const raw = textarea.value.trim();
-          if (!raw) return;
-          try {
-            const parsed = JSON.parse(raw);
-            textarea.value = JSON.stringify(parsed, null, 2);
-          } catch (error) {
-            window.alert(`JSON 格式化失败：${error.message}`);
-          }
-        });
-      }
-
-      if (clearButton) {
-        clearButton.addEventListener("click", () => {
-          textarea.value = "";
-          textarea.focus();
-        });
-      }
+      if (formatButton) formatButton.addEventListener("click", () => {
+        const raw = textarea.value.trim();
+        if (!raw) return;
+        try { textarea.value = JSON.stringify(JSON.parse(raw), null, 2); }
+        catch (error) { window.alert(`JSON 格式化失败：${error.message}`); }
+      });
+      if (clearButton) clearButton.addEventListener("click", () => { textarea.value = ""; textarea.focus(); });
     });
   })();
 </script>
