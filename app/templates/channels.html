@@ -40,9 +40,14 @@
     <article class="record-row account-record-row">
       <div class="record-primary">
         <a class="record-link" href="/channels/{{ row.channel.id }}">{{ row.connection.display_name }}</a>
-        <span>{{ row.channel.channel_type|channel_type_label }}</span>
+        <span>{{ row.channel.channel_type|channel_type_label }} · 渠道 ID {{ row.channel.id }}</span>
       </div>
       <dl class="record-meta">
+        {# 渠道 ID 是后台入口和微桥服务地址的重要定位信息，直接在账号清单展示。 #}
+        <div>
+          <dt>渠道 ID</dt>
+          <dd><code>{{ row.channel.id }}</code></dd>
+        </div>
         <div>
           <dt>连接状态</dt>
           <dd><span class="chip {% if row.channel.is_enabled %}chip-success{% elif row.connection.state == 'failed' %}badge-error{% else %}chip-muted{% endif %}">{{ row.connection.label }}</span></dd>

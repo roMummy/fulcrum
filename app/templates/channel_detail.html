@@ -11,7 +11,7 @@
   {% if can_manage_channel %}
   <button class="btn btn-secondary" type="button" data-modal-open="edit-channel-modal">账号设置</button>
   {% endif %}
-  <span class="chip chip-outline">账号 #{{ channel.id }}</span>
+  <span class="chip chip-outline">渠道 ID #{{ channel.id }}</span>
   <span class="chip chip-muted">{{ channel.channel_type|channel_type_label }}</span>
   <span class="chip {% if channel.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if channel.is_enabled else '已停用' }}</span>
 </div>
