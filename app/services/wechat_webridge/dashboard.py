@@ -54,11 +54,21 @@ def _paginate(db: Session, stmt, page: int) -> tuple[list, dict[str, Any]]:
     }
 
 
-def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "contacts", keyword: str = "", page: int = 1) -> dict:
+def build_webridge_dashboard(
+    db: Session,
+    channel: Channel,
+    *,
+    tab: str = "contacts",
+    keyword: str = "",
+    page: int = 1,
+    conversation_id: int = 0,
+    sender: str = "",
+) -> dict:
     """构建单个 WeBridge 渠道的总览：各标签数量加当前标签的搜索分页结果。"""
 
     active = tab if tab in TABS else "contacts"
     q = (keyword or "").strip()[:100]
+    sender_q = (sender or "").strip()[:100]
     cid = int(channel.id)
 
     contact_filter = [WorkWechatContact.channel_id == cid, WorkWechatContact.contact_kind == "friend"]
@@ -74,7 +84,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
         ),
     }
     # 外部 ID -> 会话 ID，用于“查看消息”链接；只取本页涉及的 ID，避免整渠道扫描。
-    result: dict[str, Any] = {"tab": active, "keyword": q, "counts": counts, "rows": [], "message_identities": {}}
+    result: dict[str, Any] = {"tab": active, "keyword": q, "sender": sender_q, "conversation_id": int(conversation_id or 0), "conversations": [], "counts": counts, "rows": [], "message_identities": {}}
 
     if active == "contacts":
         stmt = select(WorkWechatContact).where(*contact_filter)
@@ -147,11 +157,28 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
             stmt = stmt.where(
                 or_(Message.content.like(like, escape="\\"), Message.sender_name.like(like, escape="\\"), Message.sender_id.like(like, escape="\\"))
             )
+        # 会话筛选（群或好友）：限定在本渠道内，避免跨渠道读取。
+        if conversation_id:
+            stmt = stmt.where(Message.conversation_id == int(conversation_id))
+        # 发送者筛选：按昵称或 wxid 模糊匹配。
+        if sender_q:
+            like = _like(sender_q)
+            stmt = stmt.where(or_(Message.sender_name.like(like, escape="\\"), Message.sender_id.like(like, escape="\\")))
         rows, pagination = _paginate(db, stmt.order_by(Message.id.desc()), page)
         messages = [row[0] for row in rows]
         # 查询按最新优先分页，模板内再反转，保证页内最新消息在底部。
         result["rows"] = messages
-        result["message_identities"] = IdentityDirectory(db).for_messages(messages)
+        directory = IdentityDirectory(db)
+        result["message_identities"] = directory.for_messages(messages)
+        # 筛选下拉：按最近活跃排序的会话，最多 200 个，展示昵称而不是 wxid。
+        convs = db.scalars(
+            select(Conversation).where(Conversation.channel_id == cid).order_by(Conversation.last_message_at.desc(), Conversation.id.desc()).limit(200)
+        ).all()
+        conv_identities = directory.for_conversations(convs)
+        result["conversations"] = [
+            {"id": int(item.id), "name": (conv_identities.get(item.id) or {}).get("name") or item.title or item.external_id, "is_group": item.chat_type == "group"}
+            for item in convs
+        ]
 
     result["pagination"] = pagination
     return result

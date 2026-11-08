@@ -56,7 +56,7 @@ def test_webridge_outbound_message_mapping_covers_media_and_cards(monkeypatch) -
 
     monkeypatch.setattr(service, "enqueue_job", fake_enqueue_job)
     channel = Channel(id=9, bot_id=1, tenant_id=3, name="微桥", channel_type="wechat_webridge")
-    conversation = Conversation(id=11, bot_id=1, channel_id=9, external_id="wxid-bob", chat_type="direct")
+    conversation = Conversation(id=11, bot_id=1, channel_id=9, external_id="wxid-bob", chat_type="direct", tenant_id=1)
 
     service.enqueue_message_command(
         object(), channel, conversation, {"message_type": "image", "image_url": "https://example.test/a.jpg"}
@@ -82,7 +82,7 @@ def test_webridge_media_upload_command_contains_attachment_reference(monkeypatch
 
     monkeypatch.setattr(service, "enqueue_job", fake_enqueue_job)
     channel = Channel(id=4, bot_id=1, tenant_id=2, name="微桥", channel_type="wechat_webridge")
-    conversation = Conversation(id=5, bot_id=1, channel_id=4, external_id="wxid-room", chat_type="group")
+    conversation = Conversation(id=5, bot_id=1, channel_id=4, external_id="wxid-room", chat_type="group", tenant_id=1)
     service.enqueue_media_upload_command(
         object(),
         channel=channel,
@@ -316,3 +316,42 @@ def test_group_scope_channel_types_include_webridge() -> None:
     from app.main import GROUP_SCOPE_CHANNEL_TYPES
 
     assert "wechat_webridge" in GROUP_SCOPE_CHANNEL_TYPES
+
+
+def test_dashboard_message_filters_by_conversation_and_sender() -> None:
+    """消息标签支持按会话（群/好友）和发送者筛选，且只返回本渠道数据。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.models.entities import Chatroom, ChatroomMember, Message, WorkWechatContact
+    from app.services.wechat_webridge.dashboard import build_webridge_dashboard
+
+    engine = create_engine("sqlite://")
+    # 只建总览统计和消息查询用到的表，避免触发全库夹具。
+    for model in (Channel, Conversation, Message, Chatroom, ChatroomMember, WorkWechatContact):
+        model.__table__.create(engine, checkfirst=True)
+    with Session(engine) as db:
+        channel = Channel(id=1, bot_id=1, name="微桥", channel_type="wechat_webridge", tenant_id=1)
+        room = Conversation(id=10, bot_id=1, channel_id=1, channel_type="wechat_webridge", external_id="r1@chatroom", chat_type="group", tenant_id=1)
+        friend = Conversation(id=11, bot_id=1, channel_id=1, channel_type="wechat_webridge", external_id="wxid_f", chat_type="direct", tenant_id=1)
+        other = Conversation(id=12, bot_id=1, channel_id=2, channel_type="wechat_webridge", external_id="x", chat_type="direct", tenant_id=1)
+        db.add_all([channel, room, friend, other])
+        db.add_all(
+            [
+                Message(conversation_id=10, direction="in", sender_id="wxid_a", sender_name="小明", content="群消息", tenant_id=1),
+                Message(conversation_id=11, direction="in", sender_id="wxid_f", sender_name="老王", content="私聊", tenant_id=1),
+                Message(conversation_id=12, direction="in", sender_id="wxid_z", sender_name="外渠道", content="别的渠道", tenant_id=1),
+            ]
+        )
+        db.commit()
+
+        everything = build_webridge_dashboard(db, channel, tab="messages")
+        assert len(everything["rows"]) == 2
+        by_room = build_webridge_dashboard(db, channel, tab="messages", conversation_id=10)
+        assert [m.content for m in by_room["rows"]] == ["群消息"]
+        by_sender = build_webridge_dashboard(db, channel, tab="messages", sender="老王")
+        assert [m.content for m in by_sender["rows"]] == ["私聊"]
+        # 其他渠道的会话 ID 不能被当作筛选条件读出数据。
+        assert build_webridge_dashboard(db, channel, tab="messages", conversation_id=12)["rows"] == []
+        assert {c["id"] for c in everything["conversations"]} == {10, 11}

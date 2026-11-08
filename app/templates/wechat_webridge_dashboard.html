@@ -4,20 +4,14 @@
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
   <a class="btn btn-secondary" href="/api/wechat-webridge/{{ channel.id }}/capabilities">能力目录</a>
+  {# 同步命令放在页头，随时可点；命令进入手机长轮询队列。 #}
+  {% for cmd, label in [('friends_all','同步好友'),('groups_all','同步群组')] %}
+  <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="{{ cmd }}" /><input type="hidden" name="args_json" value="{}" /><button class="btn" type="submit">{{ label }}</button></form>
+  {% endfor %}
 </div>
 {% endblock %}
 {% block content %}
 {% set base = '/channels/' ~ channel.id ~ '/wechat-webridge' %}
-<section class="work-surface">
-  <div class="toolbar">
-    <div><h2>{{ channel.name }}</h2></div>
-    <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="friends_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步好友</button></form>
-      <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="groups_all" /><input type="hidden" name="args_json" value="{}" /><button class="btn btn-secondary" type="submit">同步群组</button></form>
-    </div>
-  </div>
-</section>
-
 <section class="work-surface">
   <div class="toolbar">
     <nav class="chip-row" aria-label="数据类型">
@@ -27,21 +21,28 @@
     </nav>
     <form method="get" action="{{ base }}" class="chip-row">
       <input type="hidden" name="tab" value="{{ dashboard.tab }}" />
+      {% if dashboard.tab == 'messages' %}
+      <select name="conversation_id" aria-label="按群或好友筛选">
+        <option value="0">全部群和好友</option>
+        {% for conv in dashboard.conversations %}<option value="{{ conv.id }}" {% if conv.id == dashboard.conversation_id %}selected{% endif %}>{{ '群 · ' if conv.is_group else '' }}{{ conv.name }}</option>{% endfor %}
+      </select>
+      <input type="search" name="sender" value="{{ dashboard.sender }}" placeholder="发送者昵称或微信 ID" maxlength="100" />
+      {% endif %}
       <input type="search" name="keyword" value="{{ dashboard.keyword }}" placeholder="搜索昵称、备注、微信 ID 或内容" maxlength="100" />
       <button class="btn btn-secondary" type="submit">搜索</button>
-      {% if dashboard.keyword %}<a class="btn btn-secondary" href="{{ base }}?tab={{ dashboard.tab }}">清除</a>{% endif %}
+      {% if dashboard.keyword or dashboard.sender or dashboard.conversation_id %}<a class="btn btn-secondary" href="{{ base }}?tab={{ dashboard.tab }}">清除</a>{% endif %}
     </form>
   </div>
 
   {% if dashboard.tab == 'contacts' %}
     {% if dashboard.rows %}<table class="table"><thead><tr><th>好友</th><th>备注</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
     {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.remark or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a>{% else %}<span class="muted-text">暂无会话</span>{% endif %}</td></tr>{% endfor %}
-    </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的好友' if dashboard.keyword else '暂无好友资料，点击上方“同步全部好友”。' }}</p>{% endif %}
+    </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的好友' if dashboard.keyword else '暂无好友资料，点击右上角“同步好友”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'groups' %}
     {% if dashboard.rows %}<table class="table"><thead><tr><th>群组</th><th>成员数</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
     {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.member_count or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a> {% endif %}<a class="btn btn-small" href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">群详情</a></td></tr>{% endfor %}
-    </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的群组' if dashboard.keyword else '暂无群组资料，点击上方“同步全部群组”。' }}</p>{% endif %}
+    </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的群组' if dashboard.keyword else '暂无群组资料，点击右上角“同步群组”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'members' %}
     {% if dashboard.rows %}<table class="table"><thead><tr><th>成员</th><th>所在群</th><th>角色</th><th class="col-time">最近同步</th></tr></thead><tbody>
@@ -53,12 +54,13 @@
     {% for item in dashboard.rows|reverse %}<tr><td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td><td class="col-dir">{{ '入站' if item.direction == 'in' else '出站' }}</td><td>{{ identity(dashboard.message_identities.get(item.id)) }}</td><td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td><td>{{ (item.content|message_display(item.message_type))[:160] }}</td></tr>{% endfor %}
     </tbody></table>
     <p class="muted-text top-gap"><a href="/messages?channel_id={{ channel.id }}">在消息中心按会话查看完整聊天</a></p>
-    {% else %}<p class="muted-text">{{ '没有匹配的消息' if dashboard.keyword else '暂无消息记录。' }}</p>{% endif %}
+    {% else %}<p class="muted-text">{{ '没有匹配的消息' if (dashboard.keyword or dashboard.sender or dashboard.conversation_id) else '暂无消息记录。' }}</p>{% endif %}
   {% endif %}
 
   {% set pg = dashboard.pagination %}
   {% if pg.total_pages > 1 %}
-  {% set qs = '&keyword=' ~ (dashboard.keyword|urlencode) if dashboard.keyword else '' %}
+  {# 翻页需要保留所有筛选条件。 #}
+  {% set qs = ('&keyword=' ~ (dashboard.keyword|urlencode) if dashboard.keyword else '') ~ ('&sender=' ~ (dashboard.sender|urlencode) if dashboard.sender else '') ~ ('&conversation_id=' ~ dashboard.conversation_id if dashboard.conversation_id else '') %}
   <div class="list-pagination"><div class="list-pagination-summary">第 {{ pg.page }} / {{ pg.total_pages }} 页，共 {{ pg.total }} 条{% if dashboard.tab == 'messages' %}（第 1 页为最新）{% endif %}</div>
   <div class="list-pagination-actions">
     {% if dashboard.tab == 'messages' %}

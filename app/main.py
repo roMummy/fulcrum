@@ -2252,7 +2252,7 @@ async def channel_detail_page(request: Request, channel_id: int):
 
 
 @app.get("/channels/{channel_id}/wechat-webridge", response_class=HTMLResponse)
-async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab: str = "contacts", keyword: str = "", page: int = 1):
+async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab: str = "contacts", keyword: str = "", page: int = 1, conversation_id: int = 0, sender: str = ""):
     """展示 WeBridge 渠道内已落库的好友、群组和消息信息。"""
 
     # 后台页面必须先恢复当前租户身份，避免匿名请求或错误租户上下文读取渠道数据。
@@ -2269,7 +2269,7 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab:
             "wechat_webridge_dashboard.html",
             page_title=f"微桥后台 · {channel.name}",
             channel=channel,
-            dashboard=build_webridge_dashboard(db, channel, tab=tab, keyword=keyword, page=page),
+            dashboard=build_webridge_dashboard(db, channel, tab=tab, keyword=keyword, page=page, conversation_id=conversation_id, sender=sender),
             notice=request.query_params.get("notice", ""),
         )
     finally:
