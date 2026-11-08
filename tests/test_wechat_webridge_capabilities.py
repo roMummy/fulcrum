@@ -292,3 +292,19 @@ def test_persist_room_members_maps_owner_admin_roles() -> None:
     )
     assert counts["members"] == 3
     assert [m.role for m in db.added] == ["owner", "admin", "member"]
+
+
+def test_compact_result_for_storage_keeps_small_and_summarizes_large() -> None:
+    """小结果原样保存；大群成员列表超过 TEXT 上限前只保留标量摘要，明细已落业务表。"""
+
+    small = {"ok": True, "result": {"members": [{"account_id": "a"}]}}
+    assert service._compact_result_for_storage(small, {"members": 1}) == small
+
+    big = {"ok": True, "request_id": "r1", "result": {"room_id": "r", "member_count": 500, "members": [{"nick_name": "好" * 200}] * 400}}
+    compact = service._compact_result_for_storage(big, {"members": 400})
+    assert compact["request_id"] == "r1"
+    assert compact["result"]["truncated"] is True
+    assert compact["result"]["persisted_counts"] == {"members": 400}
+    assert compact["result"]["member_count"] == 500
+    assert "members" not in compact["result"]
+    assert len(json.dumps(compact, ensure_ascii=False).encode("utf-8")) < service.RESULT_INLINE_LIMIT_BYTES

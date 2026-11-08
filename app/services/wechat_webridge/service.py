@@ -141,6 +141,23 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
     return counts
 
 
+# task_jobs.result_json 是 TEXT（上限 65535 字节），大群成员列表可达 6 万字符以上，
+# 超出时写入报 Data too long，连同成员落库一起回滚，任务永远完成不了。
+RESULT_INLINE_LIMIT_BYTES = 40000
+
+
+def _compact_result_for_storage(payload: dict[str, Any], counts: dict[str, int]) -> dict[str, Any]:
+    """目录类命令的明细已写入各自业务表，任务结果过大时只保存摘要。"""
+
+    if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) <= RESULT_INLINE_LIMIT_BYTES:
+        return payload
+    result = as_object(payload.get("result"))
+    summary = {key: value for key, value in result.items() if not isinstance(value, (list, dict))}
+    summary["truncated"] = True
+    summary["persisted_counts"] = counts
+    return {**{key: value for key, value in payload.items() if key != "result"}, "result": summary}
+
+
 def command_catalog(channel: Channel | None = None) -> dict[str, Any]:
     """返回稳定命令目录，并附带当前手机注册时上报的能力集合。"""
 
@@ -537,8 +554,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         result = as_object(payload.get("result"))
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
-            persist_directory_result(db, channel, command, result)
-            complete_job(db, job, result={"webridge": payload})
+            counts = persist_directory_result(db, channel, command, result)
+            complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
         fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
