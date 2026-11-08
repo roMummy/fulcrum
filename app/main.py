@@ -156,7 +156,7 @@ from app.services.wechat_winauto_chatrooms import (
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard
 from app.services.identity_directory import IdentityDirectory
-from app.services.wechat_webridge.service import enqueue_command
+from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
     build_workwechat_chatroom_list,
@@ -2260,6 +2260,8 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab:
         channel = get_channel(db, channel_id)
         if not channel or channel.channel_type != "wechat_webridge":
             raise HTTPException(status_code=404, detail="WeBridge channel not found")
+        # 手机离线时不会有 poll，打开后台页面时也回收一次超时命令，避免页面一直显示进行中。
+        reap_stale_commands(db, channel)
         return render(
             request,
             "wechat_webridge_dashboard.html",

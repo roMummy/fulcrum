@@ -163,3 +163,45 @@ def test_persist_directory_result_reads_group_id_and_nick_name() -> None:
     )
     assert db.added[0].name == "小柒"
     assert db.added[0].display_name == "小柒"
+
+
+def test_reap_stale_commands_only_fails_timed_out_jobs_of_this_channel(tmp_path) -> None:
+    """领取后超时未回报的命令要置为失败终态；未超时和其他渠道的任务不能被误伤。"""
+
+    from datetime import timedelta
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.time import now_shanghai
+    from app.models.entities import TaskJob
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'reap.db'}")
+    TaskJob.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    now = now_shanghai()
+    expired = now - timedelta(seconds=service.COMMAND_RUNNING_TIMEOUT_SECONDS + 60)
+
+    def add_job(channel_id: int, locked_at, status: str = "running") -> TaskJob:
+        job = TaskJob(
+            tenant_id=1, job_type=service.JOB_TYPE, status=status, locked_at=locked_at,
+            payload_json=json.dumps({"channel_id": channel_id, "command": {"type": "room_members"}}),
+        )
+        db.add(job)
+        db.commit()
+        return job
+
+    stale = add_job(2, expired)
+    fresh = add_job(2, now - timedelta(seconds=10))
+    other_channel = add_job(3, expired)
+    pending = add_job(2, None, status="pending")
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    assert service.reap_stale_commands(db, channel) == 1
+
+    db.refresh(stale)
+    assert stale.status == "failed"
+    assert stale.error_message == "webridge_command_timeout"
+    assert [db.get(TaskJob, job.id).status for job in (fresh, other_channel, pending)] == ["running", "running", "pending"]
+    # 再次回收不应重复处理已经失败的任务。
+    assert service.reap_stale_commands(db, channel) == 0

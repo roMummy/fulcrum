@@ -20,6 +20,32 @@ from .contract import COMMAND_GROUPS, COMMANDS, JOB_TYPE, as_object, identity_fr
 
 logger = get_logger(__name__)
 
+# 手机领取命令后超过该时长仍未回传结果，视为插件卡死或断线，任务置为失败以免链路一直显示进行中。
+COMMAND_RUNNING_TIMEOUT_SECONDS = 180
+
+
+def reap_stale_commands(db: Session, channel: Channel) -> int:
+    """回收本渠道领取后超时未回报的命令，返回回收数量。
+
+    不自动重试：发消息类命令无法证明手机是在发送前还是发送后卡死，重试可能造成重复发送；
+    读取类命令失败后由操作人在后台重新提交即可。
+    """
+
+    # 用 SQL 比较时间，避免数据库返回的无时区时间与带时区时间直接比较。
+    cutoff = now_shanghai() - timedelta(seconds=COMMAND_RUNNING_TIMEOUT_SECONDS)
+    jobs = db.scalars(
+        select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status == "running", TaskJob.locked_at < cutoff)
+    ).all()
+    reaped = 0
+    for job in jobs:
+        if int(parse_job_payload(job).get("channel_id") or 0) != int(channel.id):
+            continue
+        fail_job_terminal(db, job, error_message="webridge_command_timeout", result={"timeout_seconds": COMMAND_RUNNING_TIMEOUT_SECONDS})
+        reaped += 1
+    if reaped:
+        logger.warning("webridge stale commands reaped", extra={"channel_id": channel.id, "count": reaped})
+    return reaped
+
 
 def _result_items(result: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
     """从微桥不同版本的列表返回结构中提取对象数组。"""
@@ -411,6 +437,8 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         logger.error("webridge command claim identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     current = now_shanghai()
+    # 每次轮询先清理超时命令，手机恢复后第一次 poll 就能让链路解除阻塞。
+    reap_stale_commands(db, channel)
     jobs = db.scalars(
         select(TaskJob)
         .where(TaskJob.job_type == JOB_TYPE, TaskJob.status == "pending", TaskJob.available_at <= current)
