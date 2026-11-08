@@ -74,7 +74,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
         ),
     }
     # 外部 ID -> 会话 ID，用于“查看消息”链接；只取本页涉及的 ID，避免整渠道扫描。
-    result: dict[str, Any] = {"tab": active, "keyword": q, "counts": counts, "items": [], "message_identities": {}}
+    result: dict[str, Any] = {"tab": active, "keyword": q, "counts": counts, "rows": [], "message_identities": {}}
 
     if active == "contacts":
         stmt = select(WorkWechatContact).where(*contact_filter)
@@ -90,7 +90,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
         rows, pagination = _paginate(db, stmt.order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc()), page)
         contacts = [row[0] for row in rows]
         conv_map = _conversation_ids(db, cid, [item.contact_external_id for item in contacts])
-        result["items"] = [
+        result["rows"] = [
             {
                 "identity": make_identity(item.contact_external_id, item.display_name or item.name, item.avatar_url),
                 "remark": item.display_name if item.name and item.display_name != item.name else "",
@@ -107,7 +107,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
         rows, pagination = _paginate(db, stmt.order_by(Chatroom.name.asc(), Chatroom.id.desc()), page)
         rooms = [row[0] for row in rows]
         conv_map = _conversation_ids(db, cid, [item.external_id for item in rooms])
-        result["items"] = [
+        result["rows"] = [
             {
                 "identity": make_identity(item.external_id, item.remark or item.name, _avatar(item.extra_json)),
                 "room_id": int(item.id),
@@ -130,7 +130,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
                 )
             )
         rows, pagination = _paginate(db, stmt.order_by(Chatroom.name.asc(), ChatroomMember.id.asc()), page)
-        result["items"] = [
+        result["rows"] = [
             {
                 "identity": make_identity(member.member_external_id, member.display_name or member.nickname, _avatar(member.extra_json)),
                 "role": member.role,
@@ -150,7 +150,7 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "conta
         rows, pagination = _paginate(db, stmt.order_by(Message.id.desc()), page)
         messages = [row[0] for row in rows]
         # 查询按最新优先分页，模板内再反转，保证页内最新消息在底部。
-        result["items"] = messages
+        result["rows"] = messages
         result["message_identities"] = IdentityDirectory(db).for_messages(messages)
 
     result["pagination"] = pagination

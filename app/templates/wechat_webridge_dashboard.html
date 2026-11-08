@@ -44,23 +44,23 @@
   </div>
 
   {% if dashboard.tab == 'contacts' %}
-    {% if dashboard.items %}<table class="table"><thead><tr><th>好友</th><th>备注</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
-    {% for item in dashboard.items %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.remark or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a>{% else %}<span class="muted-text">暂无会话</span>{% endif %}</td></tr>{% endfor %}
+    {% if dashboard.rows %}<table class="table"><thead><tr><th>好友</th><th>备注</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
+    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.remark or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a>{% else %}<span class="muted-text">暂无会话</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的好友' if dashboard.keyword else '暂无好友资料，点击上方“同步全部好友”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'groups' %}
-    {% if dashboard.items %}<table class="table"><thead><tr><th>群组</th><th>成员数</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
-    {% for item in dashboard.items %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.member_count or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a> {% endif %}<a class="btn btn-small" href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">群详情</a></td></tr>{% endfor %}
+    {% if dashboard.rows %}<table class="table"><thead><tr><th>群组</th><th>成员数</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
+    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.member_count or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a> {% endif %}<a class="btn btn-small" href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">群详情</a></td></tr>{% endfor %}
     </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的群组' if dashboard.keyword else '暂无群组资料，点击上方“同步全部群组”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'members' %}
-    {% if dashboard.items %}<table class="table"><thead><tr><th>成员</th><th>所在群</th><th>角色</th><th class="col-time">最近同步</th></tr></thead><tbody>
-    {% for item in dashboard.items %}<tr><td>{{ identity(item.identity) }}</td><td><a href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">{{ identity(item.room) }}</a></td><td>{{ item.role or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td></tr>{% endfor %}
+    {% if dashboard.rows %}<table class="table"><thead><tr><th>成员</th><th>所在群</th><th>角色</th><th class="col-time">最近同步</th></tr></thead><tbody>
+    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity) }}</td><td><a href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">{{ identity(item.room) }}</a></td><td>{{ item.role or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td></tr>{% endfor %}
     </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的群成员' if dashboard.keyword else '暂无群成员，请在群详情里同步成员。' }}</p>{% endif %}
 
   {% else %}
-    {% if dashboard.items %}<table class="table"><thead><tr><th class="col-time">时间</th><th class="col-dir">方向</th><th>发送者</th><th class="col-type">类型</th><th>内容</th></tr></thead><tbody>
-    {% for item in dashboard.items|reverse %}<tr><td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td><td class="col-dir">{{ '入站' if item.direction == 'in' else '出站' }}</td><td>{{ identity(dashboard.message_identities.get(item.id)) }}</td><td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td><td>{{ (item.content|message_display(item.message_type))[:160] }}</td></tr>{% endfor %}
+    {% if dashboard.rows %}<table class="table"><thead><tr><th class="col-time">时间</th><th class="col-dir">方向</th><th>发送者</th><th class="col-type">类型</th><th>内容</th></tr></thead><tbody>
+    {% for item in dashboard.rows|reverse %}<tr><td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td><td class="col-dir">{{ '入站' if item.direction == 'in' else '出站' }}</td><td>{{ identity(dashboard.message_identities.get(item.id)) }}</td><td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td><td>{{ (item.content|message_display(item.message_type))[:160] }}</td></tr>{% endfor %}
     </tbody></table>
     <p class="muted-text top-gap"><a href="/messages?channel_id={{ channel.id }}">在消息中心按会话查看完整聊天</a></p>
     {% else %}<p class="muted-text">{{ '没有匹配的消息' if dashboard.keyword else '暂无消息记录。' }}</p>{% endif %}
