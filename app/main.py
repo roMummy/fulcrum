@@ -225,6 +225,20 @@ CHANNEL_TYPE_FORM_SCHEMA = serialize_channel_type_definitions()
 CHANNEL_TYPE_FORM_SCHEMA_BY_CODE = {item["code"]: item for item in CHANNEL_TYPE_FORM_SCHEMA}
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
 
+# 机器接口通过自身签名或一次性令牌完成鉴权，不能被租户页面 Cookie 中间件重定向。
+# 将公开前缀集中定义，便于支付回调、开放 API 和 Provider 接口共同维护边界。
+PUBLIC_MACHINE_PREFIXES = (
+    "/api/open/",
+    "/api/payment/",
+    "/api/workwechat/customer-operations",
+    "/api/workwechat/provider",
+    "/api/provider",
+    "/outbound-files/",
+    "/inbound-files/",
+    "/webhooks/",
+    "/static/",
+)
+
 
 def log_startup_banner() -> None:
     # 在 INFO 级别输出显眼的系统启动完成标识，便于从日志中快速定位启动成功时间点。
@@ -1210,17 +1224,9 @@ async def auth_middleware(request: Request, call_next):
 
     # 云端企微 Provider 接口是桌面客户端的机器到机器入口，不能依赖后台登录 Cookie。
     # 这些接口内部会分别校验一次性授权码或 client token，因此这里只放行到业务路由。
-    public_prefixes = (
-        "/static/",
-        "/webhooks/",
-        # Open API 自身使用 X-App-Key/X-Timestamp/X-Signature 鉴权，不能再套后台登录态。
-        "/api/open/",
-        "/outbound-files/",
-        "/inbound-files/",
-        "/api/workwechat/customer-operations",
-        "/api/workwechat/provider",
-        "/api/provider",
-    )
+    # Open API、支付回调、Provider 和受控文件入口均使用自己的鉴权边界，
+    # 不能因为未携带后台 Cookie 被重定向到网页登录页。
+    public_prefixes = PUBLIC_MACHINE_PREFIXES
     public_paths = {
         "/",
         "/pricing",

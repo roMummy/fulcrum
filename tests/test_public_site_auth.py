@@ -215,6 +215,14 @@ def test_open_api_machine_route_remains_outside_tenant_page_authentication(clien
     assert response.headers.get("location") is None
 
 
+def test_payment_webhook_machine_route_is_in_public_prefixes() -> None:
+    """支付回调前缀必须归入机器接口白名单，避免被重定向到租户登录页。"""
+
+    from app.main import PUBLIC_MACHINE_PREFIXES
+
+    assert "/api/payment/" in PUBLIC_MACHINE_PREFIXES
+
+
 def test_platform_operations_require_platform_login(client: TestClient) -> None:
     """未登录请求访问平台运维与日志时固定回到独立平台登录入口。"""
 
