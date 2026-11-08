@@ -521,8 +521,14 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if job is None or str(job.job_type or "") != JOB_TYPE:
             continue
         data = parse_job_payload(job)
+        # 只允许回报本渠道的任务，禁止一个渠道的手机改写其他渠道的命令结果。
+        if int(data.get("channel_id") or 0) != int(channel.id):
+            continue
+        # 非 job_ 前缀的回报必须与任务保存的 request_id 严格相等。
+        # 之前"保存的 request_id 为空也放行"，会让无 command 的普通出站任务被误匹配，
+        # 回报被当成重复提交吞掉，真正的命令永远停在 running。
         stored_request_id = text(as_object(data.get("command")).get("request_id"))
-        if stored_request_id and stored_request_id != request_id and int(job.id) != job_id:
+        if job_id <= 0 and stored_request_id != request_id:
             continue
         if job.status in {"completed", "failed"}:
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}

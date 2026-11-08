@@ -232,3 +232,38 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
     assert len(commands) == 1
     assert commands[0]["command_name"] == "send_message"
     assert commands[0]["args"] == {"receiver": "r@chatroom", "content": "你好"}
+
+
+def test_accept_command_result_matches_request_id_strictly(tmp_path) -> None:
+    """命令回报必须严格按 request_id 匹配，不能被无 command 的普通出站任务或其他渠道任务吞掉。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'accept.db'}")
+    TaskJob.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+
+    def add_job(payload: dict, status: str) -> TaskJob:
+        job = TaskJob(tenant_id=1, job_type=service.JOB_TYPE, status=status, payload_json=json.dumps(payload))
+        db.add(job)
+        db.commit()
+        return job
+
+    # 先放入已失败的普通出站任务（无 command）和其他渠道的同名命令，它们都不能抢走回报。
+    plain_failed = add_job({"channel_id": 2, "payload": {"content": "x"}}, "failed")
+    other_channel = add_job({"channel_id": 3, "command": {"request_id": "cmd_x", "type": "room_members"}}, "running")
+    target = add_job({"channel_id": 2, "command": {"request_id": "cmd_x", "type": "room_members", "params": {}}}, "running")
+
+    identity = {"device_id": "d1", "session_id": "s1", "account_id": "a1"}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge",
+                      runtime_info_json=json.dumps({"webridge": identity}))
+
+    result = service.accept_command_result(db, channel, {**identity, "request_id": "cmd_x", "ok": True, "result": {"ok": True, "members": []}})
+
+    assert result["job_id"] == target.id
+    assert db.get(TaskJob, target.id).status == "completed"
+    assert db.get(TaskJob, other_channel.id).status == "running"
+    assert db.get(TaskJob, plain_failed.id).status == "failed"
