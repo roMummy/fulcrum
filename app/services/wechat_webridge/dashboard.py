@@ -21,7 +21,12 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, message_limit: in
     conversations = db.scalars(
         select(Conversation)
         .where(Conversation.channel_id == channel.id)
-        .order_by(Conversation.last_message_at.desc().nullslast(), Conversation.id.desc())
+        # MariaDB 不支持 PostgreSQL 的 NULLS LAST，先按是否为空排序即可保持最近消息在前。
+        .order_by(
+            Conversation.last_message_at.is_(None),
+            Conversation.last_message_at.desc(),
+            Conversation.id.desc(),
+        )
     ).all()
     direct = [item for item in conversations if str(item.chat_type or "direct") == "direct"]
     groups = [item for item in conversations if str(item.chat_type or "") == "group"]
