@@ -476,12 +476,14 @@ def _queue_inbound_media_fetch_if_needed(
     normalized: dict[str, Any],
     message: Message,
 ) -> None:
-    if channel.channel_type != "wechat_ipad":
+    if channel.channel_type not in {"wechat_ipad", "wechat_webridge"}:
         return
     attachment_type = str(message.message_type or "").strip()
     if attachment_type not in {"image", "voice", "video"}:
         return
-    if not _chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation):
+    # WeBridge 手机端媒体必须由 upload_message_media 主动回传；它没有 wechat_ipad
+    # 的群级自动下载开关，因此私聊和群聊都进入统一附件流程。
+    if channel.channel_type == "wechat_ipad" and not _chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation):
         return
     details = normalized.get("details")
     if not isinstance(details, dict):
@@ -492,6 +494,8 @@ def _queue_inbound_media_fetch_if_needed(
         "video": "video_info",
     }.get(attachment_type, "")
     media_info = details.get(metadata_key)
+    if channel.channel_type == "wechat_webridge":
+        media_info = details.get("media") or {}
     if not isinstance(media_info, dict):
         return
     attachment = create_wechat_media_attachment(
@@ -502,18 +506,36 @@ def _queue_inbound_media_fetch_if_needed(
         message_id=message.id,
         attachment_type=attachment_type,
         metadata=media_info,
+        provider=channel.channel_type,
     )
-    enqueue_job(
-        db,
-        job_type=INBOUND_MEDIA_FETCH_JOB,
-        payload={
-            "attachment_id": attachment.id,
-            "channel_id": channel.id,
-        },
-        priority=95,
-        related_type="message_attachment",
-        related_id=attachment.id,
-    )
+    if channel.channel_type == "wechat_webridge":
+        from app.services.wechat_webridge.service import enqueue_media_upload_command
+
+        try:
+            adapter_config = json.loads(channel.adapter_config_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            adapter_config = {}
+        upload_url = str(adapter_config.get("upload_url") or "").strip() if isinstance(adapter_config, dict) else ""
+        if not upload_url:
+            upload_url = f"/api/wechat-webridge/{channel.id}/agent/upload_media?attachment_id={attachment.id}"
+        enqueue_media_upload_command(
+            db,
+            channel=channel,
+            conversation=conversation,
+            message_id=str(message.external_message_id or message.id),
+            media_type=attachment_type,
+            upload_url=upload_url,
+            attachment_id=attachment.id,
+        )
+    else:
+        enqueue_job(
+            db,
+            job_type=INBOUND_MEDIA_FETCH_JOB,
+            payload={"attachment_id": attachment.id, "channel_id": channel.id},
+            priority=95,
+            related_type="message_attachment",
+            related_id=attachment.id,
+        )
 
 
 def _chatroom_auto_download_media_enabled(
@@ -767,7 +789,7 @@ def _attach_message_attachments_to_normalized_event(
     normalized: dict[str, Any],
     message_id: int | None,
 ) -> None:
-    if channel.channel_type not in {"wechat_winauto", "workwechat", "wechat_ipad"}:
+    if channel.channel_type not in {"wechat_winauto", "workwechat", "wechat_ipad", "wechat_webridge"}:
         return
     stmt = select(MessageAttachment).where(
         MessageAttachment.channel_id == channel.id,

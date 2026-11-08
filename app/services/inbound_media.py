@@ -52,6 +52,7 @@ def create_wechat_media_attachment(
     message_id: int,
     attachment_type: str,
     metadata: dict[str, Any],
+    provider: str = "wechat_ipad",
 ) -> MessageAttachment:
     attachment = MessageAttachment(
         message_id=message_id,
@@ -60,7 +61,7 @@ def create_wechat_media_attachment(
         conversation_id=conversation_id,
         direction="in",
         attachment_type=attachment_type,
-        provider="wechat_ipad",
+        provider=provider,
         status="pending",
         metadata_json=json.dumps(metadata, ensure_ascii=False, sort_keys=True),
     )
@@ -146,6 +147,46 @@ def mark_attachment_failed(db: Session, *, attachment: MessageAttachment, error_
     attachment.status = "failed"
     attachment.last_error = error_message
     db.flush()
+
+
+def store_uploaded_media_attachment(
+    db: Session,
+    *,
+    attachment: MessageAttachment,
+    content: bytes,
+    filename: str = "",
+    content_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    """保存手机回传的媒体字节，并把附件切换为可消费状态。"""
+
+    if not content:
+        raise ValueError("webridge_uploaded_media_empty")
+    suffix = Path(filename or "").suffix or _extension_for_mime(content_type)
+    storage_path = _build_attachment_path(attachment.channel_id, attachment.id, suffix)
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_bytes(content)
+    attachment.status = "downloaded"
+    attachment.storage_path = str(storage_path)
+    attachment.file_size = len(content)
+    attachment.mime_type = content_type or "application/octet-stream"
+    attachment.last_error = None
+    metadata = _parse_json(attachment.metadata_json)
+    attachment.metadata_json = json.dumps({**metadata, "uploaded_by": "wechat_webridge", "file_name": filename or None}, ensure_ascii=False, sort_keys=True)
+    db.flush()
+    return {"attachment_id": int(attachment.id), "storage_path": str(storage_path), "file_size": len(content), "mime_type": attachment.mime_type}
+
+
+def _extension_for_mime(content_type: str) -> str:
+    """为没有文件名的上传提供保守扩展名，避免把媒体保存成无后缀临时文件。"""
+
+    return {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "audio/mpeg": ".mp3",
+        "audio/amr": ".amr",
+        "video/mp4": ".mp4",
+    }.get(str(content_type or "").lower(), ".bin")
 
 
 def _download_workwechat_file_attachment(db: Session, *, attachment: MessageAttachment, channel: Channel) -> dict[str, Any]:

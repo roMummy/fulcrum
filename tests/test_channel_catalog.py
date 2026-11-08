@@ -21,6 +21,7 @@ def test_public_channel_catalog_contains_real_supported_channels() -> None:
         "workwechat",
         "wechat_ipad",
         "wechat_winauto",
+        "wechat_webridge",
         "telegram",
     )
 

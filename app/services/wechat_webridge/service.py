@@ -153,6 +153,47 @@ def enqueue_text_message(db: Session, channel: Channel, conversation: Conversati
     )
 
 
+def enqueue_media_upload_command(
+    db: Session,
+    *,
+    channel: Channel,
+    conversation: Conversation,
+    message_id: str,
+    media_type: str,
+    upload_url: str,
+    attachment_id: int | None = None,
+) -> TaskJob:
+    """为手机侧媒体准备上传任务。
+
+    WeBridge 的媒体文件只存在手机本地，服务端不能假设自己能读取手机路径；
+    因此入站事件先落附件，再由手机执行 upload_message_media 回传字节。
+    """
+
+    normalized_message_id = text(message_id)
+    normalized_media_type = text(media_type).lower()
+    if not normalized_message_id or normalized_media_type not in {"image", "voice", "video", "emoji", "file"}:
+        raise ValueError("invalid_webridge_media_upload_request")
+    params = {
+        "message_id": normalized_message_id,
+        "media_type": normalized_media_type,
+        "upload_url": text(upload_url),
+    }
+    if attachment_id:
+        params["attachment_id"] = int(attachment_id)
+    return enqueue_job(
+        db,
+        job_type=JOB_TYPE,
+        payload={
+            "channel_id": int(channel.id),
+            "conversation_id": int(conversation.id),
+            "command": {"request_id": f"media_{uuid.uuid4().hex}", "type": "upload_message_media", "params": params},
+        },
+        priority=95,
+        related_type="conversation",
+        related_id=int(conversation.id),
+    )
+
+
 
 def enqueue_command(db: Session, channel: Channel, *, command_name: str, args: dict[str, Any], request_id: str = "") -> TaskJob:
     """把任意 WeBridge 命令放入当前渠道队列，供联系人、群组、媒体和高级能力复用。"""

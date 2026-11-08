@@ -20,6 +20,8 @@ https://your-domain.example/api/wechat-webridge/12
 
 普通出站接口已映射文本、图片、表情、语音、视频、文件、链接卡片、联系人名片、位置和 XML/app 消息；朋友圈、红包、收藏、联系人高级操作等通过通用命令桥执行并保留原始结果。WebSocket 仍未接入。
 
+入站图片、语音和视频会先按统一 `MessageAttachment` 模型落库，再通过手机执行 `upload_message_media` 回传文件。手机回传地址为 `POST /agent/upload_media`，需要携带 `X-WeBridge-Device-Id`、`X-WeBridge-Session-Id` 和 `X-WeBridge-Account-Id`，并以 multipart 字段 `file` 上传；附件完成后状态变为 `downloaded`，后续开放事件会读取服务端保存路径。
+
 真实手机验收需要在 WeBridge 插件中启用长轮询并填写上述地址，然后验证注册、状态、测试事件、文本发送和断线恢复。当前代码验证只覆盖协议服务、目录注册、路由编译和任务边界，未代替真机验收。
 
 ## 通用命令桥

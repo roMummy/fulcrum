@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from sqlalchemy import select
 
 from app.core.db import SessionLocal, TenantSessionLocal
-from app.core.tenant_db import open_tenant_session, platform_session, tenant_session
+from app.core.tenant_db import platform_session, tenant_session
 from app.core.tenant_context import tenant_scope
 from app.models.entities import Channel
 from app.services.channel_events import ingest_inbound_event
 from app.services.saas_auth import has_tenant_role
-from app.services.crud import get_channel
 from app.services.wechat_webridge.service import (
     accept_command_result,
     accept_state,
@@ -19,6 +18,8 @@ from app.services.wechat_webridge.service import (
     enqueue_command,
     get_command_result,
 )
+from app.models.entities import MessageAttachment
+from app.services.inbound_media import store_uploaded_media_attachment
 
 router = APIRouter(prefix="/api/wechat-webridge", tags=["wechat-webridge"])
 
@@ -111,6 +112,39 @@ async def command_result(channel_id: int, request: Request):
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         try:
             return accept_command_result(db, db.get(Channel, int(channel_id)), body)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{channel_id}/agent/upload_media")
+async def upload_media(channel_id: int, request: Request, attachment_id: int, file: UploadFile = File(...)):
+    """接收手机执行 upload_message_media 后回传的媒体文件。"""
+
+    body = {
+        "device_id": request.headers.get("x-webridge-device-id", ""),
+        "session_id": request.headers.get("x-webridge-session-id", ""),
+        "account_id": request.headers.get("x-webridge-account-id", ""),
+    }
+    tenant_id, _ = _channel_tenant(channel_id)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        try:
+            from app.services.wechat_webridge.service import _identity_matches
+
+            if not _identity_matches(channel, body):
+                raise ValueError("webridge_identity_mismatch")
+            attachment = db.scalar(select(MessageAttachment).where(MessageAttachment.id == int(attachment_id), MessageAttachment.channel_id == channel.id))
+            if attachment is None:
+                raise ValueError("webridge_attachment_not_found")
+            result = store_uploaded_media_attachment(
+                db,
+                attachment=attachment,
+                content=await file.read(),
+                filename=file.filename or "",
+                content_type=file.content_type or "application/octet-stream",
+            )
+            db.commit()
+            return {"ok": True, **result}
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
