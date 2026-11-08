@@ -28,6 +28,14 @@ https://your-domain.example/api/wechat-webridge/12
 
 租户操作员可以通过以下接口提交微桥文档中的任意命令，命令会按渠道进入手机长轮询队列：
 
+调用方可以先读取能力目录，按业务域生成操作菜单或自动化参数表：
+
+```http
+GET /api/wechat-webridge/{channel_id}/capabilities
+```
+
+返回值同时包含服务端稳定命令目录、手机最近一次 `register` 上报的 `capabilities` 和当前在线状态。最终是否可执行仍以手机插件实际回报为准。
+
 ```http
 POST /api/wechat-webridge/{channel_id}/commands
 Content-Type: application/json

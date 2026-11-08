@@ -17,6 +17,7 @@ from app.services.wechat_webridge.service import (
     register_device,
     enqueue_command,
     get_command_result,
+    command_catalog,
 )
 from app.models.entities import MessageAttachment
 from app.services.inbound_media import store_uploaded_media_attachment
@@ -50,6 +51,21 @@ async def _json(request: Request) -> dict:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="request_body_must_be_object")
     return body
+
+
+@router.get("/{channel_id}/capabilities")
+async def capabilities(channel_id: int, request: Request):
+    """返回可直接用于控制台和集成方的微桥命令目录。"""
+
+    user = getattr(request.state, "current_user", None)
+    if user is None or not has_tenant_role(user, "operator"):
+        raise HTTPException(status_code=403, detail="operator_role_required")
+    tenant_id, _ = _channel_tenant(channel_id)
+    if int(getattr(user, "tenant_id", 0) or 0) != tenant_id:
+        raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        return {"ok": True, "channel_id": channel_id, **command_catalog(channel)}
 
 
 @router.post("/{channel_id}/agent/register")

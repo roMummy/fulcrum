@@ -15,7 +15,20 @@ from app.core.time import now_shanghai
 from app.models.entities import Channel, Conversation, TaskJob
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 
-from .contract import JOB_TYPE, as_object, identity_from_payload, text
+from .contract import COMMAND_GROUPS, COMMANDS, JOB_TYPE, as_object, identity_from_payload, text
+
+
+def command_catalog(channel: Channel | None = None) -> dict[str, Any]:
+    """返回稳定命令目录，并附带当前手机注册时上报的能力集合。"""
+
+    runtime = _runtime(channel).get("webridge") if channel is not None else None
+    reported = [text(item) for item in (runtime or {}).get("capabilities", []) if text(item)] if isinstance(runtime, dict) else []
+    return {
+        "groups": {name: list(commands) for name, commands in COMMAND_GROUPS.items()},
+        "commands": list(COMMANDS),
+        "reported_capabilities": reported,
+        "online": bool((runtime or {}).get("online")) if isinstance(runtime, dict) else False,
+    }
 
 
 def _runtime(channel: Channel) -> dict[str, Any]:
@@ -102,6 +115,12 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
         "location": "send_location",
         "app": "send_xml",
         "mini_program": "send_xml",
+        "signal": "send_signal",
+        "pat": "send_pat",
+        "music": "send_music_card",
+        "livephoto": "send_livephoto",
+        "forward": "forward_message",
+        "revoke": "revoke_message",
     }.get(message_type)
     if not command_type:
         raise ValueError(f"webridge_message_type_unsupported:{message_type}")
@@ -122,6 +141,16 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
         params["contact_id"] = payload.get("card_user_id") or payload.get("contact_id") or ""
     elif message_type == "location":
         params.update({key: payload[key] for key in ("latitude", "longitude", "title", "address") if key in payload})
+    elif message_type in {"signal", "pat"}:
+        params.update({key: payload[key] for key in ("room_id", "content") if key in payload})
+    elif message_type == "music":
+        params.update({key: payload[key] for key in ("title", "desc", "url", "data_url", "song_album_url", "app_id", "app_name", "song_lyric") if key in payload})
+    elif message_type == "livephoto":
+        params.update({key: payload[key] for key in ("video_path", "image_path", "still_image_time_ms", "prefered_hevc") if key in payload})
+    elif message_type == "forward":
+        params["message_id"] = payload.get("message_id") or payload.get("external_message_id") or ""
+    elif message_type == "revoke":
+        params["message_id"] = payload.get("message_id") or payload.get("external_message_id") or ""
     else:
         params["xml"] = payload.get("xml") or payload.get("cdn_xml") or payload.get("content") or ""
     if not any(value not in (None, "") for key, value in params.items() if key != "receiver"):

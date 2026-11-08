@@ -100,3 +100,18 @@ def test_webridge_media_upload_command_contains_attachment_reference(monkeypatch
         "upload_url": "/api/wechat-webridge/4/agent/upload_media",
         "attachment_id": 99,
     }
+
+
+def test_webridge_command_catalog_exposes_groups_and_runtime_capabilities() -> None:
+    """能力页同时提供稳定命令目录和手机注册时实际上报的能力。"""
+
+    channel = Channel(
+        id=12,
+        bot_id=1,
+        channel_type="wechat_webridge",
+        runtime_info_json=json.dumps({"webridge": {"online": True, "capabilities": ["moments_list"]}}),
+    )
+    catalog = service.command_catalog(channel)
+    assert "moments_list" in catalog["groups"]["moments"]
+    assert catalog["reported_capabilities"] == ["moments_list"]
+    assert catalog["online"] is True

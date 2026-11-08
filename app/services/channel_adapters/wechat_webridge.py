@@ -8,7 +8,7 @@ from .base import BaseChannelAdapter
 
 
 class WechatWeBridgeAdapter(BaseChannelAdapter):
-    """把 WeBridge 事件映射成统一消息结构，并限制首期只发送文本。"""
+    """把 WeBridge 事件和统一出站消息映射到长轮询命令队列。"""
 
     adapter_type = "wechat_webridge"
 
@@ -66,7 +66,18 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         message_type = {"contact_card": "card", "pat": "pat", "system": "system"}.get(raw_type, raw_type)
         if raw_type == "app":
             message_type = str(body.get("msg_subtype") or "app").strip().lower() or "app"
-        if event_name == "red_packet_received":
+        event_message_types = {
+            "friend_request": "friend_request",
+            "friend_added": "contact",
+            "group_member_join": "group_member_join",
+            "group_member_leave": "group_member_leave",
+            "moments_received": "moments",
+            "favorite_received": "favorite",
+            "official_account_message": "official_account",
+        }
+        if event_name in event_message_types:
+            message_type = event_message_types[event_name]
+        elif event_name == "red_packet_received":
             message_type = "red_packet"
         elif event_name == "transfer_received":
             message_type = "transfer"
@@ -81,12 +92,15 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "content_xml": body.get("content_xml"),
             "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
             "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
+            "contact": {key: body.get(key) for key in ("contact_id", "contact_ref", "encrypt_username", "ticket", "nickname") if body.get(key) is not None},
+            "group": {key: body.get(key) for key in ("room_id", "member_id", "member_ids", "group_name", "operation") if body.get(key) is not None},
+            "moment": {key: body.get(key) for key in ("sns_id", "media_id", "author_id", "operation_id") if body.get(key) is not None},
         }
         return {
             "adapter_type": self.adapter_type,
             "event_key": str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None,
             "event_type": event_name,
-            "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system"},
+            "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system", "friend_request", "contact", "group_member_join", "group_member_leave", "moments", "favorite", "official_account"},
             "conversation": {
                 "external_id": conversation_id,
                 "title": body.get("conversation_title") or body.get("chat_name") or conversation_id,
