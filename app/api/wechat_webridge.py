@@ -18,6 +18,7 @@ from app.services.wechat_webridge.service import (
     enqueue_command,
     get_command_result,
     command_catalog,
+    list_command_results,
 )
 from app.models.entities import MessageAttachment
 from app.services.inbound_media import store_uploaded_media_attachment
@@ -208,3 +209,18 @@ async def command_result_query(channel_id: int, request_id: str, request: Reques
         if result is None:
             raise HTTPException(status_code=404, detail="webridge_command_not_found")
         return {"ok": True, **result}
+
+
+@router.get("/{channel_id}/commands")
+async def command_results(channel_id: int, request: Request, status: str = "", command_type: str = "", limit: int = 50):
+    """查询当前渠道最近的微桥命令执行记录。"""
+
+    user = getattr(request.state, "current_user", None)
+    if user is None or not has_tenant_role(user, "operator"):
+        raise HTTPException(status_code=403, detail="operator_role_required")
+    tenant_id, _ = _channel_tenant(channel_id)
+    if int(getattr(user, "tenant_id", 0) or 0) != tenant_id:
+        raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        return {"ok": True, "channel_id": channel_id, "items": list_command_results(db, channel, status=status, command_type=command_type, limit=limit)}

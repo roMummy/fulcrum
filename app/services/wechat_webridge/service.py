@@ -265,6 +265,50 @@ def get_command_result(db: Session, channel: Channel, request_id: str) -> dict[s
         return {"request_id": normalized, "job_id": int(job.id), "status": job.status, "result": raw_result, "error": job.error_message}
     return None
 
+
+def list_command_results(
+    db: Session,
+    channel: Channel,
+    *,
+    status: str = "",
+    command_type: str = "",
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """按渠道列出最近的通用命令结果，便于控制台展示异步操作历史。"""
+
+    normalized_status = text(status).lower()
+    normalized_type = text(command_type)
+    safe_limit = max(1, min(int(limit or 50), 100))
+    stmt = select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.tenant_id == channel.tenant_id).order_by(TaskJob.id.desc()).limit(safe_limit * 3)
+    rows: list[dict[str, Any]] = []
+    for job in db.scalars(stmt).all():
+        payload = parse_job_payload(job)
+        if int(payload.get("channel_id") or 0) != int(channel.id):
+            continue
+        command = as_object(payload.get("command"))
+        if normalized_status and str(job.status or "").lower() != normalized_status:
+            continue
+        if normalized_type and text(command.get("type")) != normalized_type:
+            continue
+        raw_result = {}
+        try:
+            raw_result = json.loads(job.result_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw_result = {}
+        rows.append({
+            "request_id": text(command.get("request_id")) or f"job_{int(job.id)}",
+            "job_id": int(job.id),
+            "command_type": text(command.get("type")),
+            "status": job.status,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+            "result": raw_result,
+            "error": job.error_message,
+        })
+        if len(rows) >= safe_limit:
+            break
+    return rows
+
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
     """领取当前设备的待发送命令，并将任务置为 running 防止重复下发。"""
 
