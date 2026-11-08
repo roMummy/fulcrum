@@ -6,6 +6,9 @@
 </div>
 {% endblock %}
 {% block content %}
+<style>
+  .message-media-image{display:block;max-width:300px;max-height:300px;border-radius:10px;object-fit:cover;margin-bottom:8px}.message-media-player{display:block;max-width:300px;margin-bottom:8px}.message-file-card{display:inline-block;padding:9px 12px;border-radius:8px;background:#f1f5f9;color:#1d4ed8;text-decoration:none;margin-bottom:8px}
+</style>
 <section class="work-surface">
   <h2>会话信息</h2>
   <table class="table">
@@ -57,8 +60,13 @@
         <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
         <td>
           {% set message_content = item.content or '' %}
-          {% set message_short = message_content[:100] ~ ('...' if message_content|length > 100 else '') %}
-          {% if message_content|length > 100 %}
+          {% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}
+          {% for attachment in attachment_items %}
+          {% if attachment.attachment_type == 'image' and attachment.storage_path %}<img class="message-media-image" src="/media/attachments/{{ attachment.id }}" alt="图片消息" loading="lazy" />{% elif attachment.attachment_type == 'video' and attachment.storage_path %}<video class="message-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></video>{% elif attachment.attachment_type == 'voice' and attachment.storage_path %}<audio class="message-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></audio>{% elif attachment.storage_path %}<a class="message-file-card" href="/media/attachments/{{ attachment.id }}">{{ attachment.attachment_type or '文件' }}{% if attachment.file_size %} · {{ attachment.file_size }} bytes{% endif %}</a>{% endif %}
+          {% endfor %}
+          {% if item.message_type in ['xml','app','mini_program','card'] %}<div class="message-preview">{{ message_content|message_display(item.message_type) or '结构化消息' }}</div>
+          {% set message_short = '' %}
+          {% elif message_content|length > 100 %}
           <details class="message-preview-card">
             <summary class="message-preview-toggle">
               <span class="message-preview-short">{{ message_short }}</span>
@@ -70,7 +78,6 @@
           {% else %}
           <div class="message-preview">{{ message_content }}</div>
           {% endif %}
-          {% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}
           {% if attachment_items %}
           <div class="muted-text" style="margin-top:8px;">附件 {{ attachment_items|length }} 条</div>
           {% for attachment in attachment_items %}

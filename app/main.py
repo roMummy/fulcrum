@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
@@ -4226,6 +4226,24 @@ async def send_manual_message_action(request: Request, conversation_id: int, con
         db.close()
 
 
+@app.get("/media/attachments/{attachment_id}")
+async def message_attachment_media(request: Request, attachment_id: int):
+    """以当前租户权限提供已落库媒体，供消息中心直接展示图片、音频和视频。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        attachment = db.get(MessageAttachment, int(attachment_id))
+        if attachment is None or not attachment.storage_path:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        path = Path(str(attachment.storage_path))
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Attachment file not found")
+        return FileResponse(path, media_type=attachment.mime_type or "application/octet-stream", filename=path.name)
+    finally:
+        db.close()
+
+
 @app.get("/messages", response_class=HTMLResponse)
 async def messages_page(
     request: Request,
@@ -4310,6 +4328,14 @@ async def messages_page(
         current_page = min(current_page, total_pages)
         offset = (current_page - 1) * page_size
         messages = db.scalars(stmt.order_by(Message.id.desc()).offset(offset).limit(page_size)).all()
+        message_ids = [int(item.id) for item in messages]
+        attachment_rows = db.scalars(
+            select(MessageAttachment).where(MessageAttachment.message_id.in_(message_ids) if message_ids else MessageAttachment.id == 0).order_by(MessageAttachment.id.asc())
+        ).all()
+        attachments_by_message: dict[int, list[MessageAttachment]] = {}
+        for attachment in attachment_rows:
+            if attachment.message_id is not None:
+                attachments_by_message.setdefault(int(attachment.message_id), []).append(attachment)
         pagination_query = {
             "keyword": normalized_keyword,
             "direction": normalized_direction,
@@ -4337,6 +4363,7 @@ async def messages_page(
             "messages.html",
             page_title="消息中心",
             messages=messages,
+            attachments_by_message=attachments_by_message,
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,
             pagination=pagination,
