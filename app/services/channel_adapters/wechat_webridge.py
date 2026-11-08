@@ -57,28 +57,48 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         )
 
     def normalize_inbound_payload(self, channel: Channel, payload: dict[str, Any], *, headers: dict[str, str] | None = None) -> dict[str, Any]:
-        """兼容 WeBridge 事件的常见字段名，输出主服务统一入站结构。"""
+        """解析 WeBridge 的 event_name/body 信封，覆盖文本、媒体、红包和转账事件。"""
 
-        message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
-        conversation_id = str(message.get("conversation_id") or message.get("chat_id") or message.get("from") or "manual").strip()
-        content = str(message.get("content") or message.get("text") or message.get("message") or "")
-        is_group = bool(message.get("is_group") or str(conversation_id).endswith("@chatroom"))
+        body = payload.get("body") if isinstance(payload.get("body"), dict) else payload
+        event_name = str(payload.get("event_name") or payload.get("event_type") or body.get("event_name") or "message").strip() or "message"
+        raw_type = str(body.get("msg_type") or body.get("message_type") or "text").strip().lower() or "text"
+        # WeBridge 将文件、链接、小程序等放在 app 类型下，用 msg_subtype 区分子类型。
+        message_type = {"contact_card": "card", "pat": "pat", "system": "system"}.get(raw_type, raw_type)
+        if raw_type == "app":
+            message_type = str(body.get("msg_subtype") or "app").strip().lower() or "app"
+        if event_name == "red_packet_received":
+            message_type = "red_packet"
+        elif event_name == "transfer_received":
+            message_type = "transfer"
+        conversation_id = str(body.get("chat_id") or body.get("room_id") or body.get("from") or "manual").strip() or "manual"
+        content = str(body.get("content") or body.get("text") or body.get("message") or "")
+        is_group = bool(body.get("is_group") or body.get("room_id") or str(conversation_id).endswith("@chatroom"))
+        details = {
+            "headers_used": sorted((headers or {}).keys()),
+            "event_name": event_name,
+            "raw_message_type": body.get("raw_message_type"),
+            "msg_subtype": body.get("msg_subtype"),
+            "content_xml": body.get("content_xml"),
+            "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
+            "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
+        }
         return {
             "adapter_type": self.adapter_type,
-            "event_key": str(payload.get("event_id") or payload.get("message_id") or payload.get("id") or "").strip() or None,
-            "event_type": str(payload.get("event_type") or payload.get("type") or "message").strip() or "message",
-            "should_persist_message": bool(content.strip()),
+            "event_key": str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None,
+            "event_type": event_name,
+            "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system"},
             "conversation": {
                 "external_id": conversation_id,
-                "title": message.get("conversation_title") or message.get("chat_name") or conversation_id,
+                "title": body.get("conversation_title") or body.get("chat_name") or conversation_id,
                 "chat_type": "group" if is_group else "direct",
             },
             "message": {
-                "content": content,
-                "sender_id": str(message.get("sender_id") or message.get("from") or "").strip() or None,
-                "sender_name": message.get("sender_name") or message.get("nickname"),
-                "message_type": str(message.get("message_type") or "text").strip() or "text",
-                "external_message_id": str(message.get("message_id") or payload.get("message_id") or "").strip() or None,
+                "content": content or (body.get("pat_template") or body.get("app_msg_title") or event_name),
+                "sender_id": str(body.get("sender_id") or body.get("from") or "").strip() or None,
+                "sender_name": body.get("sender_name") or body.get("nickname") or body.get("nick_name"),
+                "message_type": message_type,
+                "external_message_id": str(body.get("message_id") or payload.get("event_id") or "").strip() or None,
             },
-            "details": {"headers_used": sorted((headers or {}).keys())},
+            "details": details,
         }
+
