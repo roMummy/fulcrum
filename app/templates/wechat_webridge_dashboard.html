@@ -23,12 +23,15 @@
     </div>
   </div>
   <div class="stats-grid compact-grid">
+    {% for item in device.hardware %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
     {% for item in device.basic %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
     {% for item in device.fields %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
   </div>
   {% if not device.fields %}<p class="muted-text">手机尚未上报运行状态（state），登录、授权、缓存等字段会在上报后显示。</p>{% endif %}
   <div class="panel-grid panel-grid-balanced top-gap">
     <div><h3>待处理命令</h3>{{ trend_chart(device.pending_chart, '近 24 小时待处理命令趋势') }}</div>
+    {% if device.battery_chart['items'] %}<div><h3>电量 %</h3>{{ trend_chart(device.battery_chart, '近 24 小时电量趋势', 'success') }}</div>{% endif %}
+    {% if device.memory_chart['items'] %}<div><h3>系统内存已用 %</h3>{{ trend_chart(device.memory_chart, '近 24 小时系统内存使用趋势') }}</div>{% endif %}
     {% if device.cache_chart['items'] %}<div><h3>缓存消息数</h3>{{ trend_chart(device.cache_chart, '近 24 小时缓存消息趋势', 'success') }}</div>{% endif %}
     {% if device.event_chart['items'] %}<div><h3>待上传事件</h3>{{ trend_chart(device.event_chart, '近 24 小时待上传事件趋势') }}</div>{% endif %}
   </div>

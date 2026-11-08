@@ -230,6 +230,41 @@ def _chart(samples: list[WebridgeDeviceSample], field: str, label_format: str = 
     return {"max_value": peak, "points": " ".join(points), "items": items}
 
 
+_BATTERY_STATE = {"unplugged": "未充电", "charging": "充电中", "full": "已充满", "unknown": "未知"}
+_THERMAL_STATE = {"nominal": "正常", "fair": "轻微发热", "serious": "较热", "critical": "过热", "unknown": "未知"}
+_APP_STATE = {"active": "前台", "inactive": "非活跃", "background": "后台", "unknown": "未知"}
+_NETWORK_TYPE = {"wifi": "Wi-Fi", "cellular": "蜂窝网络", "none": "无网络", "unknown": "未知"}
+
+
+def _hardware_items(dev: dict[str, Any]) -> list[dict[str, str]]:
+    """把 device_status 快照转成页面条目；读不到的值（null、system_memory 采集失败）直接省略。"""
+
+    def obj(key: str) -> dict[str, Any]:
+        return dev.get(key) if isinstance(dev.get(key), dict) else {}
+
+    items: list[dict[str, str]] = []
+    device, battery, power, thermal, network, app = obj("device"), obj("battery"), obj("power"), obj("thermal"), obj("network"), obj("application")
+    system, process = obj("system_memory"), obj("process_memory")
+    if device.get("device_model"):
+        items.append({"label": "机型", "value": f"{device['device_model']} · iOS {device.get('ios_version') or '-'}"})
+    if isinstance(battery.get("percent"), (int, float)):
+        low = "，低电量模式" if power.get("low_power_mode") else ""
+        items.append({"label": "电量", "value": f"{int(battery['percent'])}%（{_BATTERY_STATE.get(battery.get('state'), '未知')}{low}）"})
+    if system.get("ok") and isinstance(system.get("used_estimate_percent"), (int, float)):
+        items.append({"label": "系统内存", "value": f"已用约 {system['used_estimate_percent']:.0f}% · 可用约 {system.get('available_estimate_mb', 0):.0f} MB / 共 {system.get('physical_total_mb', 0):.0f} MB"})
+    if isinstance(process.get("phys_footprint_mb"), (int, float)):
+        items.append({"label": "插件进程内存", "value": f"{process['phys_footprint_mb']:.0f} MB（常驻 {process.get('resident_mb', 0):.0f} MB）"})
+    if thermal.get("state"):
+        items.append({"label": "温度状态", "value": _THERMAL_STATE.get(thermal["state"], str(thermal["state"]))})
+    if network:
+        net = _NETWORK_TYPE.get(network.get("network_type"), "未知")
+        gen = f" {network['cellular_generation']}" if network.get("cellular_generation") not in (None, "", "unknown") else ""
+        items.append({"label": "网络", "value": f"{net}{gen}" + ("" if network.get("connected") else "（不可达）")})
+    if app.get("state"):
+        items.append({"label": "微信前后台", "value": _APP_STATE.get(app["state"], str(app["state"]))})
+    return items
+
+
 def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 24) -> dict[str, Any]:
     """构建 iPhone 状态区：当前在线与上报字段 + 近 hours 小时的积压/缓存趋势。"""
 
@@ -245,6 +280,7 @@ def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 2
             return "是" if value else "否"
         return str(value)
 
+    dev = runtime.get("device") if isinstance(runtime.get("device"), dict) else {}
     known = {key for key, _, _ in STATE_LABELS}
     fields = [{"label": label, "value": _show(state[key], kind)} for key, label, kind in STATE_LABELS if key in state]
     extra = [{"label": key, "value": str(value)} for key, value in sorted(state.items()) if key not in known and not isinstance(value, (dict, list))]
@@ -256,6 +292,9 @@ def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 2
     samples = samples[::10] if len(samples) > 144 else samples
     capabilities = runtime.get("capabilities") if isinstance(runtime.get("capabilities"), list) else []
     return {
+        "hardware": _hardware_items(dev),
+        "battery_chart": _chart(samples, "battery_percent"),
+        "memory_chart": _chart(samples, "memory_used_percent"),
         "online": bool(runtime.get("online")),
         "last_seen_at": runtime.get("last_seen_at"),
         "registered_at": runtime.get("registered_at"),

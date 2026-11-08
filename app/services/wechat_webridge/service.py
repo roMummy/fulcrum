@@ -25,12 +25,21 @@ logger = get_logger(__name__)
 COMMAND_RUNNING_TIMEOUT_SECONDS = 180
 # poll 每次都会进入 claim_commands；超时回收和在线心跳不需要每次执行，按渠道最多每 30 秒一次。
 POLL_MAINTENANCE_INTERVAL_SECONDS = 30
+# 设备状态（电量、内存等）通过 device_status 命令读取，随 poll 维护（30 秒节流）入队。
+# 用较低且独有的优先级标记这类任务，既让业务消息先发，也便于识别和清理。
+DEVICE_STATUS_PRIORITY = 7
 _last_poll_maintenance: dict[int, float] = {}
 # 手机状态采样保留天数；趋势图只看最近 24 小时，多留几天便于排查。
 SAMPLE_RETENTION_DAYS = 7
 
 
-def record_device_sample(db: Session, channel: Channel) -> None:
+def _num(value: Any) -> int | None:
+    """手机侧读不到的值为 null，保留为空而不是 0；布尔值不当作数字。"""
+
+    return int(round(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def record_device_sample(db: Session, channel: Channel, device: dict[str, Any] | None = None) -> None:
     """写入（或更新）本分钟的手机状态采样，并顺带清理过期采样。
 
     任务积压数从任务队列实时统计，手机侧缓存数和事件队列数取最近一次 state 上报。
@@ -64,6 +73,11 @@ def record_device_sample(db: Session, channel: Channel) -> None:
     sample.running_commands = running
     sample.cached_message_count = _int_or_none("cached_message_count")
     sample.pending_event_queue_count = _int_or_none("pending_event_queue_count")
+    # 设备指标只在 device_status 回报时更新，普通 poll 采样不覆盖已有值。
+    if device:
+        sample.battery_percent = _num(as_object(device.get("battery")).get("percent"))
+        sample.memory_used_percent = _num(as_object(device.get("system_memory")).get("used_estimate_percent"))
+        sample.process_memory_mb = _num(as_object(device.get("process_memory")).get("phys_footprint_mb"))
     db.execute(delete(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == cid, WebridgeDeviceSample.bucket_start < now - timedelta(days=SAMPLE_RETENTION_DAYS)).execution_options(synchronize_session=False))
 
 
@@ -486,6 +500,23 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
         bridge.update({"last_seen_at": now_shanghai().isoformat(), "online": True})
         _save_runtime(channel, runtime)
     record_device_sample(db, channel)
+    _enqueue_device_status(db, channel)
+
+
+def _enqueue_device_status(db: Session, channel: Channel) -> None:
+    """定期让手机回报设备状态：同渠道已有未完成的 device_status 时不重复入队。
+
+    已完成的 device_status 任务只保留最近一天，避免每分钟一条把任务表撑大。
+    """
+
+    cid = int(channel.id)
+    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")), TaskJob.priority == DEVICE_STATUS_PRIORITY)).all():
+        if int(parse_job_payload(job).get("channel_id") or 0) == cid:
+            return
+    job = enqueue_command(db, channel, command_name="device_status", args={})
+    job.priority = DEVICE_STATUS_PRIORITY
+    cutoff = now_shanghai() - timedelta(days=1)
+    db.execute(delete(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.priority == DEVICE_STATUS_PRIORITY, TaskJob.status == "completed", TaskJob.finished_at < cutoff).execution_options(synchronize_session=False))
 
 
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
@@ -596,6 +627,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
             counts = persist_directory_result(db, channel, command, result)
+            if text(command.get("type") or command.get("command_name")) == "device_status":
+                _save_device_status(db, channel, as_object(result.get("result")) or result)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
@@ -603,6 +636,16 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}
     raise ValueError("webridge_request_not_found")
+
+
+def _save_device_status(db: Session, channel: Channel, device: dict[str, Any]) -> None:
+    """保存 device_status 快照到渠道运行信息（供页面展示）并写入当前分钟采样。"""
+
+    runtime = _runtime(channel)
+    bridge = runtime.setdefault("webridge", {})
+    bridge["device"] = {key: device[key] for key in ("device", "battery", "power", "thermal", "network", "application", "process_memory", "system_memory", "ts_ms") if key in device}
+    _save_runtime(channel, runtime)
+    record_device_sample(db, channel, device)
 
 
 def mark_event_seen(channel: Channel, payload: dict[str, Any]) -> str:

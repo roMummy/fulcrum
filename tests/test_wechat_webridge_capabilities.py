@@ -231,7 +231,11 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
     channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge",
                       runtime_info_json=json.dumps({"webridge": identity}))
 
-    commands = service.claim_commands(db, channel, identity)
+    # 维护会入队 device_status，裸会话没有租户补全；这里只验证领取逻辑，故桩掉。
+    from unittest.mock import patch
+
+    with patch.object(service, "_enqueue_device_status"):
+        commands = service.claim_commands(db, channel, identity)
 
     assert len(commands) == 1
     assert commands[0]["command_name"] == "send_message"
@@ -474,3 +478,62 @@ def test_device_panel_maps_state_fields_and_charts(tmp_path) -> None:
     assert {"label": "mystery", "value": "x"} in panel["extra"]
     assert [item["value"] for item in panel["pending_chart"]["items"]] == [0, 3, 1]
     assert panel["cache_chart"]["items"] == []
+
+
+def test_device_status_report_saves_snapshot_and_sample(tmp_path) -> None:
+    """device_status 回报写入渠道快照与当前分钟采样；读不到的 null 保持为空，页面条目省略采集失败的内存。"""
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob, WebridgeDeviceSample
+    from app.services.wechat_webridge.dashboard import _hardware_items
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'dev.db'}")
+    TaskJob.__table__.create(engine)
+    WebridgeDeviceSample.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps({"webridge": {}}))
+    report = {
+        "battery": {"percent": 89, "state": "unplugged"},
+        "system_memory": {"ok": True, "used_estimate_percent": 69.58, "available_estimate_mb": 604.9, "physical_total_mb": 1988.9},
+        "process_memory": {"phys_footprint_mb": 729.0, "resident_mb": 433.5},
+        "device": {"device_model": "iPhone8,2", "ios_version": "15.8.8"},
+        "thermal": {"state": "nominal"},
+        "network": {"connected": True, "network_type": "wifi", "cellular_generation": ""},
+        "application": {"state": "background"},
+        "power": {"low_power_mode": False},
+    }
+
+    service._save_device_status(db, channel, report)
+    db.commit()
+
+    sample = db.scalars(select(WebridgeDeviceSample)).one()
+    assert (sample.battery_percent, sample.memory_used_percent, sample.process_memory_mb) == (89, 70, 729)
+    saved = json.loads(channel.runtime_info_json)["webridge"]["device"]
+    values = {item["label"]: item["value"] for item in _hardware_items(saved)}
+    assert values["机型"] == "iPhone8,2 · iOS 15.8.8" and values["电量"].startswith("89%") and values["网络"] == "Wi-Fi"
+    # 系统内存采集失败时只有 ok:false，不应展示内存行，也不能抛错。
+    saved["system_memory"] = {"ok": False, "error": "x"}
+    assert "系统内存" not in {item["label"] for item in _hardware_items(saved)}
+
+
+def test_enqueue_device_status_skips_when_one_is_unfinished() -> None:
+    """同渠道已有未完成的 device_status 时不重复入队；其他渠道的不影响。"""
+
+    from unittest.mock import MagicMock, patch
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    mine = SimpleNamespace(payload_json=json.dumps({"channel_id": 2}))
+    other = SimpleNamespace(payload_json=json.dumps({"channel_id": 3}))
+    db = MagicMock()
+    with patch.object(service, "parse_job_payload", side_effect=lambda job: json.loads(job.payload_json)), patch.object(service, "enqueue_command") as enqueue:
+        enqueue.return_value = SimpleNamespace(priority=0)
+        db.scalars.return_value.all.return_value = [other, mine]
+        service._enqueue_device_status(db, channel)
+        enqueue.assert_not_called()
+        db.scalars.return_value.all.return_value = [other]
+        service._enqueue_device_status(db, channel)
+        enqueue.assert_called_once()
+        assert enqueue.call_args.kwargs["command_name"] == "device_status"
+        assert enqueue.return_value.priority == service.DEVICE_STATUS_PRIORITY

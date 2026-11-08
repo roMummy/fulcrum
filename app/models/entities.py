@@ -794,3 +794,7 @@ class WebridgeDeviceSample(Base, TenantOwnedMixin):
     # 以下两项来自手机 state 上报；手机尚未上报 state 时为 NULL，图表据此跳过。
     cached_message_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pending_event_queue_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 以下来自手机 device_status 命令（见微桥文档第 17 节）；命令未回报时为 NULL。
+    battery_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_used_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    process_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
