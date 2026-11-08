@@ -9,6 +9,7 @@ os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="webridge-test-logs-"))
 
 from app.models.entities import Channel, Conversation
 from app.services.channel_adapters.wechat_webridge import WechatWeBridgeAdapter
+from app.services.channel_catalog import get_channel_type_definition
 from app.services.wechat_webridge import service
 
 
@@ -115,3 +116,10 @@ def test_webridge_command_catalog_exposes_groups_and_runtime_capabilities() -> N
     assert "moments_list" in catalog["groups"]["moments"]
     assert catalog["reported_capabilities"] == ["moments_list"]
     assert catalog["online"] is True
+
+
+def test_webridge_channel_catalog_advertises_advanced_business_domains() -> None:
+    """渠道目录要把已接通的高级命令域展示给控制台，而不是只标记 send/inbound。"""
+
+    capabilities = get_channel_type_definition("wechat_webridge").capabilities
+    assert {"advanced_commands", "contacts", "payments", "moments", "favorites"}.issubset(capabilities)

@@ -142,7 +142,10 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="微桥 WeBridge",
         summary="通过 iPhone 微信微桥插件的服务端长轮询接入个人微信消息。",
         runtime_mode="platform_polling",
-        capabilities=frozenset({"send", "inbound", "health", "polling"}),
+        capabilities=frozenset({
+            "send", "inbound", "health", "polling", "advanced_commands", "media",
+            "contacts", "chatrooms", "payments", "profile", "moments", "favorites", "official_accounts",
+        }),
         config_fields=(
             ChannelConfigField("api_base", "WeBridge 服务端地址", placeholder="https://example.com/api/webridge/CHANNEL_ID", required_when_enabled=True),
             *COMMON_POLICY_FIELDS,
