@@ -205,3 +205,30 @@ def test_reap_stale_commands_only_fails_timed_out_jobs_of_this_channel(tmp_path)
     assert [db.get(TaskJob, job.id).status for job in (fresh, other_channel, pending)] == ["running", "running", "pending"]
     # 再次回收不应重复处理已经失败的任务。
     assert service.reap_stale_commands(db, channel) == 0
+
+
+def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -> None:
+    """插件自动回复（无 command 的普通出站）下发给手机时必须带 command_name/args。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'claim.db'}")
+    TaskJob.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    db.add(TaskJob(
+        tenant_id=1, job_type=service.JOB_TYPE, status="pending", priority=100,
+        payload_json=json.dumps({"channel_id": 2, "payload": {"message_type": "text", "receiver_id": "r@chatroom", "content": "你好"}}),
+    ))
+    db.commit()
+    identity = {"device_id": "d1", "session_id": "s1", "account_id": "a1"}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge",
+                      runtime_info_json=json.dumps({"webridge": identity}))
+
+    commands = service.claim_commands(db, channel, identity)
+
+    assert len(commands) == 1
+    assert commands[0]["command_name"] == "send_message"
+    assert commands[0]["args"] == {"receiver": "r@chatroom", "content": "你好"}

@@ -482,10 +482,14 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
                 job.error_message = "webridge_text_message_requires_content_and_receiver"
                 job.finished_at = current
                 continue
+            # 插件自动回复走这条分支：同样必须带 command_name/args，手机插件只认这两个字段，
+            # 缺失会返回 command_name is required 而导致回复发不出去。
             commands.append({
                 "request_id": f"job_{int(job.id)}",
                 "type": "send_message",
                 "params": {"receiver": receiver, "content": content},
+                "command_name": "send_message",
+                "args": {"receiver": receiver, "content": content},
             })
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
