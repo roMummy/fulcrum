@@ -58,6 +58,7 @@ def provider_page_context(tmp_path, monkeypatch):
         "app.web.tenant_auth",
         "app.web.platform_auth",
         "app.web.tenant_admin",
+        "app.web.open_api_apps",
     ):
         route_module = importlib.import_module(module_name)
         if hasattr(route_module, "SessionLocal"):
@@ -104,6 +105,16 @@ def provider_page_context(tmp_path, monkeypatch):
             )
         ]
         alpha_bot = Bot(tenant_id=alpha.id, name="甲机器人")
+        db.add_all([*users, alpha_bot])
+        db.flush()
+        alpha_open_channel = Channel(
+            tenant_id=alpha.id,
+            bot_id=alpha_bot.id,
+            name="甲 iPad 账号",
+            channel_type="wechat_ipad",
+            api_base="http://ipad.platform.internal:9064",
+            is_enabled=True,
+        )
         active_node = ProviderNode(
             tenant_id=alpha.id,
             name="客服电脑A",
@@ -123,7 +134,7 @@ def provider_page_context(tmp_path, monkeypatch):
             api_base="http://ipad.platform.internal:9064",
             is_enabled=True,
         )
-        db.add_all([*users, alpha_bot, active_node, disabled_node, beta_node, ipad_protocol_service])
+        db.add_all([alpha_open_channel, active_node, disabled_node, beta_node, ipad_protocol_service])
         db.flush()
         account_a = ProviderNodeAccount(
             tenant_id=alpha.id,
@@ -160,6 +171,7 @@ def provider_page_context(tmp_path, monkeypatch):
             "alpha": int(alpha.id),
             "beta": int(beta.id),
             "bot": int(alpha_bot.id),
+            "channel_id": int(alpha_open_channel.id),
             "active_node": int(active_node.id),
             "disabled_node": int(disabled_node.id),
             "beta_node": int(beta_node.id),

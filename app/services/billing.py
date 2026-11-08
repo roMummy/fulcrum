@@ -181,6 +181,19 @@ def get_current_subscription(db: Session, *, tenant_id: int) -> TenantSubscripti
     )
 
 
+def subscription_is_active(subscription: TenantSubscription | None, *, now: datetime | None = None) -> bool:
+    """统一判断订阅是否仍可使用开放业务能力。
+
+    数据库中的 ``status`` 由履约流程维护，但到期时间必须在每次业务请求时
+    再校验一次，避免定时任务尚未把状态改成 ``expired`` 时继续放行请求。
+    """
+
+    if subscription is None or subscription.status != "active":
+        return False
+    current = ensure_shanghai_datetime(now) if now is not None else now_shanghai()
+    return subscription.expires_at is None or ensure_shanghai_datetime(subscription.expires_at) > current
+
+
 def _normalize_proof_path(value: str) -> str:
     """只接受私有存储相对路径，阻止订单服务持久化目录穿越路径。"""
 

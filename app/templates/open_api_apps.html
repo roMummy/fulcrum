@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block page_intro %}
+<p>为你的订单、客服和自动化系统创建开放应用，按授权渠道调用业务接口。</p>
+{% endblock %}
+
+{% block hero_actions %}
+<a class="btn btn-secondary" href="/developer/docs">查看开发文档</a>
+{% endblock %}
+
+{% block content %}
+{% if generated_secret %}
+<section class="notice-card">
+  <strong>请立即保存开放应用密钥</strong>
+  <p>密钥只在本次响应中显示，离开本页后无法再次查看。</p>
+  <p><code>{{ generated_secret }}</code></p>
+</section>
+{% endif %}
+
+<section class="page-section">
+  <div class="section-head">
+    <div>
+      <h2>新建开放应用</h2>
+      <p class="muted-text">开放应用只允许访问你明确授权的渠道。扫码登录和本地代理仍由平台负责。</p>
+    </div>
+  </div>
+  <form method="post" action="/tenant/open-apps" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label><span>应用名称</span><input name="name" maxlength="100" placeholder="订单系统" required /></label>
+    <label><span>App Key</span><input name="app_key" maxlength="100" placeholder="order-system" required /></label>
+    <label class="full-row"><span>自定义 App Secret（可留空自动生成）</span><input name="app_secret" maxlength="255" autocomplete="new-password" placeholder="留空由平台生成高熵密钥" /></label>
+    <label><span>默认渠道</span><select name="default_channel_id" required>{% for channel in channels %}<option value="{{ channel.id }}">#{{ channel.id }} · {{ channel.name }} · {{ channel.channel_type }}</option>{% else %}<option value="">暂无可授权渠道</option>{% endfor %}</select></label>
+    <fieldset class="full-row check-option-group">
+      <legend>额外授权渠道</legend>
+      {% for channel in channels %}
+      <label class="check-option"><input type="checkbox" name="authorized_channel_ids" value="{{ channel.id }}" /><span>#{{ channel.id }} · {{ channel.name }} · {{ channel.channel_type }}</span></label>
+      {% else %}<p class="muted-text">请先完成账号接入。</p>{% endfor %}
+    </fieldset>
+    <label class="full-row"><span>Webhook 地址（可留空）</span><input type="url" name="webhook_url" maxlength="500" placeholder="https://your.example.com/hooks/mba" /></label>
+    <label class="full-row"><span>Webhook 密钥（可留空）</span><input type="password" name="webhook_secret" maxlength="255" autocomplete="new-password" placeholder="只保存在服务端，不会回显" /></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit"{% if not channels %} disabled{% endif %}>创建开放应用</button></div>
+  </form>
+</section>
+
+<section class="page-section">
+  <div class="section-head"><div><h2>开放应用清单</h2><p class="muted-text">轮换密钥后旧密钥立即失效，请同步更新你的业务系统。</p></div><span class="chip chip-outline">{{ open_api_apps|length }} 个</span></div>
+  <div class="record-list">
+    {% for item in open_api_apps %}
+    {% set app = item.app %}
+    <article class="record-row">
+      <div class="record-primary"><strong>{{ app.name }}</strong><span>{{ app.app_key }} · #{{ app.id }}</span></div>
+      <dl class="record-meta">
+        <div><dt>状态</dt><dd><span class="chip {% if app.status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ '启用' if app.status == 'active' else '已停用' }}</span></dd></div>
+        <div><dt>默认渠道</dt><dd>#{{ app.default_channel_id }}</dd></div>
+        <div><dt>应用密钥</dt><dd>{{ '已配置' if item.secret_configured else '未配置' }}</dd></div>
+        <div><dt>Webhook</dt><dd>{{ '已配置' if item.webhook_configured else '未配置' }}</dd></div>
+      </dl>
+      <details class="record-actions-menu">
+        <summary class="btn btn-ghost">管理</summary>
+        <div class="record-actions-panel">
+          <form method="post" action="/tenant/open-apps/{{ app.id }}" class="form-grid compact-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <label><span>应用名称</span><input name="name" value="{{ app.name }}" maxlength="100" required /></label>
+            <label><span>App Key</span><input name="app_key" value="{{ app.app_key }}" maxlength="100" required /></label>
+            <label><span>默认渠道</span><select name="default_channel_id" required>{% for channel in channels %}<option value="{{ channel.id }}"{% if channel.id == app.default_channel_id %} selected{% endif %}>#{{ channel.id }} · {{ channel.name }}</option>{% endfor %}</select></label>
+            <fieldset class="full-row check-option-group"><legend>授权渠道</legend>{% for channel in channels %}<label class="check-option"><input type="checkbox" name="authorized_channel_ids" value="{{ channel.id }}"{% if channel.id in item.authorized_channel_ids %} checked{% endif %} /><span>#{{ channel.id }} · {{ channel.name }}</span></label>{% endfor %}</fieldset>
+            <label class="full-row"><span>Webhook 地址</span><input type="url" name="webhook_url" value="{{ app.webhook_url or '' }}" maxlength="500" /></label>
+            <label class="full-row"><span>Webhook 密钥（留空保持不变）</span><input type="password" name="webhook_secret" maxlength="255" autocomplete="new-password" /></label>
+            <div class="full-row form-actions-inline"><button class="btn btn-secondary" type="submit">保存设置</button></div>
+          </form>
+          <form method="post" action="/tenant/open-apps/{{ app.id }}/rotate-secret" data-confirm-mode="confirm" data-confirm-title="轮换开放应用密钥" data-confirm-message="旧密钥会立即失效，确认已经准备好更新业务系统吗？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn btn-ghost" type="submit">轮换密钥</button>
+          </form>
+          {% if app.status == 'active' %}
+          <form method="post" action="/tenant/open-apps/{{ app.id }}/disable" data-confirm-mode="confirm" data-confirm-title="停用开放应用" data-confirm-message="停用后使用该 App Key 的请求会立即失败，确认继续吗？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button class="btn btn-danger" type="submit">停用应用</button>
+          </form>
+          {% endif %}
+        </div>
+      </details>
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>暂无开放应用</strong><span>创建后即可按开发文档接入你的业务系统。</span></div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

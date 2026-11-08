@@ -7,7 +7,8 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import Bot, Channel
-from app.models.saas import Tenant
+from app.core.time import now_shanghai
+from app.models.saas import SaasPlan, Tenant, TenantSubscription
 from app.services.open_api_apps import OpenApiAppInput, list_authorized_channel_ids, upsert_open_api_app
 
 
@@ -19,8 +20,26 @@ class OpenApiAppsTestCase(unittest.TestCase):
         with TestingSession() as platform_db:
             tenant = Tenant(code="open-api-app-test", name="开放应用测试租户", status="active")
             platform_db.add(tenant)
+            plan = SaasPlan(
+                code="open-api-app-test-plan",
+                name="开放应用测试套餐",
+                status="active",
+                bot_limit=2,
+                is_public=True,
+            )
+            platform_db.add(plan)
             platform_db.commit()
             platform_db.refresh(tenant)
+            platform_db.refresh(plan)
+            platform_db.add(
+                TenantSubscription(
+                    tenant_id=tenant.id,
+                    plan_id=plan.id,
+                    status="active",
+                    starts_at=now_shanghai(),
+                )
+            )
+            platform_db.commit()
             self.tenant_id = tenant.id
 
         # 开放应用、机器人和渠道都属于租户业务数据。夹具通过正式租户会话创建，

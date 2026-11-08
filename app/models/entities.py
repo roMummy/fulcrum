@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
@@ -369,6 +369,51 @@ class OpenApiAppChannel(Base, TenantOwnedMixin, TimestampMixin):
 
     app = relationship("OpenApiApp")
     channel = relationship("Channel")
+
+
+class OpenApiUsageRecord(Base, TenantOwnedMixin, TimestampMixin):
+    """开放接口月度额度流水。
+
+    每一次额度预扣都保留一条不可覆盖的业务记录，状态从 ``reserved`` 转为
+    ``committed`` 或 ``refunded``。reservation_key 是服务端拼接的幂等键，
+    让网络重试只命中原记录而不会重复消耗额度。
+    """
+
+    __tablename__ = "open_api_usage_records"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('reserved', 'committed', 'refunded')",
+            name="ck_open_api_usage_records_status",
+        ),
+        CheckConstraint("units > 0", name="ck_open_api_usage_records_units"),
+        UniqueConstraint("reservation_key", name="uq_open_api_usage_records_reservation_key"),
+        Index(
+            "ix_open_api_usage_records_period_metric",
+            "tenant_id",
+            "period",
+            "metric",
+            "status",
+        ),
+        Index(
+            "ix_open_api_usage_records_app_period",
+            "app_id",
+            "period",
+            "metric",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("open_api_apps.id"), nullable=False, index=True)
+    period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    metric: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    request_id: Mapped[str] = mapped_column(String(191), nullable=False)
+    reservation_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    units: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="reserved", index=True)
+    finalized_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    app = relationship("OpenApiApp")
 
 
 class GroupPluginScope(Base, TenantOwnedMixin, TimestampMixin):

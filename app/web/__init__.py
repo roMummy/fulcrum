@@ -13,6 +13,7 @@ from app.web.public_site import router as public_site_router
 from app.web.billing import router as billing_router
 from app.web.developer_docs import router as developer_docs_router
 from app.web.provider_nodes import router as provider_nodes_router
+from app.web.open_api_apps import router as open_api_apps_router
 from app.web.tenant_auth import router as tenant_auth_router
 from app.web.tenant_admin import router as tenant_admin_router
 
@@ -24,6 +25,7 @@ __all__ = [
     "billing_router",
     "developer_docs_router",
     "provider_nodes_router",
+    "open_api_apps_router",
     "public_site_router",
     "tenant_admin_router",
     "tenant_auth_router",

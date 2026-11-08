@@ -167,6 +167,11 @@ class SaasPlan(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("provider_node_limit >= 0", name="ck_saas_plans_provider_node_limit"),
         CheckConstraint("bot_limit >= 0", name="ck_saas_plans_bot_limit"),
+        CheckConstraint("open_api_app_limit >= 0", name="ck_saas_plans_open_api_app_limit"),
+        CheckConstraint("open_api_channel_limit >= 0", name="ck_saas_plans_open_api_channel_limit"),
+        CheckConstraint("monthly_api_request_limit >= 0", name="ck_saas_plans_monthly_api_request_limit"),
+        CheckConstraint("monthly_message_limit >= 0", name="ck_saas_plans_monthly_message_limit"),
+        CheckConstraint("monthly_media_bytes_limit >= 0", name="ck_saas_plans_monthly_media_bytes_limit"),
         CheckConstraint("monthly_price_cents >= 0", name="ck_saas_plans_monthly_price"),
         CheckConstraint("yearly_price_cents >= 0", name="ck_saas_plans_yearly_price"),
         CheckConstraint("trial_days >= 0", name="ck_saas_plans_trial_days"),
@@ -180,6 +185,13 @@ class SaasPlan(Base, TimestampMixin):
     # provider_node_limit 仍由旧 Provider 管理页面使用；订单、注册和机器人绑定服务不得读取它。
     provider_node_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     bot_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 开放接口资源额度独立于旧 Provider 节点和机器人额度；0 表示该项不设上限，
+    # 这样历史套餐在迁移后仍能保持原有业务可用性，平台可以在新套餐中显式配置限制。
+    open_api_app_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    open_api_channel_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    monthly_api_request_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    monthly_message_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    monthly_media_bytes_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 金额统一保存为人民币分，禁止业务层用浮点数直接换算或接受客户端提交的订单金额。
     monthly_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     yearly_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
