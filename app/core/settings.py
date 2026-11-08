@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     billing_payment_qr_image: str = ""
     billing_payment_bank_details: str = ""
     billing_payment_proof_max_bytes: int = 5 * 1024 * 1024
+    # 第三方支付回调用独立签名密钥；为空时不开放自动履约入口，继续使用人工审核。
+    payment_webhook_secret: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

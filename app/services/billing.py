@@ -329,6 +329,90 @@ def approve_order(db: Session, *, order_id: int, reviewer_user_id: int) -> Billi
         raise
 
 
+def auto_fulfill_paid_order(
+    db: Session,
+    *,
+    order_no: str,
+    amount_cents: int,
+    provider_transaction_id: str,
+    paid_at: datetime | None = None,
+) -> BillingOrder:
+    """校验支付回调金额后自动履约订单，重复通知返回原订单。
+
+    该入口不模拟平台页面，也不需要平台人工账号；支付渠道已经完成签名校验后，
+    这里在同一事务中完成订单状态、订阅有效期和审计记录的变更。
+    """
+
+    normalized_order_no = str(order_no or "").strip()
+    normalized_transaction_id = str(provider_transaction_id or "").strip()
+    if not normalized_order_no or not normalized_transaction_id:
+        raise BillingError("payment_callback_fields_invalid")
+    try:
+        order = db.scalar(
+            select(BillingOrder)
+            .where(BillingOrder.order_no == normalized_order_no)
+            .options(selectinload(BillingOrder.plan))
+            .with_for_update()
+        )
+        if order is None:
+            raise BillingError("order_not_found")
+        if order.status == "approved" and order.fulfilled_subscription_id is not None:
+            return order
+        if int(order.amount_cents) != int(amount_cents):
+            raise BillingError("payment_amount_mismatch")
+        if order.status not in {"pending_payment", "payment_submitted", "rejected"}:
+            raise BillingError("order_not_fulfillable")
+        current_time = ensure_shanghai_datetime(paid_at) if paid_at is not None else now_shanghai()
+        active_subscriptions = db.scalars(
+            select(TenantSubscription)
+            .where(
+                TenantSubscription.tenant_id == order.tenant_id,
+                TenantSubscription.status == "active",
+            )
+            .with_for_update()
+        ).all()
+        renewal_base = current_time
+        for subscription in active_subscriptions:
+            if subscription.expires_at is not None:
+                candidate = ensure_shanghai_datetime(subscription.expires_at)
+                if candidate > renewal_base:
+                    renewal_base = candidate
+            subscription.status = "expired"
+        duration_months = 1 if order.billing_cycle == "monthly" else 12
+        fulfilled = TenantSubscription(
+            tenant_id=order.tenant_id,
+            plan_id=order.plan_id,
+            status="active",
+            starts_at=current_time,
+            expires_at=_add_months(renewal_base, duration_months),
+            notes=f"payment:{normalized_transaction_id};billing_order:{order.order_no}",
+        )
+        db.add(fulfilled)
+        db.flush()
+        order.status = "approved"
+        order.payment_reference = normalized_transaction_id
+        order.payment_submitted_at = current_time
+        order.reviewed_at = current_time
+        order.rejection_reason = None
+        order.fulfilled_subscription_id = fulfilled.id
+        db.add(
+            PlatformAuditLog(
+                actor_user_id=None,
+                action="billing_order.auto_fulfill",
+                target_type="billing_order",
+                target_id=order.id,
+                target_tenant_id=order.tenant_id,
+                detail=f"order_no={order.order_no};subscription_id={fulfilled.id};provider_transaction_id={normalized_transaction_id}",
+            )
+        )
+        db.commit()
+        db.refresh(order)
+        return order
+    except BaseException:
+        db.rollback()
+        raise
+
+
 def reject_order(
     db: Session,
     *,

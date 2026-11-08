@@ -5,6 +5,7 @@ from .open_api import router as open_api_router
 from .open_resources import router as open_resources_router
 from .open_messages import router as open_messages_router
 from .open_media import router as open_media_router
+from .payment_webhooks import router as payment_webhook_router
 from .tool_api import router as tool_api_router
 from .workwechat_provider_cloud import provider_router, router as workwechat_provider_cloud_router
 
@@ -17,6 +18,7 @@ __all__ = [
     "open_resources_router",
     "open_messages_router",
     "open_media_router",
+    "payment_webhook_router",
     "workwechat_provider_cloud_router",
     "provider_router",
 ]
