@@ -19,6 +19,7 @@ from app.core.logging import get_logger
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Conversation, Message, MessageAttachment, OpenApiApp, OpenApiAppChannel, TaskJob
 from app.services.task_queue import OPEN_WEBHOOK_DELIVERY_JOB, enqueue_job, parse_job_payload
+from app.services.open_event_catalog import build_open_event_id, is_open_event_type
 
 
 OPEN_WEBHOOK_TIMEOUT_SECONDS = 10
@@ -61,12 +62,16 @@ def build_message_event_envelope(
     这样收发单系统、客服系统等业务都可以复用同一套事件协议。
     """
 
-    event_id = f"evt_{event_type}_{message.id}_{int(time.time() * 1000)}"
+    normalized_event_type = str(event_type or "").strip()
+    if not is_open_event_type(normalized_event_type):
+        raise ValueError("open_event_type_not_supported")
+    event_id = build_open_event_id(event_type=normalized_event_type, scope_id=channel.id, sequence=message.id)
     return {
         "event_id": event_id,
-        "event_type": event_type,
+        "event_type": normalized_event_type,
         "occurred_at": now_shanghai().isoformat(),
         "bot": {"id": channel.bot_id},
+        "account": {"id": channel.id, "channel_id": channel.id, "channel_type": channel.channel_type},
         "channel": {"id": channel.id, "type": channel.channel_type},
         "conversation": {
             "id": conversation.id,
@@ -252,7 +257,7 @@ def dispatch_open_send_result_event(
         fallback_error_message=error_message,
     )
     envelope = {
-        "event_id": f"evt_{event_type}_{job.id}_{int(time.time() * 1000)}",
+        "event_id": build_open_event_id(event_type=event_type, scope_id=channel.id, sequence=job.id),
         "event_type": event_type,
         "occurred_at": now_shanghai().isoformat(),
         "open_api": {
@@ -261,6 +266,7 @@ def dispatch_open_send_result_event(
             "job_id": job.id,
         },
         "bot": {"id": channel.bot_id},
+        "account": {"id": channel.id, "channel_id": channel.id, "channel_type": channel.channel_type},
         "channel": {"id": channel.id, "type": channel.channel_type},
         "conversation": {
             "id": conversation.id,
