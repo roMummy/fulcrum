@@ -9,11 +9,11 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WorkWechatContact
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WebridgeDeviceSample, WorkWechatContact
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
 
@@ -26,6 +26,45 @@ COMMAND_RUNNING_TIMEOUT_SECONDS = 180
 # poll 每次都会进入 claim_commands；超时回收和在线心跳不需要每次执行，按渠道最多每 30 秒一次。
 POLL_MAINTENANCE_INTERVAL_SECONDS = 30
 _last_poll_maintenance: dict[int, float] = {}
+# 手机状态采样保留天数；趋势图只看最近 24 小时，多留几天便于排查。
+SAMPLE_RETENTION_DAYS = 7
+
+
+def record_device_sample(db: Session, channel: Channel) -> None:
+    """写入（或更新）本分钟的手机状态采样，并顺带清理过期采样。
+
+    任务积压数从任务队列实时统计，手机侧缓存数和事件队列数取最近一次 state 上报。
+    """
+
+    now = now_shanghai()
+    bucket = now.replace(second=0, microsecond=0)
+    cid = int(channel.id)
+    pending = running = 0
+    # 积压任务通常只有个位数，取出后按渠道过滤，不依赖 payload 的 JSON 文本格式。
+    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")))).all():
+        if int(parse_job_payload(job).get("channel_id") or 0) != cid:
+            continue
+        if job.status == "pending":
+            pending += 1
+        else:
+            running += 1
+    bridge = _runtime(channel).get("webridge")
+    state = as_object(bridge.get("state")) if isinstance(bridge, dict) else {}
+
+    def _int_or_none(key: str) -> int | None:
+        value = state.get(key)
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    sample = db.scalar(select(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == cid, WebridgeDeviceSample.bucket_start == bucket))
+    if sample is None:
+        sample = WebridgeDeviceSample(tenant_id=channel.tenant_id, channel_id=cid, bucket_start=bucket)
+        db.add(sample)
+    sample.online = True
+    sample.pending_commands = pending
+    sample.running_commands = running
+    sample.cached_message_count = _int_or_none("cached_message_count")
+    sample.pending_event_queue_count = _int_or_none("pending_event_queue_count")
+    db.execute(delete(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == cid, WebridgeDeviceSample.bucket_start < now - timedelta(days=SAMPLE_RETENTION_DAYS)).execution_options(synchronize_session=False))
 
 
 def reap_stale_commands(db: Session, channel: Channel) -> int:
@@ -235,6 +274,7 @@ def accept_state(db: Session, channel: Channel, payload: dict[str, Any]) -> dict
     bridge = runtime.setdefault("webridge", {})
     bridge.update({"state": as_object(payload.get("state")), "last_seen_at": now_shanghai().isoformat(), "online": True})
     _save_runtime(channel, runtime)
+    record_device_sample(db, channel)
     db.commit()
     return {"ok": True}
 
@@ -445,6 +485,7 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     if isinstance(bridge, dict):
         bridge.update({"last_seen_at": now_shanghai().isoformat(), "online": True})
         _save_runtime(channel, runtime)
+    record_device_sample(db, channel)
 
 
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:

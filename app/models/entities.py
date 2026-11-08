@@ -773,3 +773,24 @@ class AdminUser(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(20), default="readonly", index=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auth_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class WebridgeDeviceSample(Base, TenantOwnedMixin):
+    """微桥手机状态采样：每个渠道每分钟最多一行，用于后台的 iPhone 状态趋势图。
+
+    采样点来自 poll 维护和 state 上报；超过保留期的行在写入新采样时顺带清理。
+    """
+
+    __tablename__ = "webridge_device_samples"
+    __table_args__ = (UniqueConstraint("channel_id", "bucket_start", name="uq_webridge_device_samples_channel_bucket"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    # 分钟级时间桶，同一分钟内重复采样只更新不新增。
+    bucket_start: Mapped[DateTime] = mapped_column(DateTime(timezone=True), index=True)
+    online: Mapped[bool] = mapped_column(Boolean, default=True)
+    pending_commands: Mapped[int] = mapped_column(Integer, default=0)
+    running_commands: Mapped[int] = mapped_column(Integer, default=0)
+    # 以下两项来自手机 state 上报；手机尚未上报 state 时为 NULL，图表据此跳过。
+    cached_message_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_event_queue_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

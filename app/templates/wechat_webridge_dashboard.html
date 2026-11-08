@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
+{% from '_dashboard_chart.html' import trend_chart %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
@@ -11,6 +12,33 @@
 {% endblock %}
 {% block content %}
 {% set base = '/channels/' ~ channel.id ~ '/wechat-webridge' %}
+{# iPhone 状态：当前在线与微桥上报的全部字段 + 近 24 小时趋势；其余技术信息折叠。 #}
+<section class="work-surface">
+  <div class="toolbar">
+    <div><h2>iPhone 状态</h2></div>
+    <div class="chip-row">
+      <span class="chip {% if device.online %}chip-success{% else %}chip-muted{% endif %}">{{ '在线' if device.online else '离线' }}</span>
+      <span class="chip chip-outline">最近心跳 {{ device.last_seen_at|bj_time if device.last_seen_at else '-' }}</span>
+      <span class="chip chip-outline">注册于 {{ device.registered_at|bj_time if device.registered_at else '-' }}</span>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    {% for item in device.basic %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
+    {% for item in device.fields %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
+  </div>
+  {% if not device.fields %}<p class="muted-text">手机尚未上报运行状态（state），登录、授权、缓存等字段会在上报后显示。</p>{% endif %}
+  <div class="panel-grid panel-grid-balanced top-gap">
+    <div><h3>待处理命令</h3>{{ trend_chart(device.pending_chart, '近 24 小时待处理命令趋势') }}</div>
+    {% if device.cache_chart['items'] %}<div><h3>缓存消息数</h3>{{ trend_chart(device.cache_chart, '近 24 小时缓存消息趋势', 'success') }}</div>{% endif %}
+    {% if device.event_chart['items'] %}<div><h3>待上传事件</h3>{{ trend_chart(device.event_chart, '近 24 小时待上传事件趋势') }}</div>{% endif %}
+  </div>
+  <details class="top-gap">
+    <summary class="muted-text">其他上报与能力列表（{{ device.capability_count }} 项）</summary>
+    {% if device.extra %}<div class="stats-grid compact-grid top-gap">{% for item in device.extra %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}</div>{% endif %}
+    <p class="muted-text value-break">{{ device.capabilities|join('、') if device.capabilities else '暂无能力上报' }}</p>
+  </details>
+</section>
+
 <section class="work-surface">
   <div class="toolbar">
     <nav class="chip-row" aria-label="数据类型">

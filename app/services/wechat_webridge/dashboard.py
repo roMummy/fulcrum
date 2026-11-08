@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, WorkWechatContact
+from app.core.time import now_shanghai
+from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, WebridgeDeviceSample, WorkWechatContact
 from app.services.identity_directory import IdentityDirectory, make_identity
 
 PAGE_SIZE = 20
@@ -192,3 +194,84 @@ def _conversation_ids(db: Session, channel_id: int, external_ids: list[str]) -> 
         return {}
     rows = db.execute(select(Conversation.external_id, Conversation.id).where(Conversation.channel_id == channel_id, Conversation.external_id.in_(ids))).all()
     return {external_id: int(conversation_id) for external_id, conversation_id in rows}
+
+
+# 手机 state 上报字段 -> 页面标签。只展示微桥已经给出的字段，未识别字段统一进“其他上报”。
+STATE_LABELS = (
+    ("is_logged_in", "微信登录", "bool"),
+    ("auth_status", "授权状态", "text"),
+    ("auth_expires_at", "授权有效期", "text"),
+    ("send_enabled", "发送开关", "bool"),
+    ("receive_enabled", "接收开关", "bool"),
+    ("forward_enabled", "转发开关", "bool"),
+    ("plugin_enabled", "插件启用", "bool"),
+    ("event_uploader_running", "事件上传线程", "bool"),
+    ("log_capture_enabled", "日志采集", "bool"),
+    ("cached_message_count", "缓存消息数", "text"),
+    ("cached_room_snapshot_count", "缓存群快照", "text"),
+    ("cached_red_packet_count", "缓存红包数", "text"),
+    ("pending_event_queue_count", "待上传事件", "text"),
+    ("oldest_pending_event_age_ms", "最久待传事件(毫秒)", "text"),
+    ("last_hook_selector", "最近 Hook", "text"),
+)
+
+
+def _chart(samples: list[WebridgeDeviceSample], field: str, label_format: str = "%H:%M") -> dict[str, Any]:
+    """把采样序列转换为 _dashboard_chart.html 的 trend_chart 宏需要的结构；NULL 采样跳过。"""
+
+    items = [{"label": item.bucket_start.strftime(label_format), "value": int(getattr(item, field))} for item in samples if getattr(item, field) is not None]
+    values = [item["value"] for item in items]
+    peak = max(values) if values else 0
+    points = []
+    for index, value in enumerate(values):
+        x = 0 if len(values) <= 1 else round(index / (len(values) - 1) * 100, 2)
+        y = 100 if peak <= 0 else round(100 - value / peak * 100, 2)
+        points.append(f"{x},{y}")
+    return {"max_value": peak, "points": " ".join(points), "items": items}
+
+
+def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 24) -> dict[str, Any]:
+    """构建 iPhone 状态区：当前在线与上报字段 + 近 hours 小时的积压/缓存趋势。"""
+
+    try:
+        runtime = json.loads(channel.runtime_info_json or "{}").get("webridge")
+    except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
+        runtime = None
+    runtime = runtime if isinstance(runtime, dict) else {}
+    state = runtime.get("state") if isinstance(runtime.get("state"), dict) else {}
+
+    def _show(value: Any, kind: str) -> str:
+        if kind == "bool":
+            return "是" if value else "否"
+        return str(value)
+
+    known = {key for key, _, _ in STATE_LABELS}
+    fields = [{"label": label, "value": _show(state[key], kind)} for key, label, kind in STATE_LABELS if key in state]
+    extra = [{"label": key, "value": str(value)} for key, value in sorted(state.items()) if key not in known and not isinstance(value, (dict, list))]
+    since = now_shanghai() - timedelta(hours=hours)
+    samples = db.scalars(
+        select(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == int(channel.id), WebridgeDeviceSample.bucket_start >= since).order_by(WebridgeDeviceSample.bucket_start.asc())
+    ).all()
+    # 采样按分钟，24 小时最多 1440 点；每 10 分钟取一个点即可，曲线更平滑且页面更轻。
+    samples = samples[::10] if len(samples) > 144 else samples
+    capabilities = runtime.get("capabilities") if isinstance(runtime.get("capabilities"), list) else []
+    return {
+        "online": bool(runtime.get("online")),
+        "last_seen_at": runtime.get("last_seen_at"),
+        "registered_at": runtime.get("registered_at"),
+        "basic": [
+            {"label": "运行版本", "value": runtime.get("runtime_version") or "-"},
+            {"label": "构建标记", "value": runtime.get("build_marker") or "-"},
+            {"label": "微信账号", "value": runtime.get("account_id") or "-"},
+            {"label": "设备 ID", "value": runtime.get("device_id") or "-"},
+            {"label": "会话 ID", "value": runtime.get("session_id") or "-"},
+        ],
+        "fields": fields,
+        "extra": extra,
+        "capability_count": len(capabilities),
+        "capabilities": [str(item) for item in capabilities],
+        "pending_chart": _chart(samples, "pending_commands"),
+        "cache_chart": _chart(samples, "cached_message_count"),
+        "event_chart": _chart(samples, "pending_event_queue_count"),
+        "sample_count": len(samples),
+    }

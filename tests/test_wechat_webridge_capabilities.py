@@ -215,8 +215,12 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
 
     from app.models.entities import TaskJob
 
+    from app.models.entities import WebridgeDeviceSample
+
+    service._last_poll_maintenance.clear()
     engine = create_engine(f"sqlite:///{tmp_path / 'claim.db'}")
     TaskJob.__table__.create(engine)
+    WebridgeDeviceSample.__table__.create(engine)
     db = sessionmaker(bind=engine, expire_on_commit=False)()
     db.add(TaskJob(
         tenant_id=1, job_type=service.JOB_TYPE, status="pending", priority=100,
@@ -411,3 +415,62 @@ async def _timed(coro):
     begin = time.monotonic()
     result = await coro
     return result, time.monotonic() - begin
+
+
+def test_record_device_sample_counts_backlog_and_upserts_per_minute(tmp_path) -> None:
+    """采样统计本渠道积压命令，不含其他渠道；同一分钟重复采样只更新一行，state 数值被带入。"""
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob, WebridgeDeviceSample
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sample.db'}")
+    TaskJob.__table__.create(engine)
+    WebridgeDeviceSample.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    for channel_id, status in ((2, "pending"), (2, "running"), (2, "pending"), (3, "pending")):
+        db.add(TaskJob(tenant_id=1, job_type=service.JOB_TYPE, status=status, priority=1, payload_json=json.dumps({"channel_id": channel_id})))
+    db.commit()
+    runtime = {"webridge": {"state": {"cached_message_count": 200, "pending_event_queue_count": 0, "is_logged_in": True}}}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps(runtime))
+
+    service.record_device_sample(db, channel)
+    service.record_device_sample(db, channel)
+    db.commit()
+
+    rows = db.scalars(select(WebridgeDeviceSample)).all()
+    assert len(rows) == 1
+    assert (rows[0].pending_commands, rows[0].running_commands) == (2, 1)
+    assert (rows[0].cached_message_count, rows[0].pending_event_queue_count) == (200, 0)
+
+
+def test_device_panel_maps_state_fields_and_charts(tmp_path) -> None:
+    """iPhone 状态区展示全部已上报字段（已知字段中文标签，未知字段进其他上报），并生成可画图的序列。"""
+
+    from datetime import timedelta
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.time import now_shanghai
+    from app.models.entities import WebridgeDeviceSample
+    from app.services.wechat_webridge.dashboard import build_webridge_device_panel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'panel.db'}")
+    WebridgeDeviceSample.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    base = now_shanghai().replace(second=0, microsecond=0)
+    for index, pending in enumerate((0, 3, 1)):
+        db.add(WebridgeDeviceSample(tenant_id=1, channel_id=2, bucket_start=base - timedelta(minutes=2 - index), pending_commands=pending, cached_message_count=None))
+    db.commit()
+    runtime = {"webridge": {"online": True, "runtime_version": "8.0.80-6", "capabilities": ["a", "b"], "state": {"is_logged_in": True, "cached_message_count": 200, "mystery": "x"}}}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps(runtime))
+
+    panel = build_webridge_device_panel(db, channel)
+
+    assert panel["online"] is True and panel["capability_count"] == 2
+    assert {"label": "微信登录", "value": "是"} in panel["fields"]
+    assert {"label": "mystery", "value": "x"} in panel["extra"]
+    assert [item["value"] for item in panel["pending_chart"]["items"]] == [0, 3, 1]
+    assert panel["cache_chart"]["items"] == []

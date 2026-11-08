@@ -154,7 +154,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
-from app.services.wechat_webridge.dashboard import build_webridge_dashboard
+from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel
 from app.services.identity_directory import IdentityDirectory
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -2270,6 +2270,7 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab:
             page_title=f"微桥后台 · {channel.name}",
             channel=channel,
             dashboard=build_webridge_dashboard(db, channel, tab=tab, keyword=keyword, page=page, conversation_id=conversation_id, sender=sender),
+            device=build_webridge_device_panel(db, channel),
             notice=request.query_params.get("notice", ""),
         )
     finally:
