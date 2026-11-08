@@ -12,13 +12,99 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
-from app.models.entities import Channel, Conversation, TaskJob
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WorkWechatContact
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
 
 from .contract import COMMAND_GROUPS, COMMANDS, JOB_TYPE, as_object, identity_from_payload, text
 
 logger = get_logger(__name__)
+
+
+def _result_items(result: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+    """从微桥不同版本的列表返回结构中提取对象数组。"""
+
+    for key in keys:
+        value = result.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _directory_id(item: dict[str, Any], *keys: str) -> str:
+    """提取目录实体稳定 ID，页面展示优先使用昵称和头像。"""
+
+    return next((str(item.get(key) or "").strip() for key in keys if str(item.get(key) or "").strip()), "")
+
+
+def persist_directory_result(db: Session, channel: Channel, command: dict[str, Any], result: dict[str, Any]) -> dict[str, int]:
+    """把好友、群组和群成员同步结果写入现有联系人与群组实体。"""
+
+    command_name = text(command.get("type") or command.get("command_name"))
+    now = now_shanghai()
+    counts = {"contacts": 0, "groups": 0, "members": 0}
+    if command_name in {"friends", "friends_all"}:
+        for item in _result_items(result, "items", "friends", "contacts"):
+            external_id = _directory_id(item, "account_id", "user_name", "wxid", "username", "id")
+            if not external_id:
+                continue
+            contact = db.scalar(select(WorkWechatContact).where(WorkWechatContact.channel_id == channel.id, WorkWechatContact.contact_external_id == external_id))
+            if contact is None:
+                contact = WorkWechatContact(channel_id=channel.id, contact_external_id=external_id, first_seen_at=now)
+                db.add(contact)
+            contact.contact_kind = "friend"
+            contact.name = str(item.get("nickname") or item.get("display_name") or item.get("remark") or external_id)[:255]
+            contact.display_name = str(item.get("display_name") or item.get("remark") or item.get("nickname") or external_id)[:255]
+            contact.avatar_url = str(item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "") or None
+            contact.source = "wechat_webridge"
+            contact.sync_status = "active"
+            contact.last_seen_at = now
+            contact.last_synced_at = now
+            contact.raw_contact_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            counts["contacts"] += 1
+    elif command_name == "groups_all":
+        for item in _result_items(result, "groups", "items", "rooms"):
+            external_id = _directory_id(item, "room_id", "chatroom_id", "user_name", "wxid", "id")
+            if not external_id:
+                continue
+            room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
+            if room is None:
+                room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now)
+                db.add(room)
+            room.name = str(item.get("display_name") or item.get("room_name") or item.get("nickname") or item.get("name") or external_id)[:255]
+            room.remark = str(item.get("remark") or "")[:255] or None
+            room.status = "synced"
+            room.is_active = True
+            room.last_seen_at = now
+            room.last_synced_at = now
+            room.member_count = int(item.get("member_count") or item.get("member_total") or item.get("member_num") or room.member_count or 0)
+            room.extra_json = json.dumps({"source": "wechat_webridge", "avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
+            counts["groups"] += 1
+    elif command_name == "room_members":
+        params = as_object(command.get("params") or command.get("args"))
+        room_id = _directory_id(params, "room_id", "chatroom_id", "conversation_id")
+        room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == room_id)) if room_id else None
+        if room:
+            for item in _result_items(result, "members", "items"):
+                external_id = _directory_id(item, "account_id", "user_name", "wxid", "id")
+                if not external_id:
+                    continue
+                member = db.scalar(select(ChatroomMember).where(ChatroomMember.chatroom_id == room.id, ChatroomMember.member_external_id == external_id))
+                if member is None:
+                    member = ChatroomMember(chatroom_id=room.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=external_id)
+                    db.add(member)
+                member.nickname = str(item.get("nickname") or item.get("display_name") or external_id)[:255]
+                member.display_name = str(item.get("display_name") or item.get("remark") or item.get("nickname") or external_id)[:255]
+                member.status = "active"
+                member.last_synced_at = now
+                member.extra_json = json.dumps({"avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
+                counts["members"] += 1
+            room.member_count = max(room.member_count, counts["members"])
+            room.last_synced_at = now
+    if any(counts.values()):
+        db.flush()
+        logger.info("webridge directory persisted", extra={"channel_id": channel.id, "command_name": command_name, **counts})
+    return counts
 
 
 def command_catalog(channel: Channel | None = None) -> dict[str, Any]:
@@ -404,6 +490,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
         result = as_object(payload.get("result"))
         if bool(payload.get("ok")) or bool(result.get("ok")):
+            command = as_object(data.get("command"))
+            persist_directory_result(db, channel, command, result)
             complete_job(db, job, result={"webridge": payload})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}

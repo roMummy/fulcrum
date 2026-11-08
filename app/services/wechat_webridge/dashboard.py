@@ -11,7 +11,7 @@ import json
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, TaskJob
+from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, TaskJob, WorkWechatContact
 from app.services.task_queue import parse_job_payload
 
 
@@ -46,6 +46,25 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, message_limit: in
     ).all()
     conversation_map = {int(item.id): item for item in conversations}
     command_contacts, command_groups, command_members, sync_history = _build_command_snapshots(db, channel)
+    persisted_contacts = db.scalars(
+        select(WorkWechatContact).where(WorkWechatContact.channel_id == channel.id, WorkWechatContact.contact_kind == "friend").order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc())
+    ).all()
+    persisted_group_rows = db.scalars(
+        select(Chatroom).where(Chatroom.channel_id == channel.id).order_by(Chatroom.name.asc(), Chatroom.id.desc())
+    ).all()
+    persisted_groups = []
+    for room in persisted_group_rows:
+        try:
+            extra = json.loads(room.extra_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            extra = {}
+        persisted_groups.append({
+            "name": room.name or room.external_id,
+            "external_id": room.external_id,
+            "member_count": room.member_count,
+            "last_synced_at": room.last_synced_at,
+            "avatar_url": str(extra.get("avatar_url") or "").strip(),
+        })
     return {
         "direct": direct,
         "groups": groups,
@@ -56,6 +75,8 @@ def build_webridge_dashboard(db: Session, channel: Channel, *, message_limit: in
         "command_contacts": command_contacts,
         "command_groups": command_groups,
         "command_members": command_members,
+        "persisted_contacts": persisted_contacts,
+        "persisted_groups": persisted_groups,
         "sync_history": sync_history,
         "counts": {
             "conversations": len(conversations),
