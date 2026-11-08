@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block hero_actions %}
+<div class="hero-action-cluster">
+  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
+  <a class="btn btn-secondary" href="/api/wechat-webridge/{{ channel.id }}/capabilities">能力目录</a>
+  <span class="chip chip-outline">{{ channel.name }}</span>
+</div>
+{% endblock %}
+{% block content %}
+<section class="work-surface">
+  <div class="toolbar"><div><h2>微桥后台总览</h2><p class="muted-text">展示本地已观测到的好友、群组和消息；主动同步使用能力目录中的微桥命令。</p></div></div>
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>会话总数</span><strong>{{ dashboard.counts.conversations }}</strong></div>
+    <div class="metric-item"><span>好友会话</span><strong>{{ dashboard.counts.direct }}</strong></div>
+    <div class="metric-item"><span>群组会话</span><strong>{{ dashboard.counts.groups }}</strong></div>
+    <div class="metric-item"><span>本地群档案</span><strong>{{ dashboard.counts.chatrooms }}</strong></div>
+    <div class="metric-item"><span>消息记录</span><strong>{{ dashboard.counts.messages }}</strong></div>
+  </div>
+</section>
+
+<section class="work-surface">
+  <div class="toolbar"><div><h2>好友信息</h2><p class="muted-text">好友资料以手机命令返回后，再由事件或消息写入本地。</p></div><span class="chip chip-outline">{{ dashboard.direct|length }} 条</span></div>
+  {% if dashboard.direct %}<table class="table"><thead><tr><th>会话</th><th>外部 ID</th><th>最近消息</th><th>操作</th></tr></thead><tbody>
+  {% for item in dashboard.direct %}<tr><td>{{ item.title or '未命名好友' }}</td><td><code>{{ item.external_id }}</code></td><td>{{ item.last_message_at|bj_time if item.last_message_at else '-' }}</td><td><a class="btn btn-secondary" href="/conversations/{{ item.id }}">查看消息</a></td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="muted-text">暂无好友会话。可通过能力目录执行 friends 或 friends_all。</p>{% endif %}
+</section>
+
+<section class="work-surface">
+  <div class="toolbar"><div><h2>群组信息</h2><p class="muted-text">群消息进入后会自动形成群会话；成员快照来自群成员同步命令。</p></div><span class="chip chip-outline">{{ dashboard.groups|length }} 条</span></div>
+  {% if dashboard.groups %}<table class="table"><thead><tr><th>群组</th><th>外部 ID</th><th>成员快照</th><th>操作</th></tr></thead><tbody>
+  {% for item in dashboard.groups %}{% set ns = namespace(chatroom=None) %}{% for room in dashboard.chatrooms %}{% if room.external_id == item.external_id %}{% set ns.chatroom = room %}{% endif %}{% endfor %}<tr><td>{{ item.title or '未命名群组' }}</td><td><code>{{ item.external_id }}</code></td><td>{% if ns.chatroom %}{{ dashboard.members_by_chatroom[ns.chatroom.id]|length }} 人{% else %}未同步{% endif %}</td><td><a class="btn btn-secondary" href="/conversations/{{ item.id }}">查看消息</a>{% if ns.chatroom %} <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms/{{ ns.chatroom.id }}">查看成员</a>{% endif %}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="muted-text">暂无群组会话。可通过能力目录执行 groups_all。</p>{% endif %}
+</section>
+
+<section class="work-surface">
+  <div class="toolbar"><div><h2>消息记录</h2></div><a class="btn btn-secondary" href="/messages?channel_id={{ channel.id }}">打开完整消息中心</a></div>
+  {% if dashboard.messages %}<table class="table"><thead><tr><th>时间</th><th>方向</th><th>类型</th><th>发送者</th><th>内容</th></tr></thead><tbody>
+  {% for item in dashboard.messages %}<tr><td>{{ item.created_at|bj_time if item.created_at else '-' }}</td><td>{{ '入站' if item.direction == 'in' else '出站' }}</td><td><span class="chip chip-muted">{{ item.message_type }}</span></td><td>{{ item.sender_name or item.sender_id or '-' }}</td><td>{{ (item.content or '')[:160] }}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="muted-text">暂无消息记录。</p>{% endif %}
+</section>
+{% endblock %}

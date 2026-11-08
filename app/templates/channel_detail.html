@@ -148,6 +148,12 @@
 </section>
 {% endif %}
 
+{% if channel.channel_type == 'wechat_webridge' %}
+<section class="work-surface">
+  <div class="toolbar"><div><h2>微桥后台</h2><p class="muted-text">好友、群组、成员和消息记录统一查看。</p></div><a class="btn btn-secondary" href="/channels/{{ channel.id }}/wechat-webridge">进入微桥后台</a></div>
+</section>
+{% endif %}
+
 {% if workwechat_contact_summary %}
 <section class="work-surface">
   <div class="toolbar">

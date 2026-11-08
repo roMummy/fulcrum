@@ -153,6 +153,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_config_override,
     update_wechat_winauto_chatroom_scope_enabled,
 )
+from app.services.wechat_webridge.dashboard import build_webridge_dashboard
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
     build_workwechat_chatroom_list,
@@ -2149,6 +2150,14 @@ async def channel_detail_page(request: Request, channel_id: int):
         elif channel.channel_type == "workwechat":
             # workwechat 群摘要来自独立群服务，包含 Hook 群列表和消息观测落库后的本地样本。
             channel_chatroom_summary = build_channel_chatroom_summary(build_workwechat_chatroom_list(db, channel))
+        elif channel.channel_type == "wechat_webridge":
+            channel_chatroom_summary = {
+                "total": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id)) or 0),
+                "active_chatroom_count": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id, Chatroom.is_active.is_(True))) or 0),
+                "member_snapshot_chatroom_count": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == channel.id, Chatroom.member_count > 0)) or 0),
+                "sync_action": "",
+                "sync_button_label": "",
+            }
         workwechat_contact_summary = build_workwechat_contact_summary(db, channel) if channel.channel_type == "workwechat" else None
         # 企微云端拉取配置只在渠道详情页展示摘要；授权码明文不落库，生成后只通过一次性提示展示。
         wechat_ipad_contact_list = build_wechat_ipad_contact_list(channel) if channel.channel_type == "wechat_ipad" else None
@@ -2183,6 +2192,27 @@ async def channel_detail_page(request: Request, channel_id: int):
             workwechat_cloud_poll_config=workwechat_cloud_poll_config,
             wechat_ipad_contact_list=wechat_ipad_contact_list,
             can_manage_channel=has_tenant_role(require_user(request), "tenant_admin"),
+            notice=request.query_params.get("notice", ""),
+        )
+    finally:
+        db.close()
+
+
+@app.get("/channels/{channel_id}/wechat-webridge", response_class=HTMLResponse)
+async def wechat_webridge_dashboard_page(request: Request, channel_id: int):
+    """展示 WeBridge 渠道内已落库的好友、群组和消息信息。"""
+
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type != "wechat_webridge":
+            raise HTTPException(status_code=404, detail="WeBridge channel not found")
+        return render(
+            request,
+            "wechat_webridge_dashboard.html",
+            page_title=f"微桥后台 · {channel.name}",
+            channel=channel,
+            dashboard=build_webridge_dashboard(db, channel),
             notice=request.query_params.get("notice", ""),
         )
     finally:
