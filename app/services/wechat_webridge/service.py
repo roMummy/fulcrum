@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from datetime import timedelta
 from typing import Any
@@ -22,6 +23,9 @@ logger = get_logger(__name__)
 
 # 手机领取命令后超过该时长仍未回传结果，视为插件卡死或断线，任务置为失败以免链路一直显示进行中。
 COMMAND_RUNNING_TIMEOUT_SECONDS = 180
+# poll 每次都会进入 claim_commands；超时回收和在线心跳不需要每次执行，按渠道最多每 30 秒一次。
+POLL_MAINTENANCE_INTERVAL_SECONDS = 30
+_last_poll_maintenance: dict[int, float] = {}
 
 
 def reap_stale_commands(db: Session, channel: Channel) -> int:
@@ -424,6 +428,25 @@ def list_command_results(
             break
     return rows
 
+def _poll_maintenance(db: Session, channel: Channel) -> None:
+    """按渠道节流执行：回收超时命令，并刷新手机在线时间。
+
+    last_seen_at 以前只在 register/state 时更新，而手机实际只发 poll，页面会误判离线；
+    这里用 poll 作为存活证据。
+    """
+
+    now = time.monotonic()
+    if now - _last_poll_maintenance.get(int(channel.id), 0.0) < POLL_MAINTENANCE_INTERVAL_SECONDS:
+        return
+    _last_poll_maintenance[int(channel.id)] = now
+    reap_stale_commands(db, channel)
+    runtime = _runtime(channel)
+    bridge = runtime.get("webridge")
+    if isinstance(bridge, dict):
+        bridge.update({"last_seen_at": now_shanghai().isoformat(), "online": True})
+        _save_runtime(channel, runtime)
+
+
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
     """领取当前设备的待发送命令，并将任务置为 running 防止重复下发。"""
 
@@ -431,8 +454,8 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         logger.error("webridge command claim identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     current = now_shanghai()
-    # 每次轮询先清理超时命令，手机恢复后第一次 poll 就能让链路解除阻塞。
-    reap_stale_commands(db, channel)
+    # 手机恢复后第一次 poll 必定执行维护，让链路尽快解除阻塞；之后按间隔节流。
+    _poll_maintenance(db, channel)
     jobs = db.scalars(
         select(TaskJob)
         .where(TaskJob.job_type == JOB_TYPE, TaskJob.status == "pending", TaskJob.available_at <= current)
@@ -488,7 +511,9 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
     db.commit()
-    logger.info("webridge commands claimed", extra={"channel_id": channel.id, "command_count": len(commands), "command_names": [str(item.get("command_name") or item.get("type") or "") for item in commands]})
+    # 空轮询占绝大多数，只记录真正下发了命令的情况，避免日志被刷满。
+    if commands:
+        logger.info("webridge commands claimed", extra={"channel_id": channel.id, "command_count": len(commands), "command_names": [str(item.get("command_name") or item.get("type") or "") for item in commands]})
     return commands
 
 

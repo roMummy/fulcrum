@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from app.core.db import SessionLocal, TenantSessionLocal
@@ -30,6 +34,10 @@ from app.core.logging import get_logger
 
 router = APIRouter(prefix="/api/wechat-webridge", tags=["wechat-webridge"])
 logger = get_logger(__name__)
+
+# 长轮询挂起时长需小于手机插件的 HTTP 超时；队列检查间隔决定新命令的最大下发延迟。
+POLL_HOLD_SECONDS = 15
+POLL_CHECK_INTERVAL_SECONDS = 1
 
 
 def _payload_summary(payload: dict) -> dict[str, object]:
@@ -157,19 +165,32 @@ async def event(channel_id: int, request: Request):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _claim_once(channel_id: int, tenant_id: int, body: dict) -> list[dict]:
+    """用独立短会话领取一次命令；等待期间不持有数据库连接。"""
+
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        return claim_commands(db, db.get(Channel, int(channel_id)), body)
+
+
 @router.post("/{channel_id}/agent/poll")
 async def poll(channel_id: int, request: Request):
+    """长轮询：有命令立即返回，没有则最多挂起 POLL_HOLD_SECONDS 秒再返回空列表。
+
+    手机插件拿到空响应会立刻重发请求，若服务端不挂起就会形成每秒近百次的紧循环。
+    """
+
     body = await _json(request)
-    logger.info("webridge poll received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
-    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+    deadline = time.monotonic() + POLL_HOLD_SECONDS
+    while True:
         try:
-            commands = claim_commands(db, db.get(Channel, int(channel_id)), body)
-            logger.info("webridge poll completed", extra={"channel_id": channel_id, "command_count": len(commands), "command_names": [str(item.get("command_name") or item.get("type") or "") for item in commands]})
-            return {"commands": commands}
+            commands = await run_in_threadpool(_claim_once, channel_id, tenant_id, body)
         except ValueError as exc:
             logger.exception("webridge poll rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if commands or time.monotonic() >= deadline or await request.is_disconnected():
+            return {"commands": commands}
+        await asyncio.sleep(POLL_CHECK_INTERVAL_SECONDS)
 
 
 @router.post("/{channel_id}/agent/command_result")

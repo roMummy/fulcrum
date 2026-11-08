@@ -355,3 +355,59 @@ def test_dashboard_message_filters_by_conversation_and_sender() -> None:
         # 其他渠道的会话 ID 不能被当作筛选条件读出数据。
         assert build_webridge_dashboard(db, channel, tab="messages", conversation_id=12)["rows"] == []
         assert {c["id"] for c in everything["conversations"]} == {10, 11}
+
+
+def test_poll_maintenance_is_throttled_and_refreshes_last_seen() -> None:
+    """超时回收和在线心跳按渠道节流：间隔内重复 poll 不再重复执行，首次执行会刷新在线时间。"""
+
+    from unittest.mock import MagicMock, patch
+
+    service._last_poll_maintenance.clear()
+    identity = {"device_id": "d1", "session_id": "s1", "account_id": "a1", "last_seen_at": "old", "online": False}
+    channel = Channel(id=9, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps({"webridge": identity}))
+    with patch.object(service, "reap_stale_commands") as reap:
+        service._poll_maintenance(MagicMock(), channel)
+        service._poll_maintenance(MagicMock(), channel)
+    assert reap.call_count == 1
+    bridge = json.loads(channel.runtime_info_json)["webridge"]
+    assert bridge["online"] is True and bridge["last_seen_at"] != "old"
+
+
+def test_poll_holds_until_deadline_when_no_commands() -> None:
+    """无命令时 poll 必须挂起到截止时间再返回空列表，不能立即返回造成手机紧循环重试。"""
+
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.api import wechat_webridge as api
+
+    calls = []
+
+    def fake_claim(channel_id, tenant_id, body):
+        calls.append(1)
+        return []
+
+    request = AsyncMock()
+    request.json.return_value = {}
+    request.is_disconnected.return_value = False
+    with (
+        patch.object(api, "_claim_once", fake_claim),
+        patch.object(api, "_channel_tenant", return_value=(1, None)),
+        patch.object(api, "_json", AsyncMock(return_value={})),
+        patch.object(api, "POLL_HOLD_SECONDS", 0.35),
+        patch.object(api, "POLL_CHECK_INTERVAL_SECONDS", 0.1),
+    ):
+        result, elapsed = asyncio.run(_timed(api.poll(2, request)))
+    assert result == {"commands": []}
+    assert elapsed >= 0.3
+    assert 2 <= len(calls) <= 6
+
+
+async def _timed(coro):
+    """返回协程结果和耗时，供长轮询挂起时长断言使用。"""
+
+    import time
+
+    begin = time.monotonic()
+    result = await coro
+    return result, time.monotonic() - begin
