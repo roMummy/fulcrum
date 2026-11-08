@@ -24,8 +24,22 @@ from app.services.account_connections import finalize_account_connection, verify
 from app.services.account_connections.contracts import AccountConnectionError
 from app.models.entities import MessageAttachment
 from app.services.inbound_media import store_uploaded_media_attachment
+from app.core.logging import get_logger
 
 router = APIRouter(prefix="/api/wechat-webridge", tags=["wechat-webridge"])
+logger = get_logger(__name__)
+
+
+def _payload_summary(payload: dict) -> dict[str, object]:
+    """只记录字段形状和关键标识，调试日志不落设备密钥、Token 或消息正文。"""
+
+    summary: dict[str, object] = {"keys": sorted(str(key) for key in payload.keys())}
+    for key in ("request_id", "command_name", "type", "event_id", "device_id", "account_id"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            text = str(value)
+            summary[key] = text[:120] if key not in {"device_id", "account_id"} else f"{text[:8]}..."
+    return summary
 
 
 def _channel_tenant(channel_id: int) -> tuple[int, int]:
@@ -74,6 +88,7 @@ async def capabilities(channel_id: int, request: Request):
 @router.post("/{channel_id}/agent/register")
 async def register(channel_id: int, request: Request):
     body = await _json(request)
+    logger.info("webridge register received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
@@ -89,34 +104,41 @@ async def register(channel_id: int, request: Request):
                 channel_id=int(channel.id),
                 display_name=verified.identity.display_name if verified.identity else "",
             )
-            return {
+            response = {
                 **result,
                 "connection_state": "active",
                 "message": "WeBridge 已自动完成身份验证、额度绑定并启用",
                 "bot_id": int(finalized.bot.id),
                 "binding_id": int(finalized.binding.id),
             }
+            logger.info("webridge register completed", extra={"channel_id": channel_id, "connection_state": "active", "binding_id": response["binding_id"]})
+            return response
         except AccountConnectionError as exc:
             # 注册本身已经成功时，保留设备快照并返回可读状态，手机端仍可继续心跳和轮询。
+            logger.exception("webridge register binding failed", extra={"channel_id": channel_id, "error_code": str(exc)})
             return {"ok": True, "channel_id": int(channel.id), "connection_state": "pending", "message": str(exc)}
         except ValueError as exc:
+            logger.exception("webridge register rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{channel_id}/agent/state")
 async def state(channel_id: int, request: Request):
     body = await _json(request)
+    logger.info("webridge state received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         try:
             return accept_state(db, db.get(Channel, int(channel_id)), body)
         except ValueError as exc:
+            logger.exception("webridge state rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{channel_id}/agent/event")
 async def event(channel_id: int, request: Request):
     body = await _json(request)
+    logger.info("webridge event received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
@@ -129,29 +151,35 @@ async def event(channel_id: int, request: Request):
             db.commit()
             return {"ok": True, "deduplicated": bool(result.get("deduplicated")), "event_id": body["event_id"]}
         except ValueError as exc:
+            logger.exception("webridge event rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{channel_id}/agent/poll")
 async def poll(channel_id: int, request: Request):
     body = await _json(request)
+    logger.info("webridge poll received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         try:
             commands = claim_commands(db, db.get(Channel, int(channel_id)), body)
+            logger.info("webridge poll completed", extra={"channel_id": channel_id, "command_count": len(commands), "command_names": [str(item.get("command_name") or item.get("type") or "") for item in commands]})
             return {"commands": commands}
         except ValueError as exc:
+            logger.exception("webridge poll rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{channel_id}/agent/command_result")
 async def command_result(channel_id: int, request: Request):
     body = await _json(request)
+    logger.info("webridge command result received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         try:
             return accept_command_result(db, db.get(Channel, int(channel_id)), body)
         except ValueError as exc:
+            logger.exception("webridge command result rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -164,6 +192,7 @@ async def upload_media(channel_id: int, request: Request, attachment_id: int, fi
         "session_id": request.headers.get("x-webridge-session-id", ""),
         "account_id": request.headers.get("x-webridge-account-id", ""),
     }
+    logger.info("webridge media upload received", extra={"channel_id": channel_id, "attachment_id": attachment_id, "filename": file.filename or "", "content_type": file.content_type or ""})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
@@ -185,6 +214,7 @@ async def upload_media(channel_id: int, request: Request, attachment_id: int, fi
             db.commit()
             return {"ok": True, **result}
         except ValueError as exc:
+            logger.exception("webridge media upload rejected", extra={"channel_id": channel_id, "attachment_id": attachment_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

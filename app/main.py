@@ -1,6 +1,7 @@
 import json
 import subprocess
 import time as time_module
+import xml.etree.ElementTree as ElementTree
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -350,6 +351,7 @@ def get_cron_probe_snapshot() -> dict[str, str]:
 templates.env.filters["bj_time"] = format_beijing_time
 templates.env.filters["uptime"] = format_uptime
 templates.env.filters["channel_type_label"] = get_channel_type_label
+templates.env.filters["message_display"] = lambda value, message_type="": format_message_display(value, message_type)
 
 
 def build_url(path: str, **params: object) -> str:
@@ -549,6 +551,34 @@ def merge_channel_adapter_config(
 
 def parse_message_lines(raw_text: str) -> list[str]:
     return [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
+
+
+def format_message_display(raw_text: object, message_type: object = "") -> str:
+    """把 XML、JSON 和卡片消息转换成后台可读摘要，原文仍由页面按需展开。"""
+
+    text = str(raw_text or "").strip()
+    normalized_type = str(message_type or "").strip().lower()
+    if not text:
+        return ""
+    if normalized_type in {"xml", "app", "mini_program", "card"} and text.startswith("<"):
+        try:
+            root = ElementTree.fromstring(text)
+            values: list[str] = []
+            for node in root.iter():
+                value = (node.text or "").strip()
+                if value and len(value) <= 240:
+                    values.append(f"{node.tag}: {value}")
+            return " · ".join(values[:8]) or "结构化消息"
+        except ElementTree.ParseError:
+            return "结构化消息（内容待展开查看）"
+    if normalized_type in {"json", "app", "card"} and text[:1] in {"{", "["}:
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return " · ".join(f"{key}: {value}" for key, value in list(parsed.items())[:8])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return text
 
 
 def _normalize_dt_utc(value: datetime | None) -> datetime:
@@ -4204,6 +4234,7 @@ async def messages_page(
     bot_id: int = 0,
     channel_id: int = 0,
     chat_type: str = "",
+    conversation_id: int = 0,
     page: int = 1,
 ):
     db = get_session()
@@ -4243,6 +4274,37 @@ async def messages_page(
         else:
             normalized_chat_type = ""
 
+        conversations_stmt = select(Conversation)
+        if bot_id:
+            conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
+        if channel_id:
+            conversations_stmt = conversations_stmt.where(Conversation.channel_id == channel_id)
+        if normalized_chat_type:
+            conversations_stmt = conversations_stmt.where(Conversation.chat_type == normalized_chat_type)
+        conversations = db.scalars(
+            conversations_stmt.order_by(
+                Conversation.last_message_at.is_(None),
+                Conversation.last_message_at.desc(),
+                Conversation.id.desc(),
+            ).limit(100)
+        ).all()
+        conversation_summaries = []
+        for item in conversations:
+            latest = db.scalar(
+                select(Message).where(Message.conversation_id == item.id).order_by(Message.id.desc()).limit(1)
+            )
+            display_name = item.title or item.external_id or f"会话 #{item.id}"
+            conversation_summaries.append(
+                {
+                    "conversation": item,
+                    "latest": latest,
+                    "display_name": display_name,
+                    "initial": display_name[:1].upper(),
+                }
+            )
+        if conversation_id:
+            stmt = stmt.where(Conversation.id == conversation_id)
+
         total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
         total_pages = max((total + page_size - 1) // page_size, 1)
         current_page = min(current_page, total_pages)
@@ -4275,6 +4337,8 @@ async def messages_page(
             "messages.html",
             page_title="消息中心",
             messages=messages,
+            conversation_summaries=conversation_summaries,
+            selected_conversation_id=conversation_id,
             pagination=pagination,
             bots=bots,
             channels=channels,

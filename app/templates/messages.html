@@ -1,137 +1,27 @@
 {% extends 'base.html' %}
 {% block hero_actions %}
-<div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/conversations">查看会话</a>
-</div>
+<div class="hero-action-cluster"><a class="btn btn-secondary" href="/conversations">查看会话管理</a><span class="chip chip-outline">消息 {{ pagination.total if pagination else messages|length }}</span></div>
 {% endblock %}
 {% block content %}
+<style>
+  .wechat-message-layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;min-height:620px}.wechat-conversation-list,.wechat-thread{overflow:hidden}.wechat-conversation-list{padding:0}.wechat-conversation-item{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color,#e5e7eb);text-decoration:none;color:inherit}.wechat-conversation-item.active{background:var(--surface-muted,#eef4ff)}.wechat-avatar{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-weight:700;flex:0 0 auto}.wechat-conversation-copy{min-width:0;flex:1}.wechat-conversation-head{display:flex;justify-content:space-between;gap:8px}.wechat-conversation-name,.wechat-conversation-preview{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wechat-conversation-preview{font-size:13px;color:var(--muted-text,#64748b);margin-top:5px}.wechat-conversation-time{font-size:12px;color:var(--muted-text,#64748b);white-space:nowrap}.wechat-thread{display:flex;flex-direction:column}.wechat-thread-head{padding:18px 20px;border-bottom:1px solid var(--border-color,#e5e7eb)}.wechat-thread-body{padding:20px;overflow:auto;max-height:660px;background:#f8fafc}.wechat-message-bubble{max-width:78%;margin:0 0 14px;padding:11px 14px;border-radius:14px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.06)}.wechat-message-bubble.out{margin-left:auto;background:#dbeafe}.wechat-message-meta{font-size:12px;color:var(--muted-text,#64748b);margin-bottom:5px}.wechat-message-content{white-space:pre-wrap;word-break:break-word;line-height:1.6}.wechat-raw-content{margin-top:8px}.wechat-raw-content pre{max-height:240px;overflow:auto;white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;font-size:12px}.wechat-empty{display:grid;place-items:center;min-height:480px;color:var(--muted-text,#64748b)}@media (max-width:900px){.wechat-message-layout{grid-template-columns:1fr}.wechat-conversation-list{max-height:300px}.wechat-thread-body{max-height:none}}
+</style>
 <section class="work-surface">
-  <div class="section-head">
-    <div>
-
-      <h2>消息列表</h2>
-    </div>
-    <div class="chip-row">
-      <span class="chip chip-outline">匹配 {{ pagination.total if pagination else messages|length }}</span>
-      <span class="chip chip-muted">本页 {{ messages|length }}</span>
-      <span class="chip chip-muted">入站 {{ messages | selectattr('direction', 'equalto', 'in') | list | length }}</span>
-      <span class="chip chip-muted">出站 {{ messages | selectattr('direction', 'equalto', 'out') | list | length }}</span>
-      {% if pagination %}<span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>{% endif %}
-    </div>
+  <div class="section-head"><div><h2>微信式消息中心</h2><p class="muted-text">左侧选择联系人或群聊，右侧查看消息历史。</p></div></div>
+  {% if conversation_summaries %}
+  <div class="wechat-message-layout">
+    <aside class="wechat-conversation-list">
+      {% for item in conversation_summaries %}<a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}"><span class="wechat-avatar">{{ item.initial }}</span><span class="wechat-conversation-copy"><span class="wechat-conversation-head"><strong class="wechat-conversation-name">{{ item.display_name }}</strong><time class="wechat-conversation-time">{{ item.latest.created_at|bj_time if item.latest and item.latest.created_at else '-' }}</time></span><span class="wechat-conversation-preview">{{ item.latest.content|message_display(item.latest.message_type) if item.latest else '暂无消息' }}</span></span></a>{% endfor %}
+    </aside>
+    <section class="wechat-thread">
+      {% set selected = namespace(item=None) %}{% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{% set selected.item = item %}{% endif %}{% endfor %}
+      {% if selected.item %}<header class="wechat-thread-head"><h2>{{ selected.item.display_name }}</h2><p class="muted-text">{{ selected.item.conversation.chat_type or 'direct' }} · 会话 #{{ selected.item.conversation.id }}</p></header>{% endif %}
+      <div class="wechat-thread-body">
+        {% if selected_conversation_id and messages %}{% for item in messages|reverse %}<article class="wechat-message-bubble {{ 'out' if item.direction == 'out' else 'in' }}"><div class="wechat-message-meta">{{ item.sender_name or item.sender_id or ('我' if item.direction == 'out' else '联系人') }} · {{ item.created_at|bj_time if item.created_at else '-' }} · {{ item.message_type }}</div><div class="wechat-message-content">{{ item.content|message_display(item.message_type) }}</div>{% if item.message_type in ['xml','app','mini_program','card'] and item.content %}<details class="wechat-raw-content"><summary>查看原始结构化内容</summary><pre>{{ item.content }}</pre></details>{% endif %}</article>{% endfor %}{% elif not selected_conversation_id %}<div class="wechat-empty">从左侧选择一个联系人或群聊</div>{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
+      </div>
+      {% if selected_conversation_id and pagination %}<div class="list-pagination"><div class="list-pagination-summary">第 {{ pagination.page }} / {{ pagination.total_pages }} 页，共 {{ pagination.total }} 条</div><div class="list-pagination-actions">{% if pagination.has_prev %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}&page={{ pagination.prev_page }}">更早消息</a>{% endif %}{% if pagination.has_next %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}&page={{ pagination.next_page }}">更新消息</a>{% endif %}</div></div>{% endif %}
+    </section>
   </div>
-  {# 模板默认展开供桌面使用，共享初始化逻辑只在窄屏关闭没有生效条件的筛选区。 #}
-  {% set filter_active = keyword or direction or bot_id or channel_id or chat_type %}
-  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
-    <summary class="compact-filter-summary">
-      <span>筛选消息</span>
-      <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}按条件缩小结果{% endif %}</span>
-    </summary>
-    <form method="get" action="/messages" class="compact-filter-form">
-    <label class="compact-filter-field compact-filter-field-query">
-      <span>关键词</span>
-      <input name="keyword" value="{{ keyword or '' }}" placeholder="搜索内容、发送者或消息 ID" />
-    </label>
-    <label class="compact-filter-field">
-      <span>方向</span>
-      <select name="direction">
-        <option value="" {% if not direction %}selected{% endif %}>全部</option>
-        <option value="in" {% if direction == 'in' %}selected{% endif %}>入站</option>
-        <option value="out" {% if direction == 'out' %}selected{% endif %}>出站</option>
-      </select>
-    </label>
-    <label class="compact-filter-field">
-      <span>机器人</span>
-      <select name="bot_id">
-        <option value="0">全部</option>
-        {% for bot in bots %}
-        <option value="{{ bot.id }}" {% if bot_id == bot.id %}selected{% endif %}>{{ bot.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="compact-filter-field">
-      <span>渠道</span>
-      <select name="channel_id">
-        <option value="0">全部</option>
-        {% for channel in channels %}
-        <option value="{{ channel.id }}" {% if channel_id == channel.id %}selected{% endif %}>{{ channel.name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="compact-filter-field">
-      <span>会话类型</span>
-      <select name="chat_type">
-        <option value="" {% if not chat_type %}selected{% endif %}>全部</option>
-        <option value="group" {% if chat_type == 'group' %}selected{% endif %}>群聊</option>
-        <option value="direct" {% if chat_type == 'direct' %}selected{% endif %}>私聊</option>
-      </select>
-    </label>
-    <div class="compact-filter-actions">
-      <button class="btn" type="submit">筛选</button>
-      <a class="btn btn-secondary" href="/messages">重置</a>
-    </div>
-    </form>
-  </details>
-  {# 消息结果需要像日志一样快速扫读，因此把会话编号提升为独立窄列，内容列只负责正文预览。 #}
-  <table class="table table-tight message-record-table">
-    <thead><tr><th class="col-id">ID</th><th class="col-compact">会话</th><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th class="col-status">状态</th><th>内容</th></tr></thead>
-    <tbody>
-      {% for item in messages %}
-      <tr>
-        <td class="col-id">#{{ item.id }}</td>
-        <td class="col-compact"><a class="record-link" href="/conversations/{{ item.conversation_id }}">#{{ item.conversation_id }}</a></td>
-        <td class="col-dir"><span class="chip {% if item.direction == 'in' %}chip-success{% else %}chip-outline{% endif %}">{{ item.direction }}</span></td>
-        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>{{ item.sender_name or item.sender_id or '-' }}</td>
-        <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
-        <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
-        <td>
-          {% set message_content = item.content or '' %}
-          {% set message_short = message_content[:100] ~ ('...' if message_content|length > 100 else '') %}
-          {% if message_content|length > 100 %}
-          <details class="message-preview-card">
-            <summary class="message-preview-toggle">
-              <span class="message-preview-short">{{ message_short }}</span>
-              <span class="message-preview-toggle-collapsed">展开全文</span>
-              <span class="message-preview-toggle-expanded">收起</span>
-            </summary>
-            <div class="message-preview message-preview-full">{{ message_content }}</div>
-          </details>
-          {% else %}
-          <div class="message-preview">{{ message_content }}</div>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="8">
-          <div class="empty-state">
-            <strong>没有匹配消息</strong>
-            <p>可以去掉关键词，或切换方向、机器人和渠道后重新筛选。</p>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if pagination %}
-  <div class="list-pagination">
-    <div class="list-pagination-summary">
-      当前显示 {{ pagination.from_index }} - {{ pagination.to_index }} / {{ pagination.total }}
-    </div>
-    <div class="list-pagination-actions">
-      {% set pagination_prefix = '/messages' ~ ('?' ~ pagination.query ~ '&' if pagination.query else '?') %}
-      {% if pagination.has_prev %}
-      <a class="btn btn-secondary" href="{{ pagination_prefix }}page={{ pagination.prev_page }}">上一页</a>
-      {% else %}
-      <span class="btn btn-secondary is-disabled" aria-disabled="true">上一页</span>
-      {% endif %}
-      {% if pagination.has_next %}
-      <a class="btn btn-secondary" href="{{ pagination_prefix }}page={{ pagination.next_page }}">下一页</a>
-      {% else %}
-      <span class="btn btn-secondary is-disabled" aria-disabled="true">下一页</span>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
+  {% else %}<div class="wechat-empty">暂无会话消息</div>{% endif %}
 </section>
 {% endblock %}

@@ -14,8 +14,11 @@ from sqlalchemy.orm import Session
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Conversation, TaskJob
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
+from app.core.logging import get_logger
 
 from .contract import COMMAND_GROUPS, COMMANDS, JOB_TYPE, as_object, identity_from_payload, text
+
+logger = get_logger(__name__)
 
 
 def command_catalog(channel: Channel | None = None) -> dict[str, Any]:
@@ -313,6 +316,7 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
     """领取当前设备的待发送命令，并将任务置为 running 防止重复下发。"""
 
     if not _identity_matches(channel, payload):
+        logger.error("webridge command claim identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     current = now_shanghai()
     jobs = db.scalars(
@@ -366,6 +370,7 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
     db.commit()
+    logger.info("webridge commands claimed", extra={"channel_id": channel.id, "command_count": len(commands), "command_names": [str(item.get("command_name") or item.get("type") or "") for item in commands]})
     return commands
 
 
@@ -373,6 +378,7 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
     """按 command request_id 完成任务；重复回报返回已处理状态。"""
 
     if not _identity_matches(channel, payload):
+        logger.error("webridge command result identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     command = as_object(payload.get("command"))
     request_id = text(payload.get("request_id") or command.get("request_id"))
@@ -399,8 +405,10 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         result = as_object(payload.get("result"))
         if bool(payload.get("ok")) or bool(result.get("ok")):
             complete_job(db, job, result={"webridge": payload})
+            logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
         fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
+        logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}
     raise ValueError("webridge_request_not_found")
 

@@ -517,7 +517,13 @@ def _queue_inbound_media_fetch_if_needed(
             adapter_config = {}
         upload_url = str(adapter_config.get("upload_url") or "").strip() if isinstance(adapter_config, dict) else ""
         if not upload_url:
-            upload_url = f"/api/wechat-webridge/{channel.id}/agent/upload_media?attachment_id={attachment.id}"
+            # 手机端必须能够直接发起 HTTP 请求，不能接收只对浏览器相对当前站点有效的路径。
+            base_url = str(channel.api_base or "").strip().rstrip("/")
+            upload_url = f"{base_url}/agent/upload_media?attachment_id={attachment.id}"
+        elif upload_url.startswith("/"):
+            # 兼容历史渠道配置，把旧的相对地址统一补成微桥渠道绝对地址。
+            base_url = str(channel.api_base or "").strip().rstrip("/")
+            upload_url = f"{base_url}{upload_url}"
         enqueue_media_upload_command(
             db,
             channel=channel,
