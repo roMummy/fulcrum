@@ -3,7 +3,6 @@
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道详情</a>
-  <a class="btn btn-secondary" href="/api/wechat-webridge/{{ channel.id }}/capabilities">能力目录</a>
   {# 同步命令放在页头，随时可点；命令进入手机长轮询队列。 #}
   {% for cmd, label in [('friends_all','同步好友'),('groups_all','同步群组')] %}
   <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/command"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="command_name" value="{{ cmd }}" /><input type="hidden" name="args_json" value="{}" /><button class="btn" type="submit">{{ label }}</button></form>
