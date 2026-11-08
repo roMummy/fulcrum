@@ -154,7 +154,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
-from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel
+from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -2271,8 +2271,24 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab:
             channel=channel,
             dashboard=build_webridge_dashboard(db, channel, tab=tab, keyword=keyword, page=page, conversation_id=conversation_id, sender=sender),
             device=build_webridge_device_panel(db, channel),
+            live=build_webridge_live_summary(db, channel),
             notice=request.query_params.get("notice", ""),
         )
+    finally:
+        db.close()
+
+
+@app.get("/channels/{channel_id}/wechat-webridge/live")
+async def wechat_webridge_live_summary(request: Request, channel_id: int):
+    """顶部摘要的实时数据（只读 JSON），页面每 10 秒轮询一次。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type != "wechat_webridge":
+            raise HTTPException(status_code=404, detail="WeBridge channel not found")
+        return JSONResponse(build_webridge_live_summary(db, channel))
     finally:
         db.close()
 

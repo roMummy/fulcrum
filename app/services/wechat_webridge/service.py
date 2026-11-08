@@ -39,6 +39,24 @@ def _num(value: Any) -> int | None:
     return int(round(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def count_backlog(db: Session, channel: Channel) -> tuple[int, int]:
+    """统计本渠道实时积压：返回（待领取, 执行中）命令数，不含已完成和失败。
+
+    积压任务通常只有个位数，取出后按渠道过滤，不依赖 payload 的 JSON 文本格式。
+    device_status 是内部采样命令，不算业务积压。
+    """
+
+    pending = running = 0
+    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")), TaskJob.priority != DEVICE_STATUS_PRIORITY)).all():
+        if int(parse_job_payload(job).get("channel_id") or 0) != int(channel.id):
+            continue
+        if job.status == "pending":
+            pending += 1
+        else:
+            running += 1
+    return pending, running
+
+
 def record_device_sample(db: Session, channel: Channel, device: dict[str, Any] | None = None) -> None:
     """写入（或更新）本分钟的手机状态采样，并顺带清理过期采样。
 
@@ -48,15 +66,7 @@ def record_device_sample(db: Session, channel: Channel, device: dict[str, Any] |
     now = now_shanghai()
     bucket = now.replace(second=0, microsecond=0)
     cid = int(channel.id)
-    pending = running = 0
-    # 积压任务通常只有个位数，取出后按渠道过滤，不依赖 payload 的 JSON 文本格式。
-    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")))).all():
-        if int(parse_job_payload(job).get("channel_id") or 0) != cid:
-            continue
-        if job.status == "pending":
-            pending += 1
-        else:
-            running += 1
+    pending, running = count_backlog(db, channel)
     bridge = _runtime(channel).get("webridge")
     state = as_object(bridge.get("state")) if isinstance(bridge, dict) else {}
 

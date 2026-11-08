@@ -537,3 +537,32 @@ def test_enqueue_device_status_skips_when_one_is_unfinished() -> None:
         enqueue.assert_called_once()
         assert enqueue.call_args.kwargs["command_name"] == "device_status"
         assert enqueue.return_value.priority == service.DEVICE_STATUS_PRIORITY
+
+
+def test_live_summary_backlog_excludes_device_status_and_other_channels(tmp_path) -> None:
+    """顶部摘要的积压只统计本渠道业务命令；内部 device_status 采样命令和其他渠道不计入，电量/内存读自快照。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob
+    from app.services.wechat_webridge.dashboard import build_webridge_live_summary
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'live.db'}")
+    TaskJob.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    rows = ((2, "pending", 90), (2, "running", 90), (2, "pending", service.DEVICE_STATUS_PRIORITY), (3, "pending", 90))
+    for channel_id, status, priority in rows:
+        db.add(TaskJob(tenant_id=1, job_type=service.JOB_TYPE, status=status, priority=priority, payload_json=json.dumps({"channel_id": channel_id})))
+    db.commit()
+    device = {"battery": {"percent": 88, "state": "charging"}, "system_memory": {"ok": True, "used_estimate_percent": 69.6}}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps({"webridge": {"online": True, "device": device}}))
+
+    live = build_webridge_live_summary(db, channel)
+
+    assert (live["pending"], live["running"]) == (1, 1)
+    assert (live["battery_percent"], live["battery_state"], live["memory_used_percent"]) == (88, "充电中", 70)
+    # 系统内存采集失败时不显示内存，避免展示误导数字。
+    device["system_memory"] = {"ok": False}
+    channel.runtime_info_json = json.dumps({"webridge": {"online": True, "device": device}})
+    assert build_webridge_live_summary(db, channel)["memory_used_percent"] is None

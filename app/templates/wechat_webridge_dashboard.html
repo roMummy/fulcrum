@@ -12,33 +12,39 @@
 {% endblock %}
 {% block content %}
 {% set base = '/channels/' ~ channel.id ~ '/wechat-webridge' %}
-{# iPhone 状态：当前在线与微桥上报的全部字段 + 近 24 小时趋势；其余技术信息折叠。 #}
-<section class="work-surface">
+{# iPhone 状态：顶部一行精简摘要（每 10 秒自动刷新），完整信息与趋势折叠在“展开详情”。 #}
+<section class="work-surface" id="device-summary" data-live-url="{{ base }}/live">
   <div class="toolbar">
-    <div><h2>iPhone 状态</h2></div>
-    <div class="chip-row">
-      <span class="chip {% if device.online %}chip-success{% else %}chip-muted{% endif %}">{{ '在线' if device.online else '离线' }}</span>
-      <span class="chip chip-outline">最近心跳 {{ device.last_seen_at|bj_time if device.last_seen_at else '-' }}</span>
-      <span class="chip chip-outline">注册于 {{ device.registered_at|bj_time if device.registered_at else '-' }}</span>
+    <div class="chip-row" aria-live="polite">
+      <strong>iPhone</strong>
+      <span class="chip {% if live.online %}chip-success{% else %}chip-muted{% endif %}" data-live="online">{{ '在线' if live.online else '离线' }}</span>
+      <span class="chip chip-outline" data-live="battery">电量 {{ (live.battery_percent ~ '%') if live.battery_percent is not none else '-' }}{% if live.battery_state %} · {{ live.battery_state }}{% endif %}</span>
+      <span class="chip chip-outline" data-live="memory">内存 {{ (live.memory_used_percent ~ '%') if live.memory_used_percent is not none else '-' }}</span>
+      <span class="chip {% if live.pending or live.running %}chip-success{% else %}chip-outline{% endif %}" data-live="backlog">积压 {{ live.pending }}{% if live.running %} · 执行中 {{ live.running }}{% endif %}</span>
+      <span class="chip chip-muted" data-live="seen">心跳 {{ live.last_seen_at|bj_time if live.last_seen_at else '-' }}</span>
     </div>
   </div>
-  <div class="stats-grid compact-grid">
-    {% for item in device.hardware %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
-    {% for item in device.basic %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
-    {% for item in device.fields %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
-  </div>
-  {% if not device.fields %}<p class="muted-text">手机尚未上报运行状态（state），登录、授权、缓存等字段会在上报后显示。</p>{% endif %}
-  <div class="panel-grid panel-grid-balanced top-gap">
-    <div><h3>待处理命令</h3>{{ trend_chart(device.pending_chart, '近 24 小时待处理命令趋势') }}</div>
-    {% if device.battery_chart['items'] %}<div><h3>电量 %</h3>{{ trend_chart(device.battery_chart, '近 24 小时电量趋势', 'success') }}</div>{% endif %}
-    {% if device.memory_chart['items'] %}<div><h3>系统内存已用 %</h3>{{ trend_chart(device.memory_chart, '近 24 小时系统内存使用趋势') }}</div>{% endif %}
-    {% if device.cache_chart['items'] %}<div><h3>缓存消息数</h3>{{ trend_chart(device.cache_chart, '近 24 小时缓存消息趋势', 'success') }}</div>{% endif %}
-    {% if device.event_chart['items'] %}<div><h3>待上传事件</h3>{{ trend_chart(device.event_chart, '近 24 小时待上传事件趋势') }}</div>{% endif %}
-  </div>
-  <details class="top-gap">
-    <summary class="muted-text">其他上报与能力列表（{{ device.capability_count }} 项）</summary>
-    {% if device.extra %}<div class="stats-grid compact-grid top-gap">{% for item in device.extra %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}</div>{% endif %}
-    <p class="muted-text value-break">{{ device.capabilities|join('、') if device.capabilities else '暂无能力上报' }}</p>
+  <details>
+    <summary class="muted-text">展开详情</summary>
+    <p class="muted-text top-gap">注册于 {{ device.registered_at|bj_time if device.registered_at else '-' }}</p>
+    <div class="stats-grid compact-grid">
+      {% for item in device.hardware %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
+      {% for item in device.basic %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
+      {% for item in device.fields %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
+    </div>
+    {% if not device.fields %}<p class="muted-text">手机尚未上报运行状态（state），登录、授权、缓存等字段会在上报后显示。</p>{% endif %}
+    <div class="panel-grid panel-grid-balanced top-gap">
+      <div><h3>待处理命令</h3>{{ trend_chart(device.pending_chart, '近 24 小时待处理命令趋势') }}</div>
+      {% if device.battery_chart['items'] %}<div><h3>电量 %</h3>{{ trend_chart(device.battery_chart, '近 24 小时电量趋势', 'success') }}</div>{% endif %}
+      {% if device.memory_chart['items'] %}<div><h3>系统内存已用 %</h3>{{ trend_chart(device.memory_chart, '近 24 小时系统内存使用趋势') }}</div>{% endif %}
+      {% if device.cache_chart['items'] %}<div><h3>缓存消息数</h3>{{ trend_chart(device.cache_chart, '近 24 小时缓存消息趋势', 'success') }}</div>{% endif %}
+      {% if device.event_chart['items'] %}<div><h3>待上传事件</h3>{{ trend_chart(device.event_chart, '近 24 小时待上传事件趋势') }}</div>{% endif %}
+    </div>
+    <details class="top-gap">
+      <summary class="muted-text">其他上报与能力列表（{{ device.capability_count }} 项）</summary>
+      {% if device.extra %}<div class="stats-grid compact-grid top-gap">{% for item in device.extra %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}</div>{% endif %}
+      <p class="muted-text value-break">{{ device.capabilities|join('、') if device.capabilities else '暂无能力上报' }}</p>
+    </details>
   </details>
 </section>
 
@@ -103,4 +109,29 @@
   </div></div>
   {% endif %}
 </section>
+{% endblock %}
+{% block scripts %}
+<script>
+  // 顶部摘要每 10 秒拉取一次实时数据；页面不可见时暂停，请求失败静默等待下次。
+  (() => {
+    const box = document.getElementById("device-summary");
+    if (!box) return;
+    const set = (key, text) => { const node = box.querySelector(`[data-live="${key}"]`); if (node) node.textContent = text; };
+    const pct = (value) => (value === null || value === undefined ? "-" : value + "%");
+    const refresh = async () => {
+      if (document.hidden) return;
+      try {
+        const response = await fetch(box.dataset.liveUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" });
+        if (!response.ok) return;
+        const d = await response.json();
+        set("online", d.online ? "在线" : "离线");
+        set("battery", "电量 " + pct(d.battery_percent) + (d.battery_state ? " · " + d.battery_state : ""));
+        set("memory", "内存 " + pct(d.memory_used_percent));
+        set("backlog", "积压 " + d.pending + (d.running ? " · 执行中 " + d.running : ""));
+        set("seen", "心跳 " + (d.last_seen_at ? new Date(d.last_seen_at).toLocaleTimeString("zh-CN", { hour12: false }) : "-"));
+      } catch (error) { /* 网络抖动不打扰操作人员 */ }
+    };
+    setInterval(refresh, 10000);
+  })();
+</script>
 {% endblock %}

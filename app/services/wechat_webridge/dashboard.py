@@ -265,6 +265,39 @@ def _hardware_items(dev: dict[str, Any]) -> list[dict[str, str]]:
     return items
 
 
+def build_webridge_live_summary(db: Session, channel: Channel) -> dict[str, Any]:
+    """顶部精简摘要的实时数据：在线、电量、系统内存、实时积压、数据新鲜度。
+
+    页面首次渲染和每 10 秒的自动刷新共用此函数，保证两处口径一致。
+    """
+
+    from app.services.wechat_webridge.service import count_backlog
+
+    try:
+        runtime = json.loads(channel.runtime_info_json or "{}").get("webridge")
+    except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
+        runtime = None
+    runtime = runtime if isinstance(runtime, dict) else {}
+    dev = runtime.get("device") if isinstance(runtime.get("device"), dict) else {}
+
+    def num(group: str, key: str) -> int | None:
+        value = (dev.get(group) or {}).get(key) if isinstance(dev.get(group), dict) else None
+        return int(round(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    system_ok = isinstance(dev.get("system_memory"), dict) and dev["system_memory"].get("ok")
+    pending, running = count_backlog(db, channel)
+    return {
+        "online": bool(runtime.get("online")),
+        "last_seen_at": runtime.get("last_seen_at"),
+        "battery_percent": num("battery", "percent"),
+        "battery_state": _BATTERY_STATE.get((dev.get("battery") or {}).get("state"), "") if isinstance(dev.get("battery"), dict) else "",
+        "memory_used_percent": num("system_memory", "used_estimate_percent") if system_ok else None,
+        "pending": pending,
+        "running": running,
+        "device_ts_ms": dev.get("ts_ms"),
+    }
+
+
 def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 24) -> dict[str, Any]:
     """构建 iPhone 状态区：当前在线与上报字段 + 近 hours 小时的积压/缓存趋势。"""
 
