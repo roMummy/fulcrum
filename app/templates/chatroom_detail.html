@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
@@ -123,16 +124,13 @@
       </tr>
     </thead>
     <tbody>
-      {% for item in detail.message_flow['items'] %}
+      {% for item in detail.message_flow['items']|reverse %}
       <tr>
         <td class="col-id">#{{ item.id }}</td>
         <td class="col-dir"><span class="chip {% if item.direction == 'in' %}chip-success{% else %}chip-outline{% endif %}">{{ item.direction }}</span></td>
         <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
         <td>
-          <div>{{ item.sender }}</div>
-          {% if item.sender_id %}
-          <div class="muted-text"><code>{{ item.sender_id }}</code></div>
-          {% endif %}
+          {{ identity(item.identity) }}
         </td>
         <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
         <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
@@ -187,11 +185,7 @@
       {% for item in detail.members %}
       <tr>
         <td>
-          {% if item.has_avatar %}
-          <img src="{{ item.avatar_url }}" alt="{{ item.nickname }}" style="width:40px;height:40px;border-radius:4px;object-fit:cover;display:block;margin-bottom:6px;border:1px solid rgba(148,163,184,.25);" />
-          {% endif %}
-          <div><code>{{ item.member_external_id }}</code></div>
-          <div class="muted-text">{% if item.has_avatar %}有头像{% else %}暂无头像{% endif %}</div>
+          {{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}
         </td>
         <td>
           <div>{{ item.nickname }}</div>

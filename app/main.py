@@ -36,7 +36,7 @@ from app.services.account_connections import (
 )
 from app.services.async_workers import start_background_workers, stop_background_workers
 from app.services.bot_entitlements import BotEntitlementError, get_bot_quota
-from app.services.channel_adapters import get_channel_adapter
+from app.services.channel_adapters import dispatch_outbound_message, get_channel_adapter
 from app.services.channel_catalog import (
     ChannelConfigurationError,
     get_channel_type_definition,
@@ -109,7 +109,6 @@ from app.services.installer import (
     provision_platform_admin,
 )
 from app.services.runtime import (
-    append_manual_message,
     build_binding_dispatch_view,
     build_binding_runtime_view,
     compute_binding_runtime,
@@ -155,6 +154,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard
+from app.services.identity_directory import IdentityDirectory
 from app.services.wechat_webridge.service import enqueue_command
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -2160,6 +2160,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             "from_index": message_offset + 1 if message_total else 0,
             "to_index": min(message_offset + len(recent_channel_messages), message_total),
         }
+        recent_message_identities = IdentityDirectory(db).for_messages(recent_channel_messages)
         # workwechat 云端 WS/拉取模式由本地 provider 主动注册和领取任务，不需要主服务直连 provider 的 API Base。
         workwechat_cloud_poll_config = load_cloud_poll_config(channel) if channel.channel_type == "workwechat" else None
         workwechat_cloud_poll_enabled = bool(
@@ -2207,6 +2208,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             },
             provider_nodes=provider_nodes,
             recent_channel_messages=recent_channel_messages,
+            recent_message_identities=recent_message_identities,
             message_pagination=message_pagination,
             token_preview=channel.bot_token_masked or "-",
             health_checks=health_checks,
@@ -2225,7 +2227,7 @@ async def channel_detail_page(request: Request, channel_id: int):
 
 
 @app.get("/channels/{channel_id}/wechat-webridge", response_class=HTMLResponse)
-async def wechat_webridge_dashboard_page(request: Request, channel_id: int):
+async def wechat_webridge_dashboard_page(request: Request, channel_id: int, tab: str = "contacts", keyword: str = "", page: int = 1):
     """展示 WeBridge 渠道内已落库的好友、群组和消息信息。"""
 
     # 后台页面必须先恢复当前租户身份，避免匿名请求或错误租户上下文读取渠道数据。
@@ -2240,7 +2242,7 @@ async def wechat_webridge_dashboard_page(request: Request, channel_id: int):
             "wechat_webridge_dashboard.html",
             page_title=f"微桥后台 · {channel.name}",
             channel=channel,
-            dashboard=build_webridge_dashboard(db, channel),
+            dashboard=build_webridge_dashboard(db, channel, tab=tab, keyword=keyword, page=page),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -4139,6 +4141,8 @@ async def conversations_page(request: Request, bot_id: int = 0, channel_id: int 
             "conversations.html",
             page_title="会话中心",
             conversations=conversations,
+            # 会话列表统一展示好友/群的头像与昵称，外部 ID 只作为第二行。
+            conversation_identities=IdentityDirectory(db).for_conversations(conversations),
             bots=bots,
             bot_name_map=bot_name_map,
             channels=channels,
@@ -4173,6 +4177,9 @@ async def conversation_detail_page(request: Request, conversation_id: int, page:
             .offset(offset)
             .limit(page_size)
         ).all()
+        directory = IdentityDirectory(db)
+        message_identities = directory.for_messages(messages)
+        conversation_identity = directory.for_conversations([conversation]).get(int(conversation.id))
         message_ids = [int(item.id) for item in messages]
         attachment_rows = db.scalars(
             select(MessageAttachment)
@@ -4201,6 +4208,8 @@ async def conversation_detail_page(request: Request, conversation_id: int, page:
             "conversation_detail.html",
             page_title=f"会话详情 · {conversation.title or conversation.external_id}",
             conversation=conversation,
+            conversation_identity=conversation_identity,
+            message_identities=message_identities,
             conversation_bot_name=(str(conversation_bot.name).strip() if conversation_bot and conversation_bot.name else ""),
             messages=messages,
             attachments_by_message=attachments_by_message,
@@ -4219,9 +4228,23 @@ async def send_manual_message_action(request: Request, conversation_id: int, con
         conversation = db.get(Conversation, conversation_id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        message = append_manual_message(db, conversation, content)
+        text_content = content.strip()
+        if not text_content:
+            return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote('消息内容不能为空')}", status_code=303)
+        channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
+        if channel is None:
+            return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote('会话未绑定渠道，无法发送')}", status_code=303)
+        # 必须经过渠道适配器统一出站：微桥会在这里创建手机 poll 要领取的命令任务，
+        # 之前只写消息表不入队，所以手机永远收不到后台发出的消息。
+        message, adapter_result = dispatch_outbound_message(
+            db, channel, conversation, {"message_type": "text", "content": text_content}
+        )
         record_audit(db, "message.manual-send", "message", message.id, f"conversation={conversation.id}")
-        return RedirectResponse(url=f"/conversations/{conversation_id}?notice=测试消息已入队", status_code=303)
+        if not adapter_result.get("ok"):
+            notice = f"发送失败：{adapter_result.get('error_message') or adapter_result.get('error_code') or '未知错误'}"
+        else:
+            notice = "消息已提交，等待手机执行"
+        return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 
@@ -4307,17 +4330,21 @@ async def messages_page(
             ).limit(100)
         ).all()
         conversation_summaries = []
+        summary_directory = IdentityDirectory(db)
+        summary_identities = summary_directory.for_conversations(conversations)
         for item in conversations:
             latest = db.scalar(
                 select(Message).where(Message.conversation_id == item.id).order_by(Message.id.desc()).limit(1)
             )
-            display_name = item.title or item.external_id or f"会话 #{item.id}"
+            identity = summary_identities[int(item.id)]
+            display_name = identity["name"] or item.title or item.external_id or f"会话 #{item.id}"
             conversation_summaries.append(
                 {
                     "conversation": item,
                     "latest": latest,
                     "display_name": display_name,
                     "initial": display_name[:1].upper(),
+                    "identity": identity,
                 }
             )
         if conversation_id:
@@ -4328,6 +4355,7 @@ async def messages_page(
         current_page = min(current_page, total_pages)
         offset = (current_page - 1) * page_size
         messages = db.scalars(stmt.order_by(Message.id.desc()).offset(offset).limit(page_size)).all()
+        message_identities = summary_directory.for_messages(messages)
         message_ids = [int(item.id) for item in messages]
         attachment_rows = db.scalars(
             select(MessageAttachment).where(MessageAttachment.message_id.in_(message_ids) if message_ids else MessageAttachment.id == 0).order_by(MessageAttachment.id.asc())
@@ -4363,6 +4391,7 @@ async def messages_page(
             "messages.html",
             page_title="消息中心",
             messages=messages,
+            message_identities=message_identities,
             attachments_by_message=attachments_by_message,
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,

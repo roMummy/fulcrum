@@ -1,151 +1,167 @@
-"""WeBridge 渠道后台的本地观测视图。
+"""WeBridge 渠道后台的本地数据视图。
 
-这里优先展示服务端已经确认过的联系人、群组和消息；主动刷新好友或群成员仍通过
-能力目录里的通用命令桥执行，避免把未确认的手机缓存伪装成本地事实。
+好友、群组和群成员只读取同步命令已经落库的资料（见 service.persist_directory_result），
+消息读取统一消息表。每个标签页都支持关键字搜索和分页，页面只渲染当前标签的数据。
 """
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, TaskJob, WorkWechatContact
-from app.services.task_queue import parse_job_payload
+from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, WorkWechatContact
+from app.services.identity_directory import IdentityDirectory, make_identity
+
+PAGE_SIZE = 20
+TABS = ("contacts", "groups", "members", "messages")
 
 
-def build_webridge_dashboard(db: Session, channel: Channel, *, message_limit: int = 40) -> dict:
-    """构建单个 WeBridge 渠道的好友、群组和消息总览。"""
+def _avatar(extra_json: str | None) -> str:
+    """读取群和群成员 extra_json 中的头像地址，解析失败按无头像处理。"""
 
-    conversations = db.scalars(
-        select(Conversation)
-        .where(Conversation.channel_id == channel.id)
-        # MariaDB 不支持 PostgreSQL 的 NULLS LAST，先按是否为空排序即可保持最近消息在前。
-        .order_by(
-            Conversation.last_message_at.is_(None),
-            Conversation.last_message_at.desc(),
-            Conversation.id.desc(),
-        )
-    ).all()
-    direct = [item for item in conversations if str(item.chat_type or "direct") == "direct"]
-    groups = [item for item in conversations if str(item.chat_type or "") == "group"]
-    chatrooms = db.scalars(select(Chatroom).where(Chatroom.channel_id == channel.id).order_by(Chatroom.id.desc())).all()
-    members_by_chatroom = {
-        int(chatroom.id): db.scalars(
-            select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id).order_by(ChatroomMember.id.asc())
-        ).all()
-        for chatroom in chatrooms
+    try:
+        extra = json.loads(extra_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    return str(extra.get("avatar_url") or "").strip() if isinstance(extra, dict) else ""
+
+
+def _like(keyword: str) -> str:
+    """转义 LIKE 通配符，避免用户输入 % 或 _ 时匹配到全部数据。"""
+
+    escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _paginate(db: Session, stmt, page: int) -> tuple[list, dict[str, Any]]:
+    """对已带过滤条件的查询统计总数并取当前页。"""
+
+    total = int(db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0)
+    total_pages = max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1)
+    current = min(max(int(page or 1), 1), total_pages)
+    rows = db.execute(stmt.offset((current - 1) * PAGE_SIZE).limit(PAGE_SIZE)).all()
+    return rows, {
+        "page": current,
+        "total": total,
+        "total_pages": total_pages,
+        "has_prev": current > 1,
+        "has_next": current < total_pages,
+        "prev_page": max(current - 1, 1),
+        "next_page": min(current + 1, total_pages),
     }
-    messages = db.scalars(
-        select(Message)
-        .join(Conversation, Message.conversation_id == Conversation.id)
-        .where(Conversation.channel_id == channel.id)
-        .order_by(Message.id.desc())
-        .limit(max(1, min(int(message_limit or 40), 100)))
-    ).all()
-    conversation_map = {int(item.id): item for item in conversations}
-    command_contacts, command_groups, command_members, sync_history = _build_command_snapshots(db, channel)
-    persisted_contacts = db.scalars(
-        select(WorkWechatContact).where(WorkWechatContact.channel_id == channel.id, WorkWechatContact.contact_kind == "friend").order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc())
-    ).all()
-    persisted_group_rows = db.scalars(
-        select(Chatroom).where(Chatroom.channel_id == channel.id).order_by(Chatroom.name.asc(), Chatroom.id.desc())
-    ).all()
-    persisted_groups = []
-    for room in persisted_group_rows:
-        try:
-            extra = json.loads(room.extra_json or "{}")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            extra = {}
-        persisted_groups.append({
-            "name": room.name or room.external_id,
-            "external_id": room.external_id,
-            "member_count": room.member_count,
-            "last_synced_at": room.last_synced_at,
-            "avatar_url": str(extra.get("avatar_url") or "").strip(),
-        })
-    return {
-        "direct": direct,
-        "groups": groups,
-        "chatrooms": chatrooms,
-        "members_by_chatroom": members_by_chatroom,
-        "messages": messages,
-        "conversation_map": conversation_map,
-        "command_contacts": command_contacts,
-        "command_groups": command_groups,
-        "command_members": command_members,
-        "persisted_contacts": persisted_contacts,
-        "persisted_groups": persisted_groups,
-        "sync_history": sync_history,
-        "counts": {
-            "conversations": len(conversations),
-            "direct": len(direct),
-            "groups": len(groups),
-            "chatrooms": len(chatrooms),
-            "messages": int(
-                db.scalar(
-                    select(func.count(Message.id))
-                    .join(Conversation, Message.conversation_id == Conversation.id)
-                    .where(Conversation.channel_id == channel.id)
+
+
+def build_webridge_dashboard(db: Session, channel: Channel, *, tab: str = "contacts", keyword: str = "", page: int = 1) -> dict:
+    """构建单个 WeBridge 渠道的总览：各标签数量加当前标签的搜索分页结果。"""
+
+    active = tab if tab in TABS else "contacts"
+    q = (keyword or "").strip()[:100]
+    cid = int(channel.id)
+
+    contact_filter = [WorkWechatContact.channel_id == cid, WorkWechatContact.contact_kind == "friend"]
+    counts = {
+        "contacts": int(db.scalar(select(func.count(WorkWechatContact.id)).where(*contact_filter)) or 0),
+        "groups": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.channel_id == cid)) or 0),
+        "members": int(db.scalar(select(func.count(ChatroomMember.id)).where(ChatroomMember.channel_id == cid)) or 0),
+        "messages": int(
+            db.scalar(
+                select(func.count(Message.id)).join(Conversation, Message.conversation_id == Conversation.id).where(Conversation.channel_id == cid)
+            )
+            or 0
+        ),
+    }
+    # 外部 ID -> 会话 ID，用于“查看消息”链接；只取本页涉及的 ID，避免整渠道扫描。
+    result: dict[str, Any] = {"tab": active, "keyword": q, "counts": counts, "items": [], "message_identities": {}}
+
+    if active == "contacts":
+        stmt = select(WorkWechatContact).where(*contact_filter)
+        if q:
+            like = _like(q)
+            stmt = stmt.where(
+                or_(
+                    WorkWechatContact.display_name.like(like, escape="\\"),
+                    WorkWechatContact.name.like(like, escape="\\"),
+                    WorkWechatContact.contact_external_id.like(like, escape="\\"),
                 )
-                or 0
-            ),
-        },
-    }
-
-
-def _build_command_snapshots(db: Session, channel: Channel) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-    """从已完成的 friends/groups/room_members 命令结果提取可展示资料。"""
-
-    contacts: dict[str, dict] = {}
-    groups: dict[str, dict] = {}
-    members: dict[str, dict] = {}
-    history: list[dict] = []
-    jobs = db.scalars(
-        select(TaskJob)
-        .where(TaskJob.job_type == "wechat_webridge_outbound", TaskJob.tenant_id == channel.tenant_id)
-        .order_by(TaskJob.id.desc())
-        .limit(100)
-    ).all()
-    for job in jobs:
-        payload = parse_job_payload(job)
-        if int(payload.get("channel_id") or 0) != int(channel.id):
-            continue
-        command = payload.get("command") if isinstance(payload.get("command"), dict) else {}
-        command_type = str(command.get("type") or "").strip()
-        if command_type not in {"friends", "friends_all", "groups_all", "room_members"}:
-            continue
-        try:
-            result_wrapper = json.loads(job.result_json or "{}")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            result_wrapper = {}
-        result = result_wrapper.get("webridge", {}).get("result", {}) if isinstance(result_wrapper, dict) else {}
-        if not isinstance(result, dict):
-            result = {}
-        items = result.get("items") if isinstance(result.get("items"), list) else []
-        if command_type == "groups_all":
-            items = result.get("groups") if isinstance(result.get("groups"), list) else items
-        if command_type == "room_members":
-            items = result.get("members") if isinstance(result.get("members"), list) else items
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            identifier = str(item.get("account_id") or item.get("user_name") or item.get("wxid") or item.get("room_id") or item.get("id") or "").strip()
-            if not identifier:
-                continue
-            normalized = {
-                **item,
-                "external_id": identifier,
-                "display_name": item.get("display_name") or item.get("remark") or item.get("nickname") or item.get("name") or identifier,
-                "avatar_url": item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "",
-                "last_synced_at": job.finished_at or job.created_at,
+            )
+        rows, pagination = _paginate(db, stmt.order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc()), page)
+        contacts = [row[0] for row in rows]
+        conv_map = _conversation_ids(db, cid, [item.contact_external_id for item in contacts])
+        result["items"] = [
+            {
+                "identity": make_identity(item.contact_external_id, item.display_name or item.name, item.avatar_url),
+                "remark": item.display_name if item.name and item.display_name != item.name else "",
+                "last_synced_at": item.last_synced_at,
+                "conversation_id": conv_map.get(item.contact_external_id),
             }
-            if command_type == "room_members":
-                members[identifier] = normalized
-            elif command_type == "groups_all":
-                groups[identifier] = normalized
-            else:
-                contacts[identifier] = normalized
-        history.append({"command_type": command_type, "status": job.status, "finished_at": job.finished_at or job.created_at})
-    return list(contacts.values()), list(groups.values()), list(members.values()), history[:12]
+            for item in contacts
+        ]
+    elif active == "groups":
+        stmt = select(Chatroom).where(Chatroom.channel_id == cid)
+        if q:
+            like = _like(q)
+            stmt = stmt.where(or_(Chatroom.name.like(like, escape="\\"), Chatroom.remark.like(like, escape="\\"), Chatroom.external_id.like(like, escape="\\")))
+        rows, pagination = _paginate(db, stmt.order_by(Chatroom.name.asc(), Chatroom.id.desc()), page)
+        rooms = [row[0] for row in rows]
+        conv_map = _conversation_ids(db, cid, [item.external_id for item in rooms])
+        result["items"] = [
+            {
+                "identity": make_identity(item.external_id, item.remark or item.name, _avatar(item.extra_json)),
+                "room_id": int(item.id),
+                "member_count": item.member_count,
+                "last_synced_at": item.last_synced_at,
+                "conversation_id": conv_map.get(item.external_id),
+            }
+            for item in rooms
+        ]
+    elif active == "members":
+        stmt = select(ChatroomMember, Chatroom).join(Chatroom, ChatroomMember.chatroom_id == Chatroom.id).where(ChatroomMember.channel_id == cid)
+        if q:
+            like = _like(q)
+            stmt = stmt.where(
+                or_(
+                    ChatroomMember.nickname.like(like, escape="\\"),
+                    ChatroomMember.display_name.like(like, escape="\\"),
+                    ChatroomMember.member_external_id.like(like, escape="\\"),
+                    Chatroom.name.like(like, escape="\\"),
+                )
+            )
+        rows, pagination = _paginate(db, stmt.order_by(Chatroom.name.asc(), ChatroomMember.id.asc()), page)
+        result["items"] = [
+            {
+                "identity": make_identity(member.member_external_id, member.display_name or member.nickname, _avatar(member.extra_json)),
+                "role": member.role,
+                "last_synced_at": member.last_synced_at,
+                "room": make_identity(room.external_id, room.remark or room.name, _avatar(room.extra_json)),
+                "room_id": int(room.id),
+            }
+            for member, room in rows
+        ]
+    else:
+        stmt = select(Message).join(Conversation, Message.conversation_id == Conversation.id).where(Conversation.channel_id == cid)
+        if q:
+            like = _like(q)
+            stmt = stmt.where(
+                or_(Message.content.like(like, escape="\\"), Message.sender_name.like(like, escape="\\"), Message.sender_id.like(like, escape="\\"))
+            )
+        rows, pagination = _paginate(db, stmt.order_by(Message.id.desc()), page)
+        messages = [row[0] for row in rows]
+        # 查询按最新优先分页，模板内再反转，保证页内最新消息在底部。
+        result["items"] = messages
+        result["message_identities"] = IdentityDirectory(db).for_messages(messages)
+
+    result["pagination"] = pagination
+    return result
+
+
+def _conversation_ids(db: Session, channel_id: int, external_ids: list[str]) -> dict[str, int]:
+    """批量查询外部 ID 对应的会话，供列表直接跳转到聊天记录。"""
+
+    ids = [item for item in external_ids if item]
+    if not ids:
+        return {}
+    rows = db.execute(select(Conversation.external_id, Conversation.id).where(Conversation.channel_id == channel_id, Conversation.external_id.in_(ids))).all()
+    return {external_id: int(conversation_id) for external_id, conversation_id in rows}

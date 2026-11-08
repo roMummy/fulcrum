@@ -1,0 +1,9 @@
+{# 统一身份展示：头像 + 昵称 + 下一行 ID。所有后台页面通过此宏渲染，避免各处自行显示 wxid。 #}
+{% macro identity(ident, size='sm', show_id=True) %}
+{% if ident %}
+<span class="identity-cell identity-{{ size }}">
+  <span class="identity-avatar">{% if ident.avatar_url %}<img src="{{ ident.avatar_url }}" alt="{{ ident.name }}" loading="lazy" referrerpolicy="no-referrer" />{% else %}<span>{{ ident.initial }}</span>{% endif %}</span>
+  <span class="identity-text"><strong class="identity-name">{{ ident.name }}</strong>{% if show_id and ident.show_id %}<small class="identity-id">{{ ident.external_id }}</small>{% endif %}</span>
+</span>
+{% else %}-{% endif %}
+{% endmacro %}

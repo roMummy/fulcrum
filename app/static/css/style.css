@@ -4706,3 +4706,12 @@ code {
     font-size: 21px;
   }
 }
+
+/* 统一身份展示：头像 + 昵称 + 下一行 ID，用于消息流水、会话和群成员列表。 */
+.identity-cell { display: inline-flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; }
+.identity-avatar { width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: var(--accent-soft, #dbeafe); color: var(--accent-strong, #1e40af); font-weight: 700; font-size: 13px; }
+.identity-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.identity-lg .identity-avatar { width: 42px; height: 42px; flex-basis: 42px; border-radius: 10px; }
+.identity-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-id { color: var(--muted, #64748b); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

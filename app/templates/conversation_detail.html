@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <span class="chip chip-outline">会话 #{{ conversation.id }}</span>
@@ -16,7 +17,7 @@
       <tr><th>ID</th><td>{{ conversation.id }}</td></tr>
       <tr><th>Bot</th><td>{{ conversation_bot_name or 'Bot' }} (#{{ conversation.bot_id }})</td></tr>
       <tr><th>渠道</th><td>{{ conversation.channel_type|channel_type_label }}{% if conversation.channel_id %} (#{{ conversation.channel_id }}){% endif %}</td></tr>
-      <tr><th>外部会话ID</th><td>{{ conversation.external_id }}</td></tr>
+      <tr><th>会话对象</th><td>{{ identity(conversation_identity, 'lg') }}</td></tr>
       <tr><th>标题</th><td>{{ conversation.title or '-' }}</td></tr>
       <tr><th>类型</th><td>{{ conversation.chat_type }}</td></tr>
       <tr><th>最后消息时间</th><td>{{ conversation.last_message_at|bj_time if conversation.last_message_at else '-' }}</td></tr>
@@ -49,13 +50,13 @@
   <table class="table table-tight message-record-table">
     <thead><tr><th class="col-id">ID</th><th class="col-compact">会话</th><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th class="col-status">状态</th><th>内容</th></tr></thead>
     <tbody>
-      {% for item in messages %}
+      {% for item in messages|reverse %}
       <tr>
         <td class="col-id">#{{ item.id }}</td>
         <td class="col-compact">#{{ item.conversation_id }}</td>
         <td class="col-dir"><span class="chip {% if item.direction == 'in' %}chip-success{% else %}chip-outline{% endif %}">{{ item.direction }}</span></td>
         <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>{{ item.sender_name or item.sender_id or '-' }}</td>
+        <td>{{ identity(message_identities.get(item.id)) }}</td>
         <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
         <td class="col-status"><span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span></td>
         <td>

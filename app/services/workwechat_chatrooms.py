@@ -844,13 +844,17 @@ def _build_message_flow(db: Session, channel: Channel, chatroom: Chatroom) -> di
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(MESSAGE_FLOW_LIMIT)
     ).all()
+    from app.services.identity_directory import IdentityDirectory
+
+    identities = IdentityDirectory(db).for_messages(messages)
     return {
         "items": [
             {
                 "id": message.id,
                 "direction": message.direction,
-                "sender": message.sender_name or message.sender_id or "-",
+                "sender": identities[int(message.id)]["name"],
                 "sender_id": message.sender_id or "",
+                "identity": identities[int(message.id)],
                 "message_type": message.message_type or "text",
                 "status": message.status or "-",
                 "content": message.content or "",

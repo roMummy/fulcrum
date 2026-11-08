@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
@@ -200,11 +201,11 @@
   <table class="table table-tight message-record-table">
     <thead><tr><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th>内容</th></tr></thead>
     <tbody>
-      {% for item in recent_channel_messages %}
+      {% for item in recent_channel_messages|reverse %}
       <tr>
         <td class="col-dir">{{ tone_chip('入站' if item.direction == 'in' else '出站', 'success' if item.direction == 'in' else 'outline') }}</td>
         <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>{{ item.sender_name or item.sender_id or '-' }}</td>
+        <td>{{ identity(recent_message_identities.get(item.id)) }}</td>
         <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
         <td><div class="message-preview">{{ (item.content or '')[:120] }}{% if (item.content or '')|length > 120 %}…{% endif %}</div></td>
       </tr>

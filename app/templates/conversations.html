@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="/messages">查看消息</a>
@@ -54,22 +55,21 @@
     </form>
   </details>
   <table class="table">
-    <thead><tr><th class="col-id">ID</th><th>Bot</th><th class="col-type">渠道</th><th>外部会话ID</th><th>标题</th><th class="col-type">类型</th><th class="col-time">最后消息时间</th><th class="col-action">操作</th></tr></thead>
+    <thead><tr><th class="col-id">ID</th><th>Bot</th><th class="col-type">渠道</th><th>会话对象</th><th class="col-type">类型</th><th class="col-time">最后消息时间</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for item in conversations %}
       <tr>
         <td class="col-id">{{ item.id }}</td>
         <td>{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }})</td>
         <td class="col-type">{{ item.channel_type|channel_type_label }}</td>
-        <td>{{ item.external_id }}</td>
-        <td>{{ item.title or '-' }}</td>
+        <td>{{ identity(conversation_identities.get(item.id)) }}</td>
         <td class="col-type">{{ item.chat_type }}</td>
         <td class="col-time">{{ item.last_message_at|bj_time if item.last_message_at else '-' }}</td>
         <td class="col-action"><a class="btn btn-small" href="/conversations/{{ item.id }}">详情</a></td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="8">
+        <td colspan="7">
           <div class="empty-state">
             <strong>没有匹配会话</strong>
             <p>可以放宽筛选条件，或先确认渠道是否已有消息入站。</p>
