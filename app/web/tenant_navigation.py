@@ -24,6 +24,7 @@ def build_tenant_navigation(path: str) -> dict[str, object]:
         _item("账号接入", "/channels", normalized_path, ("/channels", "/provider-nodes")),
         _item("运营能力", "/plugins", normalized_path, ("/plugins",)),
         _item("消息", "/conversations", normalized_path, ("/conversations", "/messages")),
+        _item("开发文档", "/developer/docs", normalized_path, ("/developer/docs",)),
         _item("套餐", "/account/billing", normalized_path, ("/account",)),
         _item("企业设置", "/tenant/users", normalized_path, ("/tenant",)),
     ]

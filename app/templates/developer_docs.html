@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block page_intro %}
+<p>使用桥接接口开发自己的订单、客服和自动化业务。</p>
+{% endblock %}
+
+{% block content %}
+<section class="developer-docs-layout">
+  <aside class="developer-docs-aside" aria-label="文档说明">
+    <div class="developer-docs-callout">
+      <span class="chip chip-success">推荐协议</span>
+      <h2>直接调用桥接接口</h2>
+      <p>插件用于功能演示。正式业务可以使用 <code>/api/open/*</code>，由你的系统维护订单、客户和业务状态。</p>
+    </div>
+    <div class="developer-docs-callout developer-docs-callout-muted">
+      <span class="chip chip-outline">登录范围</span>
+      <p>本页面需要企业账号登录。接口调用使用开放应用签名，不使用后台登录 Cookie，也不包含微信扫码登录流程。</p>
+    </div>
+  </aside>
+  <article class="developer-docs-content markdown-body">
+    {{ document_html|safe }}
+  </article>
+</section>
+{% endblock %}
