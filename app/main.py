@@ -234,6 +234,7 @@ PUBLIC_MACHINE_PREFIXES = (
     "/api/workwechat/customer-operations",
     "/api/workwechat/provider",
     "/api/provider",
+    "/api/wechat-webridge",
     "/outbound-files/",
     "/inbound-files/",
     "/webhooks/",
