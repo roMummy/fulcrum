@@ -308,3 +308,11 @@ def test_compact_result_for_storage_keeps_small_and_summarizes_large() -> None:
     assert compact["result"]["member_count"] == 500
     assert "members" not in compact["result"]
     assert len(json.dumps(compact, ensure_ascii=False).encode("utf-8")) < service.RESULT_INLINE_LIMIT_BYTES
+
+
+def test_group_scope_channel_types_include_webridge() -> None:
+    """微桥渠道必须具备群级插件作用域能力，否则群详情里的启停接口会返回 400/404。"""
+
+    from app.main import GROUP_SCOPE_CHANNEL_TYPES
+
+    assert "wechat_webridge" in GROUP_SCOPE_CHANNEL_TYPES

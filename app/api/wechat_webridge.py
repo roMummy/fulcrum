@@ -19,7 +19,9 @@ from app.services.wechat_webridge.service import (
     get_command_result,
     command_catalog,
     list_command_results,
+    identity_matches,
 )
+from app.services.task_queue import parse_job_payload
 from app.services.account_connections import finalize_account_connection, verify_account_connection
 from app.services.account_connections.contracts import AccountConnectionError
 from app.models.entities import MessageAttachment
@@ -197,9 +199,7 @@ async def upload_media(channel_id: int, request: Request, attachment_id: int, fi
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
         try:
-            from app.services.wechat_webridge.service import _identity_matches
-
-            if not _identity_matches(channel, body):
+            if not identity_matches(channel, body):
                 raise ValueError("webridge_identity_mismatch")
             attachment = db.scalar(select(MessageAttachment).where(MessageAttachment.id == int(attachment_id), MessageAttachment.channel_id == channel.id))
             if attachment is None:
@@ -240,7 +240,7 @@ async def enqueue_generic_command(channel_id: int, request: Request):
                 request_id=str(body.get("request_id") or ""),
             )
             db.commit()
-            payload = __import__("app.services.task_queue", fromlist=["parse_job_payload"]).parse_job_payload(job)
+            payload = parse_job_payload(job)
             return {"ok": True, "job_id": int(job.id), "request_id": payload.get("command", {}).get("request_id"), "status": job.status}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -226,6 +226,8 @@ app.include_router(open_api_apps_router)
 app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = list_supported_channel_types()
+# 支持群级插件启停、配置覆盖和纳管状态的渠道；微桥复用企微的群级作用域实现。
+GROUP_SCOPE_CHANNEL_TYPES = frozenset({"wechat_ipad", "wechat_winauto", "workwechat", "wechat_webridge"})
 CHANNEL_TYPE_FORM_SCHEMA = serialize_channel_type_definitions()
 CHANNEL_TYPE_FORM_SCHEMA_BY_CODE = {item["code"]: item for item in CHANNEL_TYPE_FORM_SCHEMA}
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
@@ -3290,7 +3292,7 @@ async def create_channel_chatroom_action(
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
+        if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         normalized_external_id = str(external_id or "").strip()
         if not normalized_external_id:
@@ -3324,7 +3326,7 @@ async def update_channel_chatroom_management_action(
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
+        if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
@@ -3445,8 +3447,8 @@ async def enable_wechat_ipad_chatroom_scope_action(request: Request, channel_id:
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat")
+        if channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail="Channel does not support group plugin scopes")
         binding = db.get(BotPlugin, bot_plugin_id)
         if not binding or binding.bot_id != channel.bot_id:
             raise HTTPException(status_code=404, detail="Bot plugin binding not found")
@@ -3499,8 +3501,8 @@ async def disable_wechat_ipad_chatroom_scope_action(request: Request, channel_id
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat")
+        if channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail="Channel does not support group plugin scopes")
         binding = db.get(BotPlugin, bot_plugin_id)
         if not binding or binding.bot_id != channel.bot_id:
             raise HTTPException(status_code=404, detail="Bot plugin binding not found")
@@ -3553,8 +3555,8 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat")
+        if channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail="Channel does not support group plugin scopes")
         binding = db.get(BotPlugin, bot_plugin_id)
         if not binding or binding.bot_id != channel.bot_id:
             raise HTTPException(status_code=404, detail="Bot plugin binding not found")
@@ -3610,8 +3612,8 @@ async def update_wechat_ipad_chatroom_scope_config_action(
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat")
+        if channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail="Channel does not support group plugin scopes")
         binding = db.get(BotPlugin, bot_plugin_id)
         if not binding or binding.bot_id != channel.bot_id:
             raise HTTPException(status_code=404, detail="Bot plugin binding not found")
@@ -3681,7 +3683,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
     db = get_session()
     try:
         channel = db.get(Channel, channel_id)
-        if not channel or channel.channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
+        if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Wechat chatroom channel not found")
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:

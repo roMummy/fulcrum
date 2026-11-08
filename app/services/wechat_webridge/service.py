@@ -187,7 +187,7 @@ def _save_runtime(channel: Channel, value: dict[str, Any]) -> None:
     channel.runtime_info_json = json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _identity_matches(channel: Channel, payload: dict[str, Any]) -> bool:
+def identity_matches(channel: Channel, payload: dict[str, Any]) -> bool:
     """校验请求身份与最近注册设备一致，禁止跨设备领取同一渠道任务。"""
 
     incoming = identity_from_payload(payload)
@@ -225,7 +225,7 @@ def register_device(db: Session, channel: Channel, payload: dict[str, Any]) -> d
 def accept_state(db: Session, channel: Channel, payload: dict[str, Any]) -> dict[str, Any]:
     """更新状态心跳；状态失败不影响插件继续 poll，但必须保留最后一次快照。"""
 
-    if not _identity_matches(channel, payload):
+    if not identity_matches(channel, payload):
         raise ValueError("webridge_identity_mismatch")
     runtime = _runtime(channel)
     bridge = runtime.setdefault("webridge", {})
@@ -296,31 +296,6 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
     if not any(value not in (None, "") for key, value in params.items() if key != "receiver"):
         raise ValueError("webridge_message_payload_missing")
     return enqueue_job(db, job_type=JOB_TYPE, payload={"channel_id": int(channel.id), "conversation_id": int(conversation.id), "command": {"request_id": f"job_{uuid.uuid4().hex}", "type": command_type, "params": params}}, priority=90, related_type="conversation", related_id=int(conversation.id))
-
-def enqueue_text_message(db: Session, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> TaskJob:
-    """把统一文本消息转换为 WeBridge 命令任务，任务归属固定到渠道。"""
-
-    content = str(payload.get("content") or payload.get("text") or "").strip()
-    receiver = str(payload.get("receiver_id") or payload.get("external_id") or conversation.external_id or "").strip()
-    if not content or not receiver:
-        raise ValueError("webridge_text_message_requires_content_and_receiver")
-    return enqueue_job(
-        db,
-        job_type=JOB_TYPE,
-        payload={
-            "channel_id": int(channel.id),
-            "conversation_id": int(conversation.id),
-            "command": {
-                "request_id": f"job_{uuid.uuid4().hex}",
-                "type": "send_message",
-                "params": {"receiver": receiver, "content": content},
-            },
-        },
-        priority=90,
-        related_type="conversation",
-        related_id=int(conversation.id),
-    )
-
 
 def enqueue_media_upload_command(
     db: Session,
@@ -452,7 +427,7 @@ def list_command_results(
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
     """领取当前设备的待发送命令，并将任务置为 running 防止重复下发。"""
 
-    if not _identity_matches(channel, payload):
+    if not identity_matches(channel, payload):
         logger.error("webridge command claim identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     current = now_shanghai()
@@ -520,7 +495,7 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
 def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]) -> dict[str, Any]:
     """按 command request_id 完成任务；重复回报返回已处理状态。"""
 
-    if not _identity_matches(channel, payload):
+    if not identity_matches(channel, payload):
         logger.error("webridge command result identity mismatch", extra={"channel_id": channel.id})
         raise ValueError("webridge_identity_mismatch")
     command = as_object(payload.get("command"))
