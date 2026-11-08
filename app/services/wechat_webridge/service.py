@@ -172,25 +172,34 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         job.locked_at = current
         # 现有统一出站入口把内容放在 payload 字段；这里在协议边界转换成 WeBridge 命令。
         command = as_object(data.get("command"))
-        if not command:
+        if command:
+            # 通用命令桥允许 friends、groups_all、profile_update、媒体和高级命令，
+            # 这些命令并不携带 receiver/content，不能套用文本消息的字段校验。
+            command["request_id"] = text(command.get("request_id")) or f"job_{int(job.id)}"
+            command["type"] = text(command.get("type") or command.get("command_name"))
+            command["params"] = as_object(command.get("params") or command.get("args"))
+            if command["type"]:
+                commands.append(command)
+        else:
             outbound = as_object(data.get("payload"))
             message_type = text(outbound.get("message_type") or "text")
             if message_type != "text":
                 job.status = "failed"
-                job.error_message = "WeBridge 首期只支持文本消息"
+                job.error_message = "WeBridge 普通出站链路暂只支持文本，请使用通用命令桥"
                 job.finished_at = current
                 continue
             receiver = text(outbound.get("receiver_id") or outbound.get("external_id"))
             content = str(outbound.get("content") or outbound.get("text") or "").strip()
-            command = {
+            if not receiver or not content:
+                job.status = "failed"
+                job.error_message = "webridge_text_message_requires_content_and_receiver"
+                job.finished_at = current
+                continue
+            commands.append({
                 "request_id": f"job_{int(job.id)}",
                 "type": "send_message",
                 "params": {"receiver": receiver, "content": content},
-            }
-        else:
-            command["request_id"] = text(command.get("request_id")) or f"job_{int(job.id)}"
-        if command.get("params", {}).get("receiver") and command.get("params", {}).get("content"):
-            commands.append(command)
+            })
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
     db.commit()
