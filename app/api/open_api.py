@@ -172,7 +172,7 @@ def enqueue_open_message_request(db: Session, *, app: OpenApiApp, payload: dict[
     message_type = str(payload.get("message_type") or payload.get("type") or "text").strip().lower() or "text"
     if message_type == "file":
         raise HTTPException(status_code=400, detail="file_message_use_files_api")
-    if message_type not in {"text", "image", "link", "mini_program"}:
+    if message_type not in {"text", "image", "voice", "video", "emoji", "link", "card", "mini_program", "app"}:
         raise HTTPException(status_code=400, detail="unsupported_message_type")
     outbound_payload = _build_open_message_payload(conversation=conversation, payload=payload, message_type=message_type)
     job = enqueue_job(
@@ -607,6 +607,21 @@ def _build_open_message_payload(*, conversation: Conversation, payload: dict[str
     }
     optional_keys = (
         "image_url",
+        "base64",
+        "image_base64",
+        "voice_base64",
+        "audio_base64",
+        "video_base64",
+        "cover_base64",
+        "voice_time",
+        "voice_type",
+        "play_length",
+        "emoji",
+        "card_user_id",
+        "card_nickname",
+        "app_type",
+        "xml",
+        "cdn_xml",
         "link_url",
         "link_title",
         "link_description",
@@ -620,7 +635,12 @@ def _build_open_message_payload(*, conversation: Conversation, payload: dict[str
         if value not in (None, ""):
             outbound_payload[key] = value
     if message_type == "image" and not outbound_payload.get("image_url"):
-        raise HTTPException(status_code=400, detail="image_url_required")
+        if not any(outbound_payload.get(key) for key in ("base64", "image_base64", "content", "xml", "cdn_xml")):
+            raise HTTPException(status_code=400, detail="image_payload_required")
+    if message_type == "voice" and not any(outbound_payload.get(key) for key in ("voice_base64", "audio_base64", "base64")):
+        raise HTTPException(status_code=400, detail="voice_payload_required")
+    if message_type == "video" and not any(outbound_payload.get(key) for key in ("video_base64", "base64", "xml", "cdn_xml")):
+        raise HTTPException(status_code=400, detail="video_payload_required")
     if message_type == "link" and not outbound_payload.get("link_url"):
         raise HTTPException(status_code=400, detail="link_url_required")
     return outbound_payload
