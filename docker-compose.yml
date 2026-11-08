@@ -12,6 +12,10 @@ services:
     env_file:
       # 验证时可用 MBS_ENV_FILE 指向样例文件，生产默认读取未提交的 .env.docker。
       - ${MBS_ENV_FILE:-.env.docker}
+    environment:
+      # 应用的业务时间取系统时区（见 app/core/time.py），容器必须使用北京时间，
+      # 否则页面、任务和日志会按 UTC 显示，比本地晚 8 小时。
+      TZ: Asia/Shanghai
     volumes:
       - ./plugins:/app/plugins
       - ./logs:/app/logs

@@ -123,3 +123,43 @@ def test_webridge_channel_catalog_advertises_advanced_business_domains() -> None
 
     capabilities = get_channel_type_definition("wechat_webridge").capabilities
     assert {"advanced_commands", "contacts", "payments", "moments", "favorites"}.issubset(capabilities)
+
+
+class _FakeDirectoryDB:
+    """只记录 add 的对象，查询一律视为不存在，用于验证目录字段映射而不依赖数据库夹具。"""
+
+    def __init__(self) -> None:
+        self.added: list = []
+
+    def scalar(self, *_args, **_kwargs):
+        return None
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        return None
+
+
+def test_persist_directory_result_reads_group_id_and_nick_name() -> None:
+    """groups_all 的群 ID 在 account_id、群名在 nick_name，不能因字段名不同而整条丢弃。"""
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    db = _FakeDirectoryDB()
+    counts = service.persist_directory_result(
+        db,
+        channel,
+        {"type": "groups_all"},
+        {"items": [{"account_id": "45317011307@chatroom", "nick_name": "4K-养生交流群", "avatar_url": "https://example.test/a.png"}]},
+    )
+    assert counts["groups"] == 1
+    room = db.added[0]
+    assert room.external_id == "45317011307@chatroom"
+    assert room.name == "4K-养生交流群"
+
+    db = _FakeDirectoryDB()
+    service.persist_directory_result(
+        db, channel, {"type": "friends_all"}, {"items": [{"account_id": "wxid_a", "nick_name": "小柒", "remark": "", "display_name": ""}]}
+    )
+    assert db.added[0].name == "小柒"
+    assert db.added[0].display_name == "小柒"

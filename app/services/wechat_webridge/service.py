@@ -53,8 +53,8 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 contact = WorkWechatContact(channel_id=channel.id, contact_external_id=external_id, first_seen_at=now)
                 db.add(contact)
             contact.contact_kind = "friend"
-            contact.name = str(item.get("nickname") or item.get("display_name") or item.get("remark") or external_id)[:255]
-            contact.display_name = str(item.get("display_name") or item.get("remark") or item.get("nickname") or external_id)[:255]
+            contact.name = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or item.get("remark") or external_id)[:255]
+            contact.display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or external_id)[:255]
             contact.avatar_url = str(item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "") or None
             contact.source = "wechat_webridge"
             contact.sync_status = "active"
@@ -67,14 +67,14 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
             counts["contacts"] += 1
     elif command_name == "groups_all":
         for item in _result_items(result, "groups", "items", "rooms"):
-            external_id = _directory_id(item, "room_id", "chatroom_id", "user_name", "wxid", "id")
+            external_id = _directory_id(item, "account_id", "room_id", "chatroom_id", "user_name", "wxid", "id")
             if not external_id:
                 continue
             room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
             if room is None:
                 room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now)
                 db.add(room)
-            room.name = str(item.get("display_name") or item.get("room_name") or item.get("nickname") or item.get("name") or external_id)[:255]
+            room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
             room.remark = str(item.get("remark") or "")[:255] or None
             room.status = "synced"
             room.is_active = True
@@ -99,8 +99,8 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 if member is None:
                     member = ChatroomMember(chatroom_id=room.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=external_id)
                     db.add(member)
-                member.nickname = str(item.get("nickname") or item.get("display_name") or external_id)[:255]
-                member.display_name = str(item.get("display_name") or item.get("remark") or item.get("nickname") or external_id)[:255]
+                member.nickname = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or external_id)[:255]
+                member.display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or external_id)[:255]
                 member.status = "active"
                 member.last_synced_at = now
                 member.extra_json = json.dumps({"avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
