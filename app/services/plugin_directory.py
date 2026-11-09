@@ -23,7 +23,7 @@ from app.core.logging import get_logger
 from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
-from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin
+from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 
 
@@ -545,15 +545,11 @@ def build_dispatch_report(
         },
     )
     decisions = evaluate_dynamic_matches(db, static_plan, normalized_event)
-    # 规则没有任何插件命中时，才交给 AI 核心调度尝试把自然语言改写成插件命令。
-    # 改写后重新走同一条匹配与执行链，群级启停、积分、权限和 consume_policy 都照常生效。
+    # 规则没有任何插件命中时，把消息交给 AI 核心调度：只入队一个独立的意图任务就返回，
+    # 模型调用不在调度主链里同步等待。意图任务完成后会把改写好的命令作为新的
+    # plugin_dispatch 任务重新入队，仍走本函数的同一条匹配与执行链。
     if not any(item.matched for item in decisions):
-        rewritten = _try_ai_route(db, static_plan, normalized_event, conversation_id=conversation_id)
-        if rewritten is not None:
-            # 动态匹配读取的是静态计划里缓存的正文，只改事件不够，必须重建静态计划。
-            normalized_event = rewritten
-            static_plan = build_static_dispatch_plan(db, channel, normalized_event)
-            decisions = evaluate_dynamic_matches(db, static_plan, normalized_event)
+        _enqueue_ai_intent(db, static_plan, normalized_event, raw_event_id=raw_event_id, conversation_id=conversation_id, message_id=message_id)
     executions = execute_dispatch_plan(
         db,
         static_plan,
@@ -581,94 +577,97 @@ def build_dispatch_report(
     )
 
 
-def _try_ai_route(
+def _enqueue_ai_intent(
     db: Session,
     static_plan: PluginDispatchPlan,
     normalized_event: Mapping[str, Any],
     *,
+    raw_event_id: int | None,
     conversation_id: int | None,
-) -> dict[str, Any] | None:
-    """AI 意图路由：返回把正文改写为插件命令的新事件；不需要或无法改写时返回 None。
+    message_id: int | None,
+) -> bool:
+    """满足 AI 触发条件时入队意图任务；这里只做不访问网络的轻量判断。
 
-    任何失败都只记录决策并降级为不处理，绝不能影响规则触发的插件。
+    目录、额度和模型调用都放到独立任务里，调度主链不会被慢模型拖住。
     """
 
     from app.services import ai_dispatch
+    from app.services.task_queue import AI_INTENT_JOB, enqueue_job
 
     context = static_plan.context
     try:
-        setting = ai_dispatch.get_ai_setting(db)
-        if not ai_dispatch.is_ai_ready(setting):
-            return None
+        details = normalized_event.get("details") or {}
+        if details.get("ai_rewritten"):
+            # 正文已经是 AI 改写出的命令，再不命中就直接放弃，不再二次分析。
+            return False
         if context.message_type != "text" or not ai_dispatch.should_trigger(
             context.chat_type, context.mentioned_self, context.message_text
         ):
-            return None
-        # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力。
+            return False
+        setting = ai_dispatch.get_ai_setting(db)
+        if not ai_dispatch.is_ai_ready(setting):
+            return False
+        # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力；没有可调度功能就不入队。
         catalog = ai_dispatch.build_catalog([item.plugin_code for item in static_plan.candidates])
         if not catalog:
-            return None
-        if ai_dispatch.used_today(db) >= int(setting.daily_limit or 0):
-            ai_dispatch.record_decision(
-                db,
-                channel_id=context.channel_id,
-                conversation_id=conversation_id,
-                sender_id=context.sender_id,
-                text=context.message_text,
-                intent=ai_dispatch.AiIntent(status="rejected", reason="今日 AI 调用额度已用完"),
-            )
-            return None
-        intent = ai_dispatch.analyze_intent(setting, context.message_text, catalog)
-        ai_dispatch.record_decision(
+            return False
+        # 同一条消息最多产生一个意图任务，重试和重复投递不会重复调用模型。
+        dedupe_key = f"ai_intent:{context.channel_id}:{raw_event_id or message_id or 0}"
+        if db.scalar(select(TaskJob.id).where(TaskJob.dedupe_key == dedupe_key).limit(1)):
+            return False
+        enqueue_job(
             db,
-            channel_id=context.channel_id,
-            conversation_id=conversation_id,
-            sender_id=context.sender_id,
-            text=context.message_text,
-            intent=intent,
+            job_type=AI_INTENT_JOB,
+            payload={
+                "channel_id": context.channel_id,
+                "raw_event_id": raw_event_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "normalized_event": dict(normalized_event),
+            },
+            priority=100,
+            related_type="raw_webhook_event",
+            related_id=raw_event_id,
+            dedupe_key=dedupe_key,
+            # 模型失败不自动重试：重试会重复计费，也可能让用户收到迟到的结果。
+            max_attempts=1,
         )
-        if intent.status == "asked":
-            _send_ai_question(db, static_plan, normalized_event, intent.question, conversation_id)
-            return None
-        if intent.status != "routed" or not intent.command_text:
-            return None
-        rewritten = json.loads(json.dumps(normalized_event, ensure_ascii=False, default=str))
-        rewritten.setdefault("message", {})["content"] = intent.command_text
-        return rewritten
+        return True
     except Exception:
-        logger.exception("ai route failed", extra={"channel_id": context.channel_id})
-        return None
+        logger.exception("ai intent enqueue failed", extra={"channel_id": context.channel_id})
+        return False
 
 
-def _send_ai_question(
+def send_ai_reply(
     db: Session,
-    static_plan: PluginDispatchPlan,
+    channel: Channel,
     normalized_event: Mapping[str, Any],
-    question: str,
+    text: str,
+    *,
     conversation_id: int | None,
 ) -> None:
-    """缺参数时向用户追问一句；复用插件自动出站链，保持引用、@ 等统一行为。"""
+    """AI 核心向用户回一句话（缺参数时的追问）；复用插件自动出站链，保持引用等统一行为。"""
 
-    if not question or not conversation_id:
+    if not text or not conversation_id:
         return
-    context = static_plan.context
+    static_context = _build_dispatch_context(channel, dict(normalized_event))
     directory_context = DirectoryPluginContext(
         plugin_code="ai_dispatch",
         binding_id=0,
-        bot_id=context.bot_id,
-        channel_id=context.channel_id,
-        channel_type=context.channel_type,
-        chat_type=context.chat_type,
-        message_type=context.message_type,
-        command_prefix=context.command_prefix,
-        content=context.message_text,
-        sender_id=context.sender_id,
-        conversation_external_id=context.conversation_external_id,
-        mentioned_self=context.mentioned_self,
+        bot_id=static_context.bot_id,
+        channel_id=static_context.channel_id,
+        channel_type=static_context.channel_type,
+        chat_type=static_context.chat_type,
+        message_type=static_context.message_type,
+        command_prefix=static_context.command_prefix,
+        content=static_context.message_text,
+        sender_id=static_context.sender_id,
+        conversation_external_id=static_context.conversation_external_id,
+        mentioned_self=static_context.mentioned_self,
         normalized_event=normalized_event,
         conversation_id=conversation_id,
     )
-    _dispatch_auto_outbound_messages(db, context, directory_context, {"reply_text": question})
+    _dispatch_auto_outbound_messages(db, static_context, directory_context, {"reply_text": text})
 
 
 def evaluate_dynamic_matches(

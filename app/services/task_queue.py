@@ -19,6 +19,8 @@ logger = get_logger(__name__)
 
 PLUGIN_DISPATCH_JOB = "plugin_dispatch"
 PLUGIN_SCHEDULED_ACTION_JOB = "plugin_scheduled_action"
+# AI 意图分析任务：模型调用慢，独立于插件调度任务，避免拖住消息主链。
+AI_INTENT_JOB = "ai_intent"
 OUTBOUND_DISPATCH_JOB = "outbound_dispatch"
 WORKWECHAT_CLOUD_OUTBOUND_JOB = "workwechat_cloud_outbound"
 WORKWECHAT_CLOUD_CONTROL_JOB = "workwechat_cloud_control"

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Mapping
 
 from sqlalchemy import func, select
@@ -84,19 +83,38 @@ def is_ai_ready(setting: TenantAiSetting | None) -> bool:
     return bool(setting and setting.enabled and setting.api_base and setting.model and setting.api_key_encrypted)
 
 
-def _build_client(setting: TenantAiSetting) -> PluginTextGenerationClient:
-    return PluginTextGenerationClient(
+@dataclass(frozen=True)
+class ModelConfig:
+    """模型调用所需的纯数据快照。
+
+    模型一次调用可能耗时数十秒，调用期间不能持有数据库会话或 ORM 对象，
+    所以先在会话内取出快照，再脱离会话去调用模型。
+    """
+
+    api_base: str
+    model: str
+    api_key: str
+
+
+def snapshot_setting(setting: TenantAiSetting) -> ModelConfig:
+    """在会话有效期内把设置固化成脱离会话的快照，密钥此时解密。"""
+
+    return ModelConfig(
         api_base=setting.api_base,
         model=setting.model,
         api_key=decrypt_secret(setting.api_key_encrypted) or "",
     )
 
 
-def test_connection(setting: TenantAiSetting) -> tuple[bool, str]:
+def _build_client(config: ModelConfig) -> PluginTextGenerationClient:
+    return PluginTextGenerationClient(api_base=config.api_base, model=config.model, api_key=config.api_key)
+
+
+def test_connection(config: ModelConfig) -> tuple[bool, str]:
     """用一条固定问题验证连接，并把失败原因翻译成中文，供设置页的“测试连接”使用。"""
 
     try:
-        client = _build_client(setting)
+        client = _build_client(config)
         result = client.generate(user_prompt="请只回复：ok", timeout_seconds=MODEL_TIMEOUT_SECONDS, max_tokens=TEST_MAX_TOKENS)
     except PluginTextGenerationError as exc:
         return False, str(exc)
@@ -206,12 +224,12 @@ def validate_model_output(raw: str, catalog: list[dict[str, Any]], prefix: str =
     return AiIntent(status="routed", plugin_code=plugin, command_text=command_text, confidence=confidence)
 
 
-def analyze_intent(setting: TenantAiSetting, text: str, catalog: list[dict[str, Any]]) -> AiIntent:
+def analyze_intent(config: ModelConfig, text: str, catalog: list[dict[str, Any]]) -> AiIntent:
     """调用模型分析意图；任何失败都降级为 error，不影响规则触发的插件。"""
 
     system_prompt = _SYSTEM_PROMPT + json.dumps(catalog, ensure_ascii=False)
     try:
-        client = _build_client(setting)
+        client = _build_client(config)
         # 用户原文放在独立的 user 消息里，不拼进系统提示，降低提示注入风险。
         result = client.generate(
             user_prompt=text,
@@ -226,6 +244,41 @@ def analyze_intent(setting: TenantAiSetting, text: str, catalog: list[dict[str, 
         logger.exception("ai intent analysis failed")
         return AiIntent(status="error", reason="模型调用异常")
     return validate_model_output(result.text, catalog)
+
+
+def prepare_intent(db: Session, payload: dict[str, Any]) -> tuple[ModelConfig, str, list[dict[str, Any]]] | None:
+    """第一阶段（持有会话、不访问网络）：重新核对条件，取模型快照、原文和目录。
+
+    返回 None 表示无需调用模型（配置被关闭、目录为空、额度用完等），额度用完会留一条记录。
+    """
+
+    from app.models.entities import Channel
+    from app.services.plugin_directory import build_static_dispatch_plan
+
+    channel = db.get(Channel, int(payload.get("channel_id") or 0))
+    event = payload.get("normalized_event")
+    if channel is None or not isinstance(event, dict):
+        return None
+    setting = get_ai_setting(db)
+    if not is_ai_ready(setting):
+        return None
+    plan = build_static_dispatch_plan(db, channel, event)
+    catalog = build_catalog([item.plugin_code for item in plan.candidates])
+    if not catalog:
+        return None
+    text = str((event.get("message") or {}).get("content") or "")
+    if used_today(db) >= int(setting.daily_limit or 0):
+        record_decision(
+            db,
+            channel_id=channel.id,
+            conversation_id=payload.get("conversation_id"),
+            sender_id=plan.context.sender_id,
+            text=text,
+            intent=AiIntent(status="rejected", reason="今日 AI 调用额度已用完"),
+        )
+        db.commit()
+        return None
+    return snapshot_setting(setting), text, catalog
 
 
 def record_decision(
@@ -263,23 +316,18 @@ def should_trigger(chat_type: str, mentioned_self: bool, text: str) -> bool:
     return chat_type == "direct" or mentioned_self
 
 
-def prune_old_decisions(db: Session, keep_days: int = 30) -> None:
-    """顺带清理过期决策记录，避免表无限增长。"""
-
-    cutoff = now_shanghai() - timedelta(days=keep_days)
-    for row in db.scalars(select(AiDecision).where(AiDecision.created_at < cutoff).limit(200)).all():
-        db.delete(row)
-
-
 __all__ = [
     "AiIntent",
     "analyze_intent",
     "build_catalog",
+    "ModelConfig",
     "get_ai_setting",
     "is_ai_ready",
+    "prepare_intent",
     "record_decision",
     "save_ai_setting",
     "should_trigger",
+    "snapshot_setting",
     "test_connection",
     "used_today",
     "validate_model_output",

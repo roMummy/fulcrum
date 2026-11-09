@@ -16,6 +16,7 @@ from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Channel, Conversation, ErrorLog, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.models.saas import Tenant
+from app.services.ai_intent_worker import poll_ai_intent_jobs
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
 from app.services.channel_runtime import run_due_channel_tasks
@@ -27,6 +28,7 @@ from app.services.task_queue import (
     INBOUND_MEDIA_FETCH_JOB,
     OPEN_WEBHOOK_DELIVERY_JOB,
     OUTBOUND_DISPATCH_JOB,
+    AI_INTENT_JOB,
     PLUGIN_DISPATCH_JOB,
     PLUGIN_SCHEDULED_ACTION_JOB,
     claim_next_job,
@@ -72,6 +74,8 @@ def _worker_loop() -> None:
     while not _stop_event.is_set():
         try:
             worked = _run_single_job()
+            # AI 意图任务只在专用线程池里执行，这里只负责领取并立即返回，不等待模型。
+            worked = poll_ai_intent_jobs() or worked
             scheduled = _run_due_plugin_scheduler()
             channel_result = run_due_channel_tasks()
             alerted = _run_due_operational_alerts()
@@ -102,6 +106,7 @@ def _recover_running_jobs_for_all_tenants() -> int:
             recovered_count += recover_running_jobs(
                 db,
                 job_types=(
+                    AI_INTENT_JOB,
                     PLUGIN_DISPATCH_JOB,
                     PLUGIN_SCHEDULED_ACTION_JOB,
                     OUTBOUND_DISPATCH_JOB,

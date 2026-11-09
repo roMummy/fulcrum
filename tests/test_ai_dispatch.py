@@ -65,60 +65,123 @@ def test_real_plugins_declare_ai_hint_and_catalog_filters() -> None:
     assert next(i for i in catalog if i["plugin"] == "weather")["needs_args"] == "城市名"
 
 
-def test_rewritten_command_hits_message_sign_through_real_dispatch(monkeypatch) -> None:
-    """闭环验证：“我要签到”规则不命中 -> AI 改写成 /签到 -> 同一条调度链命中 message_sign。"""
+def _seed(db):
+    """建最小数据：租户、机器人、微桥渠道、已启用的 message_sign、已配置的 AI。"""
+
+    from app.models.entities import Bot, BotPlugin, Channel, Plugin, TenantAiSetting
+    from app.models.saas import Tenant
+
+    db.add(Tenant(id=1, code="t", name="t"))
+    db.add(Bot(id=1, tenant_id=1, name="bot"))
+    db.flush()
+    channel = Channel(id=1, tenant_id=1, bot_id=1, name="微桥", channel_type="wechat_webridge")
+    plugin = Plugin(code="message_sign", display_name="群签到", plugin_type="command")
+    db.add_all([channel, plugin])
+    db.flush()
+    db.add(BotPlugin(tenant_id=1, bot_id=1, plugin_id=plugin.id, status="enabled"))
+    db.add(TenantAiSetting(
+        tenant_id=1, enabled=True, api_base="https://llm.test/v1", model="m",
+        api_key_encrypted=ai_dispatch.encrypt_secret("k"), daily_limit=10,
+    ))
+    db.commit()
+    return channel
+
+
+EVENT = {
+    "conversation": {"external_id": "1@chatroom", "chat_type": "group"},
+    "message": {"content": "我要签到", "sender_id": "wxid_a", "message_type": "text"},
+    "details": {"mentioned_self": True},
+}
+
+
+def test_dispatch_only_enqueues_intent_job_and_never_calls_model(monkeypatch) -> None:
+    """调度主链不能同步调用模型：规则无命中时只入队一个意图任务，且同一消息不重复入队。"""
 
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from app.core.db import Base
-    from app.models import saas  # noqa: F401  # 注册租户表，满足外键
-    from app.models.entities import AiDecision, Bot, BotPlugin, Channel, Plugin, TenantAiSetting
-    from app.models.saas import Tenant
+    from app.models import saas  # noqa: F401
+    from app.models.entities import TaskJob
     from app.services import plugin_directory as pd
-    from app.services.plugin_runtime.text_generation import PluginTextGenerationResult
+
+    called = []
+    monkeypatch.setattr(ai_dispatch.PluginTextGenerationClient, "generate", lambda self, **kw: called.append(1))
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        channel = _seed(db)
+        # 裸 SQLite 会话没有租户自动补全：入队前补 tenant_id。
+        from sqlalchemy import event as sa_event
+        sa_event.listen(db, "before_flush", lambda s, c, i: [setattr(o, "tenant_id", 1) for o in s.new if hasattr(o, "tenant_id") and o.tenant_id is None])
+
+        plan = pd.build_static_dispatch_plan(db, channel, EVENT)
+        assert pd._enqueue_ai_intent(db, plan, EVENT, raw_event_id=5, conversation_id=2, message_id=3) is True
+        assert pd._enqueue_ai_intent(db, plan, EVENT, raw_event_id=5, conversation_id=2, message_id=3) is False
+        db.flush()
+        jobs = db.query(TaskJob).all()
+        assert [j.job_type for j in jobs] == ["ai_intent"] and jobs[0].max_attempts == 1
+    assert called == []
+
+
+def test_ai_rewritten_event_is_never_analyzed_again() -> None:
+    """AI 改写出的命令若仍不命中，不能再次进入 AI，避免循环调用模型。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.db import Base
+    from app.models import saas  # noqa: F401
+    from app.services import plugin_directory as pd
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as db:
-        db.add(Tenant(id=1, code="t", name="t"))
-        db.add(Bot(id=1, tenant_id=1, name="bot"))
-        db.flush()
-        channel = Channel(id=1, tenant_id=1, bot_id=1, name="微桥", channel_type="wechat_webridge")
-        plugin = Plugin(code="message_sign", display_name="群签到", plugin_type="command")
-        db.add_all([channel, plugin])
-        db.flush()
-        db.add(BotPlugin(tenant_id=1, bot_id=1, plugin_id=plugin.id, status="enabled"))
-        db.add(TenantAiSetting(
-            tenant_id=1, enabled=True, api_base="https://llm.test/v1", model="m",
-            api_key_encrypted=ai_dispatch.encrypt_secret("k"), daily_limit=10,
-        ))
-        db.commit()
-
-        # 模型替身：永远判断为“签到”。
-        monkeypatch.setattr(
-            ai_dispatch.PluginTextGenerationClient, "generate",
-            lambda self, **kw: PluginTextGenerationResult(text=_out(plugin="message_sign", confidence=95), token_usage=1),
-        )
-        event = {
-            "conversation": {"external_id": "1@chatroom", "chat_type": "group"},
-            "message": {"content": "我要签到", "sender_id": "wxid_a", "message_type": "text"},
-            "details": {"mentioned_self": True},
-        }
+        channel = _seed(db)
+        event = {**EVENT, "details": {"mentioned_self": True, "ai_rewritten": True}}
         plan = pd.build_static_dispatch_plan(db, channel, event)
-        assert not any(d.matched for d in pd.evaluate_dynamic_matches(db, plan, event))
+        assert pd._enqueue_ai_intent(db, plan, event, raw_event_id=5, conversation_id=2, message_id=3) is False
 
-        rewritten = pd._try_ai_route(db, plan, event, conversation_id=None)
-        assert rewritten is not None and rewritten["message"]["content"] == "/签到"
-        # 裸 SQLite 会话没有租户自动补全，这里手动补 tenant_id，避免后续查询的自动刷新失败。
-        for row in db.new:
-            if isinstance(row, AiDecision):
-                row.tenant_id = 1
-        # 改写后必须重建静态计划（正文缓存在计划上下文里），再匹配才会命中。
-        new_plan = pd.build_static_dispatch_plan(db, channel, rewritten)
-        assert any(d.matched and d.candidate.plugin_code == "message_sign" for d in pd.evaluate_dynamic_matches(db, new_plan, rewritten))
-        db.flush()
+
+def test_intent_worker_delivers_rewritten_command_as_new_dispatch_job(monkeypatch) -> None:
+    """意图任务完成后：记录决策，并把改写命令作为新的 plugin_dispatch 任务入队（带防循环标记）。"""
+
+    from sqlalchemy import create_engine
+    from sqlalchemy import event as sa_event
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.db import Base
+    from app.models import saas  # noqa: F401
+    from app.models.entities import AiDecision, TaskJob
+    from app.services import ai_intent_worker
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        _seed(db)
+        sa_event.listen(db, "before_flush", lambda s, c, i: [setattr(o, "tenant_id", 1) for o in s.new if hasattr(o, "tenant_id") and o.tenant_id is None])
+        payload = {"channel_id": 1, "raw_event_id": 5, "conversation_id": 2, "message_id": 3, "normalized_event": EVENT}
+        intent = ai_dispatch.AiIntent(status="routed", plugin_code="message_sign", command_text="/签到", confidence=95)
+        result = ai_intent_worker._deliver(db, payload, intent)
+        assert result["command"] == "/签到"
+        job = db.query(TaskJob).one()
+        queued = json.loads(job.payload_json)["normalized_event"]
+        assert job.job_type == "plugin_dispatch"
+        assert queued["message"]["content"] == "/签到" and queued["details"]["ai_rewritten"] is True
         assert db.query(AiDecision).one().status == "routed"
+
+
+def test_intent_worker_slots_limit_concurrency() -> None:
+    """并发名额有上限：占满后不再领取新任务（背压），释放后才可继续。"""
+
+    from app.services import ai_intent_worker as w
+
+    taken = [w._try_reserve_slot() for _ in range(w.MAX_CONCURRENT_INTENTS + 2)]
+    assert taken.count(True) == w.MAX_CONCURRENT_INTENTS and taken[-1] is False
+    for _ in range(w.MAX_CONCURRENT_INTENTS):
+        w._release_slot()
+    assert w._try_reserve_slot() is True
+    w._release_slot()
 
 
 def test_text_generation_read_timeout_follows_total_timeout() -> None:
@@ -139,3 +202,35 @@ def test_text_generation_read_timeout_follows_total_timeout() -> None:
     client = PluginTextGenerationClient(api_base="https://x/v1", model="m", http_client=FakeHttp())
     client.generate(user_prompt="hi", timeout_seconds=45)
     assert seen["connect_timeout_seconds"] == 45 and seen["total_timeout_seconds"] == 45
+
+
+def test_slow_model_does_not_block_poller(monkeypatch) -> None:
+    """慢模型（2 秒）只占用线程池线程：领取函数立即返回，主 worker 不会被拖住。"""
+
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from app.services import ai_intent_worker as w
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_run(job_id: int, tenant_id: int) -> None:
+        started.set()
+        release.wait(5)
+
+    monkeypatch.setattr(w, "_run_intent_job", slow_run)
+    monkeypatch.setattr(w, "platform_session", lambda factory: __import__("contextlib").nullcontext(object()))
+    claims = iter([SimpleNamespace(id=1, tenant_id=1), None])
+    monkeypatch.setattr(w, "claim_next_job", lambda db, job_types: next(claims))
+
+    begin = time.monotonic()
+    assert w.poll_ai_intent_jobs() is True
+    elapsed = time.monotonic() - begin
+    assert started.wait(2) and elapsed < 0.5, f"领取被阻塞了 {elapsed:.2f}s"
+    release.set()
+    deadline = time.monotonic() + 3
+    while w._in_flight and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert w._in_flight == 0

@@ -381,7 +381,7 @@ async def tenant_ai_save_action(
         )
         db.commit()
         if action == "test":
-            ok, message = ai_dispatch.test_connection(setting)
+            ok, message = ai_dispatch.test_connection(ai_dispatch.snapshot_setting(setting))
             return _redirect("/tenant/ai", message, danger=not ok)
         return _redirect("/tenant/ai", "AI 设置已保存")
     finally:
