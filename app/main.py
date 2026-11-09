@@ -1,4 +1,5 @@
 import json
+import uuid
 import subprocess
 import time as time_module
 import xml.etree.ElementTree as ElementTree
@@ -154,6 +155,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.directory_pages import build_chatroom_directory, build_contact_directory, channel_options
+from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, find_group_member, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
@@ -2464,6 +2466,83 @@ async def contact_directory_page(request: Request, q: str = "", channel_id: int 
             channels=channel_options(db),
             pager_base=_directory_pager_base("/contacts", q=directory["keyword"], channel_id=channel_id),
         )
+    finally:
+        db.close()
+
+
+@app.get("/points", response_class=HTMLResponse)
+async def points_accounts_page(request: Request, q: str = "", group_id: str = "", page: int = 1, notice: str = ""):
+    """积分管理:所有群的积分账户,可筛选,并可人工发放或扣减。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        directory = build_points_accounts(db, keyword=q, group_id=group_id, page=page)
+        return render(
+            request,
+            "points_accounts.html",
+            page_title="积分",
+            directory=directory,
+            groups=group_options(db),
+            pager_base=_directory_pager_base("/points", q=directory["keyword"], group_id=group_id),
+            form_token=uuid.uuid4().hex,
+            notice=notice,
+        )
+    finally:
+        db.close()
+
+
+@app.get("/points/ledger", response_class=HTMLResponse)
+async def points_ledger_page(request: Request, q: str = "", group_id: str = "", source: str = "", page: int = 1):
+    """积分账单:每一笔赚取、消费、转账和人工调整,最新在前。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        directory = build_points_ledger(db, keyword=q, group_id=group_id, source=source, page=page)
+        return render(
+            request,
+            "points_ledger.html",
+            page_title="积分账单",
+            directory=directory,
+            groups=group_options(db),
+            pager_base=_directory_pager_base("/points/ledger", q=directory["keyword"], group_id=group_id, source=source),
+        )
+    finally:
+        db.close()
+
+
+@app.post("/points/adjust")
+async def points_adjust_action(
+    request: Request,
+    group_id: str = Form(""),
+    member: str = Form(""),
+    amount: int = Form(0),
+    mode: str = Form("grant"),
+    note: str = Form(""),
+    form_token: str = Form(""),
+    csrf_token: str = Form(""),
+):
+    """人工发放或扣减积分:成员可填昵称或微信号,重名时要求改用微信号。"""
+
+    user = enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        user_id, hint = find_group_member(db, group_id.strip(), member)
+        if user_id is None:
+            return RedirectResponse(url=f"/points?notice={quote(hint)}", status_code=303)
+        signed = abs(int(amount)) * (1 if mode == "grant" else -1)
+        result = adjust_points(
+            db, group_id=group_id.strip(), user_id=user_id, amount=signed, operator=user.username, note=note, request_id=form_token.strip()[:64]
+        )
+        if result.ok:
+            record_audit(db, "points.adjust", "points_account", user_id, f"group={group_id}, amount={signed}, operator={user.username}")
+            after = (result.account or {}).get("total_points")
+            notice = f"已{'发放' if signed > 0 else '扣减'} {abs(signed)} 积分" + (f",当前余额 {after}" if after is not None else "")
+        else:
+            notice = result.message
+        return RedirectResponse(url=f"/points?group_id={quote(group_id)}&notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 

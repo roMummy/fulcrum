@@ -32,6 +32,7 @@ def build_tenant_navigation(path: str) -> dict[str, object]:
         {"label": "群管理", "href": "/chatrooms", "active": in_chatroom_page or _is_active(normalized_path, ("/chatrooms",))},
         _item("好友", "/contacts", normalized_path, ("/contacts",)),
         _item("消息", "/messages", normalized_path, ("/messages",)),
+        _item("积分", "/points", normalized_path, ("/points",)),
         _item("运营能力", "/plugins", normalized_path, ("/plugins",)),
         {
             "label": "账号接入",

@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% from '_identity.html' import identity %}
+{# 积分账单:最新在前,每笔显示变动、变动后余额和来源。 #}
+{% block hero_actions %}
+<div class="chip-row"><a class="btn btn-secondary" href="/points">返回积分管理</a></div>
+{% endblock %}
+{% block content %}
+<section class="work-surface">
+  <form method="get" action="/points/ledger" class="compact-filter-form" style="margin-bottom:12px;">
+    <label class="compact-filter-field"><span>搜索</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称或微信号" /></label>
+    <label class="compact-filter-field"><span>群</span>
+      <select name="group_id">
+        <option value="">全部</option>
+        {% for item in groups %}<option value="{{ item.id }}" {% if directory.group_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="compact-filter-field"><span>来源</span>
+      <select name="source">
+        <option value="">全部</option>
+        {% for item in directory.source_options %}<option value="{{ item.id }}" {% if directory.source == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="compact-filter-actions">
+      <button class="btn" type="submit">搜索</button>
+      {% if directory.keyword or directory.group_id or directory.source %}<a class="btn btn-secondary" href="/points/ledger">清除</a>{% endif %}
+    </div>
+  </form>
+
+  {% if directory.rows %}
+  <div class="table-scroll">
+  <table class="table">
+    <thead><tr><th class="col-time">时间</th><th>成员</th><th>所在群</th><th>来源</th><th class="col-compact">变动</th><th class="col-compact">余额</th></tr></thead>
+    <tbody>
+      {% for item in directory.rows %}
+      <tr>
+        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
+        <td>{{ identity(item.identity) }}</td>
+        <td>{{ identity(item.group, 'sm', false) }}</td>
+        <td>{{ item.source_label }}{% if item.description and item.description != item.source_label %}<br /><small class="muted-text">{{ item.description }}{% if item.operator %} · {{ item.operator }}{% endif %}</small>{% endif %}</td>
+        <td class="col-compact"><strong style="color:{{ '#16a34a' if item.delta > 0 else '#dc2626' }};">{{ '+' if item.delta > 0 }}{{ item.delta }}</strong></td>
+        <td class="col-compact">{{ item.balance_after }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% include '_pager.html' %}
+  {% else %}
+  <p class="muted-text">没有符合条件的账单。</p>
+  {% endif %}
+</section>
+{% endblock %}
