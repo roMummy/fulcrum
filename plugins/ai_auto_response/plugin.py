@@ -24,7 +24,6 @@ ALLOWED_REPLY_MODES = {"social_short", "qa_fast", "qa_with_context"}
 class AutoResponseConfig:
     """保存一次群聊自动参与所需的租户配置，不包含任何平台共享凭证。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     app_mode: str
@@ -108,7 +107,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="AI 群聊参与插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_base and config.api_key),
                 "app_mode": config.app_mode,
                 "history_limit": config.history_limit,
@@ -118,8 +116,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _ignored_result("plugin_disabled")
 
     context = request.context
     if not _is_trusted_group_text(context):
@@ -223,7 +219,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> AutoResponseConfig:
 
     raw = dict(raw_config)
     return AutoResponseConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         app_mode=_resolve_app_mode(raw.get("app_mode")),

@@ -48,7 +48,6 @@ class CouponError(RuntimeError):
 class CouponConfig:
     """保存当前租户绑定唯一生效的 NewAPI、套餐、限流和通知配置。"""
 
-    enabled: bool
     base_url: str
     admin_access_token: str
     admin_user_id: int
@@ -109,8 +108,7 @@ def matches_event(context) -> dict[str, object]:
     raw_config = getattr(context, "binding_config", {}) or {}
     command, _email = _parse_command(content)
     matched = (
-        bool(raw_config.get("enabled", True))
-        and chat_type == "group"
+        chat_type == "group"
         and message_type == "text"
         and command == COMMAND
     )
@@ -134,7 +132,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="NewAPI 领券插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "newapi_configured": _newapi_configured(config),
                 "auto_create_user": config.auto_create_user,
                 "notification_configured": _notification_configured(config),
@@ -154,8 +151,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         config = _load_config(request.config)
     except (TypeError, ValueError) as exc:
         return _error_result(f"插件配置无效：{exc}", "config_invalid")
-    if not config.enabled:
-        return _error_result("NewAPI 领券当前未启用。", "disabled")
 
     trusted, context_error = _require_trusted_group_member(db, request.context)
     if context_error is not None or trusted is None:
@@ -859,7 +854,6 @@ def _load_config(raw: Mapping[str, Any]) -> CouponConfig:
     if not username_prefix:
         raise ValueError("username_prefix 必须包含字母或数字")
     return CouponConfig(
-        enabled=bool(raw.get("enabled", True)),
         base_url=str(raw.get("base_url") or "").strip(),
         admin_access_token=str(raw.get("admin_access_token") or "").strip(),
         admin_user_id=_bounded_int(raw, "admin_user_id", 0, minimum=0, maximum=2_147_483_647),

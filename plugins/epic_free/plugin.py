@@ -47,7 +47,6 @@ logger = get_logger(__name__)
 class EpicFreeConfig:
     """保存当前插件绑定唯一生效的查询和推送配置。"""
 
-    enabled: bool
     locale: str
     country: str
     include_upcoming: bool
@@ -81,7 +80,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="Epic 免费游戏插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "locale": config.locale,
                 "country": config.country,
                 "poll_interval_seconds": config.poll_interval_seconds,
@@ -89,8 +87,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _error_result("Epic 免费游戏插件当前未启用。", "disabled")
 
     try:
         games = _fetch_free_games(config)
@@ -126,8 +122,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         return context_error or _error_result("Epic 免费游戏缺少可信运行上下文。", "trusted_context_required")
 
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("Epic 免费游戏插件当前未启用。", "disabled")
     try:
         games = _fetch_free_games(config)
     except (PluginHttpError, ValueError, json.JSONDecodeError):
@@ -586,7 +580,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> EpicFreeConfig:
     if not COUNTRY_PATTERN.fullmatch(country):
         country = "CN"
     return EpicFreeConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         locale=locale,
         country=country,
         include_upcoming=_as_bool(raw.get("include_upcoming"), default=True),

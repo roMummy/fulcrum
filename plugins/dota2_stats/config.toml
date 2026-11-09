@@ -24,7 +24,6 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
-enabled = true
 api_key = ""
 request_timeout_seconds = 15
 retry_count = 2

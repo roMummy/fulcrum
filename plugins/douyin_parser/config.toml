@@ -24,7 +24,6 @@ require_mention = false
 fields = ["dtk_api_key"]
 
 [runtime]
-enabled = true
 # DTK 自建解析服务地址;密钥 dtk_api_key 在插件绑定的密文配置里填写,未填时只用自有解析
 dtk_api_url = "https://dy.functen.com"
 dtk_api_key = ""

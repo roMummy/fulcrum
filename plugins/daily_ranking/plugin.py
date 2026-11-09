@@ -45,7 +45,6 @@ RANKING_IMAGE_ROOT = PROJECT_ROOT / "data" / "temp" / "md2image"
 class DailyRankingConfig:
     """保存一个插件绑定唯一生效的日榜配置。"""
 
-    enabled: bool
     display_limit: int
     reward_limit: int
     render_as_image: bool
@@ -61,7 +60,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群聊每日排行插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "display_limit": config.display_limit,
                 "reward_limit": config.reward_limit,
                 "render_as_image": config.render_as_image,
@@ -73,7 +71,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="ready",
             message="群聊每日排行已就绪，将按目标群的定时配置自动执行。",
             output={
-                "enabled": config.enabled,
                 "schedule_mode": "scheduled_only",
             },
         )
@@ -94,8 +91,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         return error or _error_result("群聊每日排行缺少可信运行上下文。", "trusted_context_required")
 
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("群聊每日排行插件当前未启用。", "disabled")
 
     context = request.context
     if context is None:
@@ -619,7 +614,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> DailyRankingConfig:
     display_limit = _bounded_int(raw_config.get("display_limit"), default=10, minimum=1, maximum=20)
     reward_limit = _bounded_int(raw_config.get("reward_limit"), default=20, minimum=1, maximum=100)
     return DailyRankingConfig(
-        enabled=_as_bool(raw_config.get("enabled"), default=True),
         display_limit=display_limit,
         reward_limit=max(display_limit, reward_limit),
         render_as_image=_as_bool(raw_config.get("render_as_image"), default=True),

@@ -112,7 +112,7 @@ def _request(identity: dict[str, int], *, config: dict | None = None) -> PluginE
         action="execute",
         config=config
         or {
-            "enabled": True,
+           
             "api_url": "https://gscore.example.test/v1/message",
             "api_key": "tenant-gscore-key",
             "request_timeout_seconds": 20,
@@ -228,11 +228,11 @@ def test_gscore_adapter_uses_trusted_message_and_returns_standard_replies(
     }
 
 
-def test_gscore_adapter_does_not_connect_when_disabled_or_unconfigured(
+def test_gscore_adapter_does_not_connect_when_unconfigured(
     gscore_fixture,
     monkeypatch,
 ) -> None:
-    """禁用或缺少租户地址、密钥时直接结束，不能建立任何外部连接。"""
+    """缺少租户地址、密钥时直接结束，不能建立任何外部连接。"""
 
     factory, identity = gscore_fixture
     loaded = load_directory_plugin("gscore_adapter", force=True)
@@ -245,16 +245,11 @@ def test_gscore_adapter_does_not_connect_when_disabled_or_unconfigured(
 
     monkeypatch.setattr(module, "PluginHttpClient", ForbiddenClient)
     with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
-        disabled = module.execute_message_action(
-            db,
-            _request(identity, config={"enabled": False, "api_url": "https://gscore.example.test", "api_key": "key"}),
-        )
         unconfigured = module.execute_message_action(
             db,
             _request(identity, config={"enabled": True, "api_url": "", "api_key": ""}),
         )
 
-    assert disabled.ok is False and disabled.output["provider_status"] == "disabled"
     assert unconfigured.ok is False and unconfigured.output["provider_status"] == "not_configured"
 
 

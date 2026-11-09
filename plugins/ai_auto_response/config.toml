@@ -25,7 +25,6 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
-enabled = true
 # 外部 AI 成本由租户承担，平台不提供共享地址或共享密钥回退。
 api_base = ""
 api_key = ""

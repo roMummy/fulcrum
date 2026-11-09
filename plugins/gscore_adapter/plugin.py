@@ -34,7 +34,6 @@ MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 class GScoreConfig:
     """保存当前租户绑定唯一生效的 GScore HTTP 配置。"""
 
-    enabled: bool
     api_url: str
     api_key: str
     request_timeout_seconds: int
@@ -60,7 +59,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "")
     config = _load_config(getattr(context, "binding_config", {}) or {})
     is_command, _query = _extract_query(content)
-    matched = config.enabled and chat_type in {"direct", "group"} and message_type == "text" and is_command
+    matched = chat_type in {"direct", "group"} and message_type == "text" and is_command
     return {
         "matched": matched,
         "reason": "gscore_command_hit" if matched else "gscore_command_required",
@@ -78,7 +77,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="GScore 适配器运行正常。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_url and config.api_key),
                 "request_timeout_seconds": config.request_timeout_seconds,
                 "max_replies": config.max_replies,
@@ -95,9 +93,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        # 禁用状态在建立 HTTP 客户端之前结束，确保租户关闭插件后不会产生外部连接。
-        return _error_result("GScore 适配器当前未启用。", "disabled")
 
     trusted, context_error = _require_trusted_message(db, request.context)
     if context_error is not None or trusted is None:
@@ -373,7 +368,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> GScoreConfig:
 
     raw = dict(raw_config)
     return GScoreConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_url=str(raw.get("api_url") or "").strip(),
         api_key=str(raw.get("api_key") or "").strip(),
         request_timeout_seconds=_bounded_int(

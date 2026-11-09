@@ -25,7 +25,6 @@ require_mention = false
 fields = ["hash_salt"]
 
 [runtime]
-enabled = true
 match_mode = "fuzzy"
 max_links_per_message = 3
 hash_salt = ""

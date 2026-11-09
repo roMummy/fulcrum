@@ -42,7 +42,6 @@ class DifyInputError(ValueError):
 class DifyConfig:
     """保存租户自己的 Dify 连接与有限运行参数。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     app_mode: str
@@ -92,7 +91,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="Dify 对话插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_base and config.api_key),
                 "app_mode": config.app_mode,
                 "request_timeout_seconds": config.request_timeout_seconds,
@@ -101,8 +99,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _ignored_result("plugin_disabled")
     if not _is_trusted_text_context(request.context):
         return _ignored_result("trusted_text_context_required")
     if not _request_has_supported_trigger(request):
@@ -210,7 +206,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> DifyConfig:
 
     raw = dict(raw_config)
     return DifyConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         app_mode=_resolve_app_mode(raw.get("app_mode")),

@@ -21,7 +21,6 @@ commands = ["修仙帮助", "注册修仙", "我的状态", "闭关", "出关", 
 require_mention = false
 
 [runtime]
-enabled = true
 max_cultivate_hours = 8
 base_rate_per_hour = 100
 unstable_minutes = 15

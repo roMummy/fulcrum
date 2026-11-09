@@ -21,7 +21,6 @@ commands = ["积分转账", "我的积分", "积分排行", "打劫", "保释"]
 require_mention = false
 
 [runtime]
-enabled = true
 ranking_limit = 10
 rob_success_rate = 0.4
 rob_min_percent = 0.2

@@ -46,7 +46,6 @@ TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_.+-]{1,31}|[\u4e00-\u9fff]{2,12}
 class MemberRoastConfig:
     """保存当前租户绑定唯一生效的模型、采样、限流和输出配置。"""
 
-    enabled: bool
     llm_api_base: str
     llm_api_key: str
     llm_model: str
@@ -109,7 +108,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群成员锐评插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "llm_configured": bool(config.llm_api_base and config.llm_model),
                 "commands": [*COMMAND_PREFIXES, *sorted(SELF_COMMANDS)],
             },
@@ -125,8 +123,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("群成员锐评当前未启用。", "disabled")
     if not config.llm_api_base or not config.llm_model:
         return _error_result("请先配置当前租户自己的模型 API 地址和模型名称。", "llm_not_configured")
 
@@ -522,7 +518,6 @@ def _load_config(raw: Mapping[str, Any]) -> MemberRoastConfig:
     """限制模型温度、采样规模、调用频率和输出长度，控制租户成本与提示词体积。"""
 
     return MemberRoastConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         llm_api_base=str(raw.get("llm_api_base") or "").strip().rstrip("/"),
         llm_api_key=str(raw.get("llm_api_key") or "").strip(),
         llm_model=str(raw.get("llm_model") or "").strip(),

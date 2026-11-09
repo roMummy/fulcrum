@@ -22,7 +22,6 @@ commands = ["s", "t", "a", "r", "l", "h"]
 require_mention = false
 
 [runtime]
-enabled = true
 score_multiplier = 1
 ranking_limit = 10
 max_active_tasks = 10

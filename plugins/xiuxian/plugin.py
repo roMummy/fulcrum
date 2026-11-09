@@ -54,7 +54,6 @@ COMMANDS = (
 class XiuxianConfig:
     """保存当前租户机器人绑定唯一生效的修仙规则。"""
 
-    enabled: bool
     rules: CultivationRules
 
 
@@ -76,7 +75,7 @@ def matches_event(context) -> dict[str, object]:
     chat_type = str(getattr(context, "chat_type", "") or "").strip().lower()
     message_type = str(getattr(context, "message_type", "") or "text").strip().lower()
     command, _arguments = _parse_command(str(getattr(context, "content", "") or ""))
-    matched = config.enabled and chat_type == "group" and message_type == "text" and command in COMMANDS
+    matched = chat_type == "group" and message_type == "text" and command in COMMANDS
     return {
         "matched": matched,
         "reason": "xiuxian_command_hit" if matched else "xiuxian_group_command_required",
@@ -94,7 +93,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="文字修仙插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "commands": list(COMMANDS),
                 "point_to_stone_rate": config.rules.point_to_stone_rate,
                 "ranking_limit": config.rules.ranking_limit,
@@ -111,8 +109,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _plugin_error("文字修仙当前未启用。", "disabled")
     trusted, error = _require_trusted_group_message(db, request.context)
     if error is not None or trusted is None:
         return error or _plugin_error("当前修仙群消息上下文无效。", "trusted_context_required")
@@ -220,7 +216,6 @@ def _load_config(raw: Mapping[str, Any]) -> XiuxianConfig:
         "积分换灵石": points_cooldown,
     }
     return XiuxianConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         rules=CultivationRules(
             max_cultivate_hours=_bounded_int(raw.get("max_cultivate_hours"), 8, 1, 24),
             base_rate_per_hour=_bounded_int(raw.get("base_rate_per_hour"), 100, 1, 1_000_000),

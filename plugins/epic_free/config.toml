@@ -17,7 +17,6 @@ consume_policy = "continue"
 timeout_ms = 30000
 
 [runtime]
-enabled = true
 locale = "zh-CN"
 country = "CN"
 include_upcoming = true

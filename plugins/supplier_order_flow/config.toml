@@ -21,7 +21,6 @@ keywords = ["分单ID", "快递单号"]
 require_mention = false
 
 [runtime]
-enabled = true
 supplier_order_admin_url = "http://192.168.2.32:3000/openclaw/supplier-order-admin"
 disabled_conversation_external_ids = []
 help_text = "收发单功能已迁移到独立 supplier-order-admin 系统。MBA 负责企微消息网关、Open API 和 Webhook；发单、回传解析和导入请在收发单系统后台处理。"

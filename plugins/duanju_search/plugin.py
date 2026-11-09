@@ -17,7 +17,6 @@ COMMANDS = ("短剧", "短剧搜索", "搜索短剧", "短剧查询")
 class DuanjuConfig:
     """保存租户自备短剧搜索接口配置。"""
 
-    enabled: bool
     api_url: str
     api_key: str
     result_limit: int
@@ -44,7 +43,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="短剧搜索插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "api_url_configured": bool(config.api_url),
                 "api_key_configured": bool(config.api_key),
                 "result_limit": config.result_limit,
@@ -52,8 +50,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _error_result("短剧搜索插件未启用。", provider_status="plugin_disabled")
     if not config.api_url:
         return _error_result("请先配置当前租户的短剧搜索服务地址。", provider_status="search_not_configured")
 
@@ -211,7 +207,6 @@ def _error_result(message: str, *, provider_status: str) -> PluginExecutionResul
 def _load_config(raw_config: Mapping[str, Any]) -> DuanjuConfig:
     raw = dict(raw_config)
     return DuanjuConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_url=str(raw.get("api_url") or "").strip(),
         api_key=str(raw.get("api_key") or "").strip(),
         result_limit=_bounded_int(raw.get("result_limit"), default=3, minimum=1, maximum=5),

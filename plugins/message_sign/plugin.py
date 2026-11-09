@@ -28,7 +28,6 @@ MAKEUP_COMMAND = "补签"
 class SignConfig:
     """保存当前绑定可调整的签到积分规则。"""
 
-    enabled: bool
     min_point: int
     max_point: int
     streak_cycle: int
@@ -60,7 +59,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群签到插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "commands": [SIGN_COMMAND, MAKEUP_COMMAND],
                 "makeup_cost": config.makeup_cost,
             },
@@ -76,8 +74,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("群签到当前未启用。", "disabled")
     trusted, error = _require_trusted_group_message(db, request.context)
     if error is not None or trusted is None:
         return error or _error_result("当前群聊消息上下文无效。", "trusted_context_required")
@@ -363,7 +359,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> SignConfig:
     min_point = _bounded_int(raw.get("min_point"), default=3, minimum=1, maximum=10_000)
     max_point = _bounded_int(raw.get("max_point"), default=50, minimum=min_point, maximum=100_000)
     return SignConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         min_point=min_point,
         max_point=max_point,
         streak_cycle=_bounded_int(raw.get("streak_cycle"), default=1, minimum=1, maximum=365),

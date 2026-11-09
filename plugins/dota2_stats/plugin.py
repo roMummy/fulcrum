@@ -83,7 +83,6 @@ class Dota2StatsError(ValueError):
 class Dota2Config:
     """保存当前租户绑定唯一生效的查询、限流和群榜配置。"""
 
-    enabled: bool
     api_key: str
     request_timeout_seconds: int
     retry_count: int
@@ -119,7 +118,7 @@ def matches_event(context) -> dict[str, object]:
     chat_type = str(getattr(context, "chat_type", "") or "").strip().lower()
     message_type = str(getattr(context, "message_type", "text") or "text").strip().lower()
     action, _argument = _parse_command(str(getattr(context, "content", "") or ""))
-    matched = config.enabled and chat_type in {"direct", "group"} and message_type == "text" and bool(action)
+    matched = chat_type in {"direct", "group"} and message_type == "text" and bool(action)
     return {
         "matched": matched,
         "reason": "dota2_command_hit" if matched else "dota2_command_required",
@@ -137,7 +136,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="Dota 2 战绩插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "api_key_configured": bool(config.api_key),
                 "summary_match_limit": config.summary_match_limit,
                 "recent_match_limit": config.recent_match_limit,
@@ -155,8 +153,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("Dota 2 战绩插件当前未启用。", "disabled")
     trusted, context_error = _require_trusted_message(db, request.context)
     if context_error is not None or trusted is None:
         return context_error or _error_result("当前消息上下文无效。", "trusted_context_required")
@@ -200,8 +196,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
             message=f"不支持的 Dota 2 群排行动作: {request.action}",
         )
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("Dota 2 战绩插件当前未启用。", "disabled")
     binding, conversation, channel, error = _require_scheduled_group(db, request.context)
     if error is not None or binding is None or conversation is None or channel is None:
         return error or _error_result("Dota 2 群排行缺少可信运行上下文。", "trusted_context_required")
@@ -1282,7 +1276,6 @@ def _load_config(raw: Mapping[str, Any]) -> Dota2Config:
     """读取唯一配置路径，OpenDota 地址固定为官方接口，不接受租户覆盖。"""
 
     return Dota2Config(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_key=str(raw.get("api_key") or "").strip(),
         request_timeout_seconds=_bounded_int(raw.get("request_timeout_seconds"), default=15, minimum=5, maximum=60),
         retry_count=_bounded_int(raw.get("retry_count"), default=2, minimum=0, maximum=2),

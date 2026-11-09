@@ -27,7 +27,6 @@ NON_USER_PLUGIN_TYPES = {"system", "scheduled", "timer", "cron"}
 class RobotMenuConfig:
     """保存菜单插件唯一生效的显示配置。"""
 
-    enabled: bool
     max_items: int
 
 
@@ -63,7 +62,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             ok=True,
             status="running",
             message="功能菜单插件运行正常。",
-            output={"enabled": config.enabled, "commands": list(COMMANDS), "max_items": config.max_items},
+            output={"commands": list(COMMANDS), "max_items": config.max_items},
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
@@ -76,8 +75,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("功能菜单当前未启用。", "disabled")
     trusted, context_error = _require_trusted_group_message(db, request.context)
     if context_error is not None or trusted is None:
         return context_error or _error_result("当前群聊消息上下文无效。", "trusted_context_required")
@@ -165,8 +162,6 @@ def _plugin_is_visible(
     binding_config = _parse_json_object(binding.config_json)
     scope_config = _parse_json_object(scope.config_override_json if scope is not None else None)
     effective_config = {**dict(discovered.runtime_config), **binding_config, **scope_config}
-    if "enabled" in effective_config and not _as_bool(effective_config.get("enabled"), default=True):
-        return False
     external_id = str(trusted.conversation.external_id or "").strip()
     if not _binding_allows_conversation(binding_config, external_id):
         return False
@@ -356,7 +351,6 @@ def _parse_json_object(value: str | None) -> dict[str, Any]:
 def _load_config(raw_config: Mapping[str, Any]) -> RobotMenuConfig:
     raw = dict(raw_config)
     return RobotMenuConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         max_items=_bounded_int(raw.get("max_items"), default=30, minimum=1, maximum=50),
     )
 

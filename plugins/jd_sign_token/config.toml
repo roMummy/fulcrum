@@ -26,7 +26,6 @@ require_mention = false
 fields = ["client_id", "client_secret"]
 
 [runtime]
-enabled = true
 ql_host = ""
 client_id = ""
 client_secret = ""

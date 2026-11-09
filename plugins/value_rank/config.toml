@@ -21,7 +21,6 @@ commands = ["我的身价", "身价排行", "社交热度榜", "搭子榜", "社
 require_mention = false
 
 [runtime]
-enabled = true
 
 # 只有租户明确选择的群会话才参与后台快照与周报任务。
 value_rank_conversation_ids = []

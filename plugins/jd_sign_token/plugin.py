@@ -31,7 +31,6 @@ ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 class QlConfig:
     """租户自己的青龙开放接口配置。"""
 
-    enabled: bool
     ql_host: str
     client_id: str
     client_secret: str
@@ -58,7 +57,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="京东签到令牌插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "ql_host_configured": bool(config.ql_host),
                 "client_id_configured": bool(config.client_id),
                 "client_secret_configured": bool(config.client_secret),
@@ -76,8 +74,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("京东签到令牌插件当前未启用。", "disabled")
     if not config.ql_host or not config.client_id or not config.client_secret:
         return _error_result("请先配置当前租户的青龙地址和开放接口凭证。", "ql_not_configured")
     if not ENV_NAME_PATTERN.fullmatch(config.env_name):
@@ -343,7 +339,6 @@ def _require_direct_message_context(
 def _load_config(raw_config: Mapping[str, Any]) -> QlConfig:
     raw = dict(raw_config)
     return QlConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         ql_host=str(raw.get("ql_host") or "").strip().rstrip("/"),
         client_id=str(raw.get("client_id") or "").strip(),
         client_secret=str(raw.get("client_secret") or "").strip(),

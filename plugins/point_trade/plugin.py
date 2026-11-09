@@ -44,7 +44,6 @@ PRISON_HOURS = 24
 class PointTradeConfig:
     """保存当前绑定的打劫规则和积分门槛。"""
 
-    enabled: bool
     ranking_limit: int
     rob_success_rate: float
     rob_min_percent: float
@@ -86,7 +85,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="积分交易插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "commands": list(COMMANDS),
                 "rob_success_rate": config.rob_success_rate,
                 "rob_cooldown": config.rob_cooldown,
@@ -103,8 +101,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("积分交易当前未启用。", "disabled")
     trusted, error = _require_trusted_group_message(db, request.context)
     if error is not None or trusted is None:
         return error or _error_result("当前群聊消息上下文无效。", "trusted_context_required")
@@ -486,7 +482,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> PointTradeConfig:
     min_percent = _bounded_float(raw.get("rob_min_percent"), default=0.2, minimum=0.01, maximum=0.8)
     max_percent = _bounded_float(raw.get("rob_max_percent"), default=0.4, minimum=min_percent, maximum=0.9)
     return PointTradeConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         ranking_limit=_bounded_int(raw.get("ranking_limit"), default=10, minimum=3, maximum=30),
         rob_success_rate=_bounded_float(raw.get("rob_success_rate"), default=0.4, minimum=0.0, maximum=1.0),
         rob_min_percent=min_percent,

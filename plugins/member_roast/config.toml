@@ -24,7 +24,6 @@ require_mention = false
 fields = ["llm_api_key"]
 
 [runtime]
-enabled = true
 
 # 模型服务由租户维护和承担调用成本，平台不提供共享模型或共享密钥。
 llm_api_base = ""

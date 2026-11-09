@@ -26,7 +26,6 @@ require_mention = false
 fields = ["cpa_management_key", "sub2api_admin_api_key"]
 
 [runtime]
-enabled = true
 admin_user_ids = []
 
 # CPA 只支持已经验证的 v0 管理契约，地址填写服务根地址，不附加版本路径。

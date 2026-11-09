@@ -304,7 +304,7 @@ def test_ai_gen_image_stops_before_http_when_disabled_unconfigured_or_untrusted(
     image_plugin_fixture,
     monkeypatch,
 ) -> None:
-    """禁用、缺少租户模型配置或可信身份不一致时都不能访问图片服务。"""
+    """缺少租户模型配置或可信身份不一致时都不能访问图片服务。"""
 
     factory, identity = image_plugin_fixture
     loaded = load_directory_plugin("ai_gen_image", force=True)
@@ -330,18 +330,6 @@ def test_ai_gen_image_stops_before_http_when_disabled_unconfigured_or_untrusted(
         message_type="text",
     )
     with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
-        disabled = module.execute_message_action(
-            db,
-            _request(
-                identity,
-                config={
-                    "enabled": False,
-                    "api_base": "https://images.example.test/v1",
-                    "api_key": "key",
-                    "model": "model",
-                },
-            ),
-        )
         unconfigured = module.execute_message_action(
             db,
             _request(identity, config={"enabled": True, "api_base": "", "api_key": "", "model": ""}),
@@ -356,7 +344,6 @@ def test_ai_gen_image_stops_before_http_when_disabled_unconfigured_or_untrusted(
             ),
         )
 
-    assert disabled.output["provider_status"] == "disabled"
     assert unconfigured.output["provider_status"] == "not_configured"
     assert untrusted.output["provider_status"] == "trusted_context_required"
 

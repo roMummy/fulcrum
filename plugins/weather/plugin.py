@@ -29,7 +29,6 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; MultiBotSaaS-Weather/2.0)"
 class WeatherConfig:
     """保存租户天气服务配置，敏感密钥只在当前执行请求内存在。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     default_city: str
@@ -70,7 +69,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="天气插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "api_base_configured": bool(config.api_base),
                 "api_key_configured": bool(config.api_key),
                 "default_city": config.default_city,
@@ -596,8 +594,6 @@ def _build_text_outbound_payload(conversation: Conversation, content: str) -> di
 
 
 def _validate_runtime_config(config: WeatherConfig) -> PluginExecutionResult | None:
-    if not config.enabled:
-        return _error_result("天气插件未启用。", provider_status="plugin_disabled")
     if not config.api_base or not config.api_key:
         return _error_result("请先配置当前租户的天气 API 地址和密钥。", provider_status="weather_not_configured")
     return None
@@ -618,7 +614,6 @@ def _error_result(message: str, *, provider_status: str) -> PluginExecutionResul
 def _load_config(raw_config: Mapping[str, Any]) -> WeatherConfig:
     raw = dict(raw_config)
     return WeatherConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         default_city=str(raw.get("default_city") or "北京").strip() or "北京",

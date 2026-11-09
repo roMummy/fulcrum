@@ -25,7 +25,6 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
-enabled = true
 
 # Dify 由租户自行配置和承担成本。地址属于普通配置，API Key 进入绑定密文。
 api_base = ""

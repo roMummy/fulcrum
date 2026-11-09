@@ -18,7 +18,6 @@ timeout_ms = 120000
 
 [runtime]
 # 目标群必须由租户在后台明确选择，空列表不会扫描或推送全部群聊。
-enabled = true
 daily_ranking_conversation_ids = []
 prepare_time = "04:30"
 push_time = "09:30"

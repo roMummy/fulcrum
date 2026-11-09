@@ -21,6 +21,5 @@ commands = []
 require_mention = false
 
 [runtime]
-enabled = true
 allow_direct_messages = true
 max_replies_per_rule = 8

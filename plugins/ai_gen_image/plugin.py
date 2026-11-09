@@ -42,7 +42,6 @@ SUPPORTED_IMAGE_SIGNATURES = (
 class ImageGenerationConfig:
     """保存当前租户绑定唯一生效的图片模型配置。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     model: str
@@ -77,7 +76,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "")
     config = _load_config(getattr(context, "binding_config", {}) or {})
     is_command, _prompt = _extract_prompt(content)
-    matched = config.enabled and chat_type in {"direct", "group"} and message_type == "text" and is_command
+    matched = chat_type in {"direct", "group"} and message_type == "text" and is_command
     return {
         "matched": matched,
         "reason": "image_command_hit" if matched else "image_command_required",
@@ -95,7 +94,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="AI 绘图插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_base and config.api_key and config.model),
                 "model": config.model,
                 "request_timeout_seconds": config.request_timeout_seconds,
@@ -113,9 +111,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        # 禁用状态必须在 HTTP 客户端创建前结束，避免关闭插件后继续产生模型成本。
-        return _error_result("AI 绘图当前未启用。", "disabled")
 
     trusted, context_error = _require_trusted_message(db, request.context)
     if context_error is not None or trusted is None:
@@ -448,7 +443,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> ImageGenerationConfig:
 
     raw = dict(raw_config)
     return ImageGenerationConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         model=_single_line(raw.get("model"), limit=160),

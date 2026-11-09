@@ -56,7 +56,6 @@ STOP_TOPICS = {
 class MemberContextConfig:
     """保存一个租户插件绑定唯一生效的成员画像参数。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     request_timeout_seconds: int
@@ -99,7 +98,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群成员画像插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_base and config.api_key),
                 "schedule_mode": "scheduled_only",
             },
@@ -109,7 +107,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             ok=True,
             status="ready",
             message="群成员画像将按已选择群聊的日、周、月计划自动刷新。",
-            output={"enabled": config.enabled, "schedule_mode": "scheduled_only"},
+            output={"schedule_mode": "scheduled_only"},
         )
     return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
 
@@ -124,13 +122,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
             message=f"不支持的群成员画像动作: {request.action}",
         )
     config = _load_config(request.config)
-    if not config.enabled:
-        return _result(
-            ok=True,
-            status="skipped",
-            message="群成员画像插件当前未启用。",
-            provider_status="disabled",
-        )
 
     target, error = _require_trusted_group_target(db, request)
     if error is not None or target is None:
@@ -651,7 +642,6 @@ def _load_config(raw: Mapping[str, Any]) -> MemberContextConfig:
     """限制采样规模和外部调用时限，防止单个租户任务无限扩大资源消耗。"""
 
     return MemberContextConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         request_timeout_seconds=_bounded_int(

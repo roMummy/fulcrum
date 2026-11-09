@@ -20,5 +20,4 @@ commands = ["客户运营", "customer_operations"]
 require_mention = false
 
 [runtime]
-enabled = true
 public_api = "/api/workwechat/customer-operations"

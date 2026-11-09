@@ -37,7 +37,6 @@ class LuckyPotStateError(ValueError):
 class LuckyPotConfig:
     """当前绑定的奖池规则。"""
 
-    enabled: bool
     entry_fee: int
     min_players: int
     max_players: int
@@ -79,7 +78,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="幸运池插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "entry_fee": config.entry_fee,
                 "min_players": config.min_players,
                 "max_players": config.max_players,
@@ -97,8 +95,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("幸运池插件当前未启用。", "disabled")
     trusted, error = _require_group_message_context(db, request.context)
     if error is not None or trusted is None:
         return error or _error_result("大奖池缺少可信群聊消息。", "trusted_context_required")
@@ -772,7 +768,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> LuckyPotConfig:
     max_players = _bounded_int(raw.get("max_players"), default=10, minimum=2, maximum=MAX_PLAYERS_LIMIT)
     min_players = _bounded_int(raw.get("min_players"), default=2, minimum=2, maximum=max_players)
     return LuckyPotConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         entry_fee=_bounded_int(raw.get("entry_fee"), default=100, minimum=1, maximum=1_000_000),
         min_players=min_players,
         max_players=max_players,

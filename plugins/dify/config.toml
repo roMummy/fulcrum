@@ -25,7 +25,6 @@ fields = ["api_key"]
 
 [runtime]
 # Dify 应用成本由租户承担，平台不提供共享服务地址或密钥。
-enabled = true
 api_base = ""
 api_key = ""
 app_mode = "workflow"

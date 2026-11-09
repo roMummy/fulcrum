@@ -46,7 +46,6 @@ class GameTaskStateError(ValueError):
 class GameTaskConfig:
     """当前绑定的问答规则和随机发题计划。"""
 
-    enabled: bool
     score_multiplier: int
     ranking_limit: int
     max_active_tasks: int
@@ -74,7 +73,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="游戏任务插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "question_count": len(QUESTION_BANK),
                 "score_multiplier": config.score_multiplier,
                 "random_task_enabled": config.random_task_enabled,
@@ -92,8 +90,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("游戏任务插件当前未启用。", "disabled")
 
     context, conversation, message, error = _require_group_message_context(db, request.context)
     if error is not None or context is None or conversation is None or message is None:
@@ -156,7 +152,7 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     context, binding, conversation, channel, error = _require_scheduled_group_context(db, request.context)
     if error is not None or context is None or binding is None or conversation is None or channel is None:
         return error or _error_result("随机发题缺少可信群聊上下文。", "trusted_context_required")
-    if not config.enabled or not config.random_task_enabled:
+    if not config.random_task_enabled:
         return _scheduled_skip_result("当前绑定未开启随机发题。", "disabled")
     if int(conversation.id) not in config.random_task_conversation_ids:
         return _error_result("当前群不在随机发题范围内。", "conversation_not_configured")
@@ -620,7 +616,6 @@ def _require_scheduled_group_context(
 def _load_config(raw_config: Mapping[str, Any]) -> GameTaskConfig:
     raw = dict(raw_config)
     return GameTaskConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         score_multiplier=_bounded_int(raw.get("score_multiplier"), default=1, minimum=1, maximum=10),
         ranking_limit=_bounded_int(raw.get("ranking_limit"), default=10, minimum=3, maximum=20),
         max_active_tasks=_bounded_int(raw.get("max_active_tasks"), default=10, minimum=1, maximum=MAX_STORED_ACTIVE_TASKS),

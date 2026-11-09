@@ -32,7 +32,6 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
-enabled = true
 api_base = ""
 api_key = ""
 default_city = "北京"

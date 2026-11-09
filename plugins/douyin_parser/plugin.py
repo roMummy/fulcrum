@@ -29,7 +29,6 @@ DOWNLOAD_MODES = {"card", "file"}
 class DouyinConfig:
     """抖音解析配置:DTK 服务地址、密钥和发送模式。"""
 
-    enabled: bool
     dtk_api_url: str
     dtk_api_key: str
     dtk_wait_seconds: int
@@ -65,15 +64,12 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="抖音解析插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "dtk_configured": bool(config.dtk_api_url and config.dtk_api_key),
                 "download_mode": config.download_mode,
             },
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _error("抖音解析插件未启用。", "plugin_disabled")
 
     share_url = _extract_douyin_url(_resolve_content(request.payload))
     if not share_url:
@@ -150,7 +146,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> DouyinConfig:
     raw = dict(raw_config)
     mode = str(raw.get("download_mode") or "card").strip().lower()
     return DouyinConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         dtk_api_url=str(raw.get("dtk_api_url") or "").strip().rstrip("/"),
         dtk_api_key=str(raw.get("dtk_api_key") or "").strip(),
         dtk_wait_seconds=_bounded_int(raw.get("dtk_wait_seconds"), default=15, minimum=3, maximum=30),

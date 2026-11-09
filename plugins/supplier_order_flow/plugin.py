@@ -16,8 +16,6 @@ def matches_event(context: Any) -> dict[str, Any]:
     supplier-order-admin 系统里完成。这里保留 matcher 的目的，是让 MBA 仍能在插件列表
     里展示“供应商订单收发”，并允许运营按群关闭该入口，避免误触发或误提示。
     """
-    if not _plugin_enabled(context):
-        return {"matched": False, "reason": "supplier_order_flow_disabled"}
     if _conversation_disabled(context):
         return {"matched": False, "reason": "supplier_order_flow_group_disabled"}
     if getattr(context, "channel_type", "") != "workwechat":
@@ -85,11 +83,6 @@ def execute_action(request: Any) -> dict[str, Any]:
         "message": "该插件只负责识别和提示；请在独立收发单系统后台执行发单、回传解析和导入。",
         "output": {"bridge_only": True},
     }
-
-
-def _plugin_enabled(context: Any) -> bool:
-    config = _binding_config(context)
-    return _as_bool(config.get("enabled"), default=True)
 
 
 def _conversation_disabled(context: Any) -> bool:

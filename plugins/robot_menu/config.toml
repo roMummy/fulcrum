@@ -21,5 +21,4 @@ commands = ["菜单", "功能菜单"]
 require_mention = false
 
 [runtime]
-enabled = true
 max_items = 30

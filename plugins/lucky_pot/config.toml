@@ -21,7 +21,6 @@ commands = ["大奖池"]
 require_mention = false
 
 [runtime]
-enabled = true
 entry_fee = 100
 min_players = 2
 max_players = 10

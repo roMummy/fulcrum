@@ -23,7 +23,6 @@ require_mention = false
 fields = ["llm_api_key"]
 
 [runtime]
-enabled = true
 sources = ["nbc", "cnn", "abc", "fox", "bbc"]
 per_source_limit = 5
 fetch_timeout_seconds = 15

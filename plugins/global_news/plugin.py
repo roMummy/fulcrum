@@ -37,7 +37,6 @@ NEWS_IMAGE_ROOT = PROJECT_ROOT / "data" / "temp" / "md2image"
 class GlobalNewsConfig:
     """保存新闻抓取和租户自备文本生成服务配置。"""
 
-    enabled: bool
     sources: tuple[str, ...]
     per_source_limit: int
     fetch_timeout_seconds: int
@@ -92,7 +91,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="全球新闻插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "sources": list(config.sources),
                 "per_source_limit": config.per_source_limit,
                 "llm_configured": bool(config.llm_api_base and config.llm_model),
@@ -101,13 +99,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return PluginExecutionResult(
-            ok=True,
-            status="ignored",
-            message="全球新闻插件未启用。",
-            output={"provider_status": "plugin_disabled", "replies": []},
-        )
     if not config.llm_api_base or not config.llm_model:
         return _error_result(
             "请先配置当前租户自己的模型 API 地址和模型名称。",
@@ -325,7 +316,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> GlobalNewsConfig:
     if not sources:
         sources = list(DEFAULT_SOURCE_URLS)
     return GlobalNewsConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         sources=tuple(sources),
         per_source_limit=_bounded_int(raw.get("per_source_limit"), default=5, minimum=1, maximum=10),
         fetch_timeout_seconds=_bounded_int(

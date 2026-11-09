@@ -54,7 +54,6 @@ COMMANDS = (
 class ValueRankConfig:
     """保存一个租户绑定唯一生效的统计口径、调度和权限参数。"""
 
-    enabled: bool
     message_window_days: int
     active_window_days: int
     social_window_days: int
@@ -110,7 +109,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群成员身价插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "commands": list(COMMANDS),
                 "message_window_days": config.message_window_days,
                 "social_window_days": config.social_window_days,
@@ -127,8 +125,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("群成员身价当前未启用。", "disabled")
     trusted, error = _require_message_group(db, request.context)
     if error is not None or trusted is None or trusted.message is None or trusted.sender is None:
         return error or _error_result("当前群聊消息上下文无效。", "trusted_context_required")
@@ -190,8 +186,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     if request.action not in SCHEDULE_ACTIONS:
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的身价调度动作: {request.action}")
     config = _load_config(request.config)
-    if not config.enabled:
-        return _error_result("群成员身价当前未启用。", "disabled")
     trusted, error = _require_scheduled_group(db, request.context)
     if error is not None or trusted is None:
         return error or _error_result("身价任务缺少可信目标群。", "trusted_context_required")
@@ -855,7 +849,6 @@ def _load_config(raw: Mapping[str, Any]) -> ValueRankConfig:
         if str(item).strip()
     ) if isinstance(raw.get("administrator_user_ids"), (list, tuple)) else frozenset()
     return ValueRankConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         message_window_days=_bounded_int(raw.get("message_window_days"), 7, 1, 90),
         active_window_days=_bounded_int(raw.get("active_window_days"), 30, 1, 365),
         social_window_days=_bounded_int(raw.get("social_window_days"), 7, 1, 90),

@@ -143,6 +143,7 @@ def test_xiuxian_manifest_is_channel_neutral() -> None:
         "openclaw",
         "simulator",
         "telegram",
+        "wechat_webridge",
         "workwechat",
     }
     assert "注册修仙" in discovered.matcher.commands

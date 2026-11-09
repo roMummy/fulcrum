@@ -29,7 +29,6 @@ commands = ["签到", "补签"]
 require_mention = false
 
 [runtime]
-enabled = true
 min_point = 3
 max_point = 50
 streak_cycle = 1

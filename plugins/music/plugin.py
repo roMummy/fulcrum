@@ -18,7 +18,6 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; MultiBotSaaS-Music/2.0)"
 class MusicConfig:
     """保存租户自备音乐聚合服务配置。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     quality: str
@@ -46,7 +45,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="音乐点播插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "api_base_configured": bool(config.api_base),
                 "api_key_configured": bool(config.api_key),
                 "quality": config.quality,
@@ -54,8 +52,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _error_result("音乐点播插件未启用。", provider_status="plugin_disabled")
     if not config.api_base:
         return _error_result("请先配置当前租户的音乐服务地址。", provider_status="music_not_configured")
 
@@ -262,7 +258,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> MusicConfig:
     if quality not in {"standard", "higher", "exhigh", "lossless", "hires"}:
         quality = "exhigh"
     return MusicConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         quality=quality,

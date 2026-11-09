@@ -45,7 +45,6 @@ class QuotaServiceError(RuntimeError):
 class QuotaConfig:
     """保存当前租户绑定唯一生效的额度服务、管理员和风控配置。"""
 
-    enabled: bool
     admin_user_ids: tuple[str, ...]
     cpa_base_url: str
     cpa_management_key: str
@@ -144,8 +143,7 @@ def matches_event(context) -> dict[str, object]:
     raw_config = getattr(context, "binding_config", {}) or {}
     command = _parse_command(content)
     matched = (
-        bool(raw_config.get("enabled", True))
-        and chat_type in {"direct", "group"}
+        chat_type in {"direct", "group"}
         and message_type == "text"
         and command in COMMANDS
     )
@@ -173,7 +171,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running" if contract_supported else "error",
             message="Codex 额度管理插件运行正常。" if contract_supported else "额度服务接口版本不受支持。",
             output={
-                "enabled": config.enabled,
                 "admin_count": len(config.admin_user_ids),
                 "cpa_configured": bool(config.cpa_base_url and config.cpa_management_key),
                 "sub2api_configured": bool(
@@ -198,8 +195,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         config = _load_config(request.config)
     except (TypeError, ValueError) as exc:
         return _error_result(f"插件配置无效：{exc}", "config_invalid")
-    if not config.enabled:
-        return _error_result("Codex 额度管理当前未启用。", "disabled")
 
     trusted, context_error = _require_trusted_message(db, request.context)
     if context_error is not None or trusted is None:
@@ -1041,7 +1036,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> QuotaConfig:
     if not 0 <= daily_sleep_hours < 24:
         raise ValueError("daily_sleep_hours 必须大于等于 0 且小于 24")
     return QuotaConfig(
-        enabled=bool(raw_config.get("enabled", True)),
         admin_user_ids=admin_user_ids,
         cpa_base_url=str(raw_config.get("cpa_base_url") or "").strip(),
         cpa_management_key=str(raw_config.get("cpa_management_key") or "").strip(),

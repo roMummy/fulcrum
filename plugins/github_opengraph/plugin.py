@@ -28,7 +28,6 @@ MAX_PREVIEW_RESPONSE_BYTES = 8 * 1024 * 1024
 class GithubOpenGraphConfig:
     """保存当前租户绑定唯一生效的链接预览配置。"""
 
-    enabled: bool
     match_mode: str
     max_links_per_message: int
     hash_salt: str
@@ -42,7 +41,7 @@ def matches_event(context) -> dict[str, object]:
     message_type = str(getattr(context, "message_type", "") or "text").strip().lower()
     content = str(getattr(context, "content", "") or "")
     config = _load_config(getattr(context, "binding_config", {}) or {})
-    links = _extract_github_links(content, config.match_mode, maximum=1) if config.enabled else ()
+    links = _extract_github_links(content, config.match_mode, maximum=1)
     matched = chat_type in {"direct", "group"} and message_type == "text" and bool(links)
     return {
         "matched": matched,
@@ -65,7 +64,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="GitHub 链接预览插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "match_mode": config.match_mode,
                 "max_links_per_message": config.max_links_per_message,
                 "hash_salt_configured": bool(config.hash_salt),
@@ -73,8 +71,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    if not config.enabled:
-        return _error_result("GitHub 链接预览当前未启用。", "disabled")
 
     content = _resolve_content(request.payload)
     links = _extract_github_links(content, config.match_mode, maximum=config.max_links_per_message)
@@ -219,7 +215,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> GithubOpenGraphConfig:
     if match_mode not in {"fuzzy", "exact"}:
         match_mode = "fuzzy"
     return GithubOpenGraphConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         match_mode=match_mode,
         max_links_per_message=_bounded_int(raw.get("max_links_per_message"), default=3, minimum=1, maximum=5),
         hash_salt=str(raw.get("hash_salt") or ""),

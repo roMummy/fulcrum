@@ -38,7 +38,6 @@ MAX_VIDEO_BYTES = 30 * 1024 * 1024
 class FunCommandConfig:
     """保存当前机器人绑定唯一生效的趣味命令运行参数。"""
 
-    enabled: bool
     allow_direct_messages: bool
     max_replies_per_rule: int
 
@@ -62,8 +61,7 @@ def matches_event(context) -> dict[str, object]:
     message_type = str(getattr(context, "message_type", "") or "").strip().lower()
     content = str(getattr(context, "content", "") or "").strip()
     matched = (
-        config.enabled
-        and message_type == "text"
+        message_type == "text"
         and bool(content)
         and chat_type in {"direct", "group"}
         and (chat_type != "direct" or config.allow_direct_messages)
@@ -85,7 +83,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="趣味命令插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "allow_direct_messages": config.allow_direct_messages,
                 "max_replies_per_rule": config.max_replies_per_rule,
             },
@@ -101,8 +98,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = _load_config(request.config)
-    if not config.enabled:
-        return _ignored("趣味命令当前未启用。", "disabled")
 
     trusted, error = _require_message_context(db, request.context)
     if error is not None or trusted is None:
@@ -384,7 +379,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> FunCommandConfig:
 
     raw = dict(raw_config)
     return FunCommandConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         allow_direct_messages=_as_bool(raw.get("allow_direct_messages"), default=True),
         max_replies_per_rule=_bounded_int(
             raw.get("max_replies_per_rule"),

@@ -42,7 +42,6 @@ SCHEDULE_ACTIONS = {"daily_summary_prepare", "daily_summary"}
 class SummaryConfig:
     """保存租户群总结配置，Dify 地址和密钥均由当前绑定提供。"""
 
-    enabled: bool
     api_base: str
     api_key: str
     min_messages: int
@@ -91,7 +90,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群聊消息总结插件已就绪。",
             output={
-                "enabled": config.enabled,
                 "provider_configured": bool(config.api_base and config.api_key),
                 "commands": list(DEFAULT_COMMANDS),
                 "min_messages": config.min_messages,
@@ -118,8 +116,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
 
     config = _load_config(request.config)
-    if not config.enabled:
-        return _ignored_result("plugin_disabled", "群聊消息总结插件未启用。")
     context = request.context
     if not _is_trusted_group_text(context):
         return _ignored_result("group_text_only", "群聊消息总结只支持群聊文本消息。")
@@ -673,7 +669,6 @@ def _load_config(raw_config: Mapping[str, Any]) -> SummaryConfig:
         maximum=2000,
     )
     return SummaryConfig(
-        enabled=_as_bool(raw.get("enabled"), default=True),
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(),
         min_messages=min_messages,
