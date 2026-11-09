@@ -25,7 +25,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "").strip()
     config = load_config(getattr(context, "binding_config", {}) or {})
     command = content.split(maxsplit=1)[0].lstrip("/#") if content else ""
-    matched = bool(config.enabled and command in config.commands)
+    matched = command in config.commands
     return {"matched": matched, "reason": "xiuren_image_command" if matched else "xiuren_image_command_required", "debug": {"command": command}}
 
 
@@ -38,7 +38,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             ok=True,
             status="running",
             message="秀人图片插件运行正常。",
-            output={"enabled": config.enabled, "commands": list(config.commands), "cache_size": config.cache_size, "refresh_enabled": config.refresh_enabled},
+            output={"commands": list(config.commands), "cache_size": config.cache_size, "refresh_enabled": config.refresh_enabled},
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
@@ -51,8 +51,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = load_config(request.config)
-    if not config.enabled:
-        return _error_result("秀人图片当前未启用。", "disabled")
     context = request.context
     error = _validate_context(context)
     if error is not None:
@@ -104,7 +102,7 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     if context is None:
         return _error_result("缓存刷新缺少可信插件上下文。", "trusted_context_required")
     config = load_config(request.config)
-    if not config.enabled or not config.refresh_enabled:
+    if not config.refresh_enabled:
         return _error_result("秀人图片刷新未启用。", "disabled")
     try:
         store = PluginStateStore(db, context)

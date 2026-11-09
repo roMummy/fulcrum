@@ -23,7 +23,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "").strip()
     config = load_config(getattr(context, "binding_config", {}) or {})
     command = content.split(maxsplit=1)[0].lstrip("/#") if content else ""
-    matched = bool(config.enabled and command in config.commands)
+    matched = command in config.commands
     return {
         "matched": matched,
         "reason": "beautyleg_command" if matched else "beautyleg_command_required",
@@ -41,7 +41,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="美腿图片插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "commands": list(config.commands),
                 "resource_dir": config.resource_dir,
                 "points_cost": config.points_cost,
@@ -59,8 +58,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = load_config(request.config)
-    if not config.enabled:
-        return _error_result("美腿图片当前未启用。", "disabled")
     context = request.context
     error = _validate_context(context)
     if error is not None:

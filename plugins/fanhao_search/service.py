@@ -23,7 +23,6 @@ VIDEO_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
 class FanhaoConfig:
     """保存当前租户绑定的番号查询配置。"""
 
-    enabled: bool
     commands: tuple[str, ...]
     image_search_enabled: bool
     image_search_commands: tuple[str, ...]
@@ -79,7 +78,6 @@ def load_config(raw_config: Mapping[str, Any]) -> FanhaoConfig:
                 urls.append(normalized)
     avscan = _normalize_base_url(raw.get("avscan_base_url"), DEFAULT_AVSCAN_URL)
     return FanhaoConfig(
-        enabled=bool(raw.get("enabled", False)),
         commands=_commands(raw.get("commands"), DEFAULT_COMMANDS),
         image_search_enabled=bool(raw.get("image_search_enabled", True)),
         image_search_commands=_commands(raw.get("image_search_commands"), DEFAULT_IMAGE_COMMANDS),

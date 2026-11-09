@@ -26,7 +26,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
 
     config = load_config(request.config)
     if request.action == "reload":
-        return PluginExecutionResult(ok=True, status="running", message="涩图 PDF 推送插件运行正常。", output={"enabled": config.enabled, "target_count": len(config.target_conversation_ids), "source_count": len(config.source_urls)})
+        return PluginExecutionResult(ok=True, status="running", message="涩图 PDF 推送插件运行正常。", output={"target_count": len(config.target_conversation_ids), "source_count": len(config.source_urls)})
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
     return _error_result("涩图 PDF 推送只能通过统一计划任务执行。", "scheduled_only")
@@ -38,8 +38,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     if request.action != "daily_pdf_push":
         return _error_result(f"不支持的涩图 PDF 动作: {request.action}", "unsupported")
     config = load_config(request.config)
-    if not config.enabled:
-        return _error_result("涩图 PDF 推送当前未启用。", "disabled")
     context = request.context
     if context is None or not context.conversation_id:
         return _error_result("PDF 推送缺少目标会话上下文。", "trusted_context_required")

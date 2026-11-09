@@ -641,7 +641,7 @@ def _build_plugin_schedule_specs(
     if plugin_code == "xiuren_image":
         # 图片缓存刷新只按绑定执行，不携带外部地址或文件内容；任务去重键由
         # 绑定、动作和时间桶组成，服务重启或多 worker 并发时不会重复创建刷新任务。
-        if not _coerce_bool(config.get("enabled"), False) or not _coerce_bool(config.get("refresh_enabled"), False):
+        if not _coerce_bool(config.get("refresh_enabled"), False):
             return ()
         if not isinstance(config.get("source_urls"), (list, tuple)) or not config.get("source_urls"):
             return ()
@@ -661,8 +661,6 @@ def _build_plugin_schedule_specs(
         # 涩图 PDF 推送只对租户在绑定配置中明确选择的会话创建任务。
         # 任务载荷不保存站点地址、文件内容或其他外部输入，执行时由绑定配置和
         # 当前租户上下文重建，避免跨租户传递可伪造的目标信息。
-        if not _coerce_bool(config.get("enabled"), False):
-            return ()
         conversation_ids = _normalize_positive_ids(config.get("target_conversation_ids"))
         if not conversation_ids:
             return ()

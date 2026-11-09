@@ -17,7 +17,6 @@ DEFAULT_COMMANDS = ("猛男", "肌肉", "帅哥")
 class VideoManConfig:
     """保存当前租户绑定的猛男视频服务配置。"""
 
-    enabled: bool
     commands: tuple[str, ...]
     api_url: str
     request_timeout_seconds: int
@@ -45,7 +44,6 @@ def load_config(raw_config: Mapping[str, Any]) -> VideoManConfig:
     if not api_url.startswith(("http://", "https://")):
         api_url = DEFAULT_API_URL
     return VideoManConfig(
-        enabled=bool(raw.get("enabled", False)),
         commands=_commands(raw.get("commands")),
         api_url=api_url,
         request_timeout_seconds=_bounded_int(raw.get("request_timeout_seconds"), default=20, minimum=1, maximum=300),

@@ -18,7 +18,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "").strip()
     config = load_config(getattr(context, "binding_config", {}) or {})
     command = content.split(maxsplit=1)[0].lstrip("/#") if content else ""
-    matched = bool(config.enabled and command in config.commands)
+    matched = command in config.commands
     return {
         "matched": matched,
         "reason": "video_man_command" if matched else "video_man_command_required",
@@ -36,7 +36,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="猛男视频插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "commands": list(config.commands),
                 "api_url_configured": bool(config.api_url),
                 "max_video_seconds": config.max_video_seconds,
@@ -54,8 +53,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = load_config(request.config)
-    if not config.enabled:
-        return _error_result("猛男视频当前未启用。", "disabled")
     context = request.context
     error = _validate_context(context)
     if error is not None:

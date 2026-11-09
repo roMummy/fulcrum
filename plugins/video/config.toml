@@ -20,7 +20,6 @@ commands = ["黑丝视频", "黑丝", "来个黑丝", "搞个黑丝"]
 require_mention = false
 
 [runtime]
-enabled = false
 commands = ["黑丝视频", "黑丝", "来个黑丝", "搞个黑丝"]
 video_url = "http://api.yujn.cn/api/heisis.php?type=video"
 request_timeout_seconds = 20

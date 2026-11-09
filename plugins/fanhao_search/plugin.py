@@ -25,7 +25,7 @@ def matches_event(context) -> dict[str, object]:
     content = str(getattr(context, "content", "") or "").strip()
     config = load_config(getattr(context, "binding_config", {}) or {})
     command = content.split(maxsplit=1)[0].lstrip("/#") if content else ""
-    matched = bool(config.enabled and (command in config.commands or (config.image_search_enabled and command in config.image_search_commands)))
+    matched = command in config.commands or (config.image_search_enabled and command in config.image_search_commands)
     return {
         "matched": matched,
         "reason": "fanhao_command" if matched else "fanhao_command_required",
@@ -43,7 +43,6 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="番号查询插件运行正常。",
             output={
-                "enabled": config.enabled,
                 "commands": list(config.commands),
                 "image_search_enabled": config.image_search_enabled,
                 "javbus_site_count": len(config.javbus_urls),
@@ -61,8 +60,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     if request.action != "execute":
         return execute_action(request)
     config = load_config(request.config)
-    if not config.enabled:
-        return _error_result("番号查询当前未启用。", "disabled")
     context = request.context
     error = _validate_context(context)
     if error is not None:

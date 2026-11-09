@@ -20,7 +20,6 @@ DEFAULT_SOURCE_URLS = ("https://www.javbus.com",)
 class SehuatangConfig:
     """保存当前租户绑定的抓取、PDF 和推送限制。"""
 
-    enabled: bool
     source_urls: tuple[str, ...]
     push_time: str
     target_conversation_ids: tuple[int, ...]
@@ -69,7 +68,6 @@ def load_config(raw_config: Mapping[str, Any]) -> SehuatangConfig:
             if number > 0 and number not in ids:
                 ids.append(number)
     return SehuatangConfig(
-        enabled=bool(raw.get("enabled", False)),
         source_urls=tuple(sources),
         push_time=str(raw.get("push_time") or "15:30").strip() or "15:30",
         target_conversation_ids=tuple(ids),

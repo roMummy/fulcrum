@@ -23,7 +23,6 @@ IMAGE_URL_PATTERN = re.compile(r"https?://[^\"'<>\s]+?\.(?:jpe?g|png|gif|webp)(?
 class XiurenConfig:
     """保存当前租户绑定的图片缓存和抓取限制。"""
 
-    enabled: bool
     commands: tuple[str, ...]
     resource_dir: str
     cache_size: int
@@ -68,7 +67,6 @@ def load_config(raw_config: Mapping[str, Any]) -> XiurenConfig:
             if normalized not in source_urls:
                 source_urls.append(normalized)
     return XiurenConfig(
-        enabled=bool(raw.get("enabled", False)),
         commands=_commands(raw.get("commands")),
         resource_dir=resource_dir,
         cache_size=_bounded_int(raw.get("cache_size"), default=10, minimum=1, maximum=100),

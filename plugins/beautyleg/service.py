@@ -16,7 +16,6 @@ DEFAULT_RESOURCE_DIR = "images"
 class BeautyLegConfig:
     """保存当前租户绑定唯一生效的图片插件配置。"""
 
-    enabled: bool
     commands: tuple[str, ...]
     resource_dir: str
     points_cost: int
@@ -35,7 +34,6 @@ def load_config(raw_config: Mapping[str, Any]) -> BeautyLegConfig:
     if not resource_dir or resource_path.is_absolute() or ".." in resource_path.parts:
         resource_dir = DEFAULT_RESOURCE_DIR
     return BeautyLegConfig(
-        enabled=bool(raw.get("enabled", False)),
         commands=commands,
         resource_dir=resource_dir,
         points_cost=_bounded_int(raw.get("points_cost"), default=2, minimum=0, maximum=100_000),

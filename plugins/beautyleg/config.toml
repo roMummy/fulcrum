@@ -20,7 +20,6 @@ commands = ["美腿", "腿来", "腿照", "来张美腿图片"]
 require_mention = false
 
 [runtime]
-enabled = false
 commands = ["美腿", "腿来", "腿照", "来张美腿图片"]
 resource_dir = "images"
 points_cost = 2

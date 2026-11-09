@@ -26,7 +26,6 @@ DEFAULT_COMMANDS = ("黑丝视频", "黑丝", "来个黑丝", "搞个黑丝")
 class VideoConfig:
     """保存当前租户绑定的视频下载和资源限制。"""
 
-    enabled: bool
     commands: tuple[str, ...]
     video_url: str
     request_timeout_seconds: int
@@ -61,7 +60,6 @@ def load_config(raw_config: Mapping[str, Any]) -> VideoConfig:
         maximum=40 * 1024 * 1024,
     )
     return VideoConfig(
-        enabled=bool(raw.get("enabled", False)),
         commands=commands,
         video_url=video_url,
         request_timeout_seconds=_bounded_int(raw.get("request_timeout_seconds"), default=20, minimum=1, maximum=300),

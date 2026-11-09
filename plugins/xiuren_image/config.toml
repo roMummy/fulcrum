@@ -20,7 +20,6 @@ commands = ["图来", "秀人", "美图", "随机图片"]
 require_mention = false
 
 [runtime]
-enabled = false
 commands = ["图来", "秀人", "美图", "随机图片"]
 resource_dir = "images"
 cache_size = 10

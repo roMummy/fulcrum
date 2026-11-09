@@ -20,7 +20,6 @@ commands = ["猛男", "肌肉", "帅哥"]
 require_mention = false
 
 [runtime]
-enabled = false
 commands = ["猛男", "肌肉", "帅哥"]
 api_url = "https://api.52vmy.cn/api/video/boy?type=json"
 request_timeout_seconds = 20

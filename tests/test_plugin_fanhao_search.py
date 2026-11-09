@@ -57,3 +57,15 @@ def test_fanhao_reload_does_not_call_external_service() -> None:
     assert result.ok is True
     assert result.output["javbus_site_count"] >= 1
 
+
+
+def test_fanhao_matches_without_enabled_key_in_config() -> None:
+    """回归:绑定配置里没有(或残留 enabled=false)时,命令仍应匹配,开关只看绑定状态。"""
+
+    class Ctx:
+        content = "番号 ABC-123"
+        binding_config: dict = {}
+
+    assert fanhao.matches_event(Ctx())["matched"] is True
+    Ctx.binding_config = {"enabled": False}
+    assert fanhao.matches_event(Ctx())["matched"] is True

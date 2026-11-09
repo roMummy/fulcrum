@@ -20,7 +20,6 @@ commands = []
 require_mention = false
 
 [runtime]
-enabled = false
 source_urls = ["https://www.javbus.com"]
 push_time = "15:30"
 target_conversation_ids = []

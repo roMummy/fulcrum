@@ -20,7 +20,6 @@ commands = ["番号", "番号查询", "查番", "以图查番"]
 require_mention = false
 
 [runtime]
-enabled = false
 commands = ["番号", "番号查询"]
 image_search_enabled = true
 image_search_commands = ["查番", "以图查番"]
