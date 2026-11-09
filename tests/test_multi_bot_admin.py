@@ -2720,9 +2720,8 @@ consume_policy = "shared"
             binding.status = "enabled"
             binding.config_json = json.dumps(
                 {
-                    "api_url": "https://parser.example.test/v1/douyin",
+                    "dtk_api_url": "https://parser.example.test",
                     "timeout_seconds": 20,
-                    "max_media_items": 5,
                 }
             )
             db.commit()

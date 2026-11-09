@@ -2,9 +2,9 @@
 code = "douyin_parser"
 display_name = "抖音解析"
 plugin_type = "rule"
-version = "2.0.0"
+version = "3.0.0"
 author = "abot"
-description = "通过租户解析服务提取抖音视频或图集"
+description = "解析抖音视频与图文(含实况),优先使用 DTK 解析服务,失败回退官方接口"
 default_enabled = false
 
 [capability]
@@ -14,18 +14,22 @@ chat_types = ["direct", "group"]
 message_types = ["text", "app"]
 priority = 105
 consume_policy = "continue"
-timeout_ms = 30000
+timeout_ms = 60000
 
 [matcher]
 keywords = ["douyin.com", "iesdouyin.com"]
 require_mention = false
 
 [secrets]
-fields = ["api_key"]
+fields = ["dtk_api_key"]
 
 [runtime]
 enabled = true
-api_url = ""
-api_key = ""
-timeout_seconds = 20
-max_media_items = 5
+# DTK 自建解析服务地址;密钥 dtk_api_key 在插件绑定的密文配置里填写,未填时只用自有解析
+dtk_api_url = "https://dy.functen.com"
+dtk_api_key = ""
+dtk_wait_seconds = 15
+# 视频发送方式: card=短视频直发/长视频卡片, file=发送视频文件
+download_mode = "card"
+# 一次解析加下载的整体时限(秒),必须小于 timeout_ms
+timeout_seconds = 25

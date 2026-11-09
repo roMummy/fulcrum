@@ -180,6 +180,7 @@ def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list
             allowed_internal = {
                 f"plugins.{plugin_code}.service",
                 f"plugins.{plugin_code}.parsers",
+                f"plugins.{plugin_code}.a_bogus",
                 "plugins._shared",
                 "plugins._shared.media",
                 "plugins._shared.resources",
