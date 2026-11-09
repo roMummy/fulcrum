@@ -143,8 +143,8 @@ def test_ai_rewritten_event_is_never_analyzed_again() -> None:
         assert pd._enqueue_ai_intent(db, plan, event, raw_event_id=5, conversation_id=2, message_id=3) is False
 
 
-def test_intent_worker_delivers_rewritten_command_as_new_dispatch_job(monkeypatch) -> None:
-    """意图任务完成后：记录决策，并把改写命令作为新的 plugin_dispatch 任务入队（带防循环标记）。"""
+def test_intent_worker_executes_plugin_directly_without_requeue(monkeypatch) -> None:
+    """识别出插件后直接执行：记录决策，调用调度链一次，且不再入队新任务。"""
 
     from sqlalchemy import create_engine
     from sqlalchemy import event as sa_event
@@ -153,8 +153,10 @@ def test_intent_worker_delivers_rewritten_command_as_new_dispatch_job(monkeypatc
     from app.core.db import Base
     from app.models import saas  # noqa: F401
     from app.models.entities import AiDecision, TaskJob
-    from app.services import ai_intent_worker
+    from app.services import ai_intent_worker, plugin_directory
 
+    seen: list[dict] = []
+    monkeypatch.setattr(plugin_directory, "build_dispatch_report", lambda db, channel, event, **kw: seen.append(event))
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as db:
@@ -164,10 +166,9 @@ def test_intent_worker_delivers_rewritten_command_as_new_dispatch_job(monkeypatc
         intent = ai_dispatch.AiIntent(status="routed", plugin_code="message_sign", command_text="/签到", confidence=95)
         result = ai_intent_worker._deliver(db, payload, intent)
         assert result["command"] == "/签到"
-        job = db.query(TaskJob).one()
-        queued = json.loads(job.payload_json)["normalized_event"]
-        assert job.job_type == "plugin_dispatch"
-        assert queued["message"]["content"] == "/签到" and queued["details"]["ai_rewritten"] is True
+        # 直接执行：调度链拿到改写后的命令，带防循环标记；没有新入队任何任务。
+        assert seen[0]["message"]["content"] == "/签到" and seen[0]["details"]["ai_rewritten"] is True
+        assert db.query(TaskJob).count() == 0
         assert db.query(AiDecision).one().status == "routed"
 
 

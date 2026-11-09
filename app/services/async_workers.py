@@ -16,7 +16,6 @@ from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Channel, Conversation, ErrorLog, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.models.saas import Tenant
-from app.services.ai_dispatch import effective_message_content
 from app.services.ai_intent_worker import poll_ai_intent_jobs
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
@@ -204,20 +203,14 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     raw_event_id = _coerce_int(payload.get("raw_event_id"))
     conversation_id = _coerce_int(payload.get("conversation_id"))
     message_id = _coerce_int(payload.get("message_id"))
-    # AI 改写出的命令不落库：插件按消息 ID 回库读正文时，只在本次调度的会话内把它读成命令，
-    # 结束即还原，不新增也不修改任何消息记录。
-    rewritten = bool((normalized_event.get("details") or {}).get("ai_rewritten"))
-    with effective_message_content(
-        db, message_id, (normalized_event.get("message") or {}).get("content") if rewritten else None
-    ):
-        dispatch_report = build_dispatch_report(
-            db,
-            channel,
-            normalized_event,
-            raw_event_id=raw_event_id,
-            conversation_id=conversation_id,
-            message_id=message_id,
-        )
+    dispatch_report = build_dispatch_report(
+        db,
+        channel,
+        normalized_event,
+        raw_event_id=raw_event_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
     dispatch_payload = serialize_dispatch_report(dispatch_report)
     _record_plugin_dispatch_errors(
         db,

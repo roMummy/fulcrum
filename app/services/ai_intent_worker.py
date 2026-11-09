@@ -24,10 +24,8 @@ from app.models.entities import Channel, TaskJob
 from app.services import ai_dispatch
 from app.services.task_queue import (
     AI_INTENT_JOB,
-    PLUGIN_DISPATCH_JOB,
     claim_next_job,
     complete_job,
-    enqueue_job,
     fail_job,
     parse_job_payload,
 )
@@ -120,8 +118,32 @@ def _execute_intent(job_id: int) -> None:
             logger.exception("ai intent deliver failed", extra={"job_id": job_id})
 
 
+def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], event: dict[str, Any], command_text: str) -> None:
+    """识别出插件后直接在本任务里执行，不再重新入队。
+
+    仍走原有的匹配与执行链，所以群级启停、权限、积分幂等、consume_policy 都照常生效。
+    事件带 ai_rewritten 标记，保证命令不命中时不会再次进入 AI 分析。命令只在内存视图里
+    替换原消息正文，库里始终只有用户原话。
+    """
+
+    from app.services.plugin_directory import build_dispatch_report
+
+    rewritten = json.loads(json.dumps(event, ensure_ascii=False, default=str))
+    rewritten.setdefault("message", {})["content"] = command_text
+    rewritten.setdefault("details", {})["ai_rewritten"] = True
+    with ai_dispatch.effective_message_content(db, payload.get("message_id"), command_text):
+        build_dispatch_report(
+            db,
+            channel,
+            rewritten,
+            raw_event_id=payload.get("raw_event_id"),
+            conversation_id=payload.get("conversation_id"),
+            message_id=payload.get("message_id"),
+        )
+
+
 def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent) -> dict[str, Any]:
-    """记录决策；改写成功就把命令作为新的调度任务入队，缺参数就追问。"""
+    """记录决策；识别出插件就直接执行，缺参数就追问。"""
 
     from app.services.plugin_directory import send_ai_reply
 
@@ -143,18 +165,6 @@ def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent)
     if intent.status == "asked":
         send_ai_reply(db, channel, event, intent.question, conversation_id=conversation_id)
     elif intent.status == "routed" and intent.command_text:
-        # 改写后的命令走原来的 plugin_dispatch 任务，匹配、权限、积分、consume_policy 都照常生效。
-        # 事件里带上标记：该事件的正文已是 AI 生成，不会再次进入 AI 分析，避免循环调用。
-        rewritten = json.loads(json.dumps(event, ensure_ascii=False, default=str))
-        rewritten.setdefault("message", {})["content"] = intent.command_text
-        rewritten.setdefault("details", {})["ai_rewritten"] = True
-        enqueue_job(
-            db,
-            job_type=PLUGIN_DISPATCH_JOB,
-            payload={**payload, "normalized_event": rewritten},
-            priority=100,
-            related_type="raw_webhook_event",
-            related_id=payload.get("raw_event_id"),
-        )
+        _execute_routed(db, channel, payload, event, intent.command_text)
     db.commit()
     return {"status": intent.status, "command": intent.command_text}
