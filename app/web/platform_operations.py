@@ -18,6 +18,8 @@ from app.core.time import format_shanghai_time, now_shanghai
 from app.models.entities import AlertRecord
 from app.models.saas import PlatformAuditLog
 from app.services.ops import build_monitoring_snapshot
+from app.services.request_metrics import summarize as summarize_request_metrics
+from app.services.system_info import build_database_info, build_server_info
 from app.services.login_proxy_pool import (
     LoginProxyPoolError,
     build_platform_proxy_summary,
@@ -191,6 +193,23 @@ async def platform_operations_page(request: Request):
             **build_monitoring_snapshot(db),
         )
         return templates.TemplateResponse(request, "platform_monitoring.html", context)
+
+
+@router.get("/system", response_class=HTMLResponse)
+async def platform_system_page(request: Request):
+    """展示服务器配置、数据库容量与表条目数、接口响应耗时。"""
+
+    _require_platform_principal(request)
+    with SessionLocal() as db:
+        context = _platform_context(
+            request,
+            page_title="服务器与数据库",
+            active="system",
+            server=build_server_info(),
+            database=build_database_info(db),
+            metrics=summarize_request_metrics(),
+        )
+        return templates.TemplateResponse(request, "platform_system.html", context)
 
 
 @router.get("/protocol-services", response_class=HTMLResponse)

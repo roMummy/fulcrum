@@ -46,6 +46,7 @@ from app.services.channel_catalog import (
     validate_enabled_channel_configuration,
 )
 from app.services.channel_events import ingest_inbound_event
+from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.login_proxy_pool import (
@@ -1249,6 +1250,11 @@ async def request_logging_middleware(request: Request, call_next):
         raise
 
     duration_ms = round((time_module.perf_counter() - started_at) * 1000, 2)
+    # 平台后台的响应性能统计:用路由模板聚合,静态资源不记。
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    if route_path and not request.url.path.startswith("/static/"):
+        record_request(f"{request.method} {route_path}", response.status_code, duration_ms)
     logger.info(
         "request completed",
         extra={

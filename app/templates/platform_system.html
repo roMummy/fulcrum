@@ -1,0 +1,77 @@
+{% extends 'platform_base.html' %}
+{# 服务器配置、数据库使用情况、表条目数与接口响应性能;只读页面。 #}
+{% block hero_actions %}<a class="btn btn-secondary" href="/platform/system">刷新</a>{% endblock %}
+{% block content %}
+{% macro pct_chip(value) %}<span class="chip {% if value >= 85 %}chip-danger{% elif value >= 70 %}chip-outline{% else %}chip-success{% endif %}">{{ value }}%</span>{% endmacro %}
+<section class="work-surface">
+  <div class="section-head"><div><h2>服务器</h2></div></div>
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>CPU（{{ server.cpu_cores }} 核）</span><strong>{{ server.cpu_percent }}%</strong></div>
+    <div class="metric-item"><span>负载 1/5/15 分钟</span><strong>{{ server.load }}</strong></div>
+    <div class="metric-item"><span>内存</span><strong>{{ server.memory_used_gb }} / {{ server.memory_total_gb }} GB</strong>{{ pct_chip(server.memory_percent) }}</div>
+    <div class="metric-item"><span>磁盘</span><strong>{{ server.disk_used_gb }} / {{ server.disk_total_gb }} GB</strong>{{ pct_chip(server.disk_percent) }}</div>
+    <div class="metric-item"><span>应用进程内存</span><strong>{{ server.process_rss_mb }} MB</strong></div>
+    <div class="metric-item"><span>应用线程数</span><strong>{{ server.process_threads }}</strong></div>
+  </div>
+  <p class="muted-text">{{ server.hostname }} · {{ server.os }} · Python {{ server.python }} · 应用已运行 {{ (server.process_uptime_seconds // 3600) }} 小时 {{ (server.process_uptime_seconds % 3600 // 60) }} 分钟</p>
+</section>
+
+<section class="work-surface">
+  <div class="section-head"><div><h2>数据库</h2></div></div>
+  {% if database.error %}<p class="muted-text">采集失败:{{ database.error }}</p>{% endif %}
+  {% if database.ping_ms is defined %}
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>响应延迟</span><strong>{{ database.ping_ms }} ms</strong></div>
+    {% if database.version %}<div class="metric-item"><span>版本</span><strong>{{ database.version }}</strong></div>{% endif %}
+    {% if database.data_mb is defined %}
+    <div class="metric-item"><span>数据 / 索引</span><strong>{{ database.data_mb }} / {{ database.index_mb }} MB</strong></div>
+    <div class="metric-item"><span>表数量 / 总条目(估)</span><strong>{{ database.table_count }} / {{ database.total_rows }}</strong></div>
+    {% endif %}
+    {% if database.status %}
+    <div class="metric-item"><span>连接数 / 运行中</span><strong>{{ database.status.Threads_connected }} / {{ database.status.Threads_running }}</strong></div>
+    <div class="metric-item"><span>慢查询累计</span><strong>{{ database.status.Slow_queries }}</strong></div>
+    {% endif %}
+    <div class="metric-item"><span>应用连接池(使用中 / 容量)</span><strong>{{ database.pool.checked_out }} / {{ database.pool.size }}</strong></div>
+  </div>
+  {% endif %}
+  {% if database.tables %}
+  <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight">
+      <thead><tr><th>表名</th><th>条目数(估)</th><th>数据 MB</th><th>索引 MB</th></tr></thead>
+      <tbody>
+        {% for item in database.tables %}
+        <tr><td><code>{{ item.name }}</code></td><td>{{ item.rows }}</td><td>{{ item.data_mb }}</td><td>{{ item.index_mb }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">按占用空间倒序显示前 {{ database.tables|length }} 张表;条目数为数据库估算值,仅用于了解量级。</p>
+  {% endif %}
+</section>
+
+<section class="work-surface">
+  <div class="section-head"><div><h2>接口响应性能</h2></div></div>
+  {% if metrics.overall %}
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>近 {{ metrics.window_minutes }} 分钟请求数</span><strong>{{ metrics.overall.count }}</strong></div>
+    <div class="metric-item"><span>平均耗时</span><strong>{{ metrics.overall.avg_ms }} ms</strong></div>
+    <div class="metric-item"><span>P95 耗时</span><strong>{{ metrics.overall.p95_ms }} ms</strong></div>
+    <div class="metric-item"><span>最慢一次</span><strong>{{ metrics.overall.max_ms }} ms</strong></div>
+    <div class="metric-item"><span>5xx 错误</span><strong>{{ metrics.overall.errors }}</strong></div>
+  </div>
+  <div class="record-scroll-panel record-scroll-panel-md">
+    <table class="table table-tight">
+      <thead><tr><th>接口</th><th>请求数</th><th>平均 ms</th><th>P95 ms</th><th>最大 ms</th><th>5xx</th></tr></thead>
+      <tbody>
+        {% for item in metrics.slowest %}
+        <tr><td><code>{{ item.route }}</code></td><td>{{ item.count }}</td><td>{{ item.avg_ms }}</td><td>{{ item.p95_ms }}</td><td>{{ item.max_ms }}</td><td>{{ item.errors }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted-text">按 P95 耗时倒序;统计保存在应用内存中,服务重启后重新累计。</p>
+  {% else %}
+  <p class="muted-text">暂无请求样本,服务刚启动,稍后刷新。</p>
+  {% endif %}
+</section>
+{% endblock %}
