@@ -26,7 +26,11 @@ logger = get_logger(__name__)
 # 置信度（0-100）低于该值不执行，避免误触发；属于平台默认值，不开放给用户配置。
 MIN_CONFIDENCE = 70
 # 单次模型调用的超时秒数；独立于插件超时，失败直接降级为不处理。
-MODEL_TIMEOUT_SECONDS = 12
+# 推理类模型（如 grok、o 系列）回复一个字也要先思考十几秒，所以不能设得太短。
+MODEL_TIMEOUT_SECONDS = 45
+# 路由和测试连接的输出上限：推理模型的思考 token 也计入其中，太小会连答案都出不来。
+ROUTE_MAX_TOKENS = 1024
+TEST_MAX_TOKENS = 512
 # 决策记录里输入摘要的最大长度。
 INPUT_SUMMARY_LIMIT = 200
 DEFAULT_DAILY_LIMIT = 200
@@ -93,7 +97,7 @@ def test_connection(setting: TenantAiSetting) -> tuple[bool, str]:
 
     try:
         client = _build_client(setting)
-        result = client.generate(user_prompt="请只回复：ok", timeout_seconds=MODEL_TIMEOUT_SECONDS, max_tokens=16)
+        result = client.generate(user_prompt="请只回复：ok", timeout_seconds=MODEL_TIMEOUT_SECONDS, max_tokens=TEST_MAX_TOKENS)
     except PluginTextGenerationError as exc:
         return False, str(exc)
     except Exception:
@@ -214,7 +218,7 @@ def analyze_intent(setting: TenantAiSetting, text: str, catalog: list[dict[str, 
             system_prompt=system_prompt,
             timeout_seconds=MODEL_TIMEOUT_SECONDS,
             temperature=0.0,
-            max_tokens=200,
+            max_tokens=ROUTE_MAX_TOKENS,
         )
     except PluginTextGenerationError as exc:
         return AiIntent(status="error", reason=str(exc))

@@ -119,3 +119,23 @@ def test_rewritten_command_hits_message_sign_through_real_dispatch(monkeypatch) 
         assert any(d.matched and d.candidate.plugin_code == "message_sign" for d in pd.evaluate_dynamic_matches(db, new_plan, rewritten))
         db.flush()
         assert db.query(AiDecision).one().status == "routed"
+
+
+def test_text_generation_read_timeout_follows_total_timeout() -> None:
+    """非流式推理模型要等十几秒才返回：单次读超时必须跟随总时限，不能被写死成 10 秒。"""
+
+    from app.services.plugin_runtime.http_client import PluginHttpResponse
+    from app.services.plugin_runtime.text_generation import PluginTextGenerationClient
+
+    seen: dict = {}
+
+    class FakeHttp:
+        def post_json(self, url, body, **kwargs):
+            seen.update(kwargs)
+            return PluginHttpResponse(
+                status_code=200, headers={}, body=b'{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":3}}', url="https://x/v1/chat/completions",
+            )
+
+    client = PluginTextGenerationClient(api_base="https://x/v1", model="m", http_client=FakeHttp())
+    client.generate(user_prompt="hi", timeout_seconds=45)
+    assert seen["connect_timeout_seconds"] == 45 and seen["total_timeout_seconds"] == 45

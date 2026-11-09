@@ -70,7 +70,9 @@ class PluginTextGenerationClient:
                 f"{self.api_base}/chat/completions",
                 body,
                 headers=headers,
-                connect_timeout_seconds=min(10, max(1, int(timeout_seconds))),
+                # HTTP 客户端把该值同时用作单次 socket 读超时：非流式的推理类模型要先思考再一次性
+                # 返回，读超时若比总时限短（原先写死 10 秒）就会在模型还没答完时被误判为超时。
+                connect_timeout_seconds=max(1, min(int(timeout_seconds), 300)),
                 total_timeout_seconds=max(5, min(int(timeout_seconds), 300)),
                 max_response_bytes=2 * 1024 * 1024,
                 max_redirects=2,
