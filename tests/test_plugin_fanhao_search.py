@@ -69,3 +69,14 @@ def test_fanhao_matches_without_enabled_key_in_config() -> None:
     assert fanhao.matches_event(Ctx())["matched"] is True
     Ctx.binding_config = {"enabled": False}
     assert fanhao.matches_event(Ctx())["matched"] is True
+
+
+def test_fanhao_requests_carry_age_cookie_and_browser_ua() -> None:
+    """回归:JavBus 请求必须带 dv=1 和浏览器 UA,否则镜像站会重定向到年龄验证页。"""
+
+    from plugins.fanhao_search.service import _javbus_headers
+
+    headers = _javbus_headers("https://example.test/ABC-123")
+    assert headers["Cookie"] == "dv=1"
+    assert "Chrome/" in headers["User-Agent"]
+    assert headers["Referer"] == "https://example.test/ABC-123"

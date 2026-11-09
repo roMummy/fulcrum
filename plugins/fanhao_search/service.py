@@ -121,7 +121,7 @@ def fetch_movie_detail(client: PluginHttpClient, config: FanhaoConfig, code: str
             response = client.request(
                 "GET",
                 detail_url,
-                headers={"User-Agent": _user_agent(), "Accept": "text/html"},
+                headers=_javbus_headers(),
                 connect_timeout_seconds=min(8, config.request_timeout_seconds),
                 total_timeout_seconds=config.request_timeout_seconds,
                 max_response_bytes=4 * 1024 * 1024,
@@ -148,7 +148,7 @@ def fetch_best_magnet(client: PluginHttpClient, config: FanhaoConfig, detail: Mo
         response = client.request(
             "GET",
             url,
-            headers={"User-Agent": _user_agent(), "Accept": "text/html", "Referer": f"{detail.source_url}/{detail.code}"},
+            headers=_javbus_headers(f"{detail.source_url}/{detail.code}"),
             connect_timeout_seconds=min(8, config.request_timeout_seconds),
             total_timeout_seconds=config.request_timeout_seconds,
             max_response_bytes=2 * 1024 * 1024,
@@ -391,5 +391,19 @@ def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int
 
 
 def _user_agent() -> str:
-    return "Mozilla/5.0 (compatible; MultiBotSaaS-Fanhao/2.0)"
+    """JavBus 对非浏览器 UA 容易返回拦截页，沿用 abot 验证可用的浏览器 UA。"""
+
+    return (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    )
+
+
+def _javbus_headers(referer: str = "") -> dict[str, str]:
+    """JavBus 请求头:带上 dv=1 年龄确认 Cookie,否则站点会 302 到 /doc/driver-verify 验证页。"""
+
+    headers = {"User-Agent": _user_agent(), "Accept": "text/html", "Cookie": "dv=1"}
+    if referer:
+        headers["Referer"] = referer
+    return headers
 
