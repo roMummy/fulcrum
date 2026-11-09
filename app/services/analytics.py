@@ -64,6 +64,39 @@ def record_message_activity(
     row.message_count += 1
 
 
+# 执行日志 details_json 是 TEXT 列(MariaDB 上限 65535 字节)。插件回复可能带整张图片的 base64,
+# 原样写入会触发 "Data too long",并连带回滚同一事务里已入队的出站消息,所以入库前必须收口。
+_DETAILS_STRING_LIMIT = 500
+_DETAILS_BYTE_LIMIT = 60000
+
+
+def _shrink_details(value: Any) -> Any:
+    """递归把过长的字符串(图片 base64、整段正文)截成摘要,只保留排查需要的信息。"""
+
+    if isinstance(value, str):
+        if len(value) > _DETAILS_STRING_LIMIT:
+            return f"{value[:_DETAILS_STRING_LIMIT]}...(共 {len(value)} 字符,已截断)"
+        return value
+    if isinstance(value, dict):
+        return {key: _shrink_details(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_shrink_details(item) for item in value]
+    return value
+
+
+def _dump_execution_details(decision_debug: dict[str, Any], execution_debug: dict[str, Any]) -> str:
+    """序列化执行详情并保证不超过列容量;仍然过大时丢弃体积最大的运行时载荷。"""
+
+    details = _shrink_details({"decision_debug": decision_debug, "execution_debug": execution_debug})
+    text = json.dumps(details, ensure_ascii=False, sort_keys=True, default=str)
+    if len(text.encode("utf-8")) > _DETAILS_BYTE_LIMIT:
+        details["execution_debug"].pop("runtime_payload", None)
+        text = json.dumps(details, ensure_ascii=False, sort_keys=True, default=str)
+    if len(text.encode("utf-8")) > _DETAILS_BYTE_LIMIT:
+        text = json.dumps({"truncated": True, "reason": "执行详情超过存储上限"}, ensure_ascii=False)
+    return text
+
+
 def record_plugin_dispatch_analytics(
     db: Session,
     *,
@@ -117,13 +150,9 @@ def record_plugin_dispatch_analytics(
                 trigger_source="inbound_dispatch",
                 error_message=message if status in {"error", "timeout", "outbound_failed"} else None,
                 summary=message or None,
-                details_json=json.dumps(
-                    {
-                        "decision_debug": dict(getattr(decision, "debug", {}) or {}) if decision else {},
-                        "execution_debug": debug,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
+                details_json=_dump_execution_details(
+                    dict(getattr(decision, "debug", {}) or {}) if decision else {},
+                    debug,
                 ),
             )
         )
