@@ -138,7 +138,8 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
 
     lines = [f"潜水排行（近 {days} 天未发言，前 {limit} 名）"]
     for index, item in enumerate(selected, start=1):
-        status = "从未发言" if item["never_spoken"] else f"{item['inactivity_days']} 天未发言"
+        # 只展示最后发言距今多久；没有记录的成员写“暂无发言记录”，不暗示统计起点。
+        status = "暂无发言记录" if item["never_spoken"] else f"最后发言 {item['inactivity_days']} 天前"
         lines.append(f"{index}. {item['name']} - {status}")
     reply_text = "\n".join(lines)
     return PluginExecutionResult(

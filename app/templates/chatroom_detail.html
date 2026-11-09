@@ -78,12 +78,23 @@
 
   {% elif tab == 'members' %}
   {% if detail.members %}
+  {% if detail.health %}
+  {# 群健康度:分数 + 活跃/沉默概览,口径与 abot 一致。 #}
+  <div class="chip-row" style="margin-bottom:10px;">
+    <span class="chip {% if detail.health.score >= 80 %}chip-success{% else %}chip-outline{% endif %}">健康度 {{ detail.health.score }} · {{ detail.health.level }}</span>
+    <span class="chip chip-outline">7 天活跃 {{ detail.health.active_7d }}</span>
+    <span class="chip chip-outline">30 天活跃 {{ detail.health.active_30d }}</span>
+    <span class="chip chip-outline">30 天沉默 {{ detail.health.silent }}</span>
+    <span class="chip chip-outline">30 天消息 {{ detail.health.messages_30d }}</span>
+    <span class="chip chip-outline">30 天插件调用 {{ detail.health.plugin_calls_30d }}</span>
+  </div>
+  {% endif %}
   <div class="chip-row" style="margin-bottom:10px;">
     {% for role, count in detail.role_counts.items() %}<span class="chip chip-outline">{{ role }} {{ count }}</span>{% endfor %}
   </div>
   <div class="table-scroll">
   <table class="table">
-    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后活跃</th></tr></thead>
+    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后发言</th></tr></thead>
     <tbody>
       {% for item in detail.members %}
       <tr>
@@ -91,7 +102,7 @@
         <td>{{ item.display_name }}</td>
         <td>{{ item.role_label }}</td>
         {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}">调整</a></td>{% endif %}
-        <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}</td>
+        <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}{% if item.last_active_label %}<div class="muted-text">{{ item.last_active_label }}</div>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
