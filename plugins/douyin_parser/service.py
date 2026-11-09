@@ -113,7 +113,9 @@ def _from_dtk(
         f"{api_url.rstrip('/')}/api/v1/parse?wait={int(wait_seconds)}",
         {"url": share_url, "include_raw": True},
         headers={"X-API-Key": api_key, "Accept": "application/json"},
-        connect_timeout_seconds=5,
+        # urllib 的单次超时同时约束“等待响应字节”;DTK 的 wait 模式会挂起到任务完成,
+        # 所以它必须不小于 wait,否则任务还在跑就被误判超时(此前固定 5 秒导致慢任务全部失败)。
+        connect_timeout_seconds=wait_seconds + 5,
         total_timeout_seconds=_remaining(deadline, wait_seconds + 5),
         max_response_bytes=_JSON_MAX_BYTES,
         max_redirects=1,
