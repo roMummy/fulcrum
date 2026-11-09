@@ -41,8 +41,18 @@ def test_nickname_change_event():
     assert event["message"]["message_type"] == "group_member_nickname_change"
     parsed = _parse_structured_member_change({"normalized_event": event})
     assert parsed["change_type"] == "rename" and parsed["new_name"] == "新群昵称"
-    # 改名事件不发群消息
-    assert _build_reply_text("rename", parsed["members"]) == ""
+    # 改群昵称发变动通知:旧名取库里记录,没有则写“未设置”
+    reply = _build_reply_text(
+        "rename",
+        parsed["members"],
+        new_name=parsed["new_name"],
+        old_name=parsed["old_name"],
+        previous={"wxid_a": {"nickname": "小明", "display_name": "旧群昵称"}},
+    )
+    assert reply == "📋 群成员变动通知\n📝 群昵称修改：小明（旧群昵称 → 新群昵称）"
+    assert "未设置" in _build_reply_text("rename", parsed["members"], new_name="x")
+    # 退出保持静默
+    assert _build_reply_text("left", parsed["members"]) == ""
 
 
 def test_apply_member_change_updates_status_and_nickname():

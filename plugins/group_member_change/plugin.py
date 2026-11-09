@@ -81,6 +81,7 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
 
     change_type = str(parsed["change_type"])
     members = list(parsed["members"])
+    previous = _lookup_previous_names(db, context=context, chatroom=chatroom, members=members) if change_type == "rename" else {}
     updated_count = _apply_member_change(
         db,
         context=context,
@@ -92,7 +93,13 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     # 微桥事件自带变更后的群人数,直接校准,不必等下一次全量同步。
     if isinstance(parsed.get("after_count"), int):
         chatroom.member_count = int(parsed["after_count"])
-    reply_text = _build_reply_text(change_type, members)
+    reply_text = _build_reply_text(
+        change_type,
+        members,
+        new_name=str(parsed.get("new_name") or ""),
+        old_name=str(parsed.get("old_name") or ""),
+        previous=previous,
+    )
     output: dict[str, Any] = {
         "provider_status": f"member_{change_type}",
         "change_type": change_type,
@@ -166,6 +173,7 @@ def _parse_structured_member_change(payload: Mapping[str, Any]) -> dict[str, Any
     parsed: dict[str, Any] = {"change_type": change_type, "members": members}
     if change_type == "rename":
         parsed["new_name"] = str(member_change.get("new_room_nick_name") or "").strip()
+        parsed["old_name"] = str(member_change.get("old_room_nick_name") or "").strip()
     after_count = member_change.get("after_count")
     if isinstance(after_count, int) and after_count >= 0:
         parsed["after_count"] = after_count
@@ -288,13 +296,54 @@ def _apply_member_change(
     return updated_count
 
 
-def _build_reply_text(change_type: str, members: list[dict[str, str]]) -> str:
-    """当前业务只对新成员发送欢迎语，离开和移除保持静默。"""
+def _lookup_previous_names(
+    db: Session,
+    *,
+    context: PluginExecutionContext,
+    chatroom: Chatroom,
+    members: list[dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    """改群昵称前读取成员当前的全局昵称和群昵称,用于通知里的“旧 → 新”。"""
 
-    if change_type != "join":
-        return ""
-    names = "、".join(item["display_name"] for item in members if item.get("display_name"))
-    return f"欢迎 {names} 加入群聊。" if names else ""
+    result: dict[str, dict[str, str]] = {}
+    for item in members:
+        member = db.scalar(
+            select(ChatroomMember).where(
+                ChatroomMember.tenant_id == int(context.tenant_id),
+                ChatroomMember.chatroom_id == int(chatroom.id),
+                ChatroomMember.member_external_id == item["external_id"],
+            )
+        )
+        if member is not None:
+            result[item["external_id"]] = {
+                "nickname": str(member.nickname or "").strip(),
+                "display_name": str(member.display_name or "").strip(),
+            }
+    return result
+
+
+def _build_reply_text(
+    change_type: str,
+    members: list[dict[str, str]],
+    *,
+    new_name: str = "",
+    old_name: str = "",
+    previous: dict[str, dict[str, str]] | None = None,
+) -> str:
+    """加入发欢迎语、改群昵称发变动通知;退出和移除保持静默。"""
+
+    if change_type == "join":
+        names = "、".join(item["display_name"] for item in members if item.get("display_name"))
+        return f"欢迎 {names} 加入群聊。" if names else ""
+    if change_type == "rename" and members:
+        item = members[0]
+        before = (previous or {}).get(item["external_id"], {})
+        # 旧名优先用事件自带的旧群昵称,其次用库里记录的群昵称/昵称,都没有写“未设置”。
+        old = old_name or before.get("display_name") or before.get("nickname") or "未设置"
+        who = before.get("nickname") or item.get("display_name") or item["external_id"]
+        new = new_name or "已清除"
+        return f"📋 群成员变动通知\n📝 群昵称修改：{who}（{old} → {new}）"
+    return ""
 
 
 def _error_result(message: str, provider_status: str) -> PluginExecutionResult:
