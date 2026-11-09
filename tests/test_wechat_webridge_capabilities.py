@@ -566,3 +566,48 @@ def test_live_summary_backlog_excludes_device_status_and_other_channels(tmp_path
     device["system_memory"] = {"ok": False}
     channel.runtime_info_json = json.dumps({"webridge": {"online": True, "device": device}})
     assert build_webridge_live_summary(db, channel)["memory_used_percent"] is None
+
+
+def _reply_context(channel_type: str, chat_type: str, config: dict | None = None):
+    """构造回复方式测试用的最小插件上下文。"""
+
+    from app.services.plugin_directory import DirectoryPluginContext
+
+    return DirectoryPluginContext(
+        plugin_code="demo", binding_id=1, bot_id=1, channel_id=9, channel_type=channel_type,
+        chat_type=chat_type, message_type="text", command_prefix="/", content="/签到",
+        sender_id="wxid_a", conversation_external_id="1@chatroom", mentioned_self=False,
+        binding_config=config or {},
+        normalized_event={"message": {"external_message_id": "555"}},
+    )
+
+
+def test_reply_mode_quotes_trigger_message_in_webridge_group() -> None:
+    """微桥群聊默认引用触发消息；both 同时 @；私聊和其他渠道保持原样。"""
+
+    from app.services.plugin_directory import _apply_reply_mode
+
+    base = [{"message_type": "text", "content": "ok"}]
+    quoted = _apply_reply_mode(_reply_context("wechat_webridge", "group"), {}, [dict(base[0])])
+    assert quoted[0]["quote_message_id"] == "555"
+    both = _apply_reply_mode(_reply_context("wechat_webridge", "group"), {"reply_mode": "both"}, [dict(base[0])])
+    assert both[0]["content"].startswith("{{mention:wxid_a}}") and both[0]["quote_message_id"] == "555"
+    assert _apply_reply_mode(_reply_context("wechat_webridge", "direct"), {}, [dict(base[0])]) == base
+    assert _apply_reply_mode(_reply_context("telegram", "group"), {}, [dict(base[0])]) == base
+    assert _apply_reply_mode(_reply_context("wechat_webridge", "group", {"reply_mode": "plain"}), {}, [dict(base[0])]) == base
+
+
+def test_webridge_text_command_carries_quote_and_mentions(monkeypatch) -> None:
+    """文本出站命令必须透传引用 ID 和 @ 名单。"""
+
+    from types import SimpleNamespace
+    from app.models.entities import Channel, Conversation
+    from app.services.wechat_webridge import service
+
+    captured: list[dict] = []
+    monkeypatch.setattr(service, "enqueue_job", lambda db, **kw: captured.append(kw) or SimpleNamespace(id=1))
+    channel = Channel(id=9, bot_id=1, tenant_id=3, name="微桥", channel_type="wechat_webridge")
+    conversation = Conversation(id=11, bot_id=1, channel_id=9, external_id="1@chatroom", chat_type="group", tenant_id=1)
+    service.enqueue_message_command(object(), channel, conversation, {"message_type": "text", "content": "hi", "quote_message_id": "555", "mention_user_list": ["wxid_a"]})
+    params = captured[0]["payload"]["command"]["params"]
+    assert params["quote_message_id"] == "555" and params["mention_user_list"] == ["wxid_a"]

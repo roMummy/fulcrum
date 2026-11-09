@@ -335,6 +335,14 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
     params: dict[str, Any] = {"receiver": receiver}
     if message_type == "text":
         params["content"] = str(payload.get("content") or payload.get("text") or "").strip()
+        # 引用回复和 @ 是微桥 send_message 的原生能力：只在上游明确给出时透传，
+        # 引用目标必须是微信侧消息 ID，而不是库内自增 ID。
+        quote_message_id = text(payload.get("quote_message_id"))
+        if quote_message_id:
+            params["quote_message_id"] = quote_message_id
+        mention_user_list = [text(item) for item in payload.get("mention_user_list") or [] if text(item)]
+        if mention_user_list:
+            params["mention_user_list"] = mention_user_list
     elif message_type == "image":
         params["source"] = payload.get("image_url") or payload.get("base64") or payload.get("image_base64") or payload.get("content")
     elif message_type in {"voice", "video"}:

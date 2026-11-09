@@ -1347,6 +1347,55 @@ def _build_auto_outbound_payloads(
     context: DirectoryPluginContext,
     output: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    payloads = _collect_outbound_payloads(context, output)
+    return _apply_reply_mode(context, output, payloads)
+
+
+# 回复方式：plain 普通文本；quote 引用触发消息；mention @触发人；both 引用并 @。
+REPLY_MODES = ("plain", "quote", "mention", "both")
+# 只有微桥协议支持引用与 @，其他渠道保持普通文本，避免把渠道差异散落到插件里。
+REPLY_MODE_CHANNEL_TYPES = {"wechat_webridge"}
+DEFAULT_REPLY_MODE = "quote"
+
+
+def _apply_reply_mode(
+    context: DirectoryPluginContext,
+    output: Mapping[str, Any],
+    payloads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """按回复方式给第一条文本回复补充引用和 @，插件无需自己拼协议字段。
+
+    优先级：插件输出的 reply_mode > 群级/绑定配置的 reply_mode > 默认值。
+    引用只在群聊使用；私聊对话本身一对一，引用和 @ 都是噪音。
+    """
+
+    if context.channel_type not in REPLY_MODE_CHANNEL_TYPES or context.chat_type != "group":
+        return payloads
+    mode = str(output.get("reply_mode") or context.binding_config.get("reply_mode") or DEFAULT_REPLY_MODE).strip().lower()
+    if mode not in REPLY_MODES or mode == "plain":
+        return payloads
+    message = context.normalized_event.get("message") if isinstance(context.normalized_event, Mapping) else None
+    message = message if isinstance(message, Mapping) else {}
+    quote_id = _coerce_optional_text(message.get("external_message_id"))
+    sender_id = _coerce_optional_text(context.sender_id)
+    for index, item in enumerate(payloads):
+        if item.get("message_type") != "text":
+            continue
+        updated = dict(item)
+        if mode in ("quote", "both") and quote_id:
+            updated["quote_message_id"] = quote_id
+        if mode in ("mention", "both") and sender_id:
+            # 正文内联占位符由微桥渲染成 @昵称，并同步写入 @ 名单。
+            updated["content"] = "{{mention:%s}} %s" % (sender_id, updated.get("content") or "")
+        payloads[index] = updated
+        break
+    return payloads
+
+
+def _collect_outbound_payloads(
+    context: DirectoryPluginContext,
+    output: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     if not isinstance(output, Mapping):
         return []
 
