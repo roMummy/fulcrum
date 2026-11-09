@@ -35,3 +35,24 @@ def test_unknown_event_keeps_original_text():
     entry = parse_entries([line])[0]
     assert entry["title"] == "some new event"
     assert entry["fields"] == [("渠道", "2")]
+
+
+def test_read_page_reads_from_tail_and_paginates(tmp_path):
+    from app.services.log_view import read_page
+
+    lines = []
+    for i in range(250):
+        lines.append(f"2026-11-09 17:00:{i % 60:02d}.000 | INFO     | a.b:c:1 - job enqueued | job_id={i} job_type=t")
+        if i == 100:
+            lines += ["Traceback (most recent call last):", "ValueError: boom"]
+    path = tmp_path / "app.log"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    first, more = read_page(path, page=1, page_size=100)
+    assert len(first) == 100 and more is True
+    assert first[0]["title"] == "任务入队 #249 (t)"  # 最新在前
+    third, more = read_page(path, page=3, page_size=100)
+    assert len(third) == 50 and more is False
+    # 堆栈续行并入 job 100 这一条
+    hit, _ = read_page(path, page=1, page_size=100, keyword="boom")
+    assert len(hit) == 1 and hit[0]["trace"] == ["Traceback (most recent call last):", "ValueError: boom"]

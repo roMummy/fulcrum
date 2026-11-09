@@ -17,7 +17,7 @@ from app.core.settings import settings
 from app.core.time import format_shanghai_time, now_shanghai
 from app.models.entities import AlertRecord
 from app.models.saas import PlatformAuditLog
-from app.services.log_view import LEVEL_RANK, parse_entries
+from app.services.log_view import LEVEL_RANK, read_page
 from app.services.ops import build_monitoring_snapshot
 from app.services.request_metrics import summarize as summarize_request_metrics
 from app.services.system_info import build_database_info, build_server_info
@@ -524,27 +524,14 @@ async def platform_logs_page(
     normalized_keyword = str(keyword or "").strip().lower()
     available_log_files = _resolve_tab_log_paths(active_tab)
     selected_path = _resolve_selected_log_path(active_tab, str(source_file or "").strip())
-    try:
-        raw_lines = selected_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        raw_lines = []
-    # 先把 Traceback 等续行并入所属日志,再按关键字和级别筛选,避免堆栈被拆散。
-    entries = parse_entries(raw_lines)
-    min_rank = LEVEL_RANK.get(str(level or "").strip().upper(), 0)
-    filtered_lines = [
-        entry
-        for entry in entries
-        if entry["rank"] >= min_rank and (not normalized_keyword or normalized_keyword in entry["raw"].lower())
-    ]
-
-    page_size = 300
+    # 从文件末尾往前读,凑够一页即停;大文件也只解析本页需要的部分。
+    page_size = 100
     current_page = max(int(page or 1), 1)
-    total = len(filtered_lines)
-    total_pages = max((total + page_size - 1) // page_size, 1)
-    current_page = min(current_page, total_pages)
+    min_rank = LEVEL_RANK.get(str(level or "").strip().upper(), 0)
+    paged_lines, has_next = read_page(
+        selected_path, page=current_page, page_size=page_size, min_rank=min_rank, keyword=normalized_keyword
+    )
     start_index = (current_page - 1) * page_size
-    end_index = min(start_index + page_size, total)
-    paged_lines = list(reversed(filtered_lines))[start_index:end_index]
     filter_query = urlencode(
         {
             key: value
@@ -563,22 +550,18 @@ async def platform_logs_page(
         active="logs",
         log_lines=paged_lines,
         overview={
-            "total_lines": total,
             "displayed_lines": len(paged_lines),
             "active_file": selected_path.name,
             "active_file_path": str(selected_path),
-            "order_label": "最新在前",
         },
         pagination={
             "page": current_page,
-            "total": total,
-            "total_pages": total_pages,
             "has_prev": current_page > 1,
-            "has_next": current_page < total_pages,
-            "prev_page": current_page - 1 if current_page > 1 else 1,
-            "next_page": current_page + 1 if current_page < total_pages else total_pages,
-            "from_index": start_index + 1 if total else 0,
-            "to_index": end_index,
+            "has_next": has_next,
+            "prev_page": max(current_page - 1, 1),
+            "next_page": current_page + 1,
+            "from_index": start_index + 1 if paged_lines else 0,
+            "to_index": start_index + len(paged_lines),
             "query": filter_query,
         },
         active_tab=active_tab,

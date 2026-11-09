@@ -3,7 +3,7 @@
 <section class="work-surface">
   <div class="section-head">
     <div><h2>日志文件概览</h2></div>
-    <div class="chip-row"><span class="chip chip-outline">{{ overview.active_file }}</span><span class="chip">总行数 {{ overview.total_lines }}</span><span class="chip chip-muted">本页 {{ overview.displayed_lines }}</span></div>
+    <div class="chip-row"><span class="chip chip-outline">{{ overview.active_file }}</span><span class="chip chip-muted">本页 {{ overview.displayed_lines }} 条</span></div>
   </div>
   <p class="muted-text">文件路径：<code>{{ overview.active_file_path }}</code></p>
 </section>
@@ -17,7 +17,7 @@
   {% if source_file %}{% set info_query = info_query ~ '&source_file=' ~ source_file|urlencode %}{% endif %}
   {% if keyword %}{% set info_query = info_query ~ '&keyword=' ~ keyword|urlencode %}{% endif %}
   {% if level %}{% set info_query = info_query ~ '&level=' ~ level %}{% endif %}
-  <div class="section-head"><div><h2>{{ 'Error 日志' if active_tab == 'error' else 'Info 日志' }}</h2></div><span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span></div>
+  <div class="section-head"><div><h2>{{ 'Error 日志' if active_tab == 'error' else 'Info 日志' }}</h2></div><span class="chip chip-outline">第 {{ pagination.page }} 页 · 最新在前</span></div>
   {# 文件选择属于日志结果控制区；只有用户显式提交条件时才在窄屏保持展开。 #}
   {% set filter_active = request.query_params.get('source_file') or keyword or level %}
   <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">

@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 
 _LINE_RE = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<time>\d{2}:\d{2}:\d{2})\.\d{3} \| (?P<level>[A-Z]+)\s*\| (?P<where>\S+) - (?P<body>.*)$"
@@ -165,3 +166,76 @@ def parse_entries(lines: list[str]) -> list[dict[str, Any]]:
             entries[-1]["trace"].append(line)
             entries[-1]["raw"] += "\n" + line
     return entries
+
+
+_CHUNK_BYTES = 256 * 1024
+
+
+def _iter_lines_reversed(path: Path) -> Iterator[str]:
+    """从文件末尾分块向前读取,逐行产出(最新的行在前),不会整文件载入内存。"""
+
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        tail = b""
+        while position > 0:
+            size = min(_CHUNK_BYTES, position)
+            position -= size
+            handle.seek(position)
+            data = handle.read(size) + tail
+            parts = data.split(b"\n")
+            # 第一段可能被块边界截断,留到下一轮和更早的内容拼接。
+            tail = parts[0]
+            for raw in reversed(parts[1:]):
+                yield raw.decode("utf-8", errors="ignore").rstrip("\r")
+        if tail:
+            yield tail.decode("utf-8", errors="ignore").rstrip("\r")
+
+
+def iter_entries_reversed(path: Path) -> Iterator[dict[str, Any]]:
+    """由新到旧产出日志条目;往回读到时间行时,把已收集的续行(Traceback)并成一条。"""
+
+    pending: list[str] = []
+    for line in _iter_lines_reversed(path):
+        match = _LINE_RE.match(line)
+        if match:
+            entry = _build_entry(line, match)
+            for extra in reversed(pending):
+                entry["trace"].append(extra)
+                entry["raw"] += "\n" + extra
+            pending = []
+            yield entry
+        elif line:
+            pending.append(line)
+
+
+def read_page(
+    path: Path,
+    *,
+    page: int,
+    page_size: int,
+    min_rank: int = 0,
+    keyword: str = "",
+) -> tuple[list[dict[str, Any]], bool]:
+    """读取指定页的条目,凑够即停。返回 (条目, 是否还有更早的一页)。
+
+    多读一条用来判断是否还有下一页,因此不需要统计总数,耗时只取决于页码而不是文件大小。
+    """
+
+    skip = (max(page, 1) - 1) * page_size
+    items: list[dict[str, Any]] = []
+    try:
+        for entry in iter_entries_reversed(path):
+            if entry["rank"] < min_rank:
+                continue
+            if keyword and keyword not in entry["raw"].lower():
+                continue
+            if skip > 0:
+                skip -= 1
+                continue
+            items.append(entry)
+            if len(items) > page_size:
+                return items[:page_size], True
+    except OSError:
+        pass
+    return items, False
