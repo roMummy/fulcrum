@@ -60,7 +60,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
 
 
 def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """使用可信群会话更新成员状态，并对加入事件生成标准欢迎回复。"""
+    """使用可信群会话更新成员状态，并对加入、退出、移除和改群昵称生成群内变动通知。"""
 
     if request.action != "execute":
         return execute_action(request)
@@ -330,20 +330,23 @@ def _build_reply_text(
     old_name: str = "",
     previous: dict[str, dict[str, str]] | None = None,
 ) -> str:
-    """加入发欢迎语、改群昵称发变动通知;退出和移除保持静默。"""
+    """群内变动通知,格式与 abot 一致:标题 + 每个变动一行,加入、退出、移除、改群昵称都通知。"""
 
+    lines: list[str] = []
     if change_type == "join":
-        names = "、".join(item["display_name"] for item in members if item.get("display_name"))
-        return f"欢迎 {names} 加入群聊。" if names else ""
-    if change_type == "rename" and members:
+        lines = [f"🆕 成员新增: {item['display_name']}" for item in members if item.get("display_name")]
+    elif change_type in {"left", "removed"}:
+        lines = [f"❌ 成员减少: {item['display_name']}" for item in members if item.get("display_name")]
+    elif change_type == "rename" and members:
         item = members[0]
         before = (previous or {}).get(item["external_id"], {})
-        # 旧名优先用事件自带的旧群昵称,其次用库里记录的群昵称/昵称,都没有写“未设置”。
+        # 旧群昵称优先用事件自带的,其次用库里改名前记录的群昵称/昵称,都没有写“未设置”。
         old = old_name or before.get("display_name") or before.get("nickname") or "未设置"
         who = before.get("nickname") or item.get("display_name") or item["external_id"]
-        new = new_name or "已清除"
-        return f"📋 群成员变动通知\n📝 群昵称修改：{who}（{old} → {new}）"
-    return ""
+        lines = [f"📝 昵称修改: {who} ({old} -> {new_name or '已清除'})"]
+    if not lines:
+        return ""
+    return "📋 群成员变动通知:\n" + "\n".join(lines)
 
 
 def _error_result(message: str, provider_status: str) -> PluginExecutionResult:

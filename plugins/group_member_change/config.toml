@@ -4,7 +4,7 @@ display_name = "群成员变更"
 plugin_type = "observer"
 version = "2.0.0"
 author = "abot"
-description = "同步当前群成员加入与离开状态，并发送入群欢迎语"
+description = "同步群成员加入、退出和群昵称变化,并在群里发送变动通知"
 default_enabled = false
 
 [capability]

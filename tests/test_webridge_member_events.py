@@ -33,7 +33,7 @@ def test_join_event_and_welcome_reply():
     event = _normalize("group_member_join")
     parsed = _parse_structured_member_change({"normalized_event": event})
     assert parsed["change_type"] == "join"
-    assert _build_reply_text("join", parsed["members"]) == "欢迎 小明 加入群聊。"
+    assert _build_reply_text("join", parsed["members"]) == "📋 群成员变动通知:\n🆕 成员新增: 小明"
 
 
 def test_nickname_change_event():
@@ -49,10 +49,11 @@ def test_nickname_change_event():
         old_name=parsed["old_name"],
         previous={"wxid_a": {"nickname": "小明", "display_name": "旧群昵称"}},
     )
-    assert reply == "📋 群成员变动通知\n📝 群昵称修改：小明（旧群昵称 → 新群昵称）"
+    assert reply == "📋 群成员变动通知:\n📝 昵称修改: 小明 (旧群昵称 -> 新群昵称)"
     assert "未设置" in _build_reply_text("rename", parsed["members"], new_name="x")
-    # 退出保持静默
-    assert _build_reply_text("left", parsed["members"]) == ""
+    # 退出、被移出同样通知
+    assert _build_reply_text("left", parsed["members"]) == "📋 群成员变动通知:\n❌ 成员减少: 小明"
+    assert _build_reply_text("removed", parsed["members"]) == "📋 群成员变动通知:\n❌ 成员减少: 小明"
 
 
 def test_apply_member_change_updates_status_and_nickname():

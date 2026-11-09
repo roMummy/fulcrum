@@ -378,7 +378,7 @@ def test_group_member_change_uses_trusted_group_and_generic_event(group_plugin_f
 
     assert join_result.ok is True
     assert join_result.output["provider_status"] == "member_join"
-    assert join_result.output["replies"] == [{"type": "text", "content": "欢迎 新成员 加入群聊。"}]
+    assert join_result.output["replies"] == [{"type": "text", "content": "📋 群成员变动通知:\n🆕 成员新增: 新成员"}]
     assert joined is not None and joined.status == "active"
     assert forged is None
 
@@ -411,7 +411,7 @@ def test_group_member_change_uses_trusted_group_and_generic_event(group_plugin_f
         )
         db.commit()
     assert leave_result.output["provider_status"] == "member_left"
-    assert "replies" not in leave_result.output
+    assert leave_result.output["replies"] == [{"type": "text", "content": "📋 群成员变动通知:\n❌ 成员减少: 新成员"}]
     assert left is not None and left.status == "left"
 
     with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
