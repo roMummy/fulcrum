@@ -78,11 +78,8 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         if not decision.allowed:
             return _error_result(f"请求太频繁，请 {decision.retry_after_seconds} 秒后再试。", "rate_limited")
 
-        sender_id = str(context.sender_id or "").strip()
-        group_id = _group_id(context)
-        points = PointsService(db).deduct_points(
-            sender_id,
-            group_id,
+        points = PointsService(db).spend(
+            context,
             config.points_cost,
             source="beautyleg",
             description="美腿图片消费",
@@ -117,9 +114,6 @@ def _validate_context(context: PluginExecutionContext | None) -> PluginExecution
         return _error_result("当前消息缺少可信发送人或消息编号。", "message_context_invalid")
     return None
 
-
-def _group_id(context: PluginExecutionContext) -> str:
-    """把平台会话主键转换为积分账本的稳定分组标识。"""
 
     prefix = "group" if str(context.chat_type or "").strip().lower() == "group" else "direct"
     return f"{prefix}:{int(context.conversation_id or context.bot_id)}"

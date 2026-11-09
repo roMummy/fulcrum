@@ -74,9 +74,8 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         if not decision.allowed:
             return _error_result(f"请求太频繁，请 {decision.retry_after_seconds} 秒后再试。", "rate_limited")
         if config.points_cost > 0:
-            points = PointsService(db).deduct_points(
-                str(context.sender_id),
-                _group_id(context),
+            points = PointsService(db).spend(
+                context,
                 config.points_cost,
                 source="video",
                 description="视频插件消费",
@@ -114,10 +113,6 @@ def _validate_context(context: PluginExecutionContext | None) -> PluginExecution
         return _error_result("当前消息缺少可信发送人或消息编号。", "message_context_invalid")
     return None
 
-
-def _group_id(context: PluginExecutionContext) -> str:
-    prefix = "group" if str(context.chat_type or "").strip().lower() == "group" else "direct"
-    return f"{prefix}:{int(context.conversation_id or context.bot_id)}"
 
 
 def _error_result(message: str, status: str) -> PluginExecutionResult:

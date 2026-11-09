@@ -181,9 +181,8 @@ def config_max_image_bytes(payload: Mapping[str, Any]) -> int:
 def _deduct_points(db: Session, context: PluginExecutionContext, config: FanhaoConfig, mode: str, key: str) -> PluginExecutionResult | None:
     if config.points_cost <= 0:
         return None
-    result = PointsService(db).deduct_points(
-        str(context.sender_id),
-        _group_id(context),
+    result = PointsService(db).spend(
+        context,
         config.points_cost,
         source="fanhao_search",
         description="番号查询消费",
@@ -202,10 +201,6 @@ def _validate_context(context: PluginExecutionContext | None) -> PluginExecution
         return _error_result("当前消息缺少可信发送人或消息编号。", "message_context_invalid")
     return None
 
-
-def _group_id(context: PluginExecutionContext) -> str:
-    prefix = "group" if str(context.chat_type or "").strip().lower() == "group" else "direct"
-    return f"{prefix}:{int(context.conversation_id or context.bot_id)}"
 
 
 def _text_result(message: str, status: str) -> PluginExecutionResult:

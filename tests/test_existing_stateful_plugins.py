@@ -1973,3 +1973,46 @@ def test_lucky_pot_scheduled_action_refunds_when_players_are_insufficient(lucky_
     assert outbound_payload["conversation_id"] == identity["conversation_id"]
     assert outbound_payload["payload"]["receiver_id"] == "lucky-room"
     assert "人数不足" in outbound_payload["payload"]["content"]
+
+
+def test_points_context_entry_unifies_earn_and_spend_into_one_account(game_task_fixture) -> None:
+    """统一口径:不同插件按上下文赚取和消费,落在同一个 租户+群+用户 账户;换群则是另一个账户。"""
+
+    from app.models.entities import Message
+    from app.services.plugin_runtime.contracts import PluginExecutionContext
+
+    factory, identity = game_task_fixture
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        message = Message(
+            tenant_id=identity["tenant_id"],
+            conversation_id=identity["conversation_id"],
+            direction="inbound",
+            sender_id="wxid_a",
+            sender_name="小A",
+            content="签到",
+        )
+        db.add(message)
+        db.flush()
+
+        def ctx(conversation_id: int) -> PluginExecutionContext:
+            return PluginExecutionContext(
+                tenant_id=identity["tenant_id"],
+                binding_id=identity["binding_id"],
+                bot_id=identity["bot_id"],
+                channel_id=identity["channel_id"],
+                conversation_id=conversation_id,
+                message_id=int(message.id),
+                sender_id="wxid_a",
+                chat_type="group",
+            )
+
+        service = PointsService(db)
+        service.earn(ctx(identity["conversation_id"]), 50, source="checkin", description="签到")
+        spent = service.spend(ctx(identity["conversation_id"]), 20, source="fanhao_search", description="番号查询")
+        assert spent.ok is True
+        assert service.balance(ctx(identity["conversation_id"])) == 30
+        # 同一用户在另一个群没有积分,账户按群隔离。
+        assert service.balance(ctx(identity["forged_conversation_id"])) == 0
+        assert service.spend(ctx(identity["forged_conversation_id"]), 1, source="x", description="x").ok is False
+        accounts = db.scalars(select(PointsAccount).where(PointsAccount.user_id == "wxid_a")).all()
+        assert [(a.group_id, a.user_name, a.total_points) for a in accounts if a.total_points] == [("game-room", "小A", 30)]

@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
-from app.models.entities import PointsAccount, PointsPrisonRecord, PointsTransaction
+from app.models.entities import Conversation, Message, PointsAccount, PointsPrisonRecord, PointsTransaction
 
 
 SYSTEM_USER_ID = "SYSTEM"
@@ -27,6 +27,47 @@ class PointsResult:
 class PointsService:
     def __init__(self, db: Session):
         self.db = db
+
+    # ===== 统一口径入口 =====
+    # 积分账户唯一键 = 租户 + 群(会话 external_id,如 xxx@chatroom) + 用户(发送人 wxid)。
+    # 所有插件(签到、消费、打劫、兑换等)必须通过下面三个方法按“可信上下文”读写,
+    # 不得自行拼 group_id,否则会出现同一个人在不同插件里各有一份积分的割裂账户。
+
+    def resolve_account_key(self, context: object) -> tuple[str, str, str | None]:
+        """由插件可信上下文解析唯一账户键,返回 (用户ID, 群ID, 昵称)。
+
+        群ID取会话 external_id(私聊同样取会话 external_id,天然区分),
+        昵称取入站消息的发送人昵称,仅用于展示,不参与账户定位。
+        """
+
+        user_id = str(getattr(context, "sender_id", "") or "").strip()
+        conversation = self.db.get(Conversation, int(getattr(context, "conversation_id", 0) or 0))
+        group_id = str(conversation.external_id or "").strip() if conversation is not None else ""
+        if not user_id or not group_id:
+            raise ValueError("积分账户需要可信的发送人和会话")
+        message_id = int(getattr(context, "message_id", 0) or 0)
+        message = self.db.get(Message, message_id) if message_id else None
+        name = str(message.sender_name or "").strip() if message is not None else ""
+        return user_id, group_id, name or None
+
+    def earn(self, context: object, points: int, *, source: str, description: str, idempotency_key: str | None = None, metadata: dict[str, object] | None = None) -> PointsResult:
+        """按上下文给当前发送人在当前群的账户增加积分。"""
+
+        user_id, group_id, name = self.resolve_account_key(context)
+        return self.add_points(user_id, group_id, points, user_name=name, source=source, description=description, metadata=metadata, idempotency_key=idempotency_key)
+
+    def spend(self, context: object, points: int, *, source: str, description: str, idempotency_key: str | None = None, metadata: dict[str, object] | None = None) -> PointsResult:
+        """按上下文从当前发送人在当前群的账户扣除积分,余额不足返回 ok=False。"""
+
+        user_id, group_id, name = self.resolve_account_key(context)
+        return self.deduct_points(user_id, group_id, points, user_name=name, source=source, description=description, metadata=metadata, idempotency_key=idempotency_key)
+
+    def balance(self, context: object) -> int:
+        """按上下文查询当前发送人在当前群的积分余额。"""
+
+        user_id, group_id, _name = self.resolve_account_key(context)
+        account = self.get_user_points(user_id, group_id)
+        return int(account["total_points"]) if account else 0
 
     def get_user_points(self, user_id: str, group_id: str) -> dict[str, object] | None:
         account = self._find_account(user_id, group_id)

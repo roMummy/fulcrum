@@ -71,9 +71,8 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
             _enqueue_refresh_if_needed(db, context, config)
             return _text_result("图片资源正在准备中，请稍后再试。", "refresh_queued")
         if config.points_cost > 0:
-            points = PointsService(db).deduct_points(
-                str(context.sender_id),
-                _group_id(context),
+            points = PointsService(db).spend(
+                context,
                 config.points_cost,
                 source="xiuren_image",
                 description="秀人图片插件消费",
@@ -147,10 +146,6 @@ def _validate_context(context: PluginExecutionContext | None) -> PluginExecution
         return _error_result("当前消息缺少可信发送人或消息编号。", "message_context_invalid")
     return None
 
-
-def _group_id(context: PluginExecutionContext) -> str:
-    prefix = "group" if str(context.chat_type or "").strip().lower() == "group" else "direct"
-    return f"{prefix}:{int(context.conversation_id or context.bot_id)}"
 
 
 def _text_result(message: str, status: str) -> PluginExecutionResult:
