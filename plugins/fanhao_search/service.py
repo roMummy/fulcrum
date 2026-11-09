@@ -14,10 +14,10 @@ from plugins._shared.media import IMAGE_TYPES, MediaBoundaryError, validate_medi
 
 DEFAULT_COMMANDS = ("番号", "番号查询")
 DEFAULT_IMAGE_COMMANDS = ("查番", "以图查番")
-DEFAULT_JAVBUS_URL = "https://www.javbus.com"
+# 站点按访问速度排序:201 直连 javbus 主站握手超时(实测),cdnbus 镜像约 1 秒返回,
+# 所以镜像在前、主站兜底。站点列表固定在代码里,不再作为配置项暴露给用户。
+JAVBUS_SITE_URLS = ("https://www.cdnbus.casa", "https://www.javbus.com")
 DEFAULT_AVSCAN_URL = "https://avscan.cc"
-# 内置备用站:201 直连主站常握手超时,主站失败后自动切换,无需用户配置。
-DEFAULT_JAVBUS_FALLBACK_URLS = ("https://www.cdnbus.casa",)
 VIDEO_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
 
 
@@ -68,22 +68,12 @@ def load_config(raw_config: Mapping[str, Any]) -> FanhaoConfig:
     """读取配置并固定站点、结果数量、超时和图片大小上限。"""
 
     raw = dict(raw_config or {})
-    primary = _normalize_base_url(raw.get("javbus_base_url"), DEFAULT_JAVBUS_URL)
-    fallback_values = raw.get("javbus_fallback_base_urls", DEFAULT_JAVBUS_FALLBACK_URLS)
-    if isinstance(fallback_values, str):
-        fallback_values = [fallback_values]
-    urls: list[str] = [primary]
-    if isinstance(fallback_values, (list, tuple)):
-        for item in fallback_values:
-            normalized = _normalize_base_url(item, "")
-            if normalized and normalized not in urls:
-                urls.append(normalized)
     avscan = _normalize_base_url(raw.get("avscan_base_url"), DEFAULT_AVSCAN_URL)
     return FanhaoConfig(
         commands=_commands(raw.get("commands"), DEFAULT_COMMANDS),
         image_search_enabled=bool(raw.get("image_search_enabled", True)),
         image_search_commands=_commands(raw.get("image_search_commands"), DEFAULT_IMAGE_COMMANDS),
-        javbus_urls=tuple(urls),
+        javbus_urls=JAVBUS_SITE_URLS,
         request_timeout_seconds=_bounded_int(raw.get("request_timeout_seconds"), default=8, minimum=1, maximum=120),
         allow_download_link=bool(raw.get("allow_download_link", True)),
         prefer_subtitle_magnet=bool(raw.get("prefer_subtitle_magnet", True)),

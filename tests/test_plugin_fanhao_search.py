@@ -6,8 +6,8 @@ from plugins.fanhao_search.service import format_image_result, format_movie_resu
 
 
 def test_fanhao_config_uses_bounded_site_list() -> None:
-    config = load_config({"enabled": True, "javbus_base_url": "javascript:alert(1)", "avscan_result_count": 8})
-    assert config.javbus_urls[0] == "https://www.javbus.com"
+    config = load_config({"javbus_base_url": "javascript:alert(1)", "avscan_result_count": 8})
+    assert config.javbus_urls[0] == "https://www.cdnbus.casa"
     assert config.avscan_result_count == 2
     assert config.points_cost == 100
 
@@ -83,9 +83,9 @@ def test_fanhao_requests_carry_age_cookie_and_browser_ua() -> None:
 
 
 def test_fanhao_defaults_include_fallback_site_and_parse_real_markup() -> None:
-    """回归:不配置也有备用站;真实页面的封面在 <a class=bigImage>,演员在 star-name 中。"""
+    """回归:镜像站优先、主站兜底;真实页面的封面在 <a class=bigImage>,演员在 star-name 中。"""
 
-    assert load_config({}).javbus_urls == ("https://www.javbus.com", "https://www.cdnbus.casa")
+    assert load_config({}).javbus_urls == ("https://www.cdnbus.casa", "https://www.javbus.com")
     markup = (
         '<div class="row movie"><a class="bigImage" href="/p.jpg"><img src="/pics/c.jpg"></a>'
         '<div class="info"><p><span class="header">發行日期:</span> 2022-05-20</p></div>'
