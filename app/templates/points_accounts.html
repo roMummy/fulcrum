@@ -5,21 +5,21 @@
 <div class="chip-row">
   <span class="chip chip-outline">{{ directory.summary.accounts }} 个账户</span>
   <span class="chip chip-outline">合计 {{ directory.summary.points }} 积分</span>
-  <a class="btn btn-secondary" href="/points/ledger{% if directory.group_id %}?group_id={{ directory.group_id|urlencode }}{% endif %}">账单</a>
+  <a class="btn btn-small btn-secondary" href="/points/ledger{% if directory.group_id %}?group_id={{ directory.group_id|urlencode }}{% endif %}">账单</a>
 </div>
 {% endblock %}
 {% block content %}
 <section class="work-surface">
-  <form method="get" action="/points" class="compact-filter-form" style="margin-bottom:12px;">
-    <label class="compact-filter-field"><span>群</span>
+  <form method="get" action="/points" class="form-grid points-filter" style="grid-template-columns:minmax(0,260px) minmax(0,260px) auto;align-items:end;margin-bottom:16px;">
+    <label><span>群</span>
       <select name="group_id" onchange="this.form.submit()">
         {% for item in groups %}<option value="{{ item.id }}" {% if directory.group_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
       </select>
     </label>
-    <label class="compact-filter-field"><span>搜索成员</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称" /></label>
-    <div class="compact-filter-actions">
+    <label><span>搜索成员</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称" /></label>
+    <div class="form-actions-inline">
       <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword %}<a class="btn btn-secondary" href="/points?group_id={{ directory.group_id|urlencode }}">清除</a>{% endif %}
+      {% if directory.keyword %}<a class="btn btn-ghost" href="/points?group_id={{ directory.group_id|urlencode }}">清除</a>{% endif %}
     </div>
   </form>
 
@@ -33,23 +33,13 @@
       <tr>
         <td>{{ identity(item.identity, 'lg') }}</td>
         {% if not directory.group_id %}<td>{{ identity(item.group, 'sm', false) }}</td>{% endif %}
-        <td class="col-compact"><strong>{{ item.points }}</strong></td>
-        <td class="col-action">
-          {# 点“调整积分”在本行展开面板,只需要填积分和备注;成员已经选定,不会发错人。 #}
-          <details class="row-actions">
-            <summary class="btn btn-small">调整积分</summary>
-            <form method="post" action="/points/adjust" class="compact-filter-form" style="margin-top:8px;">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-              <input type="hidden" name="form_token" value="{{ form_tokens[loop.index0] }}" />
-              <input type="hidden" name="group_id" value="{{ item.group_id }}" />
-              <input type="hidden" name="user_id" value="{{ item.user_id }}" />
-              <input type="hidden" name="back" value="{{ back }}" />
-              <select name="mode"><option value="grant">发放</option><option value="deduct">扣减</option></select>
-              <input type="number" name="amount" min="1" max="1000000" required placeholder="积分" style="width:90px;" />
-              <input name="note" maxlength="200" placeholder="备注(选填)" />
-              <button class="btn btn-small" type="submit">确认</button>
-            </form>
-          </details>
+        <td class="col-compact" style="vertical-align:middle;"><strong>{{ item.points }}</strong></td>
+        <td class="col-action" style="vertical-align:middle;white-space:nowrap;">
+          <button class="btn btn-small" type="button" data-points-adjust
+            data-user-id="{{ item.user_id }}" data-group-id="{{ item.group_id }}"
+            data-name="{{ item.identity.name }}" data-wxid="{{ item.identity.external_id if item.identity.show_id else '' }}"
+            data-avatar="{{ item.identity.avatar_url }}" data-initial="{{ item.identity.initial }}"
+            data-group-name="{{ item.group.name }}" data-points="{{ item.points }}">调整积分</button>
           <a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}">账单</a>
         </td>
       </tr>
@@ -62,4 +52,82 @@
   <p class="muted-text">{% if directory.group_id %}这个群还没有同步到成员。请先到群管理里同步群成员。{% else %}还没有群。请先到群管理里启用群并同步成员。{% endif %}</p>
   {% endif %}
 </section>
+
+{# 调整积分弹窗:整页共用一个,点哪一行就把那个人带进来,只需要选方式、填积分和备注。 #}
+<dialog class="app-modal" id="points-adjust-modal" aria-labelledby="points-adjust-title" style="width:min(460px,calc(100vw - 32px));">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2 id="points-adjust-title">调整积分</h2></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <div class="points-target">
+      <span class="identity-avatar" id="pa-avatar"></span>
+      <span class="identity-text"><strong class="identity-name" id="pa-name"></strong><small class="identity-id" id="pa-sub"></small></span>
+      <span class="points-target-balance"><small>当前积分</small><strong id="pa-balance">0</strong></span>
+    </div>
+    <form method="post" action="/points/adjust" class="form-grid points-adjust-form" id="points-adjust-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="form_token" id="pa-token" value="" />
+      <input type="hidden" name="group_id" id="pa-group" value="" />
+      <input type="hidden" name="user_id" id="pa-user" value="" />
+      <input type="hidden" name="back" value="{{ pager_base.rstrip('?&') }}" />
+      <div class="full-row points-mode" role="radiogroup" aria-label="调整方式">
+        <label class="points-mode-option"><input type="radio" name="mode" value="grant" checked /><span>发放</span></label>
+        <label class="points-mode-option"><input type="radio" name="mode" value="deduct" /><span>扣减</span></label>
+      </div>
+      <label class="full-row"><span>积分数量</span><input type="number" name="amount" id="pa-amount" min="1" max="1000000" inputmode="numeric" required placeholder="请输入大于 0 的整数" /></label>
+      <label class="full-row"><span>备注(选填,会记在账单里)</span><input name="note" maxlength="200" placeholder="例如:活动奖励" /></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">确认</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    </form>
+  </div>
+</dialog>
+<style>
+  .points-target { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 16px; background: var(--surface-soft); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .points-target .identity-text { flex: 1; min-width: 0; display: grid; }
+  .points-target-balance { display: grid; text-align: right; }
+  .points-target-balance small { color: var(--text-soft); font-size: 12px; }
+  .points-target-balance strong { font-size: 22px; line-height: 1.1; }
+  .points-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 3px; background: var(--surface-soft); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .points-mode-option { display: block; position: relative; }
+  .points-mode-option input { position: absolute; opacity: 0; pointer-events: none; }
+  .points-mode-option span { display: block; padding: 8px 0; text-align: center; border-radius: calc(var(--radius-md) - 2px); cursor: pointer; color: var(--text-soft); transition: background-color 200ms ease, color 200ms ease; }
+  .points-mode-option input:checked + span { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-soft); }
+  .points-mode-option input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 1px; }
+  @media (max-width: 560px) { .points-adjust-form { grid-template-columns: 1fr; } }
+</style>
+<script>
+  (() => {
+    const dialog = document.getElementById("points-adjust-modal");
+    if (!dialog) return;
+    const $ = (id) => document.getElementById(id);
+    document.querySelectorAll("[data-points-adjust]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const d = button.dataset;
+        $("pa-group").value = d.groupId;
+        $("pa-user").value = d.userId;
+        // 每次打开生成新的随机令牌:同一次提交重复点击只记一笔,下一次调整是新令牌。
+        $("pa-token").value = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/-/g, "");
+        $("pa-name").textContent = d.name;
+        $("pa-sub").textContent = [d.wxid, d.groupName].filter(Boolean).join(" · ");
+        $("pa-balance").textContent = d.points;
+        const avatar = $("pa-avatar");
+        avatar.innerHTML = "";
+        if (d.avatar) {
+          const img = document.createElement("img");
+          img.src = d.avatar; img.alt = ""; img.referrerPolicy = "no-referrer";
+          avatar.appendChild(img);
+        } else {
+          const span = document.createElement("span");
+          span.textContent = d.initial || "?";
+          avatar.appendChild(span);
+        }
+        $("pa-amount").value = "";
+        dialog.querySelector('input[name="note"]').value = "";
+        dialog.querySelector('input[name="mode"][value="grant"]').checked = true;
+        dialog.showModal();
+        $("pa-amount").focus();
+      });
+    });
+  })();
+</script>
 {% endblock %}

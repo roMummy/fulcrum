@@ -1,5 +1,4 @@
 import json
-import secrets
 import subprocess
 import time as time_module
 import xml.etree.ElementTree as ElementTree
@@ -2489,8 +2488,6 @@ async def points_accounts_page(request: Request, q: str = "", group_id: str = ""
             directory=directory,
             groups=groups,
             pager_base=_directory_pager_base("/points", q=directory["keyword"], group_id=group_id),
-            # 每行一个随机令牌:同一份表单重复提交只记一笔,而同一个人下一次调整是新的令牌。
-            form_tokens=[secrets.token_hex(12) for _ in directory["rows"]],
             notice=notice,
         )
     finally:
