@@ -16,6 +16,8 @@ DEFAULT_COMMANDS = ("番号", "番号查询")
 DEFAULT_IMAGE_COMMANDS = ("查番", "以图查番")
 DEFAULT_JAVBUS_URL = "https://www.javbus.com"
 DEFAULT_AVSCAN_URL = "https://avscan.cc"
+# 内置备用站:201 直连主站常握手超时,主站失败后自动切换,无需用户配置。
+DEFAULT_JAVBUS_FALLBACK_URLS = ("https://www.cdnbus.casa",)
 VIDEO_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
 
 
@@ -67,7 +69,7 @@ def load_config(raw_config: Mapping[str, Any]) -> FanhaoConfig:
 
     raw = dict(raw_config or {})
     primary = _normalize_base_url(raw.get("javbus_base_url"), DEFAULT_JAVBUS_URL)
-    fallback_values = raw.get("javbus_fallback_base_urls")
+    fallback_values = raw.get("javbus_fallback_base_urls", DEFAULT_JAVBUS_FALLBACK_URLS)
     if isinstance(fallback_values, str):
         fallback_values = [fallback_values]
     urls: list[str] = [primary]
@@ -213,14 +215,14 @@ def parse_movie_detail(markup: str, code: str, *, base_url: str) -> MovieDetail 
     if not content or "class=\"movie\"" not in content and "class='movie'" not in content:
         return None
     title = _first_text(re.search(r"<h3[^>]*>(.*?)</h3>", content, re.IGNORECASE | re.DOTALL))
-    image_match = re.search(r"<div[^>]*class=[\"'][^\"']*bigImage[^\"']*[\"'][^>]*>.*?<img[^>]+src=[\"']([^\"']+)", content, re.IGNORECASE | re.DOTALL)
+    image_match = re.search(r"<(?:div|a)[^>]*class=[\"'][^\"']*bigImage[^\"']*[\"'][^>]*>.*?<img[^>]+src=[\"']([^\"']+)", content, re.IGNORECASE | re.DOTALL)
     image_url = urljoin(base_url, html_lib.unescape(image_match.group(1).strip())) if image_match else ""
     date = _label_value(content, ("發行日期", "发行日期"))
     length_text = _label_value(content, ("長度", "长度"))
     length_match = re.search(r"(\d+)", length_text)
     publisher = _label_value(content, ("發行商", "发行商"))
-    star_block = _label_block(content, ("演員", "演员"))
-    stars = tuple(dict.fromkeys(re.findall(r">\s*([^<>]{1,80})\s*</a>", star_block)))
+    # 真实页面的演员在 class="star-name" 的链接里,不在带"演員"字样的 <p> 中。
+    stars = tuple(dict.fromkeys(re.findall(r'class=["\']star-name["\'][^>]*>\s*<a[^>]*>([^<]{1,80})</a>', content)))
     gid_match = re.search(r"\bvar\s+gid\s*=\s*[\"']?(\d+)", content)
     uc_match = re.search(r"\bvar\s+uc\s*=\s*[\"']?(\d+)", content)
     return MovieDetail(

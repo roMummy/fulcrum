@@ -80,3 +80,18 @@ def test_fanhao_requests_carry_age_cookie_and_browser_ua() -> None:
     assert headers["Cookie"] == "dv=1"
     assert "Chrome/" in headers["User-Agent"]
     assert headers["Referer"] == "https://example.test/ABC-123"
+
+
+def test_fanhao_defaults_include_fallback_site_and_parse_real_markup() -> None:
+    """回归:不配置也有备用站;真实页面的封面在 <a class=bigImage>,演员在 star-name 中。"""
+
+    assert load_config({}).javbus_urls == ("https://www.javbus.com", "https://www.cdnbus.casa")
+    markup = (
+        '<div class="row movie"><a class="bigImage" href="/p.jpg"><img src="/pics/c.jpg"></a>'
+        '<div class="info"><p><span class="header">發行日期:</span> 2022-05-20</p></div>'
+        '<div class="star-name"><a href="/star/1" title="x">葵つかさ</a></div></div><h3>SSIS-406 标题</h3>'
+    )
+    detail = parse_movie_detail(markup, "SSIS-406", base_url="https://www.cdnbus.casa")
+    assert detail is not None
+    assert detail.image_url == "https://www.cdnbus.casa/pics/c.jpg"
+    assert detail.stars == ("葵つかさ",)
