@@ -212,7 +212,8 @@ def parse_movie_detail(markup: str, code: str, *, base_url: str) -> MovieDetail 
     """从 JavBus 页面提取最小详情，避免引入站点专用 ORM 或旧解析依赖。"""
 
     content = str(markup or "")
-    if not content or "class=\"movie\"" not in content and "class='movie'" not in content:
+    # 真实页面容器是 class="row movie",按 class 词匹配而不是整串相等。
+    if not content or not re.search(r"class=[\"'][^\"']*\bmovie\b", content):
         return None
     title = _first_text(re.search(r"<h3[^>]*>(.*?)</h3>", content, re.IGNORECASE | re.DOTALL))
     image_match = re.search(r"<(?:div|a)[^>]*class=[\"'][^\"']*bigImage[^\"']*[\"'][^>]*>.*?<img[^>]+src=[\"']([^\"']+)", content, re.IGNORECASE | re.DOTALL)
