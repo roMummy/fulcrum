@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
@@ -207,14 +207,18 @@ async def command_result(channel_id: int, request: Request):
 
 
 @router.post("/{channel_id}/agent/upload_media")
-async def upload_media(channel_id: int, request: Request, attachment_id: int, file: UploadFile = File(...)):
+async def upload_media(
+    channel_id: int,
+    attachment_id: int,
+    file: UploadFile = File(...),
+    account_id: str = Form(""),
+    device_id: str = Form(""),
+    session_id: str = Form(""),
+):
     """接收手机执行 upload_message_media 后回传的媒体文件。"""
 
-    body = {
-        "device_id": request.headers.get("x-webridge-device-id", ""),
-        "session_id": request.headers.get("x-webridge-session-id", ""),
-        "account_id": request.headers.get("x-webridge-account-id", ""),
-    }
+    # 微桥文档规定上传是 multipart/form-data,设备身份三元组在表单字段里,不在请求头。
+    body = {"device_id": device_id, "session_id": session_id, "account_id": account_id}
     logger.info("webridge media upload received", extra={"channel_id": channel_id, "attachment_id": attachment_id, "upload_filename": file.filename or "", "content_type": file.content_type or ""})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
@@ -233,7 +237,8 @@ async def upload_media(channel_id: int, request: Request, attachment_id: int, fi
                 content_type=file.content_type or "application/octet-stream",
             )
             db.commit()
-            return {"ok": True, **result}
+            # 微桥要求响应带非空 asset_id,缺少会判定上传失败;用附件主键作为资源 ID。
+            return {"ok": True, "asset_id": str(result["attachment_id"]), **result}
         except ValueError as exc:
             logger.exception("webridge media upload rejected", extra={"channel_id": channel_id, "attachment_id": attachment_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
