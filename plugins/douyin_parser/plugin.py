@@ -12,13 +12,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from loguru import logger
-
+from app.core.logging import get_logger
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
 from app.services.plugin_runtime.replies import PluginReplyError, standard_replies, text_reply
 
 from plugins.douyin_parser.service import SourceError, build_replies, parse_media
+
+logger = get_logger(__name__)
 
 
 # 只匹配 URL 合法的 ASCII 字符,紧跟在链接后的中文文案和中文标点会被自然截断。
@@ -90,7 +91,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
         )
     except (SourceError, PluginHttpError, ValueError) as exc:
         # 失败原因只含来源与错误码,不含密钥;写入日志便于区分 key 无效、超时和站点风控。
-        logger.warning("抖音解析失败 | 原因={} | 链接={}", exc, share_url)
+        logger.warning("抖音解析失败", extra={"reason": str(exc)[:300], "share_url": share_url})
         return _error("抖音解析服务暂时不可用,请稍后重试。", "parse_failed")
     try:
         replies = build_replies(
