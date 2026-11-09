@@ -63,6 +63,8 @@ def save_ai_setting(
     api_base: str,
     model: str,
     api_key: str,
+    chat_enabled: bool = False,
+    persona: str = "",
 ) -> TenantAiSetting:
     """保存 AI 设置。api_key 留空表示沿用已有密钥，页面不会回显密钥。"""
 
@@ -73,6 +75,9 @@ def save_ai_setting(
     setting.enabled = bool(enabled)
     setting.api_base = str(api_base or "").strip().rstrip("/")
     setting.model = str(model or "").strip()
+    setting.chat_enabled = bool(chat_enabled)
+    # 人格是多行文本，保留换行，只限制长度；注入提示前还会再压成单行。
+    setting.persona = str(persona or "").strip()[:2000]
     if str(api_key or "").strip():
         setting.api_key_encrypted = encrypt_secret(str(api_key).strip())
     db.flush()
@@ -96,6 +101,8 @@ class ModelConfig:
     api_base: str
     model: str
     api_key: str
+    chat_enabled: bool = False
+    persona: str = ""
 
 
 def snapshot_setting(setting: TenantAiSetting) -> ModelConfig:
@@ -105,6 +112,8 @@ def snapshot_setting(setting: TenantAiSetting) -> ModelConfig:
         api_base=setting.api_base,
         model=setting.model,
         api_key=decrypt_secret(setting.api_key_encrypted) or "",
+        chat_enabled=bool(setting.chat_enabled),
+        persona=setting.persona or "",
     )
 
 
@@ -134,7 +143,7 @@ def used_today(db: Session) -> int:
         db.scalar(
             select(func.count(AiDecision.id)).where(
                 AiDecision.created_at >= start,
-                AiDecision.status.in_(("routed", "asked", "no_match", "low_confidence", "rejected", "error")),
+                AiDecision.status.in_(("routed", "asked", "no_match", "low_confidence", "rejected", "error", "chatted")),
             )
         )
         or 0
@@ -248,13 +257,15 @@ def analyze_intent(config: ModelConfig, text: str, catalog: list[dict[str, Any]]
     return validate_model_output(result.text, catalog)
 
 
-def prepare_intent(db: Session, payload: dict[str, Any]) -> tuple[ModelConfig, str, list[dict[str, Any]]] | None:
-    """第一阶段（持有会话、不访问网络）：重新核对条件，取模型快照、原文和目录。
+def prepare_intent(db: Session, payload: dict[str, Any]):
+    """第一阶段（持有会话、不访问网络）：重新核对条件，取模型快照、原文、目录和聊天上下文。
 
-    返回 None 表示无需调用模型（配置被关闭、目录为空、额度用完等），额度用完会留一条记录。
+    返回 (config, text, catalog, chat)；chat 为 None 表示没开聊天兜底。
+    返回 None 表示无需调用模型（配置被关闭、目录为空且没开聊天、额度用完等），额度用完会留一条记录。
     """
 
     from app.models.entities import Channel
+    from app.services import ai_chat
     from app.services.plugin_directory import build_static_dispatch_plan
 
     channel = db.get(Channel, int(payload.get("channel_id") or 0))
@@ -266,7 +277,7 @@ def prepare_intent(db: Session, payload: dict[str, Any]) -> tuple[ModelConfig, s
         return None
     plan = build_static_dispatch_plan(db, channel, event)
     catalog = build_catalog([item.plugin_code for item in plan.candidates])
-    if not catalog:
+    if not catalog and not setting.chat_enabled:
         return None
     text = str((event.get("message") or {}).get("content") or "")
     if used_today(db) >= int(setting.daily_limit or 0):
@@ -280,7 +291,17 @@ def prepare_intent(db: Session, payload: dict[str, Any]) -> tuple[ModelConfig, s
         )
         db.commit()
         return None
-    return snapshot_setting(setting), text, catalog
+    chat = None
+    if setting.chat_enabled:
+        chat = ai_chat.build_chat_input(
+            db,
+            channel_id=channel.id,
+            conversation_id=payload.get("conversation_id"),
+            sender_id=str(plan.context.sender_id or ""),
+            text=text,
+            persona=setting.persona or "",
+        )
+    return snapshot_setting(setting), text, catalog, chat
 
 
 @contextmanager

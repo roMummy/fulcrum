@@ -21,7 +21,7 @@ from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, TaskJob
-from app.services import ai_dispatch
+from app.services import ai_chat, ai_dispatch
 from app.services.task_queue import (
     AI_INTENT_JOB,
     claim_next_job,
@@ -99,10 +99,21 @@ def _execute_intent(job_id: int) -> None:
         if prepared is None:
             complete_job(db, job, result={"skipped": True})
             return
-        config, text, catalog = prepared
+        config, text, catalog, chat = prepared
 
     # 阶段二：不持有任何数据库会话，慢的模型调用只占用线程。
-    intent = ai_dispatch.analyze_intent(config, text, catalog)
+    # 有可调度功能先做意图路由；模型认为不是功能请求（或根本没有功能目录）时，
+    # 若开了聊天兜底，就按人格直接聊天。路由出错、被拒绝等情况不聊天，避免误回。
+    intent = ai_dispatch.analyze_intent(config, text, catalog) if catalog else ai_dispatch.AiIntent(status="no_match", reason="没有可调度功能")
+    chat_reply = ""
+    if chat is not None and intent.status == "no_match":
+        try:
+            chat_reply = ai_chat.generate_reply(config, chat)
+        except Exception as exc:
+            logger.warning("ai chat reply failed", extra={"job_id": job_id})
+            intent = ai_dispatch.AiIntent(status="error", reason=str(exc)[:200])
+        else:
+            intent = ai_dispatch.AiIntent(status="chatted", reason="按人格聊天")
 
     # 阶段三：短会话，落决策记录并下发结果。
     with tenant_session(TenantSessionLocal) as db:
@@ -110,12 +121,21 @@ def _execute_intent(job_id: int) -> None:
         if job is None:
             return
         try:
-            result = _deliver(db, payload, intent)
+            result = _deliver(db, payload, intent, chat_reply)
             complete_job(db, job, result=result)
         except Exception as exc:
             db.rollback()
             fail_job(db, job, error_message=str(exc))
             logger.exception("ai intent deliver failed", extra={"job_id": job_id})
+            return
+
+    # 阶段四：回复已发出，再慢慢提取长期记忆；失败不影响已完成的聊天。
+    if chat is not None and chat_reply and ai_chat.should_extract_memory(text):
+        items = ai_chat.extract_memories(config, chat, chat_reply)
+        if items:
+            with tenant_session(TenantSessionLocal) as db:
+                ai_chat.save_memories(db, chat, items)
+                db.commit()
 
 
 def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], event: dict[str, Any], command_text: str) -> None:
@@ -142,8 +162,8 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
         )
 
 
-def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent) -> dict[str, Any]:
-    """记录决策；识别出插件就直接执行，缺参数就追问。"""
+def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent, chat_reply: str = "") -> dict[str, Any]:
+    """记录决策；识别出插件就直接执行，缺参数就追问，聊天则发送人格回复。"""
 
     from app.services.plugin_directory import send_ai_reply
 
@@ -164,6 +184,8 @@ def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent)
         return {"status": intent.status}
     if intent.status == "asked":
         send_ai_reply(db, channel, event, intent.question, conversation_id=conversation_id)
+    elif intent.status == "chatted" and chat_reply:
+        send_ai_reply(db, channel, event, chat_reply, conversation_id=conversation_id)
     elif intent.status == "routed" and intent.command_text:
         _execute_routed(db, channel, payload, event, intent.command_text)
     db.commit()

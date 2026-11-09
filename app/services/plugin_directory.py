@@ -609,9 +609,10 @@ def _enqueue_ai_intent(
         setting = ai_dispatch.get_ai_setting(db)
         if not ai_dispatch.is_ai_ready(setting):
             return False
-        # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力；没有可调度功能就不入队。
+        # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力；
+        # 没有可调度功能且没开聊天兜底时不入队，开了聊天兜底则直接进入聊天。
         catalog = ai_dispatch.build_catalog([item.plugin_code for item in static_plan.candidates])
-        if not catalog:
+        if not catalog and not setting.chat_enabled:
             return False
         # 同一条消息最多产生一个意图任务，重试和重复投递不会重复调用模型。
         dedupe_key = f"ai_intent:{context.channel_id}:{raw_event_id or message_id or 0}"

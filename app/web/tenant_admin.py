@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.db import TenantSessionLocal
 from app.core.tenant_db import open_tenant_session
@@ -21,8 +21,8 @@ from app.services.tenant_admin import (
     reset_tenant_user_password,
     update_tenant_user,
 )
-from app.models.entities import AiDecision
-from app.services import ai_dispatch
+from app.models.entities import AiDecision, AiMemory
+from app.services import ai_chat, ai_dispatch
 from app.services.tenant_admin import require_tenant_mutation_allowed
 from app.services.local_proxy_connector import (
     LocalProxyConnectorError,
@@ -331,6 +331,7 @@ def _ai_page_response(request: Request, db, *, notice: str = "", tone: str = "")
 
     setting = ai_dispatch.get_ai_setting(db)
     decisions = db.scalars(select(AiDecision).order_by(AiDecision.id.desc()).limit(30)).all()
+    memory_count = int(db.scalar(select(func.count(AiMemory.id))) or 0)
     context = _tenant_context(
         request,
         page_title="AI 助手",
@@ -341,6 +342,8 @@ def _ai_page_response(request: Request, db, *, notice: str = "", tone: str = "")
         ready=ai_dispatch.is_ai_ready(setting),
         used_today=ai_dispatch.used_today(db),
         decisions=decisions,
+        memory_count=memory_count,
+        default_persona=ai_chat.DEFAULT_PERSONA,
     )
     return templates.TemplateResponse(request, "tenant_ai.html", context)
 
@@ -366,6 +369,8 @@ async def tenant_ai_save_action(
     api_base: str = Form(""),
     model: str = Form(""),
     api_key: str = Form(""),
+    chat_enabled: str = Form(""),
+    persona: str = Form(""),
     action: str = Form("save"),
     csrf_token: str = Form(""),
 ):
@@ -376,8 +381,18 @@ async def tenant_ai_save_action(
     try:
         require_tenant_csrf(db, request, csrf_token)
         require_tenant_mutation_allowed(principal)
+        if action == "clear_memory":
+            removed = ai_chat.clear_memories(db)
+            db.commit()
+            return _redirect("/tenant/ai", f"已清空 {removed} 条记忆")
         setting = ai_dispatch.save_ai_setting(
-            db, enabled=enabled == "on", api_base=api_base, model=model, api_key=api_key
+            db,
+            enabled=enabled == "on",
+            api_base=api_base,
+            model=model,
+            api_key=api_key,
+            chat_enabled=chat_enabled == "on",
+            persona=persona,
         )
         db.commit()
         if action == "test":

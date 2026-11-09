@@ -815,6 +815,25 @@ class TenantAiSetting(Base, TenantOwnedMixin, TimestampMixin):
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 每日最多调用模型的次数，防止群里刷屏造成费用失控。
     daily_limit: Mapped[int] = mapped_column(Integer, default=200)
+    # 聊天兜底开关：没有插件命中且不是功能意图时，由模型按人格直接聊天。
+    chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 租户自定义的人格设定（系统提示），留空使用平台默认人格。
+    persona: Mapped[str] = mapped_column(Text, default="")
+
+
+class AiMemory(Base, TenantOwnedMixin):
+    """AI 聊天的长期记忆：按渠道和发言人保存模型提取出的单条事实，如喜好、称呼、近况。"""
+
+    __tablename__ = "ai_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    conversation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 记忆归属的发言人；同一个人在不同群里共享记忆，注入提示时只带这个人自己的记忆。
+    sender_id: Mapped[str] = mapped_column(String(128), index=True)
+    # 单行短文本，写入前已清洗并限制长度。
+    content: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, index=True)
 
 
 class AiDecision(Base, TenantOwnedMixin):
