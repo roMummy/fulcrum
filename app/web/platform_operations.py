@@ -17,6 +17,7 @@ from app.core.settings import settings
 from app.core.time import format_shanghai_time, now_shanghai
 from app.models.entities import AlertRecord
 from app.models.saas import PlatformAuditLog
+from app.services.log_view import LEVEL_RANK, parse_entries
 from app.services.ops import build_monitoring_snapshot
 from app.services.request_metrics import summarize as summarize_request_metrics
 from app.services.system_info import build_database_info, build_server_info
@@ -513,9 +514,10 @@ async def platform_logs_page(
     tab: str = "error",
     source_file: str = "",
     keyword: str = "",
+    level: str = "",
     page: int = 1,
 ):
-    """读取平台服务器日志原文，并按类型、文件和关键字分页展示。"""
+    """读取平台服务器日志,解析为带中文标题和着色级别的条目，并按类型、文件和关键字分页展示。"""
 
     _require_platform_principal(request)
     active_tab = "info" if str(tab or "").strip().lower() == "info" else "error"
@@ -526,9 +528,16 @@ async def platform_logs_page(
         raw_lines = selected_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
         raw_lines = []
-    filtered_lines = [line for line in raw_lines if normalized_keyword in line.lower()] if normalized_keyword else raw_lines
+    # 先把 Traceback 等续行并入所属日志,再按关键字和级别筛选,避免堆栈被拆散。
+    entries = parse_entries(raw_lines)
+    min_rank = LEVEL_RANK.get(str(level or "").strip().upper(), 0)
+    filtered_lines = [
+        entry
+        for entry in entries
+        if entry["rank"] >= min_rank and (not normalized_keyword or normalized_keyword in entry["raw"].lower())
+    ]
 
-    page_size = 1200
+    page_size = 300
     current_page = max(int(page or 1), 1)
     total = len(filtered_lines)
     total_pages = max((total + page_size - 1) // page_size, 1)
@@ -543,6 +552,7 @@ async def platform_logs_page(
                 "tab": active_tab,
                 "source_file": selected_path.name,
                 "keyword": keyword.strip(),
+                "level": str(level or "").strip().upper(),
             }.items()
             if value
         }
@@ -574,6 +584,7 @@ async def platform_logs_page(
         active_tab=active_tab,
         source_file=selected_path.name,
         keyword=keyword,
+        level=str(level or "").strip().upper(),
         available_log_files=[str(path.name) for path in available_log_files],
     )
     return templates.TemplateResponse(request, "platform_logs.html", context)

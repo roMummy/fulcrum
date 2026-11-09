@@ -12,12 +12,14 @@
   {% set error_query = '/platform/logs?tab=error' %}
   {% if source_file %}{% set error_query = error_query ~ '&source_file=' ~ source_file|urlencode %}{% endif %}
   {% if keyword %}{% set error_query = error_query ~ '&keyword=' ~ keyword|urlencode %}{% endif %}
+  {% if level %}{% set error_query = error_query ~ '&level=' ~ level %}{% endif %}
   {% set info_query = '/platform/logs?tab=info' %}
   {% if source_file %}{% set info_query = info_query ~ '&source_file=' ~ source_file|urlencode %}{% endif %}
   {% if keyword %}{% set info_query = info_query ~ '&keyword=' ~ keyword|urlencode %}{% endif %}
+  {% if level %}{% set info_query = info_query ~ '&level=' ~ level %}{% endif %}
   <div class="section-head"><div><h2>{{ 'Error 日志' if active_tab == 'error' else 'Info 日志' }}</h2></div><span class="chip chip-outline">第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span></div>
   {# 文件选择属于日志结果控制区；只有用户显式提交条件时才在窄屏保持展开。 #}
-  {% set filter_active = request.query_params.get('source_file') or keyword %}
+  {% set filter_active = request.query_params.get('source_file') or keyword or level %}
   <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选日志</span>
@@ -26,13 +28,27 @@
     <form method="get" action="/platform/logs" class="compact-filter-form">
       <input type="hidden" name="tab" value="{{ active_tab }}" />
       <label class="compact-filter-field"><span>日志文件</span><select name="source_file">{% for file_name in available_log_files %}<option value="{{ file_name }}" {% if file_name == source_file %}selected{% endif %}>{{ file_name }}</option>{% endfor %}</select></label>
-      <label class="compact-filter-field compact-filter-field-query"><span>关键字</span><input name="keyword" value="{{ keyword or '' }}" placeholder="Traceback / webhook / channel_id" /></label>
+      <label class="compact-filter-field"><span>级别</span><select name="level"><option value="">全部</option><option value="WARNING" {% if level == 'WARNING' %}selected{% endif %}>警告及以上</option><option value="ERROR" {% if level == 'ERROR' %}selected{% endif %}>仅错误</option></select></label>
+      <label class="compact-filter-field compact-filter-field-query"><span>关键字</span><input name="keyword" value="{{ keyword or '' }}" placeholder="群名 / 插件 / 昵称 / 任务号" /></label>
       <div class="compact-filter-actions"><button class="btn" type="submit">筛选</button><a class="btn btn-secondary" href="/platform/logs?tab={{ active_tab }}">重置</a></div>
     </form>
   </details>
   <div class="log-tab-row"><a class="log-tab{% if active_tab == 'error' %} is-active{% endif %}" href="{{ error_query }}">Error</a><a class="log-tab{% if active_tab == 'info' %} is-active{% endif %}" href="{{ info_query }}">Info</a></div>
-  <pre class="log-message-block">{% for line in log_lines %}{{ line }}
-{% else %}(当前筛选下没有日志记录){% endfor %}</pre>
+  {# 阅读框自身滚动,页面不再滚动;每条日志:时间、级别、来源、中文标题、关键字段,点击展开原文/堆栈。 #}
+  <div class="log-reader" role="log">
+    {% for entry in log_lines %}
+    <details class="log-entry log-{{ entry.level|lower }}">
+      <summary>
+        <span class="log-time">{{ entry.date[5:] }} {{ entry.time }}</span>
+        <span class="log-level">{{ {'INFO': '信息', 'WARNING': '警告', 'ERROR': '错误', 'CRITICAL': '严重', 'DEBUG': '调试'}.get(entry.level, entry.level) }}</span>
+        <span class="log-title">{{ entry.title }}</span>
+        {% for label, value in entry.fields %}<span class="log-field"><em>{{ label }}</em>{{ value }}</span>{% endfor %}
+        <span class="log-source">{{ entry.source }}</span>
+      </summary>
+      <pre class="log-raw">{{ entry.raw }}</pre>
+    </details>
+    {% else %}<div class="empty-state"><strong>当前筛选下没有日志记录</strong></div>{% endfor %}
+  </div>
   <div class="list-pagination">
     <div class="list-pagination-summary">当前显示第 {{ pagination.from_index }} - {{ pagination.to_index }} 条</div>
     <div class="list-pagination-actions">

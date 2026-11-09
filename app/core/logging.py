@@ -57,6 +57,22 @@ class SafeExtraLogger(logging.Logger):
         return super().makeRecord(*args, **kwargs)
 
 
+def _prune_excess_backups(log_dir: Path, base_name: str, keep: int) -> None:
+    """删除超出保留数量的历史备份(app.log.5 及更大序号)。
+
+    RotatingFileHandler 只会在轮转时覆盖到 backupCount,调小保留数量后,
+    更大序号的旧文件不会被自动清理,这里在启动时补一次,保证磁盘占用上限。
+    """
+
+    for path in log_dir.glob(f"{base_name}.*"):
+        suffix = path.name[len(base_name) + 1 :]
+        if suffix.isdigit() and int(suffix) > keep:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
 def configure_logging() -> None:
     global _CONFIGURED
     if _CONFIGURED:
@@ -66,6 +82,9 @@ def configure_logging() -> None:
 
     log_dir = Path(settings.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    for base_name in ("app.log", "error.log"):
+        _prune_excess_backups(log_dir, base_name, int(settings.log_file_backup_count))
 
     level_name = str(settings.log_level or "INFO").strip().upper()
     level = getattr(logging, level_name, logging.INFO)

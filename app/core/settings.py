@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     plugin_secret_key: str = Field(default="", validation_alias="ABOT_PLUGIN_SECRET_KEY")
     log_level: str = "INFO"
     log_file_max_bytes: int = 10 * 1024 * 1024
-    # RotatingFileHandler backupCount counts backup files only.
-    # Use 9 backups so total files per log stream is at most 10 (current + 9 backups).
-    log_file_backup_count: int = 9
+    # RotatingFileHandler 的 backupCount 只统计备份文件。
+    # 每类日志(app.log / error.log)共保留 5 个文件:当前文件 + 4 个备份,单个 10M,总占用上限约 50M。
+    log_file_backup_count: int = 4
     auth_seed_demo_users: bool | None = None
     auth_bootstrap_admin_username: str = ""
     auth_bootstrap_admin_password: str = ""

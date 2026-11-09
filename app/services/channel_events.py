@@ -239,7 +239,14 @@ def ingest_normalized_event(
         raw_event.status = "mapped"
         logger.info(
             "inbound message mapped",
-            extra={"channel_id": channel.id, "conversation_id": conversation.id, "message_preview": message_content[:120]},
+            extra={
+                "channel_id": channel.id,
+                "conversation_id": conversation.id,
+                # 中文业务日志:群/会话名、发言人、内容摘要,运维不用再对 ID 查库。
+                "conversation_title": conversation.title or conversation.external_id,
+                "sender_name": message_payload.get("sender_name") or message_payload.get("sender_id") or "-",
+                "message_preview": message_content[:120].replace("\n", " "),
+            },
         )
     else:
         raw_event.status = "ignored"

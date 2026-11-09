@@ -1085,6 +1085,7 @@ def _execute_candidate(
             "channel_id": static_context.channel_id,
             "conversation_id": conversation_id or 0,
             "message_id": message_id or 0,
+            "command_name": command_name or "-",
         },
     )
     typing_heartbeat = _start_channel_typing_indicator(
@@ -1135,7 +1136,15 @@ def _execute_candidate(
             )
             logger.info(
                 "directory handler executed",
-                extra={"plugin_code": candidate.plugin_code, "ok": normalized.ok, "status": normalized.status},
+                extra={
+                    "plugin_code": candidate.plugin_code,
+                    "ok": normalized.ok,
+                    "status": normalized.status,
+                    "duration_ms": int((time.perf_counter() - started_at) * 1000),
+                    "command_name": command_name or "-",
+                    # 结果说明(中文),失败时能直接看出原因。
+                    "message_preview": str(normalized.message or "")[:120].replace("\n", " "),
+                },
             )
             if auto_outbound and any(not item.get("ok") for item in auto_outbound):
                 return PluginDispatchExecution(
