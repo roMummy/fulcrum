@@ -499,7 +499,6 @@ def test_query_pages_share_compact_filter_toolbar_and_mobile_collapse() -> None:
     stylesheet = _read_project_file(STYLE_PATH)
     query_templates = (
         "messages.html",
-        "conversations.html",
         "plugins.html",
         "platform_logs.html",
         "workwechat_contact_list.html",
@@ -514,7 +513,7 @@ def test_query_pages_share_compact_filter_toolbar_and_mobile_collapse() -> None:
         assert re.search(r'<form[^>]+method="get"[^>]+class="compact-filter-form"', template_source)
         assert not re.search(r'<form[^>]+method="get"[^>]+class="form-grid"', template_source)
 
-    for template_name in ("messages.html", "conversations.html", "platform_logs.html"):
+    for template_name in ("messages.html", "platform_logs.html"):
         assert "filter-card" not in _read_project_file(TEMPLATE_ROOT / template_name)
 
     compact_form_rule = _read_css_rule(stylesheet, ".compact-filter-form")

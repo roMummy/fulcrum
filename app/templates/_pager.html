@@ -1,0 +1,11 @@
+{# 通用上一页/下一页:沿用当前查询条件,只替换页码。需要变量 directory.paging 与 pager_base。 #}
+{% set p = directory.paging %}
+{% if p.total_pages > 1 %}
+<div class="list-pagination">
+  <div class="list-pagination-summary">第 {{ p.page }} / {{ p.total_pages }} 页,共 {{ p.total }} 条</div>
+  <div class="list-pagination-actions">
+    {% if p.has_prev %}<a class="btn btn-secondary" href="{{ pager_base }}&page={{ p.page - 1 }}">上一页</a>{% endif %}
+    {% if p.has_next %}<a class="btn btn-secondary" href="{{ pager_base }}&page={{ p.page + 1 }}">下一页</a>{% endif %}
+  </div>
+</div>
+{% endif %}

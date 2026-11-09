@@ -153,6 +153,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_config_override,
     update_wechat_winauto_chatroom_scope_enabled,
 )
+from app.services.directory_pages import build_chatroom_directory, build_contact_directory, channel_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
@@ -404,7 +405,6 @@ def build_module_links() -> dict[str, str]:
         "channels": "/channels",
         "plugins": "/plugins",
         "plugin_runtime": "/plugins/runtime",
-        "conversations": "/conversations",
         "messages": "/messages",
     }
 
@@ -425,7 +425,7 @@ def build_channel_chatroom_summary(list_view: dict[str, Any] | None) -> dict[str
     if not list_view:
         return None
     items = list(list_view.get("items") or [])
-    # 渠道详情页只需要一屏摘要；完整群管理、成员和消息流水仍进入 /channels/{id}/chatrooms 查看。
+    # 渠道详情页只需要一屏摘要；完整群列表在 /chatrooms 查看。
     recent_chatrooms = items[:8]
     return {
         "total": int(list_view.get("total") or len(items)),
@@ -2422,34 +2422,47 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
         db.close()
 
 
-@app.get("/channels/{channel_id}/chatrooms", response_class=HTMLResponse)
-async def channel_chatroom_list_page(request: Request, channel_id: int):
+def _directory_pager_base(path: str, **params: Any) -> str:
+    """目录页分页链接的公共前缀:保留搜索与筛选条件,页码由模板追加。"""
+
+    query = urlencode({key: value for key, value in params.items() if value not in ("", 0, None)})
+    return f"{path}?{query}" if query else f"{path}?"
+
+
+@app.get("/chatrooms", response_class=HTMLResponse)
+async def chatroom_directory_page(request: Request, q: str = "", channel_id: int = 0, status: str = "", page: int = 1):
+    """群管理唯一入口:所有账号的群合并展示,支持搜索、账号与状态筛选。"""
+
     db = get_session()
     try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        if channel.channel_type == "wechat_ipad":
-            list_view = build_wechat_ipad_chatroom_list(db, channel)
-        elif channel.channel_type == "wechat_winauto":
-            list_view = build_wechat_winauto_chatroom_list(db, channel)
-        elif channel.channel_type == "workwechat":
-            list_view = build_workwechat_chatroom_list(db, channel)
-        elif channel.channel_type == "wechat_webridge":
-            list_view = build_workwechat_chatroom_list(db, channel)
-            # 微桥群列表的同步入口在微桥后台（带 CSRF 的命令表单），这里不提供同步按钮。
-            list_view["sync_action"] = ""
-            list_view["intro_summary"] = "集中查看微桥已同步的微信群聊和运营状态。"
-            list_view["empty_state_message"] = "暂无微信群聊，请到微桥后台同步群组。"
-        else:
-            raise HTTPException(status_code=400, detail="Chatroom list only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge channels")
+        directory = build_chatroom_directory(db, keyword=q, channel_id=channel_id, status=status, page=page)
         return render(
             request,
-            "chatroom_list.html",
-            page_title=f"群列表 · {channel.name}",
-            channel=channel,
-            list_view=list_view,
+            "chatroom_directory.html",
+            page_title="群管理",
+            directory=directory,
+            channels=channel_options(db),
+            pager_base=_directory_pager_base("/chatrooms", q=directory["keyword"], channel_id=channel_id, status=directory["status"]),
             notice=request.query_params.get("notice", ""),
+        )
+    finally:
+        db.close()
+
+
+@app.get("/contacts", response_class=HTMLResponse)
+async def contact_directory_page(request: Request, q: str = "", channel_id: int = 0, page: int = 1):
+    """好友唯一入口:所有账号的好友合并展示,可直接跳到与好友的聊天。"""
+
+    db = get_session()
+    try:
+        directory = build_contact_directory(db, keyword=q, channel_id=channel_id, page=page)
+        return render(
+            request,
+            "contact_directory.html",
+            page_title="好友",
+            directory=directory,
+            channels=channel_options(db),
+            pager_base=_directory_pager_base("/contacts", q=directory["keyword"], channel_id=channel_id),
         )
     finally:
         db.close()
@@ -3298,10 +3311,10 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
         db.close()
 
 
-@app.post("/channels/{channel_id}/chatrooms/create")
+@app.post("/chatrooms/create")
 async def create_channel_chatroom_action(
     request: Request,
-    channel_id: int,
+    channel_id: int = Form(...),
     external_id: str = Form(...),
     name: str = Form(""),
     remark: str = Form(""),
@@ -3315,7 +3328,7 @@ async def create_channel_chatroom_action(
             raise HTTPException(status_code=404, detail="Channel not found")
         normalized_external_id = str(external_id or "").strip()
         if not normalized_external_id:
-            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms?notice={quote('群外部 ID 不能为空')}", status_code=303)
+            return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote('群外部 ID 不能为空')}", status_code=303)
         chatroom = upsert_manual_chatroom(
             db,
             channel=channel,
@@ -3340,6 +3353,7 @@ async def update_channel_chatroom_management_action(
     channel_id: int,
     chatroom_id: int,
     management_status: str = Form(...),
+    next: str = Form(""),
 ):
     user = enforce_role(request, "ops")
     db = get_session()
@@ -3364,7 +3378,10 @@ async def update_channel_chatroom_management_action(
             "disabled": "已停用该群，插件调度会跳过",
             "archived": "已归档该群",
         }.get(chatroom.management_status, "已将该群标记为待启用")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        # 列表页行内开关带 next 回到列表;只接受站内路径,防止开放重定向。
+        target = next if next.startswith("/") and not next.startswith("//") else f"/channels/{channel_id}/chatrooms/{chatroom_id}"
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(url=f"{target}{separator}notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3383,7 +3400,7 @@ async def sync_wechat_winauto_chatrooms_action(request: Request, channel_id: int
         db.commit()
         message = str(overview.get("last_status_summary") or "已刷新 wxauto 群列表")
         record_audit(db, f"channel.{channel.channel_type}.sync-chatrooms", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3414,13 +3431,13 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
             notify_cloud_job_enqueued(channel, job)
             message = "已下发企微云端群列表同步任务，请等待客户端执行后刷新群管理。"
             record_audit(db, "channel.workwechat.sync-chatrooms", "channel", channel.id, message)
-            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms?notice={quote(message)}", status_code=303)
+            return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
         # workwechat 群列表同步走 provider 的 11038，失败时服务层会保留本地消息样本视图。
         overview = sync_workwechat_chatrooms(db, channel)
         db.commit()
         message = str(overview.get("last_status_summary") or "已同步企微群列表")
         record_audit(db, "channel.workwechat.sync-chatrooms", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -4179,122 +4196,21 @@ def _build_manual_plugin_execution_context(
     )
 
 
-@app.get("/conversations", response_class=HTMLResponse)
-async def conversations_page(request: Request, bot_id: int = 0, channel_id: int = 0, chat_type: str = ""):
-    db = get_session()
-    try:
-        normalized_chat_type = chat_type.strip().lower()
-        stmt = select(Conversation)
-        if bot_id:
-            stmt = stmt.where(Conversation.bot_id == bot_id)
-        if channel_id:
-            stmt = stmt.where(Conversation.channel_id == channel_id)
-        if normalized_chat_type in {"group", "direct"}:
-            stmt = stmt.where(Conversation.chat_type == normalized_chat_type)
-        else:
-            normalized_chat_type = ""
-        conversations = db.scalars(stmt.order_by(Conversation.id.desc()).limit(50)).all()
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
-        bot_name_map = build_bot_name_map(bots)
-        channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
-        return render(
-            request,
-            "conversations.html",
-            page_title="会话中心",
-            conversations=conversations,
-            # 会话列表统一展示好友/群的头像与昵称，外部 ID 只作为第二行。
-            conversation_identities=IdentityDirectory(db).for_conversations(conversations),
-            bots=bots,
-            bot_name_map=bot_name_map,
-            channels=channels,
-            bot_id=bot_id,
-            channel_id=channel_id,
-            chat_type=normalized_chat_type,
-        )
-    finally:
-        db.close()
-
-
-@app.get("/conversations/{conversation_id}", response_class=HTMLResponse)
-async def conversation_detail_page(request: Request, conversation_id: int, page: int = 1):
-    db = get_session()
-    try:
-        conversation = db.get(Conversation, conversation_id)
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        conversation_bot = db.get(Bot, conversation.bot_id) if conversation.bot_id else None
-        current_page = max(int(page or 1), 1)
-        page_size = 20
-        total = int(
-            db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id)) or 0
-        )
-        total_pages = max((total + page_size - 1) // page_size, 1)
-        current_page = min(current_page, total_pages)
-        offset = (current_page - 1) * page_size
-        messages = db.scalars(
-            select(Message)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.id.desc())
-            .offset(offset)
-            .limit(page_size)
-        ).all()
-        directory = IdentityDirectory(db)
-        message_identities = directory.for_messages(messages)
-        conversation_identity = directory.for_conversations([conversation]).get(int(conversation.id))
-        message_ids = [int(item.id) for item in messages]
-        attachment_rows = db.scalars(
-            select(MessageAttachment)
-            .where(MessageAttachment.message_id.in_(message_ids) if message_ids else MessageAttachment.id == 0)
-            .order_by(MessageAttachment.id.asc())
-        ).all()
-        attachments_by_message: dict[int, list[MessageAttachment]] = {}
-        for row in attachment_rows:
-            if row.message_id is None:
-                continue
-            attachments_by_message.setdefault(int(row.message_id), []).append(row)
-        pagination = {
-            "page": current_page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": total_pages,
-            "has_prev": current_page > 1,
-            "has_next": current_page < total_pages,
-            "prev_page": current_page - 1 if current_page > 1 else 1,
-            "next_page": current_page + 1 if current_page < total_pages else total_pages,
-            "from_index": offset + 1 if total else 0,
-            "to_index": min(offset + len(messages), total),
-        }
-        return render(
-            request,
-            "conversation_detail.html",
-            page_title=f"会话详情 · {conversation.title or conversation.external_id}",
-            conversation=conversation,
-            conversation_identity=conversation_identity,
-            message_identities=message_identities,
-            conversation_bot_name=(str(conversation_bot.name).strip() if conversation_bot and conversation_bot.name else ""),
-            messages=messages,
-            attachments_by_message=attachments_by_message,
-            pagination=pagination,
-            notice=request.query_params.get("notice", ""),
-        )
-    finally:
-        db.close()
-
-
-@app.post("/conversations/{conversation_id}/messages")
-async def send_manual_message_action(request: Request, conversation_id: int, content: str = Form(...)):
+@app.post("/messages/send")
+async def send_manual_message_action(request: Request, conversation_id: int = Form(...), content: str = Form(...), csrf_token: str = Form("")):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token)
         conversation = db.get(Conversation, conversation_id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         text_content = content.strip()
         if not text_content:
-            return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote('消息内容不能为空')}", status_code=303)
+            return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote('消息内容不能为空')}", status_code=303)
         channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
         if channel is None:
-            return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote('会话未绑定渠道，无法发送')}", status_code=303)
+            return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote('会话未绑定渠道，无法发送')}", status_code=303)
         # 必须经过渠道适配器统一出站：微桥会在这里创建手机 poll 要领取的命令任务，
         # 之前只写消息表不入队，所以手机永远收不到后台发出的消息。
         message, adapter_result = dispatch_outbound_message(
@@ -4305,7 +4221,7 @@ async def send_manual_message_action(request: Request, conversation_id: int, con
             notice = f"发送失败：{adapter_result.get('error_message') or adapter_result.get('error_code') or '未知错误'}"
         else:
             notice = "消息已提交，等待手机执行"
-        return RedirectResponse(url=f"/conversations/{conversation_id}?notice={quote(notice)}", status_code=303)
+        return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 
@@ -4447,6 +4363,16 @@ async def messages_page(
         }
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+        # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
+        selected_chatroom = None
+        selected_summary = next((row for row in conversation_summaries if int(row["conversation"].id) == conversation_id), None)
+        if selected_summary and selected_summary["conversation"].chat_type == "group":
+            selected_chatroom = db.scalar(
+                select(Chatroom).where(
+                    Chatroom.channel_id == selected_summary["conversation"].channel_id,
+                    Chatroom.external_id == selected_summary["conversation"].external_id,
+                )
+            )
         return render(
             request,
             "messages.html",
@@ -4456,6 +4382,8 @@ async def messages_page(
             attachments_by_message=attachments_by_message,
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,
+            selected_chatroom=selected_chatroom,
+            notice=request.query_params.get("notice", ""),
             pagination=pagination,
             bots=bots,
             channels=channels,

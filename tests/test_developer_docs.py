@@ -92,6 +92,6 @@ def test_developer_docs_renders_bridge_api_content() -> None:
     toc = str(response.context["document_toc"])
     assert 'href="#鉴权hmac-sha256"' in toc
     assert 'id="鉴权hmac-sha256"' in html
-    navigation = response.context["primary_nav_items"]
+    navigation = response.context["account_nav_items"]
     docs_item = next(item for item in navigation if item["href"] == "/developer/docs")
     assert docs_item["active"] is True

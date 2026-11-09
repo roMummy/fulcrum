@@ -14,7 +14,7 @@
   {% endif %}
   {% if channel.channel_type == 'wechat_webridge' %}
   <a class="btn" href="/channels/{{ channel.id }}/wechat-webridge">微桥后台</a>
-  <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+  <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
   {% endif %}
 </div>
 {% endblock %}
@@ -74,7 +74,7 @@
     <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms">
       <button class="btn btn-secondary" type="submit">同步群聊</button>
     </form>
-    <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+    <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
   </div>
 </section>
 {% endif %}
@@ -86,7 +86,7 @@
     <div class="actions">
       <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
       <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts"><button class="btn btn-secondary" type="submit">同步联系人</button></form>
-      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+      <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
       <a class="btn btn-ghost" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
     </div>
   </div>
@@ -101,7 +101,7 @@
     <div><h2>微信客户端</h2></div>
     <div class="actions">
       <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
-      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">群管理</a>
+      <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
     </div>
   </div>
 </section>
@@ -111,7 +111,7 @@
 <section class="work-surface">
   <div class="toolbar">
     <div><h2>群聊</h2></div>
-    <a class="btn btn-secondary" href="/channels/{{ channel.id }}/chatrooms">查看全部</a>
+    <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}">查看全部</a>
   </div>
   <div class="stats-grid compact-grid">
     <div class="metric-item"><span>群总数</span><strong>{{ wechat_ipad_group_summary.chatroom_count }}</strong></div>
@@ -139,7 +139,7 @@
     <div><h2>群聊</h2></div>
     <div class="actions">
       {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}"><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
-      <a class="btn btn-ghost" href="/channels/{{ channel.id }}/chatrooms">查看全部</a>
+      <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">查看全部</a>
     </div>
   </div>
   <div class="stats-grid compact-grid">

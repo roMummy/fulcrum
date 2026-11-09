@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
 {% block hero_actions %}
-<div class="hero-action-cluster"><a class="btn btn-secondary" href="/conversations">查看会话管理</a><span class="chip chip-outline">消息 {{ pagination.total if pagination else messages|length }}</span></div>
+<div class="hero-action-cluster"><span class="chip chip-outline">消息 {{ pagination.total if pagination else messages|length }}</span></div>
 {% endblock %}
 {% block content %}
 <style>
@@ -16,10 +16,19 @@
     </aside>
     <section class="wechat-thread">
       {% set selected = namespace(item=None) %}{% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{% set selected.item = item %}{% endif %}{% endfor %}
-      {% if selected.item %}<header class="wechat-thread-head"><h2>{{ selected.item.display_name }}</h2><p class="muted-text">{{ selected.item.conversation.chat_type or 'direct' }} · 会话 #{{ selected.item.conversation.id }}</p></header>{% endif %}
+      {% if selected.item %}<header class="wechat-thread-head"><h2>{{ selected.item.display_name }}</h2><p class="muted-text">{{ '群聊' if selected.item.conversation.chat_type == 'group' else '私聊' }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p></header>{% endif %}
       <div class="wechat-thread-body" id="wechat-thread-body">
         {% if selected_conversation_id and messages %}{% for item in messages|reverse %}{% set who = message_identities.get(item.id) %}<div class="wechat-message-row {{ 'out' if item.direction == 'out' else 'in' }}"><span class="wechat-avatar">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" style="width:100%;height:100%;object-fit:cover" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if item.direction == 'out' else '?') }}{% endif %}</span><div class="wechat-message-main"><div class="wechat-message-meta">{{ who.name if who and who.name else ('我方' if item.direction == 'out' else '联系人') }}{% if who and who.show_id and item.direction != 'out' %} <small class="identity-id">{{ who.external_id }}</small>{% endif %} · {{ item.created_at|bj_time if item.created_at else '-' }}</div><article class="wechat-message-bubble {{ 'out' if item.direction == 'out' else 'in' }}">{% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}{% if attachment_items %}{% for attachment in attachment_items %}{% if attachment.attachment_type == 'image' and attachment.storage_path %}<img class="wechat-media-image" src="/media/attachments/{{ attachment.id }}" alt="图片消息" loading="lazy" />{% elif attachment.attachment_type == 'video' and attachment.storage_path %}<video class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></video>{% elif attachment.attachment_type == 'voice' and attachment.storage_path %}<audio class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></audio>{% else %}<a class="wechat-file-card" href="/media/attachments/{{ attachment.id }}">{{ attachment.attachment_type or '文件' }}{% if attachment.file_size %} · {{ attachment.file_size }} bytes{% endif %}</a>{% endif %}{% endfor %}{% endif %}{% if item.content and item.message_type not in ['xml','app','mini_program','card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) }}</div>{% elif item.message_type in ['xml','app','mini_program','card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) or '结构化消息' }}</div>{% endif %}</article></div></div>{% endfor %}{% elif not selected_conversation_id %}<div class="wechat-empty">从左侧选择一个联系人或群聊</div>{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
       </div>
+      {% if selected.item %}
+      {# 直接在消息中心回复:提交后回到本会话,由机器人通道异步发出。 #}
+      <form method="post" action="/messages/send" class="wechat-composer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border-color,#e5e7eb);">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="conversation_id" value="{{ selected_conversation_id }}" />
+        <input name="content" placeholder="输入要发送的消息" autocomplete="off" required style="flex:1;" />
+        <button class="btn" type="submit">发送</button>
+      </form>
+      {% endif %}
       {% if selected_conversation_id and pagination %}<div class="list-pagination"><div class="list-pagination-summary">第 {{ pagination.page }} / {{ pagination.total_pages }} 页（第 1 页为最新），共 {{ pagination.total }} 条</div><div class="list-pagination-actions">{% if pagination.has_next %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}&page={{ pagination.next_page }}">更早消息</a>{% endif %}{% if pagination.has_prev %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}&page={{ pagination.prev_page }}">更新消息</a>{% endif %}</div></div>{% endif %}
     </section>
   </div>

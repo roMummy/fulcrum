@@ -74,6 +74,9 @@
               <strong>{{ current_user.display_name }}</strong>
               <span>{{ current_user.role }}</span>
             </div>
+            {% for item in account_nav_items|default([]) %}
+            <a class="nav-popover-link{% if item.active %} active{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+            {% endfor %}
             <a class="nav-popover-link" href="{{ password_action|default('/profile/password', true) }}">账号安全</a>
             {# 注销会销毁数据库会话，必须提交当前会话配套的 CSRF 原始值，不能改成普通链接。 #}
             <form method="post" action="{{ logout_action|default('/logout', true) }}">
