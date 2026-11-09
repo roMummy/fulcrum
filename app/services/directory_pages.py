@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.services.points import PointsService
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, WorkWechatContact
 from app.services.identity_directory import _avatar_from_extra, make_identity
 
@@ -126,6 +127,7 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
         for conv in db.scalars(select(Conversation).where(Conversation.external_id.in_(external_ids), Conversation.chat_type == "direct")).all():
             conversation_ids[(int(conv.channel_id or 0), str(conv.external_id))] = int(conv.id)
 
+    totals = PointsService(db).user_totals(sorted(external_ids))
     rows = []
     for item in contacts:
         key = (int(item.channel_id), item.contact_external_id)
@@ -136,6 +138,7 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
                 "identity": make_identity(item.contact_external_id, item.display_name or item.name, item.avatar_url),
                 "remark": item.display_name if item.name and item.display_name and item.display_name != item.name else "",
                 "group_count": group_counts.get(key, 0),
+                "points": totals.get(item.contact_external_id, 0),
                 "conversation_id": conversation_ids.get(key),
             }
         )

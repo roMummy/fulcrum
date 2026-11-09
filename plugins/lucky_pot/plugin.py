@@ -185,8 +185,7 @@ def _create_room(
         return _error_result("当前群已有进行中的大奖池，请先查看或完成本轮。", "room_exists")
     group_id = str(trusted.conversation.external_id or "").strip()
     points_service = PointsService(db)
-    account = points_service.get_user_points(trusted.sender_id, group_id) or {}
-    current_points = int(account.get("total_points") or 0)
+    current_points = points_service.balance(trusted.context)
     if current_points < config.entry_fee:
         return _error_result(
             f"创建大奖池需要 {config.entry_fee} 积分，当前仅有 {current_points}。",
@@ -224,11 +223,9 @@ def _create_room(
         high_side_effect=False,
         priority=65,
     )
-    deducted = points_service.deduct_points(
-        trusted.sender_id,
-        group_id,
+    deducted = points_service.spend(
+        trusted.context,
         config.entry_fee,
-        user_name=trusted.sender_name,
         source="lucky_pot_entry",
         description=f"大奖池 {room_id} 入场费",
         metadata={"conversation_id": int(trusted.conversation.id), "room_id": room_id},
@@ -274,10 +271,8 @@ def _join_room(
         return _error_result("当前大奖池人数已满。", "room_full")
 
     entry_fee = int(room["entry_fee"])
-    group_id = str(trusted.conversation.external_id or "").strip()
     points_service = PointsService(db)
-    account = points_service.get_user_points(trusted.sender_id, group_id) or {}
-    current_points = int(account.get("total_points") or 0)
+    current_points = points_service.balance(trusted.context)
     if current_points < entry_fee:
         return _error_result(
             f"参与大奖池需要 {entry_fee} 积分，当前仅有 {current_points}。",
@@ -287,11 +282,9 @@ def _join_room(
     players[trusted.sender_id] = trusted.sender_name
     room["players"] = players
     _save_room(store, state_key, room)
-    deducted = points_service.deduct_points(
-        trusted.sender_id,
-        group_id,
+    deducted = points_service.spend(
+        trusted.context,
         entry_fee,
-        user_name=trusted.sender_name,
         source="lucky_pot_entry",
         description=f"大奖池 {room['room_id']} 入场费",
         metadata={"conversation_id": int(trusted.conversation.id), "room_id": str(room["room_id"])},

@@ -294,18 +294,15 @@ def _handle_answer(
     answer = _normalize_answer(parts[1])
     correct_answer = _normalize_answer(task.get("answer"))
     points_service = PointsService(db)
-    group_id = str(conversation.external_id or "").strip()
     if answer == correct_answer:
         # 先把任务移出活跃集合，再由积分服务提交同一数据库事务。重复投递时即使
         # 再次进入积分服务，任务级幂等键也只允许一条奖励流水。
         state.active_tasks.pop(task_id, None)
         _save_room_state(store, state_key, state)
         reward = int(task["score"])
-        points_result = points_service.add_points(
-            sender_id,
-            group_id,
+        points_result = points_service.earn(
+            context,
             reward,
-            user_name=sender_name,
             source="game_task",
             description=f"问答任务 #{task_id} 奖励",
             metadata={"conversation_id": int(conversation.id), "task_id": task_id},
@@ -328,11 +325,9 @@ def _handle_answer(
 
     # 错答流水使用可信消息主键，渠道重试同一消息时不会重复扣分。积分不足时不
     # 产生负余额，题目仍保持有效，其他已报名玩家可以继续作答。
-    penalty_result = points_service.deduct_points(
-        sender_id,
-        group_id,
+    penalty_result = points_service.spend(
+        context,
         1,
-        user_name=sender_name,
         source="game_task",
         description=f"问答任务 #{task_id} 错答扣分",
         metadata={"conversation_id": int(conversation.id), "task_id": task_id},

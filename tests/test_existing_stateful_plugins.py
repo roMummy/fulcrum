@@ -2016,3 +2016,24 @@ def test_points_context_entry_unifies_earn_and_spend_into_one_account(game_task_
         assert service.spend(ctx(identity["forged_conversation_id"]), 1, source="x", description="x").ok is False
         accounts = db.scalars(select(PointsAccount).where(PointsAccount.user_id == "wxid_a")).all()
         assert [(a.group_id, a.user_name, a.total_points) for a in accounts if a.total_points] == [("game-room", "小A", 30)]
+
+
+def test_points_account_name_is_backfilled_from_wxid_to_nickname(tmp_path: Path) -> None:
+    """账户昵称此前只存了 wxid 时,拿到真实昵称后应回填;已有真实昵称不被覆盖。"""
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'points-name.db'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    try:
+        with tenant_scope(1), tenant_session(factory) as db:
+            service = PointsService(db)
+            service.add_points("wxid_abc123", "g@chatroom", 5, user_name="wxid_abc123", source="t")
+            service.add_points("wxid_abc123", "g@chatroom", 5, user_name="小明", source="t")
+            service.add_points("wxid_abc123", "g@chatroom", 5, user_name="另一个名字", source="t")
+            account = db.scalar(select(PointsAccount).where(PointsAccount.user_id == "wxid_abc123"))
+            assert account.user_name == "小明" and account.total_points == 15
+            assert service.group_balances("g@chatroom") == {"wxid_abc123": 15}
+            assert service.user_totals(["wxid_abc123", "nobody"]) == {"wxid_abc123": 15}
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()

@@ -25,7 +25,7 @@
   {% if directory.rows %}
   <div class="table-scroll">
   <table class="table">
-    <thead><tr><th>好友</th><th>备注</th>{% if channels|length > 1 %}<th>账号</th>{% endif %}<th class="col-compact">共同群</th><th class="col-action"></th></tr></thead>
+    <thead><tr><th>好友</th><th>备注</th>{% if channels|length > 1 %}<th>账号</th>{% endif %}<th class="col-compact">共同群</th><th class="col-compact">总积分</th><th class="col-action"></th></tr></thead>
     <tbody>
       {% for item in directory.rows %}
       <tr>
@@ -33,6 +33,7 @@
         <td>{{ item.remark or '-' }}</td>
         {% if channels|length > 1 %}<td class="muted-text">{{ item.channel_name }}</td>{% endif %}
         <td class="col-compact">{{ item.group_count or '-' }}</td>
+        <td class="col-compact">{{ item.points or '-' }}</td>
         <td class="col-action">{% if item.conversation_id %}<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ item.channel_id }}">聊天记录</a>{% endif %}</td>
       </tr>
       {% endfor %}

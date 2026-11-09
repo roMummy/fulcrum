@@ -4,11 +4,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
+from app.services.identity_directory import looks_like_raw_id
 from app.models.entities import Conversation, Message, PointsAccount, PointsPrisonRecord, PointsTransaction
 
 
@@ -62,6 +63,24 @@ class PointsService:
         user_id, group_id, name = self.resolve_account_key(context)
         return self.deduct_points(user_id, group_id, points, user_name=name, source=source, description=description, metadata=metadata, idempotency_key=idempotency_key)
 
+    def group_balances(self, group_id: str) -> dict[str, int]:
+        """一个群内所有成员的积分余额(用户ID -> 余额),供后台群成员列表展示。"""
+
+        rows = self.db.execute(select(PointsAccount.user_id, PointsAccount.total_points).where(PointsAccount.group_id == group_id)).all()
+        return {str(user_id): int(total or 0) for user_id, total in rows}
+
+    def user_totals(self, user_ids: list[str]) -> dict[str, int]:
+        """一批用户跨群的积分合计(用户ID -> 总积分),供后台好友页展示。"""
+
+        if not user_ids:
+            return {}
+        rows = self.db.execute(
+            select(PointsAccount.user_id, func.sum(PointsAccount.total_points))
+            .where(PointsAccount.user_id.in_(user_ids))
+            .group_by(PointsAccount.user_id)
+        ).all()
+        return {str(user_id): int(total or 0) for user_id, total in rows}
+
     def balance(self, context: object) -> int:
         """按上下文查询当前发送人在当前群的积分余额。"""
 
@@ -81,7 +100,8 @@ class PointsService:
             account = PointsAccount(user_id=user_id, group_id=group_id, user_name=user_name, total_points=0)
             self.db.add(account)
             self.db.flush()
-        elif user_name and not account.user_name:
+        elif user_name and (not account.user_name or (looks_like_raw_id(account.user_name) and not looks_like_raw_id(user_name))):
+            # 账户昵称缺失,或此前只存了 wxid 时,用真实昵称回填。
             account.user_name = user_name
         return account
 

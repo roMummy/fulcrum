@@ -152,11 +152,9 @@ def _handle_sign(db: Session, trusted: TrustedSignContext, config: SignConfig) -
         f"message-sign:{int(trusted.binding.id)}:{int(trusted.conversation.id)}:"
         f"{int(trusted.message.id)}:reward"
     )
-    points_result = PointsService(db).add_points(
-        trusted.sender_id,
-        trusted.group_id,
+    points_result = PointsService(db).earn(
+        trusted.execution,
         points_awarded,
-        user_name=trusted.sender_name,
         source="checkin",
         description="签到奖励",
         metadata={"conversation_id": int(trusted.conversation.id), "message_id": int(trusted.message.id)},
@@ -213,8 +211,7 @@ def _handle_makeup_sign(db: Session, trusted: TrustedSignContext, config: SignCo
         return _error_result("当前只支持补签昨天，且仅限断签一天内。", "makeup_unavailable")
 
     points_service = PointsService(db)
-    account = points_service.get_user_points(trusted.sender_id, trusted.group_id) or {}
-    current_points = int(account.get("total_points") or 0)
+    current_points = points_service.balance(trusted.execution)
     if current_points < config.makeup_cost:
         return _error_result(
             f"积分不足，补签需要 {config.makeup_cost} 积分，当前仅有 {current_points} 积分。",
@@ -257,11 +254,9 @@ def _handle_makeup_sign(db: Session, trusted: TrustedSignContext, config: SignCo
         f"message-sign:{int(trusted.binding.id)}:{int(trusted.conversation.id)}:"
         f"{int(trusted.message.id)}:makeup"
     )
-    deduct_result = points_service.deduct_points(
-        trusted.sender_id,
-        trusted.group_id,
+    deduct_result = points_service.spend(
+        trusted.execution,
         config.makeup_cost,
-        user_name=trusted.sender_name,
         source="checkin_makeup",
         description="补签消耗",
         metadata={"conversation_id": int(trusted.conversation.id), "message_id": int(trusted.message.id)},
