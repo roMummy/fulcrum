@@ -83,6 +83,22 @@ class PluginCapability:
 
 
 @dataclass(frozen=True)
+class PluginAiHint:
+    """插件声明给 AI 调度的说明；没有 [ai] 段或 routable=false 的插件不参与 AI 调度。
+
+    自带 TOML 子集解析器不支持数组表，所以这里只接受扁平键和字符串数组。
+    """
+
+    routable: bool = False
+    # 只有 low 允许 AI 直接调度；medium、high 首期一律不开放。
+    risk: str = "high"
+    summary: str = ""
+    examples: tuple[str, ...] = ()
+    # 命令后面需要的参数说明，如“城市名”；为空表示命令不带参数。
+    needs_args: str = ""
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     code: str
     display_name: str
@@ -101,6 +117,7 @@ class DiscoveredPlugin:
     config_path: Path
     entrypoint_path: Path
     directory_path: Path
+    ai_hint: "PluginAiHint" = field(default_factory=lambda: PluginAiHint())
     runtime_config: Mapping[str, Any] = field(default_factory=dict)
     secret_fields: tuple[str, ...] = ()
     admin_config: Mapping[str, Any] = field(default_factory=dict)
@@ -528,6 +545,15 @@ def build_dispatch_report(
         },
     )
     decisions = evaluate_dynamic_matches(db, static_plan, normalized_event)
+    # 规则没有任何插件命中时，才交给 AI 核心调度尝试把自然语言改写成插件命令。
+    # 改写后重新走同一条匹配与执行链，群级启停、积分、权限和 consume_policy 都照常生效。
+    if not any(item.matched for item in decisions):
+        rewritten = _try_ai_route(db, static_plan, normalized_event, conversation_id=conversation_id)
+        if rewritten is not None:
+            # 动态匹配读取的是静态计划里缓存的正文，只改事件不够，必须重建静态计划。
+            normalized_event = rewritten
+            static_plan = build_static_dispatch_plan(db, channel, normalized_event)
+            decisions = evaluate_dynamic_matches(db, static_plan, normalized_event)
     executions = execute_dispatch_plan(
         db,
         static_plan,
@@ -553,6 +579,96 @@ def build_dispatch_report(
         executions=tuple(executions),
         stop_reason=stop_reason,
     )
+
+
+def _try_ai_route(
+    db: Session,
+    static_plan: PluginDispatchPlan,
+    normalized_event: Mapping[str, Any],
+    *,
+    conversation_id: int | None,
+) -> dict[str, Any] | None:
+    """AI 意图路由：返回把正文改写为插件命令的新事件；不需要或无法改写时返回 None。
+
+    任何失败都只记录决策并降级为不处理，绝不能影响规则触发的插件。
+    """
+
+    from app.services import ai_dispatch
+
+    context = static_plan.context
+    try:
+        setting = ai_dispatch.get_ai_setting(db)
+        if not ai_dispatch.is_ai_ready(setting):
+            return None
+        if context.message_type != "text" or not ai_dispatch.should_trigger(
+            context.chat_type, context.mentioned_self, context.message_text
+        ):
+            return None
+        # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力。
+        catalog = ai_dispatch.build_catalog([item.plugin_code for item in static_plan.candidates])
+        if not catalog:
+            return None
+        if ai_dispatch.used_today(db) >= int(setting.daily_limit or 0):
+            ai_dispatch.record_decision(
+                db,
+                channel_id=context.channel_id,
+                conversation_id=conversation_id,
+                sender_id=context.sender_id,
+                text=context.message_text,
+                intent=ai_dispatch.AiIntent(status="rejected", reason="今日 AI 调用额度已用完"),
+            )
+            return None
+        intent = ai_dispatch.analyze_intent(setting, context.message_text, catalog)
+        ai_dispatch.record_decision(
+            db,
+            channel_id=context.channel_id,
+            conversation_id=conversation_id,
+            sender_id=context.sender_id,
+            text=context.message_text,
+            intent=intent,
+        )
+        if intent.status == "asked":
+            _send_ai_question(db, static_plan, normalized_event, intent.question, conversation_id)
+            return None
+        if intent.status != "routed" or not intent.command_text:
+            return None
+        rewritten = json.loads(json.dumps(normalized_event, ensure_ascii=False, default=str))
+        rewritten.setdefault("message", {})["content"] = intent.command_text
+        return rewritten
+    except Exception:
+        logger.exception("ai route failed", extra={"channel_id": context.channel_id})
+        return None
+
+
+def _send_ai_question(
+    db: Session,
+    static_plan: PluginDispatchPlan,
+    normalized_event: Mapping[str, Any],
+    question: str,
+    conversation_id: int | None,
+) -> None:
+    """缺参数时向用户追问一句；复用插件自动出站链，保持引用、@ 等统一行为。"""
+
+    if not question or not conversation_id:
+        return
+    context = static_plan.context
+    directory_context = DirectoryPluginContext(
+        plugin_code="ai_dispatch",
+        binding_id=0,
+        bot_id=context.bot_id,
+        channel_id=context.channel_id,
+        channel_type=context.channel_type,
+        chat_type=context.chat_type,
+        message_type=context.message_type,
+        command_prefix=context.command_prefix,
+        content=context.message_text,
+        sender_id=context.sender_id,
+        conversation_external_id=context.conversation_external_id,
+        mentioned_self=context.mentioned_self,
+        normalized_event=normalized_event,
+        conversation_id=conversation_id,
+    )
+    _dispatch_auto_outbound_messages(db, context, directory_context, {"reply_text": question})
 
 
 def evaluate_dynamic_matches(
@@ -2031,6 +2147,7 @@ def _build_discovered_plugin(
         manifest=_build_manifest(plugin_dir.name, parsed),
         capability=_build_capability(parsed),
         matcher=_build_matcher(parsed),
+        ai_hint=_build_ai_hint(parsed),
         runtime_config=runtime_config,
         secret_fields=secret_fields,
         admin_config=_extract_admin_config(parsed),
@@ -2060,6 +2177,21 @@ def _build_matcher(parsed: dict[str, Any]) -> PluginMatcher:
         commands=_normalize_text_tuple(matcher_block.get("commands")),
         keywords=_normalize_text_tuple(matcher_block.get("keywords")),
         require_mention=bool(matcher_block.get("require_mention", False)),
+    )
+
+
+def _build_ai_hint(parsed: dict[str, Any]) -> PluginAiHint:
+    """读取可选的 [ai] 段；缺省视为不参与 AI 调度，不猜测插件用途。"""
+
+    block = parsed.get("ai")
+    if not isinstance(block, dict):
+        return PluginAiHint()
+    return PluginAiHint(
+        routable=bool(block.get("routable", False)),
+        risk=str(block.get("risk") or "high").strip().lower(),
+        summary=str(block.get("summary") or "").strip(),
+        examples=_normalize_text_tuple(block.get("examples")),
+        needs_args=str(block.get("needs_args") or "").strip(),
     )
 
 

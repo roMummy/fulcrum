@@ -21,6 +21,9 @@ from app.services.tenant_admin import (
     reset_tenant_user_password,
     update_tenant_user,
 )
+from app.models.entities import AiDecision
+from app.services import ai_dispatch
+from app.services.tenant_admin import require_tenant_mutation_allowed
 from app.services.local_proxy_connector import (
     LocalProxyConnectorError,
     create_proxy_connector,
@@ -319,5 +322,67 @@ async def tenant_subscription_page(request: Request):
             tenant=tenant,
         )
         return templates.TemplateResponse(request, "tenant_subscription.html", context)
+    finally:
+        db.close()
+
+
+def _ai_page_response(request: Request, db, *, notice: str = "", tone: str = ""):
+    """渲染 AI 设置页：配置、今日用量和最近的决策记录放在同一页。"""
+
+    setting = ai_dispatch.get_ai_setting(db)
+    decisions = db.scalars(select(AiDecision).order_by(AiDecision.id.desc()).limit(30)).all()
+    context = _tenant_context(
+        request,
+        page_title="AI 助手",
+        notice=notice,
+        notice_tone=tone,
+        setting=setting,
+        key_configured=bool(setting and setting.api_key_encrypted),
+        ready=ai_dispatch.is_ai_ready(setting),
+        used_today=ai_dispatch.used_today(db),
+        decisions=decisions,
+    )
+    return templates.TemplateResponse(request, "tenant_ai.html", context)
+
+
+@router.get("/ai", response_class=HTMLResponse)
+async def tenant_ai_page(request: Request):
+    """所有角色可查看 AI 设置状态与决策记录，密钥永不回显。"""
+
+    _require_principal(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        return _ai_page_response(
+            request, db, notice=request.query_params.get("notice", ""), tone=request.query_params.get("tone", "")
+        )
+    finally:
+        db.close()
+
+
+@router.post("/ai")
+async def tenant_ai_save_action(
+    request: Request,
+    enabled: str = Form(""),
+    api_base: str = Form(""),
+    model: str = Form(""),
+    api_key: str = Form(""),
+    action: str = Form("save"),
+    csrf_token: str = Form(""),
+):
+    """保存 AI 设置；action=test 时额外做一次连接测试，并把中文结果带回页面。"""
+
+    principal = _require_tenant_admin(request)
+    db = open_tenant_session(TenantSessionLocal)
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        require_tenant_mutation_allowed(principal)
+        setting = ai_dispatch.save_ai_setting(
+            db, enabled=enabled == "on", api_base=api_base, model=model, api_key=api_key
+        )
+        db.commit()
+        if action == "test":
+            ok, message = ai_dispatch.test_connection(setting)
+            return _redirect("/tenant/ai", message, danger=not ok)
+        return _redirect("/tenant/ai", "AI 设置已保存")
     finally:
         db.close()

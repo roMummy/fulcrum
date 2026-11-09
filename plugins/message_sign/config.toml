@@ -16,6 +16,14 @@ priority = 100
 consume_policy = "stop"
 timeout_ms = 12000
 
+[ai]
+# AI 调度声明：低风险，可由 AI 把“我要签到”改写成 /签到。
+routable = true
+risk = "low"
+summary = "群成员每日签到领取积分"
+examples = ["我要签到", "今天打卡", "签个到"]
+needs_args = ""
+
 [matcher]
 commands = ["签到", "补签"]
 require_mention = false

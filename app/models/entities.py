@@ -798,3 +798,41 @@ class WebridgeDeviceSample(Base, TenantOwnedMixin):
     battery_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_used_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
     process_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class TenantAiSetting(Base, TenantOwnedMixin, TimestampMixin):
+    """租户的大模型配置：AI 是平台核心能力，每个租户只有一份，成本由租户自担。"""
+
+    __tablename__ = "tenant_ai_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenant_ai_settings_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 总开关；关闭后所有群都不会触发 AI 调度，规则触发的插件不受影响。
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    api_base: Mapped[str] = mapped_column(String(255), default="")
+    model: Mapped[str] = mapped_column(String(100), default="")
+    # 密钥经 encrypt_secret 加密保存，页面只展示是否已配置。
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 每日最多调用模型的次数，防止群里刷屏造成费用失控。
+    daily_limit: Mapped[int] = mapped_column(Integer, default=200)
+
+
+class AiDecision(Base, TenantOwnedMixin):
+    """AI 调度决策记录：谁说了什么、AI 理解成什么、结果如何，用于复盘和额度统计。"""
+
+    __tablename__ = "ai_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    conversation_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    sender_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 输入只保存截断后的摘要，不保存模型密钥或完整上下文。
+    input_text: Mapped[str] = mapped_column(String(500), default="")
+    plugin_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    command_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # routed 已改写并交回调度；asked 缺参数已反问；no_match 模型认为无匹配；
+    # low_confidence 置信度不足；rejected 模型输出不在目录内；error 调用失败。
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, index=True)

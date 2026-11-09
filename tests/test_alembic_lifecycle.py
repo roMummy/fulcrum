@@ -75,7 +75,7 @@ def test_alembic_upgrades_empty_database_to_simplified_baseline(tmp_path: Path) 
     actual_tables = set(inspector.get_table_names()) - {"alembic_version"}
 
     assert _current_revision(database_path) == expected_database_revision()
-    assert expected_database_revision() == "20261108_0023"
+    assert expected_database_revision() == "20261109_0024"
     assert actual_tables == set(Base.metadata.tables)
     assert DELETED_TABLES.isdisjoint(actual_tables)
     assert DELETED_BOT_COLUMNS.isdisjoint({column["name"] for column in inspector.get_columns("bots")})

@@ -15,6 +15,14 @@ priority = 90
 consume_policy = "continue"
 timeout_ms = 30000
 
+[ai]
+# AI 调度声明：低风险，可把“北京天气怎么样”改写成 /天气 北京。
+routable = true
+risk = "low"
+summary = "查询某个城市的天气"
+examples = ["北京今天天气怎么样", "明天上海会下雨吗"]
+needs_args = "城市名"
+
 [matcher]
 commands = ["天气", "订阅天气", "取消订阅"]
 keywords = ["天气"]

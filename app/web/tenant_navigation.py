@@ -61,6 +61,7 @@ def build_tenant_navigation(path: str) -> dict[str, object]:
     elif _is_active(normalized_path, ("/tenant",)):
         section_nav_items = [
             _item("员工管理", "/tenant/users", normalized_path, ("/tenant/users",)),
+            _item("AI 助手", "/tenant/ai", normalized_path, ("/tenant/ai",)),
             _item("开放应用", "/tenant/open-apps", normalized_path, ("/tenant/open-apps",)),
             _item("本地代理连接器", "/tenant/connectors", normalized_path, ("/tenant/connectors",)),
             _item("订阅信息", "/tenant/subscription", normalized_path, ("/tenant/subscription",)),

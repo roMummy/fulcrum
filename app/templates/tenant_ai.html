@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{# AI 助手设置：只有三个框和一个开关；其余额度、阈值使用平台默认值。 #}
+{% block content %}
+<section class="work-surface">
+  <div class="section-head">
+    <div><h2>AI 助手</h2></div>
+    <span class="chip {% if ready %}chip-success{% else %}chip-muted{% endif %}">{{ '已就绪' if ready else '未启用' }}</span>
+  </div>
+  <p class="muted-text">打开后，群友 @ 机器人说「我要签到」「北京天气怎么样」这类自然语言，AI 会自动调用对应功能。已有的 /命令 不受影响，也不消耗 AI 额度。</p>
+  <form method="post" action="/tenant/ai" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span><input type="checkbox" name="enabled" {% if setting and setting.enabled %}checked{% endif %} /> 启用 AI 助手</span></label>
+    <label><span>接口地址</span><input name="api_base" placeholder="https://api.openai.com/v1" value="{{ setting.api_base if setting else '' }}" /></label>
+    <label><span>模型</span><input name="model" placeholder="gpt-4o-mini" value="{{ setting.model if setting else '' }}" /></label>
+    <label class="full-row"><span>密钥</span><input name="api_key" type="password" autocomplete="new-password" placeholder="{{ '已配置，留空则保持不变' if key_configured else '请输入密钥' }}" /></label>
+    {% if can_manage_users %}
+    <div class="full-row form-actions-inline">
+      <button class="btn" type="submit" name="action" value="save">保存</button>
+      <button class="btn btn-secondary" type="submit" name="action" value="test">保存并测试连接</button>
+    </div>
+    {% endif %}
+  </form>
+  {% if setting %}<p class="muted-text">今日已调用 {{ used_today }} / {{ setting.daily_limit }} 次</p>{% endif %}
+</section>
+
+<section class="page-section">
+  <div class="section-head"><div><h2>最近的 AI 决策</h2></div><span class="chip chip-outline">{{ decisions|length }} 条</span></div>
+  <div class="record-list">
+    {% for item in decisions %}
+    <article class="record-row">
+      <div class="record-primary">
+        <strong>{{ item.input_text }}</strong>
+        <span>{% if item.command_text %}理解为 <code>{{ item.command_text }}</code>{% else %}{{ item.reason or '未处理' }}{% endif %}</span>
+      </div>
+      <dl class="record-meta">
+        <div><dt>结果</dt><dd>{{ {'routed': '已执行', 'asked': '已追问', 'no_match': '无匹配', 'low_confidence': '把握不足', 'rejected': '已拒绝', 'error': '调用失败'}.get(item.status, item.status) }}</dd></div>
+        <div><dt>把握</dt><dd>{{ item.confidence if item.confidence is not none else '-' }}</dd></div>
+        <div><dt>时间</dt><dd>{{ format_time(item.created_at) }}</dd></div>
+      </dl>
+    </article>
+    {% else %}
+    <p class="muted-text">还没有 AI 决策记录。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
