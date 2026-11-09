@@ -86,3 +86,18 @@ def test_group_options_include_enabled_group_without_any_points(db) -> None:
     """没人有积分的已纳管群也能选到,否则无法发放第一笔积分。"""
 
     assert [item["name"] for item in group_options(db)] == ["运营群"]
+
+
+def test_adjust_audit_log_target_id_is_integer_account_id(db) -> None:
+    """回归:审计 target_id 是整数列,线上曾因写入 wxid 字符串触发 MariaDB 1366 导致提交报 500。
+
+    这里复现路由里的审计调用方式:用账户主键作 target_id,成员 wxid 放进 detail。
+    """
+
+    from app.models.entities import AuditLog
+    from app.services.ops import record_audit
+
+    AuditLog.__table__.create(db.get_bind(), checkfirst=True)
+    result = adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=5, operator="liuwei")
+    item = record_audit(db, "points.adjust", "points_account", (result.account or {}).get("id"), "group=g, user=wxid_b, amount=5")
+    assert isinstance(item.target_id, int) and "wxid_b" in item.detail

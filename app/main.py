@@ -2540,7 +2540,19 @@ async def points_adjust_action(
             db, group_id=group_id.strip(), user_id=user_id.strip(), amount=signed, operator=user.username, note=note, request_id=form_token.strip()[:64]
         )
         if result.ok:
-            record_audit(db, "points.adjust", "points_account", user_id, f"group={group_id}, amount={signed}, operator={user.username}")
+            # 积分已入账,审计只是附加记录:失败只记日志,不能让页面报错而误导运营重复发放。
+            # 审计的 target_id 是整数列,用积分账户主键;成员 id 是 wxid 字符串,只能放进 detail。
+            try:
+                record_audit(
+                    db,
+                    "points.adjust",
+                    "points_account",
+                    (result.account or {}).get("id"),
+                    f"group={group_id}, user={user_id}, amount={signed}, operator={user.username}",
+                )
+            except Exception:
+                db.rollback()
+                logger.exception("积分调整审计日志写入失败 | group_id=%s user_id=%s", group_id, user_id)
             after = (result.account or {}).get("total_points")
             notice = f"已{'发放' if signed > 0 else '扣减'} {abs(signed)} 积分" + (f",当前余额 {after}" if after is not None else "")
         else:
