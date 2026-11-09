@@ -234,3 +234,37 @@ def test_slow_model_does_not_block_poller(monkeypatch) -> None:
     while w._in_flight and time.monotonic() < deadline:
         time.sleep(0.02)
     assert w._in_flight == 0
+
+
+def test_effective_content_is_memory_only_and_never_persisted() -> None:
+    """AI 改写的命令只存在于会话内存：插件能读到命令，但 flush/commit 后库里仍是用户原话。"""
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.db import Base
+    from app.models import saas  # noqa: F401
+    from app.models.entities import Message
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    raw = lambda db: db.execute(text("select content from messages where id=1")).scalar()  # noqa: E731
+    with sessionmaker(bind=engine)() as db:
+        db.execute(text(
+            "insert into messages (id, tenant_id, conversation_id, direction, content, message_type, status, created_at, updated_at) "
+            "values (1, 1, 1, 'in', '@bot 我要签到', 'text', 'received', '2026-11-09', '2026-11-09')"
+        ))
+        db.commit()
+        with ai_dispatch.effective_message_content(db, 1, "/签到"):
+            # 插件按消息 ID 回库读取，拿到的是改写后的命令。
+            assert db.get(Message, 1).content == "/签到"
+            # 即使中途 flush（插件执行里的查询会触发自动刷新），也不会产生 UPDATE。
+            db.flush()
+            assert raw(db) == "@bot 我要签到"
+            assert db.get(Message, 1) not in db.dirty
+        assert db.get(Message, 1).content == "@bot 我要签到"
+        db.commit()
+        assert raw(db) == "@bot 我要签到"
+        # 没有改写时是空操作。
+        with ai_dispatch.effective_message_content(db, 1, None):
+            assert db.get(Message, 1).content == "@bot 我要签到"

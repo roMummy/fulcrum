@@ -1201,6 +1201,36 @@ def test_message_sign_uses_trusted_group_identity_and_idempotent_reward(message_
     assert 'payload.get("conversation_external_id")' not in source
 
 
+def test_message_sign_runs_on_ai_rewritten_command_without_persisting_it(message_sign_fixture) -> None:
+    """AI 把“我要签到”改写成 /签到：插件必须真的签到成功，而库里的原消息保持用户原话。
+
+    这是线上暴露的缺陷：插件按消息 ID 回库读正文，只改事件正文会得到 command_invalid。
+    """
+
+    from app.services.ai_dispatch import effective_message_content
+
+    factory, identity = message_sign_fixture
+    loaded = load_directory_plugin("message_sign", force=True)
+    module = loaded.instance._module
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        request = _message_sign_request(
+            db, identity, content="@机器人 我要签到", sender_id="ai-user", sender_name="AI 用户"
+        )
+        message_id = int(request.context.message_id)
+        # 不改写时，原话解析不出命令。
+        assert module.execute_message_action(db, request).ok is False
+        with effective_message_content(db, message_id, "/签到"):
+            result = module.execute_message_action(db, request)
+            db.flush()
+        assert result.ok is True, result.message
+        assert db.get(Message, message_id).content == "@机器人 我要签到"
+        db.commit()
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        assert db.get(Message, message_id).content == "@机器人 我要签到"
+        assert db.scalar(select(SignInRecord).where(SignInRecord.user_id == "ai-user")) is not None
+
+
 def test_message_sign_makeup_restores_full_streak_and_deducts_once(message_sign_fixture) -> None:
     """今天已签到时补昨天会计入昨天和今天，补签成本只在积分账本扣除一次。"""
 
