@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from loguru import logger
+
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
 from app.services.plugin_runtime.replies import PluginReplyError, standard_replies, text_reply
@@ -86,7 +88,9 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             dtk_wait_seconds=config.dtk_wait_seconds,
             deadline=deadline,
         )
-    except (SourceError, PluginHttpError, ValueError):
+    except (SourceError, PluginHttpError, ValueError) as exc:
+        # 失败原因只含来源与错误码,不含密钥;写入日志便于区分 key 无效、超时和站点风控。
+        logger.warning("抖音解析失败 | 原因={} | 链接={}", exc, share_url)
         return _error("抖音解析服务暂时不可用,请稍后重试。", "parse_failed")
     try:
         replies = build_replies(
