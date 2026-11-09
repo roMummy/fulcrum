@@ -1518,6 +1518,10 @@ def _apply_reply_mode(
 
     if context.channel_type not in REPLY_MODE_CHANNEL_TYPES or context.chat_type != "group":
         return payloads
+    # 成员加入/退出/改昵称等系统事件的 message_id 是适配器合成的,微信里没有对应消息可引用,
+    # 引用会被手机端整条拒绝(quote_message_id not found);事件也没有“触发人”可 @,只发普通文本。
+    if str(context.message_type or "").startswith("group_member_"):
+        return payloads
     mode = str(output.get("reply_mode") or context.binding_config.get("reply_mode") or DEFAULT_REPLY_MODE).strip().lower()
     if mode not in REPLY_MODES or mode == "plain":
         return payloads

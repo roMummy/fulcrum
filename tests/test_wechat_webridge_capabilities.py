@@ -568,14 +568,14 @@ def test_live_summary_backlog_excludes_device_status_and_other_channels(tmp_path
     assert build_webridge_live_summary(db, channel)["memory_used_percent"] is None
 
 
-def _reply_context(channel_type: str, chat_type: str, config: dict | None = None):
+def _reply_context(channel_type: str, chat_type: str, config: dict | None = None, message_type: str = "text"):
     """构造回复方式测试用的最小插件上下文。"""
 
     from app.services.plugin_directory import DirectoryPluginContext
 
     return DirectoryPluginContext(
         plugin_code="demo", binding_id=1, bot_id=1, channel_id=9, channel_type=channel_type,
-        chat_type=chat_type, message_type="text", command_prefix="/", content="/签到",
+        chat_type=chat_type, message_type=message_type, command_prefix="/", content="/签到",
         sender_id="wxid_a", conversation_external_id="1@chatroom", mentioned_self=False,
         binding_config=config or {},
         normalized_event={"message": {"external_message_id": "555"}},
@@ -595,6 +595,17 @@ def test_reply_mode_quotes_trigger_message_in_webridge_group() -> None:
     assert _apply_reply_mode(_reply_context("wechat_webridge", "direct"), {}, [dict(base[0])]) == base
     assert _apply_reply_mode(_reply_context("telegram", "group"), {}, [dict(base[0])]) == base
     assert _apply_reply_mode(_reply_context("wechat_webridge", "group", {"reply_mode": "plain"}), {}, [dict(base[0])]) == base
+
+
+def test_reply_mode_skips_quote_for_member_events() -> None:
+    """成员加入/退出/改昵称是合成事件,没有可引用的微信消息,引用会让手机端整条拒发。"""
+
+    from app.services.plugin_directory import _apply_reply_mode
+
+    base = [{"message_type": "text", "content": "通知"}]
+    for message_type in ("group_member_join", "group_member_leave", "group_member_nickname_change"):
+        context = _reply_context("wechat_webridge", "group", message_type=message_type)
+        assert _apply_reply_mode(context, {"reply_mode": "both"}, [dict(base[0])]) == base
 
 
 def test_webridge_text_command_carries_quote_and_mentions(monkeypatch) -> None:
