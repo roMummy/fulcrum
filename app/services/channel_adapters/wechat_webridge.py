@@ -89,6 +89,8 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "event_name": event_name,
             "raw_message_type": body.get("raw_message_type"),
             "msg_subtype": body.get("msg_subtype"),
+            # 微桥 is_at 表示本条消息是否 @ 了当前登录账号，插件匹配与 AI 调度据此判断是否被呼叫。
+            "mentioned_self": bool(body.get("is_at")),
             "content_xml": body.get("content_xml"),
             "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
             "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},

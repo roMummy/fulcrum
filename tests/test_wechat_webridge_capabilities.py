@@ -611,3 +611,14 @@ def test_webridge_text_command_carries_quote_and_mentions(monkeypatch) -> None:
     service.enqueue_message_command(object(), channel, conversation, {"message_type": "text", "content": "hi", "quote_message_id": "555", "mention_user_list": ["wxid_a"]})
     params = captured[0]["payload"]["command"]["params"]
     assert params["quote_message_id"] == "555" and params["mention_user_list"] == ["wxid_a"]
+
+
+def test_webridge_is_at_maps_to_mentioned_self() -> None:
+    """微桥 is_at 必须映射为 mentioned_self，否则群里 @ 机器人无法触发 require_mention 插件和 AI。"""
+
+    channel = Channel(id=7, bot_id=1, name="微桥", channel_type="wechat_webridge")
+    adapter = WechatWeBridgeAdapter()
+    at_me = adapter.normalize_inbound_payload(channel, {"body": {"msg_type": "text", "chat_id": "1@chatroom", "is_group": True, "content": "hi", "is_at": True}})
+    plain = adapter.normalize_inbound_payload(channel, {"body": {"msg_type": "text", "chat_id": "1@chatroom", "is_group": True, "content": "hi"}})
+    assert at_me["details"]["mentioned_self"] is True
+    assert plain["details"]["mentioned_self"] is False
