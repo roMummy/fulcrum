@@ -215,7 +215,7 @@ async def upload_media(channel_id: int, request: Request, attachment_id: int, fi
         "session_id": request.headers.get("x-webridge-session-id", ""),
         "account_id": request.headers.get("x-webridge-account-id", ""),
     }
-    logger.info("webridge media upload received", extra={"channel_id": channel_id, "attachment_id": attachment_id, "filename": file.filename or "", "content_type": file.content_type or ""})
+    logger.info("webridge media upload received", extra={"channel_id": channel_id, "attachment_id": attachment_id, "upload_filename": file.filename or "", "content_type": file.content_type or ""})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
