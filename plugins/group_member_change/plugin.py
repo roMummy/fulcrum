@@ -41,7 +41,7 @@ REMOVED_PATTERNS = (
     "removed from the group",
     "removed from the group chat",
 )
-VALID_CHANGE_TYPES = {"join", "left", "removed"}
+VALID_CHANGE_TYPES = {"join", "left", "removed", "rename"}
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
@@ -87,7 +87,11 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         chatroom=chatroom,
         change_type=change_type,
         members=members,
+        new_name=str(parsed.get("new_name") or ""),
     )
+    # 微桥事件自带变更后的群人数,直接校准,不必等下一次全量同步。
+    if isinstance(parsed.get("after_count"), int):
+        chatroom.member_count = int(parsed["after_count"])
     reply_text = _build_reply_text(change_type, members)
     output: dict[str, Any] = {
         "provider_status": f"member_{change_type}",
@@ -157,7 +161,15 @@ def _parse_structured_member_change(payload: Mapping[str, Any]) -> dict[str, Any
     if change_type not in VALID_CHANGE_TYPES:
         return None
     members = _normalize_members(member_change.get("members"))
-    return {"change_type": change_type, "members": members} if members else None
+    if not members:
+        return None
+    parsed: dict[str, Any] = {"change_type": change_type, "members": members}
+    if change_type == "rename":
+        parsed["new_name"] = str(member_change.get("new_room_nick_name") or "").strip()
+    after_count = member_change.get("after_count")
+    if isinstance(after_count, int) and after_count >= 0:
+        parsed["after_count"] = after_count
+    return parsed
 
 
 def _parse_wechat_member_change(content: str) -> dict[str, Any] | None:
@@ -234,8 +246,9 @@ def _apply_member_change(
     chatroom: Chatroom,
     change_type: str,
     members: list[dict[str, str]],
+    new_name: str = "",
 ) -> int:
-    """在当前租户和当前群内更新成员，退出与移除统一进入 left 状态。"""
+    """在当前租户和当前群内更新成员，退出与移除统一进入 left 状态；rename 只改群内昵称。"""
 
     current = now_shanghai()
     updated_count = 0
@@ -260,9 +273,14 @@ def _apply_member_change(
                 member_external_id=external_id,
             )
             db.add(member)
+        member.last_synced_at = current
+        if change_type == "rename":
+            # 群昵称变更:只更新群内昵称,不改变在群状态,也不动全局昵称。
+            member.display_name = new_name or member.nickname or display_name
+            updated_count += 1
+            continue
         member.nickname = display_name
         member.display_name = display_name
-        member.last_synced_at = current
         member.status = "active" if change_type == "join" else "left"
         updated_count += 1
     if updated_count:

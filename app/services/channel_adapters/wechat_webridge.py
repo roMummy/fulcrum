@@ -71,6 +71,7 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "friend_added": "contact",
             "group_member_join": "group_member_join",
             "group_member_leave": "group_member_leave",
+            "group_member_nickname_change": "group_member_nickname_change",
             "moments_received": "moments",
             "favorite_received": "favorite",
             "official_account_message": "official_account",
@@ -98,11 +99,16 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "group": {key: body.get(key) for key in ("room_id", "member_id", "member_ids", "group_name", "operation") if body.get(key) is not None},
             "moment": {key: body.get(key) for key in ("sns_id", "media_id", "author_id", "operation_id") if body.get(key) is not None},
         }
+        member_change = _build_member_change(event_name, body)
+        if member_change:
+            # 结构化成员事件:插件直接读 details.member_change,消息内容写成中文,后台和日志可读。
+            details["member_change"] = member_change
+            content = content or member_change["summary"]
         return {
             "adapter_type": self.adapter_type,
             "event_key": str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None,
             "event_type": event_name,
-            "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system", "friend_request", "contact", "group_member_join", "group_member_leave", "moments", "favorite", "official_account"},
+            "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system", "friend_request", "contact", "group_member_join", "group_member_leave", "group_member_nickname_change", "moments", "favorite", "official_account"},
             "conversation": {
                 "external_id": conversation_id,
                 "title": body.get("conversation_title") or body.get("chat_name") or conversation_id,
@@ -118,3 +124,29 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "details": details,
         }
 
+
+_MEMBER_EVENT_TYPES = {"group_member_join": "join", "group_member_leave": "left", "group_member_nickname_change": "rename"}
+
+
+def _build_member_change(event_name: str, body: dict[str, Any]) -> dict[str, Any] | None:
+    """把微桥群成员事件转成通用 member_change 结构(join / left / rename)。"""
+
+    change_type = _MEMBER_EVENT_TYPES.get(event_name)
+    member_id = str(body.get("member_id") or "").strip()
+    if not change_type or not member_id:
+        return None
+    name = str(body.get("member_display_name") or body.get("member_nick_name") or member_id).strip() or member_id
+    result: dict[str, Any] = {
+        "change_type": change_type,
+        "members": [{"external_id": member_id, "display_name": name}],
+        "after_count": body.get("snapshot_after_count"),
+    }
+    if change_type == "join":
+        result["summary"] = f"{name} 加入了群聊"
+    elif change_type == "left":
+        result["summary"] = f"{name} 退出了群聊"
+    else:
+        new_name = str(body.get("new_room_nick_name") or "").strip()
+        result["new_room_nick_name"] = new_name
+        result["summary"] = f"{name} 将群昵称改为 {new_name}" if new_name else f"{name} 清除了群昵称"
+    return result
