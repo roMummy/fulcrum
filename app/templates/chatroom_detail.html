@@ -90,7 +90,7 @@
         <td>{{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}</td>
         <td>{{ item.display_name }}</td>
         <td>{{ item.role_label }}</td>
-        {% if detail.show_points %}<td class="col-compact">{{ item.points }}</td>{% endif %}
+        {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}">调整</a></td>{% endif %}
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}</td>
       </tr>
       {% endfor %}

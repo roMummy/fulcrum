@@ -89,23 +89,32 @@ def _identity_for(resolved: dict[tuple[str, str], dict[str, Any]], group_id: str
 
 
 def group_options(db: Session) -> list[dict[str, Any]]:
-    """有积分账户的群,供筛选和发放时选择。名称取群档案,没有档案时显示群 ID。"""
+    """可选的群:所有已纳管的群,加上有过积分账户的群。
 
-    group_ids = [str(item) for item in db.scalars(select(PointsAccount.group_id).distinct()).all() if item]
-    names = _room_names(db, set(group_ids))
-    return sorted(
-        ({"id": gid, "name": names.get(gid, {}).get("name") or gid} for gid in group_ids),
-        key=lambda item: str(item["name"]),
-    )
+    没人有积分的新群也必须能选到,否则无法给里面的成员发放第一笔积分。
+    """
+
+    rooms = db.scalars(select(Chatroom).where(Chatroom.management_status == "enabled")).all()
+    names = {room.external_id: (room.remark or room.name or room.external_id) for room in rooms}
+    extra_ids = {str(item) for item in db.scalars(select(PointsAccount.group_id).distinct()).all() if item} - set(names)
+    for gid, identity in _room_names(db, extra_ids).items():
+        names[gid] = identity["name"]
+    for gid in extra_ids:
+        names.setdefault(gid, gid)
+    return sorted(({"id": gid, "name": name} for gid, name in names.items()), key=lambda item: str(item["name"]))
 
 
 def build_points_accounts(db: Session, *, keyword: str = "", group_id: str = "", page: int = 1) -> dict[str, Any]:
-    """账户列表:每个 群+用户 一行,按积分从高到低。"""
+    """账户列表,运营在这里先选到某个人,再对他调整积分。
+
+    - 未选群:列出所有已有积分账户的 群+用户,按积分从高到低。
+    - 选了群:列出该群全部成员,没有积分的成员显示 0,同样可以被选中发放。
+    """
 
     q = (keyword or "").strip()[:100]
-    stmt = select(PointsAccount)
     if group_id:
-        stmt = stmt.where(PointsAccount.group_id == group_id)
+        return _group_member_accounts(db, group_id=group_id, keyword=q, page=page)
+    stmt = select(PointsAccount)
     if q:
         like = _like(q)
         stmt = stmt.where(or_(PointsAccount.user_name.like(like, escape="\\"), PointsAccount.user_id.like(like, escape="\\")))
@@ -116,7 +125,6 @@ def build_points_accounts(db: Session, *, keyword: str = "", group_id: str = "",
     resolved = _user_identities(db, {(item.group_id, item.user_id) for item in accounts})
     rows = [
         {
-            "id": int(item.id),
             "identity": _identity_for(resolved, item.group_id, item.user_id, item.user_name),
             "group": rooms.get(item.group_id) or make_identity(item.group_id, ""),
             "group_id": item.group_id,
@@ -125,17 +133,47 @@ def build_points_accounts(db: Session, *, keyword: str = "", group_id: str = "",
         }
         for item in accounts
     ]
-    summary_total = db.execute(
-        select(func.count(PointsAccount.id), func.coalesce(func.sum(PointsAccount.total_points), 0)).where(
-            *( [PointsAccount.group_id == group_id] if group_id else [] )
-        )
-    ).one()
+    totals = db.execute(select(func.count(PointsAccount.id), func.coalesce(func.sum(PointsAccount.total_points), 0))).one()
     return {
         "rows": rows,
         "paging": paging,
         "keyword": q,
+        "group_id": "",
+        "summary": {"accounts": int(totals[0] or 0), "points": int(totals[1] or 0)},
+    }
+
+
+def _group_member_accounts(db: Session, *, group_id: str, keyword: str, page: int) -> dict[str, Any]:
+    """选中某个群后的成员清单:群成员并上已有账户,没有积分的成员记 0。"""
+
+    room = db.scalar(select(Chatroom).where(Chatroom.external_id == group_id))
+    balances = PointsService(db).group_balances(group_id)
+    names = {str(u): n for u, n in db.execute(select(PointsAccount.user_id, PointsAccount.user_name).where(PointsAccount.group_id == group_id)).all()}
+    member_ids: set[str] = set(balances)
+    if room is not None:
+        member_ids |= {
+            str(x)
+            for x in db.scalars(
+                select(ChatroomMember.member_external_id).where(ChatroomMember.chatroom_id == room.id, ChatroomMember.status != "left")
+            ).all()
+        }
+    resolved = _user_identities(db, {(group_id, uid) for uid in member_ids})
+    group_identity = _room_names(db, {group_id}).get(group_id) or make_identity(group_id, "")
+    rows = []
+    for uid in member_ids:
+        identity = _identity_for(resolved, group_id, uid, names.get(uid))
+        if keyword and keyword.lower() not in f"{identity['name']} {uid}".lower():
+            continue
+        rows.append({"identity": identity, "group": group_identity, "group_id": group_id, "user_id": uid, "points": balances.get(uid, 0)})
+    # 有积分的在前,同分按昵称排,翻页稳定。
+    rows.sort(key=lambda item: (-item["points"], item["identity"]["name"]))
+    paging = _page(len(rows), page)
+    return {
+        "rows": rows[paging["offset"] : paging["offset"] + PAGE_SIZE],
+        "paging": paging,
+        "keyword": keyword,
         "group_id": group_id,
-        "summary": {"accounts": int(summary_total[0] or 0), "points": int(summary_total[1] or 0)},
+        "summary": {"accounts": len(balances), "points": sum(balances.values())},
     }
 
 
@@ -228,28 +266,3 @@ def _member_name(db: Session, group_id: str, user_id: str) -> str | None:
     )
     name = (member.display_name or member.nickname) if member is not None else ""
     return name if name and not looks_like_raw_id(name) else None
-
-
-def find_group_member(db: Session, group_id: str, query: str) -> tuple[str | None, str]:
-    """在群内按昵称或微信号精确找一个成员,返回 (用户ID, 提示)。
-
-    重名或没找到时返回 None 和原因,让运营改用微信号,避免把积分发给同名的另一个人。
-    """
-
-    q = (query or "").strip()
-    if not q:
-        return None, "请填写成员昵称或微信号。"
-    rows = db.execute(
-        select(ChatroomMember.member_external_id, ChatroomMember.display_name, ChatroomMember.nickname)
-        .join(Chatroom, Chatroom.id == ChatroomMember.chatroom_id)
-        .where(Chatroom.external_id == group_id)
-    ).all()
-    exact_id = [row for row in rows if row[0] == q]
-    if exact_id:
-        return exact_id[0][0], ""
-    matched = sorted({row[0] for row in rows if q in (row[1] or row[2] or "") or q == (row[2] or "")})
-    if len(matched) == 1:
-        return matched[0], ""
-    if not matched:
-        return None, f"本群没有找到“{q}”,请确认昵称或微信号,或先同步群成员。"
-    return None, f"本群有 {len(matched)} 个成员匹配“{q}”,请改用微信号。"

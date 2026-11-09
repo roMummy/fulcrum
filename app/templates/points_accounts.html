@@ -1,58 +1,57 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{# 积分管理:所有群的积分账户,顶部可直接发放/扣减,一行一个账户。 #}
+{# 积分管理:先在列表里选到某个人,再对他调整积分。选了群则列出该群全部成员。 #}
 {% block hero_actions %}
 <div class="chip-row">
   <span class="chip chip-outline">{{ directory.summary.accounts }} 个账户</span>
   <span class="chip chip-outline">合计 {{ directory.summary.points }} 积分</span>
-  <a class="btn btn-secondary" href="/points/ledger">查看账单</a>
+  <a class="btn btn-secondary" href="/points/ledger{% if directory.group_id %}?group_id={{ directory.group_id|urlencode }}{% endif %}">账单</a>
 </div>
 {% endblock %}
 {% block content %}
 <section class="work-surface">
-  {# 发放/扣减:选群,填成员昵称或微信号,填积分。表单令牌保证重复提交只记一笔。 #}
-  <form method="post" action="/points/adjust" class="compact-filter-form" style="margin-bottom:16px;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <input type="hidden" name="form_token" value="{{ form_token }}" />
-    <label class="compact-filter-field"><span>群</span>
-      <select name="group_id" required>
-        {% for item in groups %}<option value="{{ item.id }}" {% if directory.group_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
-      </select>
-    </label>
-    <label class="compact-filter-field"><span>成员</span><input name="member" id="adjust-member" placeholder="昵称或微信号" required /></label>
-    <label class="compact-filter-field"><span>方式</span>
-      <select name="mode"><option value="grant">发放</option><option value="deduct">扣减</option></select>
-    </label>
-    <label class="compact-filter-field"><span>积分</span><input type="number" name="amount" min="1" max="1000000" required style="width:100px;" /></label>
-    <label class="compact-filter-field"><span>备注</span><input name="note" maxlength="200" placeholder="选填,会记在账单里" /></label>
-    <div class="compact-filter-actions"><button class="btn" type="submit">确认</button></div>
-  </form>
-
   <form method="get" action="/points" class="compact-filter-form" style="margin-bottom:12px;">
-    <label class="compact-filter-field"><span>搜索</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称或微信号" /></label>
     <label class="compact-filter-field"><span>群</span>
-      <select name="group_id">
-        <option value="">全部</option>
+      <select name="group_id" onchange="this.form.submit()">
         {% for item in groups %}<option value="{{ item.id }}" {% if directory.group_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
       </select>
     </label>
+    <label class="compact-filter-field"><span>搜索成员</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称" /></label>
     <div class="compact-filter-actions">
       <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword or directory.group_id %}<a class="btn btn-secondary" href="/points">清除</a>{% endif %}
+      {% if directory.keyword %}<a class="btn btn-secondary" href="/points?group_id={{ directory.group_id|urlencode }}">清除</a>{% endif %}
     </div>
   </form>
 
   {% if directory.rows %}
+  {% set back = pager_base.rstrip('?&') %}
   <div class="table-scroll">
   <table class="table">
-    <thead><tr><th>成员</th><th>所在群</th><th class="col-compact">积分</th><th class="col-action"></th></tr></thead>
+    <thead><tr><th>成员</th>{% if not directory.group_id %}<th>所在群</th>{% endif %}<th class="col-compact">积分</th><th class="col-action"></th></tr></thead>
     <tbody>
       {% for item in directory.rows %}
       <tr>
         <td>{{ identity(item.identity, 'lg') }}</td>
-        <td>{{ identity(item.group, 'sm', false) }}</td>
+        {% if not directory.group_id %}<td>{{ identity(item.group, 'sm', false) }}</td>{% endif %}
         <td class="col-compact"><strong>{{ item.points }}</strong></td>
-        <td class="col-action"><a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}">账单</a></td>
+        <td class="col-action">
+          {# 点“调整积分”在本行展开面板,只需要填积分和备注;成员已经选定,不会发错人。 #}
+          <details class="row-actions">
+            <summary class="btn btn-small">调整积分</summary>
+            <form method="post" action="/points/adjust" class="compact-filter-form" style="margin-top:8px;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <input type="hidden" name="form_token" value="{{ form_tokens[loop.index0] }}" />
+              <input type="hidden" name="group_id" value="{{ item.group_id }}" />
+              <input type="hidden" name="user_id" value="{{ item.user_id }}" />
+              <input type="hidden" name="back" value="{{ back }}" />
+              <select name="mode"><option value="grant">发放</option><option value="deduct">扣减</option></select>
+              <input type="number" name="amount" min="1" max="1000000" required placeholder="积分" style="width:90px;" />
+              <input name="note" maxlength="200" placeholder="备注(选填)" />
+              <button class="btn btn-small" type="submit">确认</button>
+            </form>
+          </details>
+          <a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}">账单</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -60,7 +59,7 @@
   </div>
   {% include '_pager.html' %}
   {% else %}
-  <p class="muted-text">还没有积分账户。群成员签到或被发放积分后会出现在这里。</p>
+  <p class="muted-text">{% if directory.group_id %}这个群还没有同步到成员。请先到群管理里同步群成员。{% else %}还没有群。请先到群管理里启用群并同步成员。{% endif %}</p>
   {% endif %}
 </section>
 {% endblock %}

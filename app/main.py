@@ -1,5 +1,5 @@
 import json
-import uuid
+import secrets
 import subprocess
 import time as time_module
 import xml.etree.ElementTree as ElementTree
@@ -155,7 +155,7 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.directory_pages import build_chatroom_directory, build_contact_directory, channel_options
-from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, find_group_member, group_options
+from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
@@ -2477,15 +2477,20 @@ async def points_accounts_page(request: Request, q: str = "", group_id: str = ""
     enforce_role(request, "readonly")
     db = get_session()
     try:
+        groups = group_options(db)
+        # 默认进入第一个群的成员列表:成员(含 0 积分的)都在这里,选到人再发放。
+        if not group_id and groups:
+            group_id = str(groups[0]["id"])
         directory = build_points_accounts(db, keyword=q, group_id=group_id, page=page)
         return render(
             request,
             "points_accounts.html",
             page_title="积分",
             directory=directory,
-            groups=group_options(db),
+            groups=groups,
             pager_base=_directory_pager_base("/points", q=directory["keyword"], group_id=group_id),
-            form_token=uuid.uuid4().hex,
+            # 每行一个随机令牌:同一份表单重复提交只记一笔,而同一个人下一次调整是新的令牌。
+            form_tokens=[secrets.token_hex(12) for _ in directory["rows"]],
             notice=notice,
         )
     finally:
@@ -2516,25 +2521,26 @@ async def points_ledger_page(request: Request, q: str = "", group_id: str = "", 
 async def points_adjust_action(
     request: Request,
     group_id: str = Form(""),
-    member: str = Form(""),
+    user_id: str = Form(""),
     amount: int = Form(0),
     mode: str = Form("grant"),
     note: str = Form(""),
     form_token: str = Form(""),
     csrf_token: str = Form(""),
+    back: str = Form("/points"),
 ):
-    """人工发放或扣减积分:成员可填昵称或微信号,重名时要求改用微信号。"""
+    """对列表里已选中的某个成员发放或扣减积分,提交后回到原列表位置。"""
 
     user = enforce_role(request, "ops")
+    # 只允许回到积分管理页,防止被当作开放跳转。
+    back_url = back if back.startswith("/points") and "//" not in back else "/points"
+    separator = "&" if "?" in back_url else "?"
     db = get_session()
     try:
         require_tenant_csrf(db, request, csrf_token)
-        user_id, hint = find_group_member(db, group_id.strip(), member)
-        if user_id is None:
-            return RedirectResponse(url=f"/points?notice={quote(hint)}", status_code=303)
         signed = abs(int(amount)) * (1 if mode == "grant" else -1)
         result = adjust_points(
-            db, group_id=group_id.strip(), user_id=user_id, amount=signed, operator=user.username, note=note, request_id=form_token.strip()[:64]
+            db, group_id=group_id.strip(), user_id=user_id.strip(), amount=signed, operator=user.username, note=note, request_id=form_token.strip()[:64]
         )
         if result.ok:
             record_audit(db, "points.adjust", "points_account", user_id, f"group={group_id}, amount={signed}, operator={user.username}")
@@ -2542,7 +2548,7 @@ async def points_adjust_action(
             notice = f"已{'发放' if signed > 0 else '扣减'} {abs(signed)} 积分" + (f",当前余额 {after}" if after is not None else "")
         else:
             notice = result.message
-        return RedirectResponse(url=f"/points?group_id={quote(group_id)}&notice={quote(notice)}", status_code=303)
+        return RedirectResponse(url=f"{back_url}{separator}notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 

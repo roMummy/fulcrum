@@ -15,7 +15,7 @@ from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import Chatroom, ChatroomMember, PointsAccount, PointsTransaction, WorkWechatContact
 from app.services.points import PointsService
-from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, find_group_member
+from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 
 GROUP = "g1@chatroom"
 
@@ -42,13 +42,16 @@ def db():
     scope.__exit__(None, None, None)
 
 
-def test_find_member_by_nickname_wxid_and_ambiguity(db) -> None:
-    assert find_group_member(db, GROUP, "小红")[0] == "wxid_b"
-    assert find_group_member(db, GROUP, "wxid_a")[0] == "wxid_a"
-    # “小明”是“小明二号”的子串但有一个精确同名,应只按唯一匹配;两个都含“小”则要求改用微信号。
-    uid, hint = find_group_member(db, GROUP, "小")
-    assert uid is None and "微信号" in hint
-    assert find_group_member(db, GROUP, "不存在")[0] is None
+def test_selecting_group_lists_all_members_including_zero_points(db) -> None:
+    """选了群后列出全部成员,没有积分的成员显示 0,同样可以被选中发放;有积分的排前面。"""
+
+    adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=7, operator="liuwei")
+    result = build_points_accounts(db, group_id=GROUP)
+    assert [(r["identity"]["name"], r["points"]) for r in result["rows"]] == [("小红", 7), ("小明", 0), ("小明二号", 0)]
+    assert result["summary"] == {"accounts": 1, "points": 7}
+    assert [r["identity"]["name"] for r in build_points_accounts(db, group_id=GROUP, keyword="二号")["rows"]] == ["小明二号"]
+    # 没选群时只列已有积分账户。
+    assert [r["identity"]["name"] for r in build_points_accounts(db)["rows"]] == ["小红"]
 
 
 def test_grant_deduct_and_ledger_show_operator_and_nickname(db) -> None:
@@ -77,3 +80,9 @@ def test_same_form_token_only_records_once_and_unknown_member_rejected(db) -> No
     # 不在群成员里、也没有账户的人不能凭空发放。
     assert adjust_points(db, group_id=GROUP, user_id="wxid_ghost", amount=10, operator="liuwei").ok is False
     assert adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=0, operator="liuwei").ok is False
+
+
+def test_group_options_include_enabled_group_without_any_points(db) -> None:
+    """没人有积分的已纳管群也能选到,否则无法发放第一笔积分。"""
+
+    assert [item["name"] for item in group_options(db)] == ["运营群"]
