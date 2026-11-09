@@ -4733,3 +4733,175 @@ code {
 .plugin-row details { grid-column: 1 / -1; }
 .plugin-row details summary { cursor: pointer; font-size: 13px; }
 @media (max-width: 720px) { .plugin-row { grid-template-columns: 1fr; } }
+
+/* ===== 全局下拉框(由 static/js/select.js 把原生 select 升级而来) =====
+ * 触发按钮沿用输入框的底色、边框、圆角和聚焦环;选项面板沿用卡片阴影。
+ * 原生 select 仍留在 DOM 里承载 value 与表单提交,只是视觉隐藏。 */
+.ui-select {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.ui-select-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+}
+
+.ui-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color 300ms ease-in-out, border-color 300ms ease-in-out, box-shadow 300ms ease-in-out;
+}
+
+.ui-select-trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.ui-select-trigger:focus-visible,
+.ui-select-open .ui-select-trigger {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--focus), 0 4px 14px rgba(99, 102, 241, 0.06);
+}
+
+.ui-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ui-select-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select.is-placeholder .ui-select-label {
+  color: var(--muted);
+}
+
+/* 下拉箭头用 CSS 画,展开时翻转。 */
+.ui-select-caret {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: -3px;
+  border-right: 1.6px solid var(--muted);
+  border-bottom: 1.6px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 200ms ease, border-color 200ms ease;
+}
+
+.ui-select-open .ui-select-caret {
+  margin-top: 3px;
+  border-color: var(--primary);
+  transform: rotate(-135deg);
+}
+
+.ui-select-panel {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  max-width: min(420px, 90vw);
+  max-height: 264px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+.ui-select-panel[hidden] {
+  display: none;
+}
+
+.ui-select-up .ui-select-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.ui-select-option {
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select-option.is-active {
+  background: var(--surface-muted);
+}
+
+.ui-select-option.is-selected {
+  color: var(--primary-strong);
+  font-weight: 600;
+  background: var(--primary-soft);
+}
+
+.ui-select-option.is-disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 筛选栏里的紧凑下拉:与 compact-filter-field 的输入框同高同圆角。 */
+.compact-filter-field .ui-select-trigger {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+}
+
+.compact-filter-field .ui-select-trigger:focus-visible,
+.compact-filter-field .ui-select-open .ui-select-trigger {
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.compact-filter-field .ui-select-option {
+  font-size: 13px;
+}
+
+/* 弹窗里的卡片自带滚动,面板需要能溢出卡片边界显示,这里让弹窗卡片内下拉面板不被裁切。 */
+.app-modal-card:has(.ui-select-open) {
+  overflow: visible;
+}
+
+@media (max-width: 1100px) {
+  .ui-select-trigger {
+    min-height: 44px;
+  }
+}
