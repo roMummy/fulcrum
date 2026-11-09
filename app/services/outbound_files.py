@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 import secrets
@@ -8,6 +9,7 @@ from datetime import datetime
 from app.core.time import now_shanghai
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Request
 
@@ -113,3 +115,85 @@ def store_outbound_upload(
         "target_path": target_path,
         "metadata": metadata,
     }
+
+
+# 出站载荷里可能携带 base64 的字段,按消息类型映射到“文件地址”字段。
+# 微桥等协议要求图片、视频、语音传路径或 URL,不接受把大文件塞进请求体。
+_MEDIA_BASE64_FIELDS = {
+    "image": (("base64", "image_base64"), "image_url"),
+    "voice": (("base64", "voice_base64", "audio_base64"), "voice_url"),
+    "video": (("base64", "video_base64"), "video_url"),
+}
+# 封面等附属 base64 不再单独投递,微桥会从视频自动生成缩略图。
+_AUXILIARY_BASE64_FIELDS = ("cover_base64", "thumb_base64")
+
+
+def _sniff_extension(content: bytes, message_type: str) -> str:
+    """按文件头判断扩展名;手机端和微信据此识别格式。"""
+
+    if content[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if content[:4] == b"GIF8":
+        return ".gif"
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return ".webp"
+    if content[4:8] == b"ftyp":
+        return ".mp4"
+    if content[:3] == b"ID3" or content[:2] in (b"\xff\xfb", b"\xff\xf3"):
+        return ".mp3"
+    return {"image": ".jpg", "video": ".mp4", "voice": ".mp3"}.get(message_type, ".bin")
+
+
+def externalize_media_payload(payload: dict[str, Any], *, tenant_id: int, channel_id: int, public_base_url: str) -> dict[str, Any]:
+    """把载荷里的 base64 媒体落成文件,并改成可下载的文件地址。
+
+    返回新的载荷,不修改入参。库、任务队列和日志里因此只会出现文件地址,
+    不会出现 base64。没有配置公开地址时无法生成地址,原样返回由调用方决定如何处理。
+    """
+
+    message_type = str(payload.get("message_type") or "").strip().lower()
+    spec = _MEDIA_BASE64_FIELDS.get(message_type)
+    base = str(public_base_url or "").strip().rstrip("/")
+    if spec is None or not base:
+        return payload
+    source_fields, url_field = spec
+    encoded = next((str(payload.get(key) or "").strip() for key in source_fields if payload.get(key)), "")
+    if not encoded:
+        return payload
+    try:
+        content = base64.b64decode(encoded, validate=False)
+    except (ValueError, TypeError):
+        return payload
+    if not content:
+        return payload
+    extension = _sniff_extension(content, message_type)
+    stored = store_outbound_upload(
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        file_name=f"{message_type}{extension}",
+        content=content,
+        content_type=None,
+        message_type=message_type,
+    )
+    result = {key: value for key, value in payload.items() if key not in (*source_fields, *_AUXILIARY_BASE64_FIELDS, "image_base64")}
+    result[url_field] = f"{base}/outbound-files/{channel_id}/{stored['share_id']}/{quote(stored['file_name'])}"
+    return result
+
+
+def redact_base64_fields(value: Any) -> Any:
+    """递归把任何 *base64 字段换成体积说明。
+
+    插件回复、出站载荷进入调试信息、日志或任务结果之前都要经过这里,
+    库里只允许出现文件地址,绝不能出现 base64 内容。
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: (f"[base64 已省略,{len(item)} 字符]" if str(key).lower().endswith("base64") and isinstance(item, str) else redact_base64_fields(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact_base64_fields(item) for item in value]
+    return value

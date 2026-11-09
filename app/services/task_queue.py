@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.settings import settings
+from app.core.text_column import dump_json_for_text_column
 from app.core.time import now_shanghai
 from app.models.entities import TaskJob
 
@@ -132,7 +133,7 @@ def recover_running_jobs(db: Session, *, job_types: tuple[str, ...] | None = Non
 def complete_job(db: Session, job: TaskJob, *, result: dict[str, Any] | None = None) -> TaskJob:
     job.status = "completed"
     job.finished_at = now_shanghai()
-    job.result_json = json.dumps(result or {}, ensure_ascii=False)
+    job.result_json = dump_json_for_text_column(result or {}, drop_keys=("runtime_payload", "debug"))
     job.error_message = None
     db.commit()
     db.refresh(job)
@@ -151,7 +152,7 @@ def fail_job(
     can_retry = int(job.attempts or 0) < int(job.max_attempts or 0)
     job.status = "pending" if can_retry else "failed"
     job.error_message = error_message
-    job.result_json = json.dumps(result or {}, ensure_ascii=False)
+    job.result_json = dump_json_for_text_column(result or {}, drop_keys=("runtime_payload", "debug"))
     current_time = now_shanghai()
     job.finished_at = current_time if not can_retry else None
     job.available_at = current_time + timedelta(seconds=retry_delay_seconds) if can_retry else current_time
@@ -180,7 +181,7 @@ def fail_job_terminal(
     current_time = now_shanghai()
     job.status = "failed"
     job.error_message = error_message
-    job.result_json = json.dumps(result or {}, ensure_ascii=False)
+    job.result_json = dump_json_for_text_column(result or {}, drop_keys=("runtime_payload", "debug"))
     job.finished_at = current_time
     job.available_at = current_time
     db.commit()

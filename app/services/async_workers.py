@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
 from datetime import timedelta
@@ -17,6 +16,7 @@ from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Channel, Conversation, ErrorLog, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.models.saas import Tenant
 from app.services.ai_intent_worker import poll_ai_intent_jobs
+from app.core.text_column import dump_json_for_text_column
 from app.services.analytics import evaluate_operational_alerts, record_plugin_dispatch_analytics
 from app.services.channel_adapters import dispatch_outbound_message
 from app.services.channel_runtime import run_due_channel_tasks
@@ -230,7 +230,7 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     )
     raw_event = db.get(RawWebhookEvent, raw_event_id) if raw_event_id else None
     if raw_event:
-        raw_event.dispatch_summary_json = json.dumps(dispatch_payload, ensure_ascii=False)
+        raw_event.dispatch_summary_json = dump_json_for_text_column(dispatch_payload, drop_keys=("runtime_payload", "debug"))
         raw_event.status = "dispatched"
     db.commit()
     logger.info(

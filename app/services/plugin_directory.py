@@ -23,6 +23,7 @@ from app.core.logging import get_logger
 from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
+from app.services.outbound_files import externalize_media_payload, redact_base64_fields
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 
@@ -1146,7 +1147,7 @@ def _execute_candidate(
                         "duration_ms": int((time.perf_counter() - started_at) * 1000),
                         **timeout_debug,
                         "consume_policy": candidate.consume_policy,
-                        "output": dict(normalized.output),
+                        "output": redact_base64_fields(dict(normalized.output)),
                         "auto_outbound": auto_outbound,
                     },
                 )
@@ -1161,7 +1162,7 @@ def _execute_candidate(
                     "duration_ms": int((time.perf_counter() - started_at) * 1000),
                     **timeout_debug,
                     "consume_policy": candidate.consume_policy,
-                    "output": dict(normalized.output),
+                    "output": redact_base64_fields(dict(normalized.output)),
                     "auto_outbound": auto_outbound,
                 },
             )
@@ -1195,7 +1196,7 @@ def _execute_candidate(
                         "execution_source": "runtime_executor_timeout",
                         "duration_ms": int((time.perf_counter() - started_at) * 1000),
                         **timeout_debug,
-                        "runtime_payload": runtime_payload,
+                        "runtime_payload": redact_base64_fields(runtime_payload),
                     },
                 )
             if runtime_result is not None:
@@ -1226,8 +1227,8 @@ def _execute_candidate(
                             "duration_ms": int((time.perf_counter() - started_at) * 1000),
                             **timeout_debug,
                             "consume_policy": candidate.consume_policy,
-                            "output": dict(runtime_result.output),
-                            "runtime_payload": runtime_payload,
+                            "output": redact_base64_fields(dict(runtime_result.output)),
+                            "runtime_payload": redact_base64_fields(runtime_payload),
                             "auto_outbound": auto_outbound,
                         },
                     )
@@ -1242,8 +1243,8 @@ def _execute_candidate(
                         "duration_ms": int((time.perf_counter() - started_at) * 1000),
                         **timeout_debug,
                         "consume_policy": candidate.consume_policy,
-                        "output": dict(runtime_result.output),
-                        "runtime_payload": runtime_payload,
+                        "output": redact_base64_fields(dict(runtime_result.output)),
+                        "runtime_payload": redact_base64_fields(runtime_payload),
                         "auto_outbound": auto_outbound,
                     },
                 )
@@ -1400,6 +1401,18 @@ def _dispatch_auto_outbound_messages(
             "chat_type": context.chat_type,
             **item,
         }
+        if channel.channel_type == "wechat_webridge":
+            # 微桥协议只接受路径或 URL。base64 在这里落成文件,库、队列和日志只保留文件地址。
+            payload = externalize_media_payload(
+                payload,
+                tenant_id=int(channel.tenant_id),
+                channel_id=int(channel.id),
+                public_base_url=str(settings.public_base_url or ""),
+            )
+            if any(str(key).lower().endswith("base64") and value for key, value in payload.items()):
+                logger.error("auto outbound media dropped because public base url is missing", extra={"plugin_code": context.plugin_code})
+                results.append({"ok": False, "error": "public_base_url_missing", "payload": redact_base64_fields(payload)})
+                continue
         job = enqueue_job(
             db,
             job_type=resolve_outbound_job_type(channel),

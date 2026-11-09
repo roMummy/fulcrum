@@ -344,13 +344,15 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
         if mention_user_list:
             params["mention_user_list"] = mention_user_list
     elif message_type == "image":
-        params["source"] = payload.get("image_url") or payload.get("base64") or payload.get("image_base64") or payload.get("content")
+        # 微桥 send_image 的字段是 image_path(本地路径或远程 URL),不接受 base64。
+        params["image_path"] = payload.get("image_url") or payload.get("content")
     elif message_type in {"voice", "video"}:
-        params["source"] = payload.get("voice_url") or payload.get("video_url") or payload.get("base64") or payload.get("voice_base64") or payload.get("video_base64")
+        # 语音、视频用 source(本地路径或远程 URL);大文件不能走 base64,统一传文件地址。
+        params["source"] = payload.get("voice_url") or payload.get("video_url")
     elif message_type == "file":
         params["file_url"] = payload.get("file_url") or payload.get("file_path")
     elif message_type == "emoji":
-        params["source"] = payload.get("emoji") or payload.get("image_url") or payload.get("base64")
+        params["source"] = payload.get("emoji") or payload.get("image_url")
     elif message_type == "link":
         params.update({"title": payload.get("link_title") or payload.get("title") or "", "url": payload.get("link_url") or "", "description": payload.get("link_description") or "", "thumb_url": payload.get("thumb_url") or ""})
     elif message_type == "card":

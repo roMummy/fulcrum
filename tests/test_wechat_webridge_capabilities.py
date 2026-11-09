@@ -66,7 +66,7 @@ def test_webridge_outbound_message_mapping_covers_media_and_cards(monkeypatch) -
     )
 
     assert captured[0]["payload"]["command"]["type"] == "send_image"
-    assert captured[0]["payload"]["command"]["params"]["source"].endswith("a.jpg")
+    assert captured[0]["payload"]["command"]["params"]["image_path"].endswith("a.jpg")
     assert captured[1]["payload"]["command"]["type"] == "send_link_card"
     assert captured[1]["payload"]["command"]["params"]["url"] == "https://example.test"
 
