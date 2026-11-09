@@ -24,6 +24,7 @@ from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
+from app.services.wechat_webridge.service import enqueue_message_command as enqueue_webridge_message_command
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 
@@ -1402,7 +1403,8 @@ def _dispatch_auto_outbound_messages(
             **item,
         }
         if channel.channel_type == "wechat_webridge":
-            # 微桥协议只接受路径或 URL。base64 在这里落成文件,库、队列和日志只保留文件地址。
+            # 微桥协议只接受路径或 URL:base64 先落成文件,库、队列和日志只保留文件地址;
+            # 再由协议层把统一消息类型映射成微桥原生命令(send_image/send_video 等),手机 poll 直接领取。
             payload = externalize_media_payload(
                 payload,
                 tenant_id=int(channel.tenant_id),
@@ -1413,19 +1415,26 @@ def _dispatch_auto_outbound_messages(
                 logger.error("auto outbound media dropped because public base url is missing", extra={"plugin_code": context.plugin_code})
                 results.append({"ok": False, "error": "public_base_url_missing", "payload": redact_base64_fields(payload)})
                 continue
-        job = enqueue_job(
-            db,
-            job_type=resolve_outbound_job_type(channel),
-            payload={
-                "channel_id": channel.id,
-                "conversation_id": conversation.id,
-                "payload": payload,
-                "plugin_code": context.plugin_code,
-            },
-            priority=90,
-            related_type="conversation",
-            related_id=conversation.id,
-        )
+            try:
+                job = enqueue_webridge_message_command(db, channel, conversation, payload)
+            except ValueError as exc:
+                logger.error("auto outbound webridge mapping failed", extra={"plugin_code": context.plugin_code, "error": str(exc)})
+                results.append({"ok": False, "error": str(exc), "payload": redact_base64_fields(payload)})
+                continue
+        else:
+            job = enqueue_job(
+                db,
+                job_type=resolve_outbound_job_type(channel),
+                payload={
+                    "channel_id": channel.id,
+                    "conversation_id": conversation.id,
+                    "payload": payload,
+                    "plugin_code": context.plugin_code,
+                },
+                priority=90,
+                related_type="conversation",
+                related_id=conversation.id,
+            )
         notify_cloud_job_enqueued(channel, job)
         result_item = {
             "ok": True,

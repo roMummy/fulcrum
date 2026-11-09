@@ -55,3 +55,27 @@ def test_redact_removes_nested_base64() -> None:
     text = str(redact_base64_fields(value))
     assert "AAAA" not in text and "1000 字符" in text
     assert redact_base64_fields(value)["n"] == 1
+
+
+def test_webridge_auto_outbound_maps_media_to_native_command(monkeypatch) -> None:
+    """插件自动回复的视频、图片在微桥渠道必须变成 send_video/send_image 命令。
+
+    之前这类载荷被入队成无 command 的普通出站任务,手机 poll 时被判定
+    “普通出站链路暂只支持文本”而失败,视频永远发不出去。
+    """
+
+    from types import SimpleNamespace
+
+    from app.services.wechat_webridge import service
+
+    captured: list[dict] = []
+    monkeypatch.setattr(service, "enqueue_job", lambda db, **kw: captured.append(kw) or SimpleNamespace(id=7))
+    channel = SimpleNamespace(id=2, tenant_id=1)
+    conversation = SimpleNamespace(id=4, external_id="wxid-bob")
+
+    service.enqueue_message_command(object(), channel, conversation, {"message_type": "video", "video_url": "http://h/outbound-files/2/x/video.mp4", "receiver_id": "wxid-bob"})
+    service.enqueue_message_command(object(), channel, conversation, {"message_type": "image", "image_url": "http://h/outbound-files/2/y/image.png", "receiver_id": "wxid-bob"})
+
+    first, second = (item["payload"]["command"] for item in captured)
+    assert first["type"] == "send_video_from_url" and first["params"]["source"].endswith("video.mp4")
+    assert second["type"] == "send_image" and second["params"]["image_path"].endswith("image.png")
