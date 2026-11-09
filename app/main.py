@@ -3478,7 +3478,7 @@ async def enable_wechat_ipad_chatroom_scope_action(request: Request, channel_id:
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=True,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual enable by {user.username}",
             )
         elif channel.channel_type == "wechat_winauto":
@@ -3488,7 +3488,7 @@ async def enable_wechat_ipad_chatroom_scope_action(request: Request, channel_id:
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=True,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual enable by {user.username}",
             )
         else:
@@ -3498,7 +3498,7 @@ async def enable_wechat_ipad_chatroom_scope_action(request: Request, channel_id:
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=True,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual enable by {user.username}",
             )
         db.commit()
@@ -3532,7 +3532,7 @@ async def disable_wechat_ipad_chatroom_scope_action(request: Request, channel_id
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=False,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual disable by {user.username}",
             )
         elif channel.channel_type == "wechat_winauto":
@@ -3542,7 +3542,7 @@ async def disable_wechat_ipad_chatroom_scope_action(request: Request, channel_id
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=False,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual disable by {user.username}",
             )
         else:
@@ -3552,7 +3552,7 @@ async def disable_wechat_ipad_chatroom_scope_action(request: Request, channel_id
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 enabled=False,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"manual disable by {user.username}",
             )
         db.commit()
@@ -3585,7 +3585,7 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
                 channel=channel,
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"reset to inherited by {user.username}",
             )
         elif channel.channel_type == "wechat_winauto":
@@ -3594,7 +3594,7 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
                 channel=channel,
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"reset to inherited by {user.username}",
             )
         else:
@@ -3603,7 +3603,7 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
                 channel=channel,
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"reset to inherited by {user.username}",
             )
         db.commit()
@@ -3659,7 +3659,7 @@ async def update_wechat_ipad_chatroom_scope_config_action(
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 config_override_json=normalized_to_save,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"group override updated by {user.username}",
             )
         elif channel.channel_type == "wechat_winauto":
@@ -3669,7 +3669,7 @@ async def update_wechat_ipad_chatroom_scope_config_action(
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 config_override_json=normalized_to_save,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"group override updated by {user.username}",
             )
         else:
@@ -3679,7 +3679,7 @@ async def update_wechat_ipad_chatroom_scope_config_action(
                 chatroom=chatroom,
                 bot_plugin_id=bot_plugin_id,
                 config_override_json=normalized_to_save,
-                operator_id=user.id,
+                operator_id=user.user_id,
                 audit_note=f"group override updated by {user.username}",
             )
         db.commit()
@@ -3716,7 +3716,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=True,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为启用",
                 )
             elif channel.channel_type == "wechat_winauto":
@@ -3726,7 +3726,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=True,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为启用",
                 )
             else:
@@ -3736,7 +3736,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=True,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为启用",
                 )
             message = "群插件已切换为群内启用"
@@ -3748,7 +3748,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=False,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为停用",
                 )
             elif channel.channel_type == "wechat_winauto":
@@ -3758,7 +3758,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=False,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为停用",
                 )
             else:
@@ -3768,7 +3768,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
                     enabled=False,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关切换为停用",
                 )
             message = "群插件已切换为群内停用"
@@ -3779,7 +3779,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     channel=channel,
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关恢复继承",
                 )
             elif channel.channel_type == "wechat_winauto":
@@ -3788,7 +3788,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     channel=channel,
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关恢复继承",
                 )
             else:
@@ -3797,7 +3797,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
                     channel=channel,
                     chatroom=chatroom,
                     bot_plugin_id=bot_plugin_id,
-                    operator_id=user.id,
+                    operator_id=user.user_id,
                     audit_note="群级开关恢复继承",
                 )
             message = "群插件已恢复继承 bot 级状态"
