@@ -132,7 +132,8 @@ def _execute_intent(job_id: int) -> None:
             return
 
     # 阶段四：回复已发出，再把这条发言异步写入长期记忆；记忆服务在后台抽取事实，失败不影响已完成的聊天。
-    if chat is not None and chat_reply and chat.memory_enabled and chat.bank_id:
+    # 群里开了"记住所有聊天"时这句话由后台批量整理,不在这里重复写入。
+    if chat is not None and chat_reply and chat.memory_enabled and chat.bank_id and not chat.memory_all:
         ai_memory.retain(
             chat.bank_id,
             sender_id=chat.sender_id,

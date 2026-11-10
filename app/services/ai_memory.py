@@ -177,6 +177,32 @@ def retain(bank: str, *, sender_id: str, sender_name: str, text: str, chat_type:
     return True
 
 
+def retain_batch(bank: str, *, content: str, when: datetime | None = None) -> bool:
+    """把一段多人群聊记录异步写入记忆(不打个人标签:这是群里的共同背景,召回时任何人提问都能用到)。
+
+    每行是"昵称: 内容",由记忆服务分别抽取各人的信息;失败只返回 False,由调用方决定是否重试。
+    """
+
+    from app.services.ai_memory_digest import _BATCH_CONTEXT
+
+    if not is_configured() or _circuit_open() or not _clean(content, 10):
+        return False
+    body = {
+        "items": [{"content": content, "context": _BATCH_CONTEXT, "timestamp": (when or now_shanghai()).isoformat()}],
+        "async": True,
+    }
+    try:
+        _request("POST", f"{API_PREFIX}/{quote(bank, safe='')}/memories", body, timeout=RETAIN_TIMEOUT_SECONDS)
+    except ValueError as exc:
+        logger.warning("memory batch retain rejected", extra={"bank": bank, "error": str(exc)})
+        return False
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("memory service unavailable on batch retain", extra={"bank": bank, "error": str(exc)[:120]})
+        _trip()
+        return False
+    return True
+
+
 def list_banks(tenant_id: int) -> list[str] | None:
     """本租户的记忆库名;没配置或服务不可用返回 None。记忆服务的列表是分页的,这里翻完所有页。"""
 

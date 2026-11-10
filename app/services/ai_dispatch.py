@@ -126,6 +126,8 @@ class AiResolution:
     chat_enabled: bool
     # 是否使用长期记忆(群里可单独关闭);只在聊天时有意义。
     memory_enabled: bool = True
+    # 群里开了"记住所有聊天"时,@ 机器人的那句话也由后台批量整理,聊天时不再单独写入,避免重复。
+    memory_all: bool = False
 
 
 def resolve_for_conversation(
@@ -151,6 +153,7 @@ def resolve_for_conversation(
     override = None
     chat_enabled = bool(setting.chat_enabled)
     memory_enabled = True
+    memory_all = False
     if chat_type == "group":
         room = db.scalar(
             select(Chatroom).where(Chatroom.channel_id == channel_id, Chatroom.external_id == str(conversation_external_id or ""))
@@ -159,6 +162,7 @@ def resolve_for_conversation(
         wants_chat = (override.enabled if override.explicit else bool(setting.chat_enabled)) if override else False
         chat_enabled = bool(room is not None and room.is_active and wants_chat)
         memory_enabled = bool(override.memory_enabled) if override else True
+        memory_all = bool(override.memory_all) if override else False
     config = ModelConfig(
         api_base=(override.api_base if override and override.api_base else setting.api_base) or "",
         model=(override.model if override and override.model else setting.model) or "",
@@ -169,7 +173,7 @@ def resolve_for_conversation(
     # 地址、模型、密钥合并后仍不齐全就不可用(例如租户没配、群里也没配全)。
     if not (config.api_base and config.model and config.api_key):
         return None
-    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled, memory_enabled=memory_enabled)
+    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled, memory_enabled=memory_enabled, memory_all=memory_all)
 
 
 def _build_client(config: ModelConfig) -> PluginTextGenerationClient:
@@ -370,6 +374,7 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
                 chat_type=plan.context.chat_type,
             ),
             memory_enabled=resolved.memory_enabled and ai_memory.is_configured(),
+            memory_all=resolved.memory_all,
         )
     return resolved.config, text, catalog, chat
 

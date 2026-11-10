@@ -44,6 +44,9 @@ logger = get_logger(__name__)
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
 _last_plugin_scheduler_scan_at = 0.0
+# 群聊记忆批量整理:每分钟检查一次,放在单独的后台线程里,不占用主 worker。
+_last_memory_digest_at = 0.0
+_memory_digest_future = None
 _last_operational_alert_eval_at = 0.0
 OUTBOUND_JOB_MAX_AGE = timedelta(hours=2)
 
@@ -80,6 +83,7 @@ def _worker_loop() -> None:
             scheduled = _run_due_plugin_scheduler()
             channel_result = run_due_channel_tasks()
             alerted = _run_due_operational_alerts()
+            _run_memory_digest()
         except Exception:
             logger.exception("background worker loop crashed")
             worked = False
@@ -89,6 +93,36 @@ def _worker_loop() -> None:
         # 渠道协调器内部已经逐租户、逐任务隔离事务；这里不再持有渠道会话或识别协议类型。
         if not worked and not scheduled and not alerted and not (channel_result and channel_result.worked):
             _stop_event.wait(0.5)
+
+
+def _memory_digest_all_tenants() -> None:
+    from app.services import ai_memory_digest
+
+    for tenant_id in _list_tenant_ids():
+        try:
+            with tenant_scope(tenant_id):
+                ai_memory_digest.run_for_tenant()
+        except Exception:
+            logger.exception("memory digest failed", extra={"tenant_id": tenant_id})
+
+
+def _run_memory_digest() -> None:
+    """每分钟最多触发一次群聊记忆整理;上一次还没跑完就跳过,不会堆积。"""
+
+    global _last_memory_digest_at, _memory_digest_future
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.services import ai_memory
+
+    current = time.monotonic()
+    if current - _last_memory_digest_at < 60 or not ai_memory.is_configured():
+        return
+    _last_memory_digest_at = current
+    if _memory_digest_future is not None and not _memory_digest_future.done():
+        return
+    if not hasattr(_run_memory_digest, "_executor"):
+        _run_memory_digest._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="memory-digest")
+    _memory_digest_future = _run_memory_digest._executor.submit(_memory_digest_all_tenants)
 
 
 def _list_tenant_ids() -> list[int]:

@@ -48,6 +48,7 @@ class ChatInput:
     # 记忆库名;为空或 memory_enabled 为假时不召回也不写入。
     bank_id: str = ""
     memory_enabled: bool = False
+    memory_all: bool = False
 
 
 def clean_line(value: object, limit: int) -> str:
@@ -68,6 +69,7 @@ def build_chat_input(
     chat_type: str = "group",
     bank_id: str = "",
     memory_enabled: bool = False,
+    memory_all: bool = False,
 ) -> ChatInput:
     """第一阶段（持有会话）：读取本会话最近对话。长期记忆稍后在无会话阶段召回。"""
 
@@ -98,6 +100,7 @@ def build_chat_input(
         chat_type=chat_type,
         bank_id=bank_id,
         memory_enabled=memory_enabled,
+        memory_all=memory_all,
     )
 
 

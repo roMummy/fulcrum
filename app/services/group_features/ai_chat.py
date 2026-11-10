@@ -32,6 +32,11 @@ FEATURE = register(
                 "memory_enabled", "记住聊过的内容(长期记忆)", kind="bool", default=True, group="长期记忆",
                 hint="按群、按人记住称呼、喜好、计划等,聊天时按话题回想;需要平台已部署记忆服务",
             ),
+            ConfigField(
+                "memory_all", "记住群里所有聊天(不只 @ 机器人的)", kind="bool", default=False, group="长期记忆",
+                depends_on="memory_enabled",
+                hint="每攒满 30 条有效消息,或最后一条之后空闲 20 分钟,就把这段群聊整理进记忆;从开启时开始记,不回溯历史。会记录群友没有 @ 机器人的发言,开启前请确认群友知情。",
+            ),
         ),
     )
 )
@@ -45,6 +50,8 @@ class GroupAiOverride:
     # 这个群是否单独设置过开关;没设置过时聊天开关跟随租户设置。
     explicit: bool = False
     memory_enabled: bool = True
+    # 记住群里所有聊天(由后台批量整理),而不只是 @ 机器人的那句。
+    memory_all: bool = False
     api_base: str = ""
     model: str = ""
     api_key: str = ""
@@ -57,6 +64,7 @@ def get_override(chatroom: Chatroom) -> GroupAiOverride:
         enabled=enabled,
         explicit=has_saved_state(chatroom, FEATURE),
         memory_enabled=bool(config.get("memory_enabled", True)),
+        memory_all=bool(config.get("memory_all", False)),
         api_base=str(config.get("api_base") or "").strip().rstrip("/"),
         model=str(config.get("model") or "").strip(),
         api_key=decrypt_secret(str(config.get("api_key") or "")) or "",
