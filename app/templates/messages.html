@@ -37,7 +37,7 @@
       <div class="wechat-empty">从左侧选择一个联系人或群聊</div>
       {% else %}
       <div class="wechat-load-hint" id="wechat-load-hint" hidden></div>
-      {% if messages %}{{ message_rows(messages, message_identities, attachments_by_message) }}{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
+      {% if messages %}{{ message_rows(messages, message_identities, message_views) }}{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
       {% endif %}
     </div>
 
@@ -59,6 +59,7 @@
   </section>
 </section>
 <script src="/static/js/messages.js" defer></script>
+<script src="/static/js/message-media.js" defer></script>
 {% else %}
 <div class="work-surface"><div class="wechat-empty">暂无会话消息</div></div>
 {% endif %}

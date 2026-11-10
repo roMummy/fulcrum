@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.core.time import SHANGHAI_TZ, now_shanghai
+from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.services.analytics import record_message_activity
 from app.services.channel_adapters import get_channel_adapter
@@ -537,21 +537,9 @@ def _queue_inbound_media_fetch_if_needed(
         provider=channel.channel_type,
     )
     if channel.channel_type == "wechat_webridge":
-        from app.services.wechat_webridge.service import enqueue_media_upload_command
+        from app.services.wechat_webridge.service import build_upload_url, enqueue_media_upload_command
 
-        try:
-            adapter_config = json.loads(channel.adapter_config_json or "{}")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            adapter_config = {}
-        upload_url = str(adapter_config.get("upload_url") or "").strip() if isinstance(adapter_config, dict) else ""
-        if not upload_url:
-            # 手机端必须能够直接发起 HTTP 请求，不能接收只对浏览器相对当前站点有效的路径。
-            base_url = str(channel.api_base or "").strip().rstrip("/")
-            upload_url = f"{base_url}/agent/upload_media?attachment_id={attachment.id}"
-        elif upload_url.startswith("/"):
-            # 兼容历史渠道配置，把旧的相对地址统一补成微桥渠道绝对地址。
-            base_url = str(channel.api_base or "").strip().rstrip("/")
-            upload_url = f"{base_url}{upload_url}"
+        upload_url = build_upload_url(channel, attachment.id)
         enqueue_media_upload_command(
             db,
             channel=channel,

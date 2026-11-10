@@ -172,7 +172,7 @@ from app.services.points_admin import adjust_points, build_points_accounts, buil
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
-from app.services import payment_ledger
+from app.services import message_media, message_view, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -574,31 +574,12 @@ def parse_message_lines(raw_text: str) -> list[str]:
 
 
 def format_message_display(raw_text: object, message_type: object = "") -> str:
-    """把 XML、JSON 和卡片消息转换成后台可读摘要，原文仍由页面按需展开。"""
+    """一行摘要(会话列表、最近消息等):文字取开头,媒体/卡片/引用用 [图片] [引用] 标题 这样的短标签。
 
-    text = str(raw_text or "").strip()
-    normalized_type = str(message_type or "").strip().lower()
-    if not text:
-        return ""
-    if normalized_type in {"xml", "app", "mini_program", "card"} and text.startswith("<"):
-        try:
-            root = ElementTree.fromstring(text)
-            values: list[str] = []
-            for node in root.iter():
-                value = (node.text or "").strip()
-                if value and len(value) <= 240:
-                    values.append(f"{node.tag}: {value}")
-            return " · ".join(values[:8]) or "结构化消息"
-        except ElementTree.ParseError:
-            return "结构化消息（内容待展开查看）"
-    if normalized_type in {"json", "app", "card"} and text[:1] in {"{", "["}:
-        try:
-            parsed = json.loads(text)
-            if isinstance(parsed, dict):
-                return " · ".join(f"{key}: {value}" for key, value in list(parsed.items())[:8])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-    return text
+    完整内容在消息中心用卡片展示(见 message_view 与 _message_rows.html)。
+    """
+
+    return message_view.preview(raw_text, message_type, limit=80)
 
 
 def _normalize_dt_utc(value: datetime | None) -> datetime:
@@ -4452,7 +4433,49 @@ def load_conversation_messages(db: Session, conversation_id: int, *, before_id: 
         ).all():
             if attachment.message_id is not None:
                 attachments.setdefault(int(attachment.message_id), []).append(attachment)
-    return {"messages": rows, "has_more": has_more, "identities": identities, "attachments": attachments}
+    # 每条消息解析成展示结构(文字/引用/卡片/媒体占位…),媒体类再补上附件状态(已下载/未下载)
+    views = {int(item.id): message_view.attach_media(message_view.describe(item.content, item.message_type), attachments.get(int(item.id), [])) for item in rows}
+    return {"messages": rows, "has_more": has_more, "identities": identities, "attachments": attachments, "views": views}
+
+
+def _media_message(db: Session, message_id: int) -> Message:
+    message = db.get(Message, int(message_id)) if message_id else None
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.message_type not in message_media.MEDIA_TYPES:
+        raise HTTPException(status_code=400, detail="Not a media message")
+    return message
+
+
+@app.post("/messages/media/load")
+async def load_message_media(request: Request, message_id: int = Form(...)):
+    """点击媒体占位卡片:让手机把这条消息的图片/视频/语音/表情/文件传上来(已有文件或已在获取中则直接返回当前状态)。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        message = _media_message(db, message_id)
+        outcome = message_media.request(db, message)
+        db.commit()
+        return JSONResponse({"ok": outcome["state"] != "failed", **outcome, "notice": outcome["error"]})
+    finally:
+        db.close()
+
+
+@app.get("/messages/media/status")
+async def message_media_status(request: Request, message_id: int):
+    """媒体获取进度(页面轮询):none / loading / ready(带地址)/ failed(带原因)。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        message = _media_message(db, message_id)
+        outcome = message_media.status(db, message)
+        db.commit()  # 状态检查会把失败/超时落实到附件上
+        return JSONResponse({"ok": True, **outcome})
+    finally:
+        db.close()
 
 
 @app.get("/messages/history")
@@ -4466,7 +4489,7 @@ async def message_history(request: Request, conversation_id: int, before_id: int
             raise HTTPException(status_code=404, detail="Conversation not found")
         page = load_conversation_messages(db, conversation_id, before_id=max(before_id, 0), after_id=max(after_id, 0))
         macro = templates.env.get_template("_message_rows.html").module.message_rows
-        html = str(macro(page["messages"], page["identities"], page["attachments"])) if page["messages"] else ""
+        html = str(macro(page["messages"], page["identities"], page["views"])) if page["messages"] else ""
         return JSONResponse({"html": html, "has_more": page["has_more"], "count": len(page["messages"])})
     finally:
         db.close()
@@ -4610,7 +4633,7 @@ async def messages_page(
             )
 
         # 只有选中了会话才读消息;没有分页,更早的消息由页面向上滚动时通过 /messages/history 继续加载。
-        page = load_conversation_messages(db, conversation_id) if conversation_id else {"messages": [], "has_more": False, "identities": {}, "attachments": {}}
+        page = load_conversation_messages(db, conversation_id) if conversation_id else {"messages": [], "has_more": False, "identities": {}, "attachments": {}, "views": {}}
         selected_total = int(db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id)) or 0) if conversation_id else None
         # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
         selected_chatroom = None
@@ -4628,7 +4651,7 @@ async def messages_page(
             page_title="消息中心",
             messages=page["messages"],
             message_identities=page["identities"],
-            attachments_by_message=page["attachments"],
+            message_views=page["views"],
             has_more_messages=page["has_more"],
             selected_total=selected_total,
             conversation_summaries=conversation_summaries,

@@ -1,10 +1,55 @@
 {# 消息中心的消息行。首屏渲染、向上滚动加载更早、发送后拉取新消息三处共用,保证样式一致。
-   每行带 data-id,前端据此判断"更早/更新"的边界。 #}
-{% macro message_rows(messages, identities, attachments_by_message) %}
+   每行带 data-id,前端据此判断"更早/更新"的边界。
+   消息内容按 views[消息ID](message_view.describe 的结果)渲染:文字 / 引用 / 链接·小程序·聊天记录·通知卡片 /
+   媒体占位卡片(图片、视频、语音、表情、文件)/ 系统消息 / 暂不支持。
+   媒体一律先显示占位卡片,已下载的图片进入可视区后自动显示,其余点击才加载(见 message-media.js)。 #}
+{% macro message_body(view, message) %}
+{% if view.kind == 'text' %}
+<div class="wechat-message-content">{{ view.text }}</div>
+
+{% elif view.kind == 'quote' %}
+<div class="msg-quote">
+  <div class="wechat-message-content">{{ view.title }}</div>
+  <blockquote class="msg-quote-refer">{% if view.refer_name %}<strong>{{ view.refer_name }}</strong>{% endif %}<span>{{ view.refer_text }}</span></blockquote>
+</div>
+
+{% elif view.kind in ['link', 'mini_program', 'merged', 'notice'] %}
+{% if view.url %}<a class="msg-card" href="{{ view.url }}" target="_blank" rel="noopener noreferrer">{% else %}<div class="msg-card">{% endif %}
+  <span class="msg-card-icon" data-icon="{{ view.kind }}" aria-hidden="true"></span>
+  <span class="msg-card-copy">
+    <strong>{{ view.title }}</strong>
+    {% if view.desc %}<small>{{ view.desc }}</small>{% endif %}
+    {% if view.source or view.tag %}<em>{{ view.tag if view.tag and view.kind != 'link' else '' }}{% if view.tag and view.kind != 'link' and view.source %} · {% endif %}{{ view.source }}</em>{% endif %}
+  </span>
+{% if view.url %}</a>{% else %}</div>{% endif %}
+
+{% elif view.kind == 'media' %}
+{# 媒体占位卡片:data-state = ready 已下载 / pending 有记录未下载 / none 还没有记录 / failed 失败 #}
+<div class="msg-media" data-media-card data-message-id="{{ message.id }}" data-media-type="{{ view.media_type }}" data-state="{{ view.state or 'none' }}" data-url="{{ view.url or '' }}" role="button" tabindex="0" aria-label="{{ view.label }}{{ '：' ~ view.title if view.title else '' }}">
+  <span class="msg-media-icon" data-icon="{{ view.media_type }}" aria-hidden="true"></span>
+  <span class="msg-media-copy">
+    <strong>{{ view.title or view.label }}</strong>
+    <small data-media-hint>{{ view.meta ~ ' · ' if view.meta else '' }}{{ '点击查看' if view.state == 'ready' else ('获取失败，点击重试' if view.state == 'failed' else '点击从手机获取') }}</small>
+  </span>
+</div>
+
+{% elif view.kind == 'system' %}
+<div class="wechat-message-content msg-system">{{ view.text }}</div>
+
+{% else %}
+<div class="msg-card msg-card-unknown">
+  <span class="msg-card-icon" data-icon="unknown" aria-hidden="true"></span>
+  <span class="msg-card-copy"><strong>{{ view.text }}</strong></span>
+</div>
+<details class="disclosure msg-raw"><summary>原始内容</summary><pre>{{ view.raw }}</pre></details>
+{% endif %}
+{% endmacro %}
+
+{% macro message_rows(messages, identities, views) %}
 {% for item in messages %}
 {% set who = identities.get(item.id) %}
 {% set is_out = item.direction == 'out' %}
-{% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}
+{% set view = views.get(item.id) or {'kind': 'text', 'text': item.content or ''} %}
 <div class="wechat-message-row {{ 'out' if is_out else 'in' }}" data-id="{{ item.id }}">
   <span class="wechat-avatar">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if is_out else '?') }}{% endif %}</span>
   <div class="wechat-message-main">
@@ -14,16 +59,8 @@
       · {{ item.created_at|bj_time if item.created_at else '-' }}
       {% if is_out and item.status == 'failed' %}<span class="wechat-msg-status">发送失败</span>{% endif %}
     </div>
-    <article class="wechat-message-bubble {{ 'out' if is_out else 'in' }}">
-      {% for attachment in attachment_items %}
-        {% if attachment.attachment_type == 'image' and attachment.storage_path %}<img class="wechat-media-image" src="/media/attachments/{{ attachment.id }}" alt="图片消息" loading="lazy" />
-        {% elif attachment.attachment_type == 'video' and attachment.storage_path %}<video class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></video>
-        {% elif attachment.attachment_type == 'voice' and attachment.storage_path %}<audio class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></audio>
-        {% else %}<a class="wechat-file-card" href="/media/attachments/{{ attachment.id }}">{{ attachment.attachment_type or '文件' }}{% if attachment.file_size %} · {{ attachment.file_size }} bytes{% endif %}</a>
-        {% endif %}
-      {% endfor %}
-      {% if item.message_type in ['xml', 'app', 'mini_program', 'card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) or '结构化消息' }}</div>
-      {% elif item.content %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) }}</div>{% endif %}
+    <article class="wechat-message-bubble {{ 'out' if is_out else 'in' }}{% if view.kind not in ['text', 'quote', 'system'] %} is-card{% endif %}">
+      {{ message_body(view, item) }}
     </article>
   </div>
 </div>

@@ -432,6 +432,24 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
         raise ValueError("webridge_message_payload_missing")
     return enqueue_job(db, job_type=JOB_TYPE, payload={"channel_id": int(channel.id), "conversation_id": int(conversation.id), "command": {"request_id": f"job_{uuid.uuid4().hex}", "type": command_type, "params": params}}, priority=90, related_type="conversation", related_id=int(conversation.id))
 
+def build_upload_url(channel: Channel, attachment_id: int) -> str:
+    """手机回传媒体文件的地址:渠道配置里有 upload_url 就用它(相对地址补成渠道绝对地址),否则用渠道的 /agent/upload_media。
+
+    手机必须能直接发起 HTTP 请求,不能是只对浏览器相对当前站点有效的路径。
+    """
+
+    try:
+        config = json.loads(channel.adapter_config_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        config = {}
+    configured = str(config.get("upload_url") or "").strip() if isinstance(config, dict) else ""
+    base_url = str(channel.api_base or "").strip().rstrip("/")
+    if not configured:
+        return f"{base_url}/agent/upload_media?attachment_id={int(attachment_id)}"
+    # 兼容历史渠道配置:旧的相对地址统一补成微桥渠道绝对地址。
+    return f"{base_url}{configured}" if configured.startswith("/") else configured
+
+
 def enqueue_media_upload_command(
     db: Session,
     *,
