@@ -3668,7 +3668,7 @@ async def enable_wechat_ipad_chatroom_scope_action(request: Request, channel_id:
         db.commit()
         message = "已将该群的插件草稿作用域设为启用"
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.enable", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3722,7 +3722,7 @@ async def disable_wechat_ipad_chatroom_scope_action(request: Request, channel_id
         db.commit()
         message = "已将该群的插件草稿作用域设为停用"
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.disable", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3773,7 +3773,7 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
         db.commit()
         message = "已恢复继承 bot_plugin 绑定状态"
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.reset", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3806,7 +3806,7 @@ async def update_wechat_ipad_chatroom_scope_config_action(
             parsed_override, config_error = parse_json_object(normalized_override)
             if config_error:
                 return RedirectResponse(
-                    url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote('群级配置 JSON 无效：' + config_error)}",
+                    url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote('群级配置 JSON 无效：' + config_error)}",
                     status_code=303,
                 )
             effective_base = build_group_scope_effective_config(
@@ -3849,7 +3849,7 @@ async def update_wechat_ipad_chatroom_scope_config_action(
         db.commit()
         message = "已保存群级插件配置覆盖" if normalized_to_save else "已清空群级插件配置覆盖，恢复继承默认配置"
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.config", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -3970,11 +3970,11 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
         # 群权限模式是运维人员在页面上直接操作的状态，先显式提交业务变更，再记录审计，避免依赖审计函数的隐式提交。
         db.commit()
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.mode", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}, mode={normalized_mode}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     except ValueError as exc:
         db.rollback()
         # 服务层会在绑定和群不匹配等数据异常时抛 ValueError；这里转成页面提示，避免按钮操作直接落到 500 错误页。
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote('群权限保存失败：' + str(exc))}", status_code=303)
+        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote('群权限保存失败：' + str(exc))}", status_code=303)
     finally:
         db.close()
 
