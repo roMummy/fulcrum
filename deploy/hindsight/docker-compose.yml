@@ -1,0 +1,66 @@
+# Hindsight(AI 记忆系统)部署:外部 PostgreSQL(pgvector)+ Hindsight 完整镜像。
+# 用法:cp .env.example .env 并填好,然后 docker compose up -d。
+# 对外只监听 127.0.0.1(UI 用 ssh 隧道访问);multi-bot-saas 的 app 容器通过共享网络用 http://hindsight:8888 访问。
+services:
+  hindsight-db:
+    build:
+      context: .
+      dockerfile: Dockerfile.pg
+    image: hindsight-pgvector:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?请在 .env 里设置 PG_PASSWORD}
+      POSTGRES_DB: hindsight
+    volumes:
+      - hindsight-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    restart: unless-stopped
+    depends_on:
+      hindsight-db:
+        condition: service_healthy
+    shm_size: 1g
+    # 文档要求:关闭时留足时间交还后台任务。
+    stop_grace_period: 75s
+    # 201 只有 7.7G 内存且还跑着应用与数据库,给 Hindsight 设上限,防止拖垮其他服务。
+    mem_limit: 3g
+    ports:
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:9999:9999"
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${PG_PASSWORD}@hindsight-db:5432/hindsight
+      # 记忆抽取用的 LLM(OpenAI 兼容接口)。
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: ${LLM_KEY:?请在 .env 里设置 LLM_KEY}
+      HINDSIGHT_API_LLM_MODEL: ${LLM_MODEL}
+      HINDSIGHT_API_LLM_BASE_URL: ${LLM_BASE_URL}
+      # 嵌入用宿主机 Ollama 上的 bge-m3(1024 维,中文效果好),不在容器里再装模型。
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: ${EMBED_BASE_URL}
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ollama
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: ${EMBED_MODEL}
+      # bge-m3 的分词器与 Hindsight 不同,输入上限调小一些留余量。
+      HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS: "2048"
+      HINDSIGHT_API_WORKER_ID: hindsight-201
+      # 201 访问不了 huggingface.co,首次启动下载重排等模型要走镜像站。
+      HF_ENDPOINT: https://hf-mirror.com
+    networks:
+      default: {}
+      # 与应用共用网络,app 容器可直接用服务名 hindsight 访问,不占用宿主机端口。
+      appnet:
+        aliases: [hindsight]
+
+networks:
+  appnet:
+    external: true
+    name: multi-bot-saas_default
+
+volumes:
+  hindsight-pg:

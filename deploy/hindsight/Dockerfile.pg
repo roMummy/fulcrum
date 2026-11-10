@@ -1,0 +1,5 @@
+# 在本机已有的 postgres:16-bookworm 上加装 pgvector(Docker Hub 拉不下来,所以基于本地已有镜像构建)。
+FROM postgres:16-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-16-pgvector \
+    && rm -rf /var/lib/apt/lists/*
