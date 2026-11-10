@@ -36,15 +36,19 @@
   {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
   <div class="gf-list">
   {# 运行模式:三选一。只采集消息 = 继续记录但不触发功能;完全关闭 = 不接收也不触发。 #}
-  <form method="post" action="{{ base_url }}/management" class="gf-card is-on">
+  <form method="post" action="{{ base_url }}/management" class="gf-card is-on" data-gf-card data-gf-key="mode" data-gf-open="1">
     <input type="hidden" name="next" value="{{ base_url }}?tab=features" />
     <header class="gf-head">
-      <div class="gf-head-copy">
+      <div class="gf-head-copy" data-gf-toggle-title>
         <h3>运行模式</h3>
         <p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
       </div>
-      <button class="btn btn-small" type="submit">保存</button>
+      <div class="gf-head-actions">
+        <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true">设置 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button class="btn btn-small" type="submit">保存</button>
+      </div>
     </header>
+    <div class="gf-collapse" data-gf-collapse>
     <div class="gf-body">
       <div class="gf-mode-list">
         {% for mode in group_modes %}
@@ -55,11 +59,12 @@
         {% endfor %}
       </div>
     </div>
+    </div>
   </form>
   {% for item in features %}
-  <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card>
+  <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card data-gf-key="{{ item.key }}">
     <header class="gf-head">
-      <div class="gf-head-copy">
+      <div class="gf-head-copy"{% if item.sections %} data-gf-toggle-title{% endif %}>
         <h3>{{ item.name }}</h3>
         <p>{{ item.description }}</p>
       </div>
@@ -71,11 +76,13 @@
             <span class="gf-switch-track"></span>
           </span>
         </label>
-        {% if not item.sections %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
+        {% if item.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false">设置 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>{% else %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
       </div>
     </header>
 
+    {# 设置区:默认收起,点"设置"展开;展开状态记在浏览器里。没有设置项的功能(只有开关)没有这一块。 #}
     {% if item.sections %}
+    <div class="gf-collapse" data-gf-collapse hidden>
     <div class="gf-body">
       {% for section in item.sections %}
       <section class="gf-section">
@@ -115,12 +122,10 @@
       </section>
       {% endfor %}
     </div>
-    {% endif %}
-
-    {% if item.sections %}
     <footer class="gf-foot">
       <button class="btn" type="submit">保存</button>
     </footer>
+    </div>
     {% endif %}
     {# 自动抢红包:本群收到并处理过的红包明细与统计(折叠,默认收起) #}
     {% if item.key == 'red_packet' and red_packet_ledger %}{{ payment_ledger(red_packet_ledger) }}{% endif %}
@@ -248,25 +253,7 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script>
-  (() => {
-    // 群功能卡片:总开关切换时同步文案和设置区明暗;“依赖”某个开关的项在该开关关闭时变淡。
-    document.querySelectorAll("[data-gf-card]").forEach((card) => {
-      const master = card.querySelector("[data-gf-master]");
-      const state = card.querySelector("[data-gf-state]");
-      const sync = () => {
-        card.classList.toggle("is-on", master.checked);
-        if (state) state.textContent = master.checked ? master.dataset.onText : master.dataset.offText;
-        card.querySelectorAll("[data-gf-depends]").forEach((el) => {
-          const dep = card.querySelector(`[name="${el.dataset.gfDepends}"]`);
-          el.classList.toggle("is-dim", !!dep && !dep.checked);
-        });
-      };
-      card.addEventListener("change", sync);
-      sync();
-    });
-  })();
-</script>
+<script src="/static/js/group-features.js" defer></script>
 <script>
   (() => {
     document.querySelectorAll(".chatroom-scope-config-form").forEach((form) => {

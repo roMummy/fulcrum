@@ -5194,7 +5194,8 @@ code {
    主次:卡片标题 + 总开关为主;设置区用浅底分小节铺开,不折叠。 */
 .gf-list {
   display: grid;
-  gap: 16px;
+  gap: 28px;
+  margin-bottom: var(--space-block);
 }
 
 /* 卡片只靠底色和柔影分隔,不画外框线和段落分隔线。 */
@@ -5333,8 +5334,14 @@ code {
 
 .gf-section h4 {
   margin: 0 0 10px;
-  color: var(--text-soft);
-  font-size: 13px;
+}
+
+/* 小节标题、明细卡片标题共用一套:卡片标题(h3)16px,其下各级标题统一 14px,同一字体、同一粗细。 */
+.gf-section h4,
+.pay-ledger-title {
+  color: var(--text);
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -5866,11 +5873,6 @@ code {
   margin-top: 0;
 }
 
-/* 放在已有内边距的卡片里(账号详情页)时不再额外缩进。 */
-.work-surface .pay-ledger {
-  margin: 14px 0 0;
-}
-
 .pay-ledger > summary {
   display: flex;
   align-items: center;
@@ -5894,10 +5896,6 @@ code {
 
 .pay-ledger[open] > summary::after {
   content: "收起";
-}
-
-.pay-ledger-title {
-  font-weight: 600;
 }
 
 .pay-ledger-sum {
@@ -5965,4 +5963,41 @@ code {
   .pay-stats {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ===== 功能卡片的设置区折叠 ===== */
+.gf-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  color: var(--secondary-text);
+  background: var(--secondary);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 200ms ease-in-out, color 200ms ease-in-out;
+}
+
+.gf-toggle:hover {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+}
+
+.gf-toggle svg {
+  transition: transform 200ms ease-in-out;
+}
+
+.gf-card.is-open .gf-toggle svg {
+  transform: rotate(180deg);
+}
+
+.gf-head-copy[data-gf-toggle-title] {
+  cursor: pointer;
+}
+
+.gf-collapse[hidden] {
+  display: none;
 }

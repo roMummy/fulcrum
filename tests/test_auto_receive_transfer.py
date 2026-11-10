@@ -165,15 +165,27 @@ def _stored(ids, channel_id):
         return auto_receive.is_enabled(db.get(Channel, channel_id))
 
 
+def _switch_tag(html: str) -> str:
+    """页面里「自动收款」开关的 input 标签(整段),用来判断是否勾选。"""
+
+    import re
+
+    match = re.search(r'<input[^>]*name="auto_receive_transfer"[^>]*>', html)
+    assert match, "页面上没有自动收款开关"
+    return match.group(0)
+
+
 def test_admin_can_turn_the_switch_on_and_off_from_the_account_page(webridge_channel) -> None:
     client, ids, channel_id = webridge_channel
     csrf = _login(client, "admin")
     page = client.get(f"/channels/{channel_id}")
-    assert page.status_code == 200 and "自动收款" in page.text and 'name="auto_receive_transfer"' in page.text and "checked" not in page.text.split('name="auto_receive_transfer"')[1][:80]
+    # 外观与群功能卡片一致:同样的卡片、标题、开关和可折叠脚本
+    assert page.status_code == 200 and "<h3>自动收款</h3>" in page.text and 'class="gf-card' in page.text and "/static/js/group-features.js" in page.text
+    assert " checked" not in _switch_tag(page.text)
 
     on = client.post(f"/channels/{channel_id}/wechat-webridge/settings", data={"auto_receive_transfer": "on", "csrf_token": csrf})
     assert on.status_code == 303 and _stored(ids, channel_id) is True
-    assert " checked" in client.get(f"/channels/{channel_id}").text.split('name="auto_receive_transfer"')[1][:80]
+    assert " checked" in _switch_tag(client.get(f"/channels/{channel_id}").text)
 
     # 勾选框没勾选时浏览器不提交该字段
     off = client.post(f"/channels/{channel_id}/wechat-webridge/settings", data={"csrf_token": csrf})
