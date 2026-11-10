@@ -32,7 +32,7 @@ def _item(n: int, *, wxid: str = "wxid_friend1", content: str | None = None, **e
     return {
         "sns_id": f"1459000000000000{n:04d}", "wxid": wxid, "create_time": 1794300000 + n, "content": content if content is not None else f"虚构的第{n}条动态",
         "type": 2, "is_mine": False, "liked": False, "like_count": 1, "comment_count": 1, "private": False, "visibility_type": 0,
-        "media": [{"mid": f"mid{n}", "type": 2, "width": 1080, "height": 1440, "preview_urls": [f"https://img.example.com/{n}.jpg", "https://img.example.com/x.jpg"], "dataUrl": "https://img.example.com/d", "videoDuration": 0, "title": "", "desc": ""}],
+        "media": [{"mid": f"mid{n}", "type": 1, "width": 1080, "height": 1440, "preview_urls": [f"https://img.example.com/{n}.jpg", "https://img.example.com/x.jpg"], "dataUrl": "https://img.example.com/d", "videoDuration": 0, "title": "", "desc": ""}],
         "likes": [{"wxid": "wxid_a", "nickname": "甲"}], "comments": [{"comment_id": "1", "wxid": "wxid_b", "nickname": "乙", "content": "不错", "reply_wxid": "", "create_time": 1794300100, "is_mine": False}],
         "media_truncated": 0, "interactions_truncated": 0, **extra,
     }
@@ -209,7 +209,7 @@ def test_no_more_history_clears_the_cursor_and_bad_items_are_skipped(env) -> Non
 
 def test_media_comments_and_likes_are_compacted(env) -> None:
     db, channel = env
-    many_media = [{"mid": f"m{i}", "type": 2, "width": 1, "height": 1, "preview_urls": [f"https://img.example.com/{i}"]} for i in range(20)]
+    many_media = [{"mid": f"m{i}", "type": 1, "width": 1, "height": 1, "preview_urls": [f"https://img.example.com/{i}"]} for i in range(20)]
     many_comments = [{"comment_id": str(i), "wxid": "w", "nickname": "某", "content": "字" * 900, "create_time": 1} for i in range(80)]
     video = _item(5, type=15, media=[{"mid": "v", "type": 5, "width": 224, "height": 398, "totalSize": 16662778, "preview_urls": ["https://img.example.com/v.jpg"], "videoDuration": 12.967, "dataUrl": "https://img.example.com/vd"}])
     _report(db, channel, _start(db, channel), _done([_item(1, media=many_media, comments=many_comments, likes=["wxid_s", {"wxid": "wxid_d", "nickname": "丁"}]), video]))
@@ -261,7 +261,7 @@ def _seed_posts(ids, channel_id: int, count: int, wxid: str = "wxid_friend1") ->
             db.add(MomentsPost(
                 tenant_id=ids["alpha"], channel_id=channel_id, sns_id=f"9{n:019d}", author_wxid=wxid, create_time=now_shanghai() - timedelta(minutes=count - n),
                 content=f"虚构动态{n}", post_type=2, like_count=n, comment_count=1,
-                media_json=json.dumps([{"mid": "m", "type": 2, "width": 100, "height": 200, "size": 2048, "duration": 0, "title": "", "desc": ""}]),
+                media_json=json.dumps([{"mid": "m", "type": 1, "width": 100, "height": 200, "size": 2048, "duration": 0, "title": "", "desc": ""}]),
                 likes_json=json.dumps([{"wxid": "w", "nickname": "甲"}]), comments_json=json.dumps([{"id": "1", "wxid": "w2", "nickname": "乙", "content": "赞", "reply_wxid": "", "time": 1, "mine": False}]),
             ))
         db.commit()

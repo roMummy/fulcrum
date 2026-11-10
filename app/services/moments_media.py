@@ -35,8 +35,8 @@ MAX_BYTES = 120 * 1024 * 1024
 # 手机同一时间最多准备这么多个朋友圈媒体。
 MAX_CONCURRENT = 2
 UPLOAD_HEADER = "X-Upload-Token"
-# 能显示的媒体:图片(微信动态媒体类型 2)和视频(15 的动态里媒体类型为 5)
-SUPPORTED_MEDIA_TYPES = {2, 5}
+# 能显示的媒体:线上实测动态里图片的媒体类型是 1、视频是 5(类型 2 是纯文字动态,没有媒体)
+SUPPORTED_MEDIA_TYPES = {1, 5}
 
 
 def token_hash(token: str) -> str:

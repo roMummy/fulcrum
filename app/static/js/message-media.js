@@ -28,7 +28,20 @@
     if (element && hint) element.textContent = hint;
   }
 
-  // 把占位卡片换成真正的媒体元素。userInitiated:用户点的才自动播放(滚动自动显示的图片不涉及播放)。
+  // 放大查看:图片取当前会话里已显示的所有图片(可左右切换);视频单独在查看器里播放。
+  function openViewer(type, url) {
+    if (!window.appLightbox) return;
+    if (type === "video") {
+      window.appLightbox.open([{ type: "video", url: url }], 0);
+      return;
+    }
+    var images = Array.prototype.slice.call(body.querySelectorAll("img.msg-media-image"));
+    var urls = images.map(function (image) { return image.getAttribute("src"); });
+    window.appLightbox.open(urls.map(function (item) { return { type: "image", url: item }; }), Math.max(urls.indexOf(url), 0));
+  }
+
+  // 把占位卡片换成真正的媒体元素。userInitiated:用户点的才自动播放/放大(滚动自动显示的图片不涉及)。
+  // 视频保持占位卡片(提示"点击播放"),在放大查看器里播放。
   function reveal(card, userInitiated) {
     var url = card.dataset.url;
     var type = card.dataset.mediaType;
@@ -43,14 +56,13 @@
       setState(card, "ready", "已开始下载");
       return;
     }
-    var element;
     if (type === "video") {
-      element = document.createElement("video");
-      element.controls = true;
-      element.preload = "metadata";
-      element.autoplay = !!userInitiated;
-      element.className = "msg-media-player";
-    } else if (type === "voice") {
+      setState(card, "ready", "点击播放");
+      if (userInitiated) openViewer("video", url);
+      return;
+    }
+    var element;
+    if (type === "voice") {
       element = document.createElement("audio");
       element.controls = true;
       element.preload = "metadata";
@@ -69,6 +81,7 @@
     }, { once: true });
     element.src = url;
     card.replaceWith(element);
+    if (type === "image" && userInitiated) openViewer("image", url);
   }
 
   function poll(card, attempt) {
@@ -119,7 +132,13 @@
 
   body.addEventListener("click", function (event) {
     var card = event.target.closest("[data-media-card]");
-    if (card) activate(card);
+    if (card) {
+      activate(card);
+      return;
+    }
+    // 已显示的图片:点击放大
+    var image = event.target.closest("img.msg-media-image");
+    if (image) openViewer("image", image.getAttribute("src"));
   });
   body.addEventListener("keydown", function (event) {
     if (event.key !== "Enter" && event.key !== " ") return;

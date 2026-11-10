@@ -47,19 +47,18 @@
     if (element && hint) element.textContent = hint;
   }
 
-  function revealMedia(tile, userInitiated) {
+  // 已传回的媒体:图片在卡片里显示缩略图;视频保持占位卡片(提示"点击播放"),都在点击时用放大查看器(lightbox.js)查看。
+  function revealMedia(tile) {
     var url = tile.dataset.url;
-    if (!url || tile.classList.contains("is-loaded")) return;
-    var video = tile.dataset.mediaType === "video";
-    var element = document.createElement(video ? "video" : "img");
-    if (video) {
-      element.controls = true;
-      element.preload = "metadata";
-      element.autoplay = !!userInitiated;
-    } else {
-      element.alt = "朋友圈图片";
-      element.loading = "lazy";
+    if (!url) return;
+    if (tile.dataset.mediaType === "video") {
+      setMediaState(tile, "ready", "点击播放");
+      return;
     }
+    if (tile.classList.contains("is-loaded")) return;
+    var element = document.createElement("img");
+    element.alt = "朋友圈图片";
+    element.loading = "lazy";
     var placeholder = tile.innerHTML;
     // 文件损坏或已被清理:回到占位卡片并允许重试
     element.addEventListener("error", function () {
@@ -73,12 +72,25 @@
     tile.appendChild(element);
   }
 
+  // 放大查看:同一条动态里已传回的图片/视频可以左右切换。
+  function openViewer(tile) {
+    if (!window.appLightbox) return;
+    var tiles = Array.prototype.filter.call(tile.parentElement.querySelectorAll("[data-moment-media]"), function (item) { return item.dataset.url; });
+    window.appLightbox.open(tiles.map(function (item) { return { type: item.dataset.mediaType, url: item.dataset.url }; }), tiles.indexOf(tile));
+  }
+
+  // 刚传回来:显示(图片出缩略图)并直接放大打开,省得再点一次。
+  function mediaReady(tile, url) {
+    tile.dataset.url = url;
+    revealMedia(tile);
+    openViewer(tile);
+  }
+
   function pollMedia(tile, attempt) {
     var query = "post_id=" + encodeURIComponent(tile.dataset.postId) + "&mid=" + encodeURIComponent(tile.dataset.mid);
     return getJson("/moments/media/status?" + query).then(function (data) {
       if (data.state === "ready") {
-        tile.dataset.url = data.url;
-        revealMedia(tile, true);
+        mediaReady(tile, data.url);
       } else if (data.state === "failed") {
         setMediaState(tile, "failed", (data.error || "获取失败") + "，点击重试");
       } else if (attempt < MEDIA_POLL_LIMIT) {
@@ -98,8 +110,7 @@
         return null;
       }
       if (data.state === "ready") {
-        tile.dataset.url = data.url;
-        revealMedia(tile, true);
+        mediaReady(tile, data.url);
         return null;
       }
       return pollMedia(tile, 0);
@@ -108,8 +119,8 @@
 
   function activateMedia(tile) {
     var state = tile.dataset.state;
-    if (state === "loading" || tile.classList.contains("is-loaded")) return;
-    if (state === "ready") revealMedia(tile, true);
+    if (state === "loading") return;
+    if (state === "ready") openViewer(tile);
     else if (canRefresh) loadMedia(tile);
     else toast("只读成员不能让手机获取媒体", "info");
   }
@@ -132,7 +143,7 @@
         entries.forEach(function (entry) {
           if (!entry.isIntersecting) return;
           mediaObserver.unobserve(entry.target);
-          if (entry.target.isConnected && entry.target.dataset.state === "ready" && entry.target.dataset.mediaType === "image") revealMedia(entry.target, false);
+          if (entry.target.isConnected && entry.target.dataset.state === "ready" && entry.target.dataset.mediaType === "image") revealMedia(entry.target);
         });
       }, { rootMargin: "300px 0px" })
     : null;

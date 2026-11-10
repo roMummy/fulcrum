@@ -35,7 +35,7 @@ from test_provider_node_pages import _login, provider_page_context  # noqa: F401
 
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
-IMAGE = {"mid": "mid-img", "type": 2, "width": 1080, "height": 1440, "duration": 0, "size": 2048, "title": "", "desc": ""}
+IMAGE = {"mid": "mid-img", "type": 1, "width": 1080, "height": 1440, "duration": 0, "size": 2048, "title": "", "desc": ""}
 VIDEO = {"mid": "mid-vid", "type": 5, "width": 224, "height": 398, "duration": 12.9, "size": 16662778, "title": "", "desc": ""}
 
 
@@ -57,7 +57,7 @@ def env(tmp_path, monkeypatch):
     channel = _seed(db)
     channel.api_base = "http://mba.test/api/wechat-webridge/1"
     posts = {}
-    for key, media, post_type in (("a", [IMAGE, VIDEO], 2), ("b", [dict(IMAGE, mid="other")], 2), ("c", [dict(IMAGE, mid="third")], 2), ("text", [dict(IMAGE, mid="odd", type=1)], 1)):
+    for key, media, post_type in (("a", [IMAGE, VIDEO], 2), ("b", [dict(IMAGE, mid="other")], 2), ("c", [dict(IMAGE, mid="third")], 2), ("text", [dict(IMAGE, mid="odd", type=3)], 1)):
         post = MomentsPost(tenant_id=1, channel_id=channel.id, sns_id=f"146000000000000{key}"[:20], author_wxid="wxid_f", create_time=now_shanghai(), post_type=post_type, media_json=json.dumps(media))
         db.add(post)
         posts[key] = post
@@ -98,7 +98,7 @@ def test_unknown_unsupported_and_busy_requests_are_refused_with_a_reason(env) ->
     db, channel, posts = env
     with pytest.raises(ValueError):
         moments_media.request(db, posts["a"], "no-such-media")
-    assert "暂不支持" in moments_media.request(db, posts["text"], "odd")["error"]  # 不是图片/视频
+    assert "暂不支持" in moments_media.request(db, posts["text"], "odd")["error"]  # 不是图片(1)/视频(5)的媒体类型
     # 手机同时最多准备 2 个:第 3 个先提示稍后再点
     moments_media.request(db, posts["a"], "mid-img")
     moments_media.request(db, posts["b"], "other")
@@ -255,9 +255,16 @@ def test_load_status_and_file_endpoints(page_env, tmp_path) -> None:
     assert file.status_code == 200 and file.headers["content-type"] == "image/jpeg" and file.content == JPEG and "private" in file.headers["cache-control"]
     # 页面里这张图已经是 ready,带地址(进入可视区自动显示)
     html = client.get(f"/moments?channel_id={channel_id}").text
+    assert "/static/js/lightbox.js" in html  # 放大查看器全站引入(消息中心、朋友圈共用)
     assert 'data-state="ready"' in html and f'data-url="/moments/media/file/{loaded["media_id"]}"' in html and "点击查看" in html
     # 只读成员:可以看进度和文件,不能让手机去下载
     csrf = _login(client, "readonly")
     assert client.get(f"/moments/media/status?post_id={post_id}&mid=mid-img").status_code == 200
     assert client.get(f"/moments/media/file/{loaded['media_id']}").status_code == 200
     assert client.post("/moments/media/load", data={"post_id": post_id, "mid": "mid-img"}, headers={"X-CSRF-Token": csrf}).status_code == 403
+
+
+def test_real_image_and_video_media_types_are_supported() -> None:
+    """线上实测:图片动态的媒体类型是 1,视频是 5;之前误以为图片是 2,导致图片点击被判"暂不支持"。"""
+
+    assert moments_media.SUPPORTED_MEDIA_TYPES == {1, 5}
