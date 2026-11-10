@@ -300,10 +300,10 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
     channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge",
                       runtime_info_json=json.dumps({"webridge": identity}))
 
-    # 维护会入队 device_status，裸会话没有租户补全；这里只验证领取逻辑，故桩掉。
+    # 维护会入队 device_status / account_status，裸会话没有租户补全；这里只验证领取逻辑，故桩掉。
     from unittest.mock import patch
 
-    with patch.object(service, "_enqueue_device_status"):
+    with patch.object(service, "_enqueue_device_status"), patch.object(service, "_enqueue_account_status"):
         commands = service.claim_commands(db, channel, identity)
 
     assert len(commands) == 1
