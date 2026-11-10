@@ -48,6 +48,7 @@ from app.services.channel_catalog import (
 from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
+from app.services.account_identity import account_identity, bot_identity
 from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.login_proxy_pool import (
     LoginProxyPoolError,
@@ -1575,9 +1576,13 @@ async def bots_page(request: Request):
     try:
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         # 列表需要稳定的计数键，模板不再触碰已删除的分组、模板、标签和环境关系。
+        channels_by_bot: dict[int, list[Channel]] = {}
+        for channel in db.scalars(select(Channel).order_by(Channel.id.asc())).all():
+            channels_by_bot.setdefault(int(channel.bot_id), []).append(channel)
         bot_rows = [
             {
                 "bot": bot,
+                "identity": bot_identity(bot.name, channels_by_bot.get(int(bot.id), [])),
                 "channel_count": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0,
                 "binding_count": db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0,
             }
@@ -1611,6 +1616,7 @@ async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
             "bot_detail.html",
             page_title=f"机器人详情 · {bot.name}",
             bot=bot,
+            bot_ident=bot_identity(bot.name, list(reversed(channels))),
             channels=channels,
             bindings=bindings,
             channel_count=len(channels),
@@ -1778,6 +1784,7 @@ async def channels_page(request: Request):
                 "bot_name": bot_name_map.get(channel.bot_id, "机器人"),
                 "binding": binding_by_channel_id.get(channel.id),
                 "connection": _channel_connection_state(channel),
+                "identity": account_identity(channel),
                 "last_online_at": channel.last_heartbeat_at or channel.last_message_sync_at or channel.last_login_at,
             }
             for channel in channels
@@ -2225,6 +2232,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             request,
             "channel_detail.html",
             page_title=f"账号详情 · {channel.name}",
+            account=account_identity(channel),
             channel=channel,
             binding=binding,
             connection=connection,

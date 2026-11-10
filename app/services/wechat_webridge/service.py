@@ -6,14 +6,15 @@ import hashlib
 import json
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WebridgeDeviceSample, WorkWechatContact
+from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WebridgeDeviceSample, WorkWechatContact
+from app.services.identity_directory import looks_like_raw_id
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
 
@@ -28,6 +29,11 @@ POLL_MAINTENANCE_INTERVAL_SECONDS = 30
 # 设备状态（电量、内存等）通过 device_status 命令读取，随 poll 维护（30 秒节流）入队。
 # 用较低且独有的优先级标记这类任务，既让业务消息先发，也便于识别和清理。
 DEVICE_STATUS_PRIORITY = 7
+# 账号资料(account_status:昵称、头像)同样是内部采样命令,用独有的优先级标记,不算业务积压。
+ACCOUNT_STATUS_PRIORITY = 6
+# 账号资料多久刷新一次;昵称很少变,没拿到时至少隔这么久才重新请求,避免手机不支持时每 30 秒重试。
+ACCOUNT_PROFILE_REFRESH_SECONDS = 6 * 3600
+ACCOUNT_PROFILE_RETRY_SECONDS = 600
 _last_poll_maintenance: dict[int, float] = {}
 # 手机状态采样保留天数；趋势图只看最近 24 小时，多留几天便于排查。
 SAMPLE_RETENTION_DAYS = 7
@@ -43,11 +49,11 @@ def count_backlog(db: Session, channel: Channel) -> tuple[int, int]:
     """统计本渠道实时积压：返回（待领取, 执行中）命令数，不含已完成和失败。
 
     积压任务通常只有个位数，取出后按渠道过滤，不依赖 payload 的 JSON 文本格式。
-    device_status 是内部采样命令，不算业务积压。
+    device_status、account_status 是内部采样命令，不算业务积压。
     """
 
     pending = running = 0
-    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")), TaskJob.priority != DEVICE_STATUS_PRIORITY)).all():
+    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")), TaskJob.priority.notin_((DEVICE_STATUS_PRIORITY, ACCOUNT_STATUS_PRIORITY)))).all():
         if int(parse_job_payload(job).get("channel_id") or 0) != int(channel.id):
             continue
         if job.status == "pending":
@@ -542,6 +548,7 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
         _save_runtime(channel, runtime)
     record_device_sample(db, channel)
     _enqueue_device_status(db, channel)
+    _enqueue_account_status(db, channel)
 
 
 def _enqueue_device_status(db: Session, channel: Channel) -> None:
@@ -558,6 +565,43 @@ def _enqueue_device_status(db: Session, channel: Channel) -> None:
     job.priority = DEVICE_STATUS_PRIORITY
     cutoff = now_shanghai() - timedelta(days=1)
     db.execute(delete(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.priority == DEVICE_STATUS_PRIORITY, TaskJob.status == "completed", TaskJob.finished_at < cutoff).execution_options(synchronize_session=False))
+
+
+def _seconds_since(value: Any) -> float | None:
+    """距离某个 ISO 时间已过去的秒数;读不到返回 None。"""
+
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return (now_shanghai() - ensure_shanghai_datetime(moment)).total_seconds()
+
+
+def _enqueue_account_status(db: Session, channel: Channel) -> None:
+    """定期让手机回报账号资料(昵称、头像),用于后台显示账号昵称而不是 wxid。
+
+    已有资料且未过期不请求;刚请求过(无论成败)隔一段时间再试,手机不支持时不会每 30 秒重试;
+    同渠道已有未完成的 account_status 不重复入队。
+    """
+
+    cid = int(channel.id)
+    profile = as_object(_runtime(channel).get("account_profile"))
+    age = _seconds_since(profile.get("fetched_at"))
+    if age is not None and age < ACCOUNT_PROFILE_REFRESH_SECONDS:
+        return
+    since_request = _seconds_since(profile.get("requested_at"))
+    if since_request is not None and since_request < ACCOUNT_PROFILE_RETRY_SECONDS:
+        return
+    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.status.in_(("pending", "running")), TaskJob.priority == ACCOUNT_STATUS_PRIORITY)).all():
+        if int(parse_job_payload(job).get("channel_id") or 0) == cid:
+            return
+    job = enqueue_command(db, channel, command_name="account_status", args={})
+    job.priority = ACCOUNT_STATUS_PRIORITY
+    runtime = _runtime(channel)
+    runtime["account_profile"] = {**as_object(runtime.get("account_profile")), "requested_at": now_shanghai().isoformat()}
+    _save_runtime(channel, runtime)
+    cutoff = now_shanghai() - timedelta(days=1)
+    db.execute(delete(TaskJob).where(TaskJob.job_type == JOB_TYPE, TaskJob.priority == ACCOUNT_STATUS_PRIORITY, TaskJob.status == "completed", TaskJob.finished_at < cutoff).execution_options(synchronize_session=False))
 
 
 def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
@@ -668,8 +712,11 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
             counts = persist_directory_result(db, channel, command, result)
-            if text(command.get("type") or command.get("command_name")) == "device_status":
+            command_type = text(command.get("type") or command.get("command_name"))
+            if command_type == "device_status":
                 _save_device_status(db, channel, as_object(result.get("result")) or result)
+            elif command_type == "account_status":
+                _save_account_profile(db, channel, as_object(result.get("result")) or result)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
@@ -687,6 +734,47 @@ def _save_device_status(db: Session, channel: Channel, device: dict[str, Any]) -
     bridge["device"] = {key: device[key] for key in ("device", "battery", "power", "thermal", "network", "application", "process_memory", "system_memory", "ts_ms") if key in device}
     _save_runtime(channel, runtime)
     record_device_sample(db, channel, device)
+
+
+def _save_account_profile(db: Session, channel: Channel, data: dict[str, Any]) -> None:
+    """保存 account_status 回报的昵称头像,并把仍是 wxid 的账号名、机器人名换成昵称。
+
+    名字只在“还是内部 ID”或“等于上次自动写入的昵称”时才替换:用户自己改过的名字不动,
+    而账号后来改了昵称时,自动写入的名字会跟着更新。
+    """
+
+    nickname = text(data.get("nick_name")) or text(data.get("display_name"))
+    if not nickname:
+        return
+    nickname = nickname[:100]
+    account_id = text(data.get("account_id") or data.get("user_name"))
+    runtime = _runtime(channel)
+    previous = as_object(runtime.get("account_profile"))
+    previous_nickname = text(previous.get("nickname"))
+    runtime["account_profile"] = {
+        "nickname": nickname,
+        "avatar_url": text(data.get("avatar_url")),
+        "account_id": account_id,
+        "fetched_at": now_shanghai().isoformat(),
+        "requested_at": previous.get("requested_at"),
+    }
+
+    def replaceable(current: str | None) -> bool:
+        value = text(current)
+        return not value or looks_like_raw_id(value) or value == account_id or (bool(previous_nickname) and value == previous_nickname)
+
+    if replaceable(channel.name):
+        channel.name = nickname
+    connection = runtime.get("account_connection")
+    if isinstance(connection, dict) and replaceable(connection.get("display_name")):
+        connection["display_name"] = nickname
+    bot = db.get(Bot, int(channel.bot_id)) if channel.bot_id else None
+    if bot is not None and replaceable(bot.name):
+        # 机器人名在租户内唯一;已被别的机器人占用时保持原名,不抢占。
+        taken = db.scalar(select(Bot.id).where(Bot.name == nickname, Bot.id != bot.id).limit(1))
+        if taken is None:
+            bot.name = nickname
+    _save_runtime(channel, runtime)
 
 
 def mark_event_seen(channel: Channel, payload: dict[str, Any]) -> str:

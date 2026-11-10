@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn btn-secondary" href="{{ back_href }}">返回列表</a>
@@ -9,7 +10,7 @@
 <section class="work-surface action-zone">
   <div class="toolbar">
     <div>
-      <strong>{{ bot.name }}</strong>
+      {{ identity(bot_ident, 'lg') }}
       <p class="muted-text">{{ bot.description or '暂无说明' }}</p>
     </div>
     <div class="actions">

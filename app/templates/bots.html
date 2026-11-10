@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <span class="chip chip-outline">共 {{ bot_count }} 个机器人</span>
@@ -44,7 +45,7 @@
           {% for row in bot_rows %}
           <tr>
             <td class="col-id"><input type="checkbox" name="bot_ids" value="{{ row.bot.id }}" aria-label="选择 {{ row.bot.name }}" /></td>
-            <td><a href="/bots/{{ row.bot.id }}"><strong>{{ row.bot.name }}</strong></a></td>
+            <td><a href="/bots/{{ row.bot.id }}" style="text-decoration:none;color:inherit;">{{ identity(row.identity, 'lg') }}</a></td>
             <td class="col-status"><span class="badge badge-{{ row.bot.status|lower }}">{{ row.bot.status }}</span></td>
             <td class="col-count">{{ row.channel_count }}</td>
             <td class="col-count">{{ row.binding_count }}</td>
