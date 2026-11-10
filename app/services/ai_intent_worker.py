@@ -136,10 +136,11 @@ def _execute_intent(job_id: int) -> None:
     if chat is not None and chat_reply and chat.memory_enabled and chat.bank_id and not chat.memory_all:
         ai_memory.retain(
             chat.bank_id,
+            label=chat.own_label,
             sender_id=chat.sender_id,
-            sender_name=chat.sender_name,
             text=chat.text,
             chat_type=chat.chat_type,
+            bank_name=chat.bank_name,
         )
 
 

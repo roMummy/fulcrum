@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -63,12 +64,87 @@ def bank_prefix(tenant_id: int) -> str:
     return f"t{int(tenant_id)}-"
 
 
-def bank_id(*, tenant_id: int, channel_id: int, conversation_id: int | None, chat_type: str) -> str:
-    """记忆库名:群聊每个群一个库;私聊同一个渠道共用一个库(库内按发言人标签区分)。"""
+def bank_id(*, tenant_id: int, channel_id: int, chat_type: str, group_external_id: str = "") -> str:
+    """记忆库名,尽量可读:群聊用"租户前缀 + 群 ID"(如 t1-45317011307@chatroom);
+    私聊同一个渠道共用一个库(库内按发言人标签区分)。群 ID 里不适合做库名的字符换成下划线。"""
 
-    if chat_type == "group" and conversation_id:
-        return f"{bank_prefix(tenant_id)}ch{int(channel_id)}-g{int(conversation_id)}"
+    if chat_type == "group" and group_external_id:
+        return f"{bank_prefix(tenant_id)}{re.sub(r'[^A-Za-z0-9@._-]', '_', str(group_external_id).strip())[:80]}"
     return f"{bank_prefix(tenant_id)}ch{int(channel_id)}-direct"
+
+
+SPEAKER_PREFIX = "成员"
+_LABEL_PATTERN = re.compile(SPEAKER_PREFIX + r"[0-9a-f]{6}")
+
+
+def speaker_label(tenant_id: int, sender_id: str) -> str:
+    """发言人在记忆里的代号:由发言人 ID 稳定生成(如 成员a3f9c1)。
+
+    昵称可能是玩笑、外号或带误导性的词(城市、职业、品牌……),换昵称也会让记忆对不上人,
+    所以记忆里完全不出现昵称,只用代号;聊天时再把代号换回对方当前的昵称(见 render_labels)。
+    """
+
+    digest = hashlib.blake2s(f"{int(tenant_id)}:{sender_id}".encode("utf-8"), digest_size=4).hexdigest()
+    return SPEAKER_PREFIX + digest[:6]
+
+
+def safe_name(value: object) -> str:
+    """把昵称整理成可以安全放进提示词的短文本:去掉控制字符、冒号和书名号,防止伪造"某某: "这样的发言行。"""
+
+    text = re.sub(r"[\x00-\x1f\x7f:：「」\[\]]", " ", str(value or ""))
+    return re.sub(r"\s+", " ", text).strip()[:20]
+
+
+def render_labels(text: str, own_label: str, names: dict[str, str]) -> str:
+    """把召回记忆里的代号换成聊天里能用的称呼:对方自己 -> "对方";已知成员 -> 「当前昵称」;其他 -> "另一位群友"。"""
+
+    def replace(match: re.Match) -> str:
+        label = match.group(0)
+        if label == own_label:
+            return "对方"
+        name = names.get(label)
+        return f"「{name}」" if name else "另一位群友"
+
+    return _LABEL_PATTERN.sub(replace, text)
+
+
+# 记忆库级抽取规则:库创建/更新时写入,对该库之后的每次写入都生效。
+BANK_MISSION = (
+    "这是微信群聊的长期记忆。成员用代号表示(如 成员a3f9c1),代号只是稳定标识,没有任何含义,不要解释、拆分或推断代号。"
+    "只记录成员在发言里明确说出的稳定信息、计划、偏好、已做的决定,以及群里反复讨论的话题和结论。"
+    "昵称、外号、网名、群名、被 @ 的名字都只是称呼,可能是玩笑或带误导性,不是事实:"
+    "不要因为这些名字里出现的词(地名、职业、品牌、性别、年龄等)就推断任何人的信息,也不要把它们当作人物或实体。"
+    "不要记录寒暄、玩笑、一次性的闲聊、情绪、转发的广告,也不要记录密码、证件号、银行卡等敏感信息。"
+)
+BATCH_CONTEXT = (
+    "微信群聊天记录,多人对话,每行是“成员代号: 内容”。分别记录各成员自己说出的稳定信息和计划;"
+    "不要把某人说的话记到别人身上;文中出现的昵称、@ 的名字只是称呼,不是事实,不要当作人物。"
+)
+
+
+def _item_context(chat_type: str, label: str) -> str:
+    scene = "微信群聊天" if chat_type == "group" else "微信私聊"
+    return f"{scene}。说话人是{label}(用户),对方是群里的 AI 助手。只记关于{label}本人的稳定信息和计划;文中出现的昵称只是称呼,不是事实。"
+
+
+_ensured: set[str] = set()
+
+
+def ensure_bank(bank: str, name: str) -> None:
+    """创建/更新记忆库的可读显示名和抽取规则(接口是幂等的"更新",不会丢事实);每个进程每个库只做一次。
+
+    规则文本改动后,重启应用即可对已有的库生效。失败不影响写入(库会在首次写入时自动创建)。
+    """
+
+    key = f"{bank}\0{name}"
+    if key in _ensured or not is_configured():
+        return
+    try:
+        _request("PUT", f"{API_PREFIX}/{quote(bank, safe='')}", {"name": _clean(name, 100) or bank, "retain_mission": BANK_MISSION}, timeout=RETAIN_TIMEOUT_SECONDS)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("memory bank setup failed", extra={"bank": bank, "error": str(exc)[:120]})
+        return
+    _ensured.add(key)
 
 
 def user_tag(sender_id: str) -> str:
@@ -142,24 +218,22 @@ def should_remember(text: str) -> bool:
     return len(_clean(text, 10_000)) >= MIN_REMEMBER_CHARS
 
 
-def retain(bank: str, *, sender_id: str, sender_name: str, text: str, chat_type: str, when: datetime | None = None) -> bool:
+def retain(bank: str, *, label: str, sender_id: str, text: str, chat_type: str, bank_name: str = "", when: datetime | None = None) -> bool:
     """把一条用户发言异步写入记忆;返回是否已成功提交(失败只记日志,不影响聊天)。
 
-    内容里写明说话人,并在 context 里说明场景,这样记忆服务会把"我在北京"记成关于这个人的事实,
+    内容里用发言人代号(不用昵称),并在 context 里说明场景,这样记忆服务会把"我在北京"记成关于这个人的事实,
     而不是机器人自己的经历。时间戳让"下个月""昨天"这类说法能换算成具体日期。
     """
 
     if not is_configured() or _circuit_open() or not should_remember(text):
         return False
-    name = _clean(sender_name, 40) or "群友"
-    scene = "微信群聊天" if chat_type == "group" else "微信私聊"
-    moment = (when or now_shanghai()).isoformat()
+    ensure_bank(bank, bank_name)
     body = {
         "items": [
             {
-                "content": f"{name}: {_clean(text, 1500)}",
-                "context": f"{scene}。说话人是{name}(用户),对方是群里的 AI 助手。只记关于{name}本人的稳定信息和计划。",
-                "timestamp": moment,
+                "content": f"{label}: {_clean(text, 1500)}",
+                "context": _item_context(chat_type, label),
+                "timestamp": (when or now_shanghai()).isoformat(),
                 "tags": [user_tag(sender_id)],
             }
         ],
@@ -177,18 +251,17 @@ def retain(bank: str, *, sender_id: str, sender_name: str, text: str, chat_type:
     return True
 
 
-def retain_batch(bank: str, *, content: str, when: datetime | None = None) -> bool:
+def retain_batch(bank: str, *, content: str, when: datetime | None = None, bank_name: str = "") -> bool:
     """把一段多人群聊记录异步写入记忆(不打个人标签:这是群里的共同背景,召回时任何人提问都能用到)。
 
-    每行是"昵称: 内容",由记忆服务分别抽取各人的信息;失败只返回 False,由调用方决定是否重试。
+    每行是"成员代号: 内容",由记忆服务分别抽取各人的信息;失败只返回 False,由调用方决定是否重试。
     """
-
-    from app.services.ai_memory_digest import _BATCH_CONTEXT
 
     if not is_configured() or _circuit_open() or not _clean(content, 10):
         return False
+    ensure_bank(bank, bank_name)
     body = {
-        "items": [{"content": content, "context": _BATCH_CONTEXT, "timestamp": (when or now_shanghai()).isoformat()}],
+        "items": [{"content": content, "context": BATCH_CONTEXT, "timestamp": (when or now_shanghai()).isoformat()}],
         "async": True,
     }
     try:
@@ -243,8 +316,13 @@ def clear_tenant_memories(tenant_id: int) -> int | None:
 
 
 def with_recalled_memories(chat):
-    """给聊天上下文补上召回的记忆(会访问网络,必须在不持有数据库会话时调用)。"""
+    """给聊天上下文补上召回的记忆(会访问网络,必须在不持有数据库会话时调用)。
+
+    记忆里是发言人代号,这里换成聊天能用的称呼:对方自己 -> "对方",已知成员 -> 「当前昵称」(仅用于称呼)。
+    """
 
     if not getattr(chat, "memory_enabled", False) or not chat.bank_id:
         return chat
-    return replace(chat, memories=recall(chat.bank_id, chat.text, chat.sender_id))
+    names = dict(chat.speaker_names)
+    memories = tuple(render_labels(item, chat.own_label, names) for item in recall(chat.bank_id, chat.text, chat.sender_id))
+    return replace(chat, memories=memories)

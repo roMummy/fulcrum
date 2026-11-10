@@ -128,6 +128,8 @@ class AiResolution:
     memory_enabled: bool = True
     # 群里开了"记住所有聊天"时,@ 机器人的那句话也由后台批量整理,聊天时不再单独写入,避免重复。
     memory_all: bool = False
+    # 群名(用作记忆库的可读显示名);私聊为空。
+    group_name: str = ""
 
 
 def resolve_for_conversation(
@@ -154,6 +156,7 @@ def resolve_for_conversation(
     chat_enabled = bool(setting.chat_enabled)
     memory_enabled = True
     memory_all = False
+    group_name = ""
     if chat_type == "group":
         room = db.scalar(
             select(Chatroom).where(Chatroom.channel_id == channel_id, Chatroom.external_id == str(conversation_external_id or ""))
@@ -163,6 +166,7 @@ def resolve_for_conversation(
         chat_enabled = bool(room is not None and room.is_active and wants_chat)
         memory_enabled = bool(override.memory_enabled) if override else True
         memory_all = bool(override.memory_all) if override else False
+        group_name = str((room.remark or room.name or "") if room is not None else "")
     config = ModelConfig(
         api_base=(override.api_base if override and override.api_base else setting.api_base) or "",
         model=(override.model if override and override.model else setting.model) or "",
@@ -173,7 +177,7 @@ def resolve_for_conversation(
     # 地址、模型、密钥合并后仍不齐全就不可用(例如租户没配、群里也没配全)。
     if not (config.api_base and config.model and config.api_key):
         return None
-    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled, memory_enabled=memory_enabled, memory_all=memory_all)
+    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled, memory_enabled=memory_enabled, memory_all=memory_all, group_name=group_name)
 
 
 def _build_client(config: ModelConfig) -> PluginTextGenerationClient:
@@ -370,11 +374,14 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
             bank_id=ai_memory.bank_id(
                 tenant_id=int(channel.tenant_id),
                 channel_id=int(channel.id),
-                conversation_id=conversation_id,
                 chat_type=plan.context.chat_type,
+                group_external_id=str(plan.context.conversation_external_id or ""),
             ),
             memory_enabled=resolved.memory_enabled and ai_memory.is_configured(),
             memory_all=resolved.memory_all,
+            own_label=ai_memory.speaker_label(int(channel.tenant_id), str(plan.context.sender_id or "")),
+            speaker_names=ai_chat.collect_speaker_names(db, tenant_id=int(channel.tenant_id), conversation_id=conversation_id),
+            bank_name=resolved.group_name or "私聊",
         )
     return resolved.config, text, catalog, chat
 

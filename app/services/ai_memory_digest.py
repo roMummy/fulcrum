@@ -5,7 +5,7 @@
 - 开启后从当前最新一条消息开始记,不回溯历史。
 - 触发条件:有效消息攒满 BATCH_SIZE 条,或最后一条有效消息之后空闲 IDLE_SECONDS 秒。
 - 有效消息:群里的入站文本,排除命令(/ 或 # 开头)、卡片/XML、过短的闲话。机器人自己的消息是出站,天然不在其中。
-- 一批作为一份"群聊记录"写入(每行"昵称: 内容",不打个人标签),这样谁说了什么、对话上下文都保留,
+- 一批作为一份"群聊记录"写入(每行"成员代号: 内容",不打个人标签;记忆里不出现昵称,昵称可能带误导性),这样谁说了什么、对话上下文都保留,
   召回时任何人提问都能用到群里的共同背景。
 - 每个群每天最多整理 MAX_FLUSHES_PER_DAY 批,防止刷屏时成本失控。
 - 网络写入在数据库会话之外进行;写入失败不推进游标,下一轮重试(断路保护见 ai_memory)。
@@ -26,7 +26,6 @@ from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Chatroom, Conversation, Message
 from app.services import ai_memory
-from app.services.identity_directory import looks_like_raw_id
 
 logger = get_logger(__name__)
 
@@ -47,11 +46,6 @@ CURSOR_KEY = "ai_memory_cursor"
 MIN_CHARS = ai_memory.MIN_REMEMBER_CHARS
 
 _SENDER_PREFIX = re.compile(r"^wxid_[0-9a-z]+:\s*\n", re.IGNORECASE)
-_BATCH_CONTEXT = (
-    "微信群聊天记录,多人对话,每行是“昵称: 内容”。"
-    "分别记录各群友自己的稳定信息(住在哪里、工作、喜好、宠物、计划)和群里的共同话题;"
-    "不要把某人说的话记到别人身上;忽略寒暄、玩笑和一次性的闲聊。"
-)
 
 
 @dataclass(frozen=True)
@@ -60,6 +54,7 @@ class DigestPlan:
 
     chatroom_id: int
     bank_id: str
+    bank_name: str
     content: str
     when: datetime
     count: int
@@ -80,11 +75,6 @@ def is_eligible(content: object, message_type: str = "text") -> bool:
         return False
     text = clean_text(content)
     return len(text) >= MIN_CHARS and text[:1] not in "/#"
-
-
-def _speaker(name: str | None) -> str:
-    value = re.sub(r"\s+", " ", str(name or "")).strip()[:30]
-    return "群友" if not value or looks_like_raw_id(value) else value
 
 
 def _load_extra(chatroom: Chatroom) -> dict[str, Any]:
@@ -128,7 +118,8 @@ def plan_group_digest(db: Session, chatroom: Chatroom, conversation: Conversatio
     ).all()
     if not rows:
         return None
-    eligible = [row for row in rows if is_eligible(row.content)]
+    # 没有发言人 ID 的消息无法归属,不记。
+    eligible = [row for row in rows if row.sender_id and is_eligible(row.content)]
     if not eligible:
         # 扫到的都不是有效消息:直接跳过,下次不再重复扫描。
         _save_cursor(chatroom, {**cursor, "message_id": int(rows[-1].id)})
@@ -147,7 +138,7 @@ def plan_group_digest(db: Session, chatroom: Chatroom, conversation: Conversatio
     used = 0
     included: list[Message] = []
     for row in eligible[:MAX_BATCH]:
-        line = f"{_speaker(row.sender_name)}: {clean_text(row.content)[:LINE_CHARS]}"
+        line = f"{ai_memory.speaker_label(int(chatroom.tenant_id), str(row.sender_id))}: {clean_text(row.content)[:LINE_CHARS]}"
         if included and used + len(line) > MAX_BATCH_CHARS:
             break
         lines.append(line)
@@ -159,8 +150,9 @@ def plan_group_digest(db: Session, chatroom: Chatroom, conversation: Conversatio
     return DigestPlan(
         chatroom_id=int(chatroom.id),
         bank_id=ai_memory.bank_id(
-            tenant_id=int(chatroom.tenant_id), channel_id=int(chatroom.channel_id), conversation_id=int(conversation.id), chat_type="group"
+            tenant_id=int(chatroom.tenant_id), channel_id=int(chatroom.channel_id), chat_type="group", group_external_id=chatroom.external_id
         ),
+        bank_name=str(chatroom.remark or chatroom.name or ""),
         content="\n".join(lines),
         when=ensure_shanghai_datetime(included[-1].created_at),
         count=len(included),
@@ -210,7 +202,7 @@ def run_for_tenant(*, now: datetime | None = None) -> int:
 
     flushed = 0
     for plan in plans:
-        ok = ai_memory.retain_batch(plan.bank_id, content=plan.content, when=plan.when)
+        ok = ai_memory.retain_batch(plan.bank_id, content=plan.content, when=plan.when, bank_name=plan.bank_name)
         if not ok:
             # 不推进游标,下一轮重试;记忆服务不可用时由断路保护避免反复等待。
             continue
