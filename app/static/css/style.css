@@ -693,6 +693,20 @@ code {
   box-shadow: 0 8px 20px rgba(189, 66, 96, 0.18);
 }
 
+/* 次要的风险操作(如删除):红字浅红底,不抢主操作的视线,悬停才加深。 */
+.btn-danger-soft {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.btn-danger-soft:hover {
+  color: #a43852;
+  background: #fbe3e9;
+  box-shadow: none;
+}
+
 .btn-small {
   min-height: 32px;
   padding: 0 11px;
@@ -1435,8 +1449,14 @@ code {
 
 .record-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  width: 40px;
+  gap: 8px;
+  min-width: 40px;
+}
+
+.record-actions form {
+  margin: 0;
 }
 
 .record-action-trigger {
@@ -1481,7 +1501,8 @@ code {
 }
 
 .account-record-row {
-  grid-template-columns: minmax(180px, 1.05fr) minmax(0, 2.8fr) 40px;
+  /* 操作列固定宽度(两个按钮:详情 + 删除),保证每行的数据列对齐。 */
+  grid-template-columns: minmax(180px, 1.05fr) minmax(0, 2.8fr) 112px;
 }
 
 /* 代理池使用四项连续指标和高密度开放列表，状态变化不会改变记录行结构。 */
@@ -3736,7 +3757,8 @@ code {
   border-radius: var(--radius-md);
 }
 
-/* 弹窗使用有限高度与柔影；内容在内部滚动，关闭操作与焦点继续由原生 dialog 管理。 */
+/* 弹窗统一外观:大圆角白卡 + 柔影,遮罩轻微模糊,打开时淡入上移;内容在内部滚动,
+   关闭操作与焦点继续由原生 dialog 管理。所有 <dialog class="app-modal"> 共用。 */
 .app-modal {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
@@ -3748,31 +3770,210 @@ code {
   overscroll-behavior: contain;
 }
 
+.app-modal[open] {
+  animation: app-modal-in 180ms ease-out;
+}
+
 .app-modal::backdrop {
-  background: rgba(32, 40, 64, 0.36);
+  background: rgba(32, 40, 64, 0.38);
+  backdrop-filter: blur(3px);
+  animation: app-backdrop-in 180ms ease-out;
+}
+
+@keyframes app-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes app-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-modal[open],
+  .app-modal::backdrop {
+    animation: none;
+  }
 }
 
 .app-modal-card {
   max-height: calc(100vh - 48px);
-  padding: 26px;
+  padding: 28px;
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--surface);
   border: 0;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-soft);
 }
 
 .app-modal-close {
+  display: grid;
+  place-items: center;
   width: 34px;
   flex-shrink: 0;
   min-height: 34px;
   padding: 0;
+  color: var(--muted);
+  background: var(--surface-muted);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: none;
   font-size: 18px;
+}
+
+.app-modal-close:hover {
+  color: var(--text);
+  background: var(--primary-soft);
+  box-shadow: none;
+  transform: none;
 }
 
 .app-modal-head {
   margin-bottom: 20px;
+}
+
+/* 确认/提示弹窗(dialog.js):图标 + 标题 + 说明 + 后果清单 + 按钮。危险操作整体偏红。 */
+.app-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.app-dialog [hidden] {
+  display: none !important;
+}
+
+.app-dialog-card {
+  padding: 28px 28px 22px;
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+}
+
+.app-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-radius: 16px;
+}
+
+.app-dialog[data-tone="danger"] .app-dialog-icon {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.app-dialog-title {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.app-dialog-message {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+
+.app-dialog-points {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  list-style: none;
+  color: var(--text-soft);
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.app-dialog[data-tone="danger"] .app-dialog-points {
+  background: var(--danger-soft);
+}
+
+.app-dialog-points li {
+  position: relative;
+  padding-left: 16px;
+  line-height: 1.55;
+}
+
+.app-dialog-points li::before {
+  content: "";
+  position: absolute;
+  top: 0.6em;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  background: var(--muted);
+  border-radius: 50%;
+}
+
+.app-dialog[data-tone="danger"] .app-dialog-points li::before {
+  background: var(--danger);
+}
+
+.app-dialog-match {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.app-dialog-match input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.app-dialog-match input:focus-visible {
+  border-color: var(--primary);
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+@media (max-width: 480px) {
+  .app-dialog-card {
+    padding: 24px 20px 20px;
+  }
+
+  .app-dialog-actions {
+    flex-direction: column-reverse;
+  }
+
+  .app-dialog-actions .btn {
+    width: 100%;
+  }
 }
 
 .confirm-modal-card {
@@ -3997,7 +4198,7 @@ code {
   }
 
   .account-record-row {
-    grid-template-columns: minmax(0, 1fr) 40px;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .proxy-record-row {

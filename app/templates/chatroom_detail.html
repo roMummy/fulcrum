@@ -275,7 +275,7 @@
         const raw = textarea.value.trim();
         if (!raw) return;
         try { textarea.value = JSON.stringify(JSON.parse(raw), null, 2); }
-        catch (error) { window.alert(`JSON 格式化失败：${error.message}`); }
+        catch (error) { window.appDialog.alert({ title: "JSON 格式化失败", message: error.message, tone: "danger" }); }
       });
       if (clearButton) clearButton.addEventListener("click", () => { textarea.value = ""; textarea.focus(); });
     });

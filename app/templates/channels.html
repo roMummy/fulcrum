@@ -62,14 +62,23 @@
         </div>
       </dl>
       <div class="record-actions">
+        <a class="btn btn-small btn-secondary" href="/channels/{{ row.channel.id }}">详情</a>
         {# 只有未启用的账号可以删除:从清单隐藏并释放额度,聊天数据保留。 #}
         {% if not row.channel.is_enabled %}
-        <form method="post" action="/channels/{{ row.channel.id }}/delete" onsubmit="return confirm('删除账号「{{ row.identity.name }}」？\n删除后会从清单中隐藏，并释放它占用的额度；聊天记录会保留。');">
+        <form
+          method="post"
+          action="/channels/{{ row.channel.id }}/delete"
+          data-confirm-mode="confirm"
+          data-confirm-tone="danger"
+          data-confirm-title="删除账号「{{ row.identity.name }}」？"
+          data-confirm-message="删除后无法在后台恢复，请确认这个账号不再使用。"
+          data-confirm-points="账号会从清单中隐藏，手机不再向它上报消息|它占用的机器人额度会立即释放|群、成员和聊天记录会保留|同一个微信号暂时不能重新接入"
+          data-confirm-confirm-text="删除账号"
+        >
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-          <button class="btn btn-small btn-secondary" type="submit">删除</button>
+          <button class="btn btn-small btn-danger-soft" type="submit">删除</button>
         </form>
         {% endif %}
-        <a class="record-action-trigger" href="/channels/{{ row.channel.id }}" aria-label="查看 {{ row.connection.display_name }}" title="查看详情">&#8250;</a>
       </div>
     </article>
     {% endfor %}

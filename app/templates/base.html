@@ -126,143 +126,7 @@
     </div>
   </div>
   {% endif %}
-  <dialog class="app-modal" id="confirm-action-modal">
-    <div class="app-modal-card confirm-modal-card">
-      <div class="app-modal-head">
-        <div>
-
-          <h2 id="confirm-action-title">确认操作</h2>
-          <p class="muted-text" id="confirm-action-message">请确认是否继续。</p>
-        </div>
-        <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
-      </div>
-      <label class="confirm-match-input" id="confirm-match-wrap" style="display:none;">
-        <span id="confirm-match-label">请输入确认内容：</span>
-        <input type="text" id="confirm-match-value" autocomplete="off" />
-      </label>
-      <p class="notice-card notice-card-danger" id="confirm-action-error" style="display:none;margin-top:12px;"></p>
-      <div class="form-actions-inline" style="margin-top:16px;">
-        <button class="btn" type="button" id="confirm-action-submit">确认继续</button>
-        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-      </div>
-    </div>
-  </dialog>
   <script>
-    (() => {
-      const forms = document.querySelectorAll("form[data-confirm-mode]");
-      if (!forms.length) return;
-      const dialog = document.getElementById("confirm-action-modal");
-      const titleEl = document.getElementById("confirm-action-title");
-      const messageEl = document.getElementById("confirm-action-message");
-      const submitEl = document.getElementById("confirm-action-submit");
-      const errorEl = document.getElementById("confirm-action-error");
-      const matchWrapEl = document.getElementById("confirm-match-wrap");
-      const matchLabelEl = document.getElementById("confirm-match-label");
-      const matchValueEl = document.getElementById("confirm-match-value");
-      let pendingForm = null;
-      let pendingMode = "confirm";
-      let pendingExpected = "";
-
-      const clearPending = () => {
-        pendingForm = null;
-        pendingMode = "confirm";
-        pendingExpected = "";
-        if (errorEl) {
-          errorEl.style.display = "none";
-          errorEl.textContent = "";
-        }
-        if (matchWrapEl) {
-          matchWrapEl.style.display = "none";
-        }
-        if (matchValueEl) {
-          matchValueEl.value = "";
-        }
-      };
-
-      const submitPending = () => {
-        if (!pendingForm) return;
-        if (pendingMode === "match-text") {
-          const entered = (matchValueEl?.value || "").trim();
-          if (entered !== pendingExpected) {
-            if (errorEl) {
-              errorEl.textContent = `输入不匹配，需准确输入：${pendingExpected}`;
-              errorEl.style.display = "block";
-            }
-            return;
-          }
-          const hiddenInput = pendingForm.querySelector('input[name="confirmation_name"]');
-          if (hiddenInput) {
-            hiddenInput.value = entered;
-          }
-        }
-        const targetForm = pendingForm;
-        clearPending();
-        if (dialog && typeof dialog.close === "function") {
-          dialog.close();
-        }
-        targetForm.dataset.confirmBypass = "true";
-        targetForm.submit();
-      };
-
-      if (submitEl) {
-        submitEl.addEventListener("click", submitPending);
-      }
-      if (dialog) {
-        dialog.addEventListener("close", clearPending);
-      }
-
-      forms.forEach((form) => {
-        form.addEventListener("submit", (event) => {
-          if (form.dataset.confirmBypass === "true") {
-            form.dataset.confirmBypass = "";
-            return;
-          }
-          const mode = form.dataset.confirmMode || "confirm";
-          const title = form.dataset.confirmTitle || "确认操作";
-          const message = form.dataset.confirmMessage || "请确认是否继续。";
-          event.preventDefault();
-
-          if (!dialog || typeof dialog.showModal !== "function") {
-            if (!window.confirm(`${title}\n\n${message}`)) {
-              return;
-            }
-            form.dataset.confirmBypass = "true";
-            form.submit();
-            return;
-          }
-
-          pendingForm = form;
-          pendingMode = mode;
-          pendingExpected = (form.dataset.confirmMatchText || "").trim();
-          if (titleEl) {
-            titleEl.textContent = title;
-          }
-          if (messageEl) {
-            messageEl.textContent = message;
-          }
-          if (errorEl) {
-            errorEl.style.display = "none";
-            errorEl.textContent = "";
-          }
-          if (mode === "match-text") {
-            if (matchWrapEl) {
-              matchWrapEl.style.display = "grid";
-            }
-            if (matchLabelEl) {
-              matchLabelEl.textContent = form.dataset.confirmMatchLabel || "请输入确认内容：";
-            }
-            if (matchValueEl) {
-              matchValueEl.value = "";
-              matchValueEl.focus();
-            }
-          } else if (matchWrapEl) {
-            matchWrapEl.style.display = "none";
-          }
-          dialog.showModal();
-        });
-      });
-    })();
-
     (() => {
       const openers = document.querySelectorAll("[data-modal-open]");
       const closers = document.querySelectorAll("[data-modal-close]");
@@ -329,8 +193,9 @@
 
       // 普通表单提交后锁定提交按钮，减少用户连续点击造成重复创建、重复同步或重复重启。
       forms.forEach((form) => {
-        form.addEventListener("submit", () => {
-          if (form.dataset.confirmMode && form.dataset.confirmBypass !== "true") return;
+        form.addEventListener("submit", (event) => {
+          // 需要确认的提交已被统一弹窗(dialog.js)拦下,确认通过后才会重新提交。
+          if (event.defaultPrevented) return;
           const submitters = form.querySelectorAll("button[type='submit'], input[type='submit']");
           submitters.forEach((submitter) => {
             submitter.dataset.originalText = submitter.textContent || "";
@@ -388,6 +253,8 @@
     })();
   </script>
   {# 全局下拉框增强:把原生 select 升级为统一调性的自绘下拉,表单与 change 事件保持原生行为。 #}
+  {# 统一弹窗:appDialog.confirm / alert 与 data-confirm-* 声明式确认,替代浏览器默认弹窗。 #}
+  <script src="/static/js/dialog.js" defer></script>
   <script src="/static/js/select.js" defer></script>
   {% block scripts %}{% endblock %}
 </body>
