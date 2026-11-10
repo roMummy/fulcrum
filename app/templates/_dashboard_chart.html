@@ -1,17 +1,47 @@
-{# 趋势只绘制一条数据曲线与三处时间刻度，避免 24 个小时柱在窄卡片中折成两行。 #}
+{# 趋势图：左侧 Y 轴标注 0、中值、最大值，底部 X 轴均分标注时间，折线末点与最大值点直接标注数值。 #}
+{# Y 轴以 0 为基线、max_value 为顶部，与折线坐标（y=100-值/最大值*100）一一对应；
+   最大值为 0 时（全为 0）顶部显示 1，避免三个刻度都是 0 无法阅读。 #}
 {% macro trend_chart(chart, label, tone='primary') %}
+{% set items = chart['items'] %}
+{% set top = chart.max_value if chart.max_value > 0 else 1 %}
+{% set mid = top / 2 %}
 <div class="dashboard-chart-card">
-  <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="{{ label }}，峰值 {{ chart.max_value }}">
-    <line class="analytics-chart-grid-line" x1="0" y1="50" x2="100" y2="50"></line>
-    <line class="analytics-chart-baseline" x1="0" y1="100" x2="100" y2="100"></line>
-    <polyline points="{{ chart.points }}" class="chart-line chart-line-{{ tone }}"></polyline>
-  </svg>
-  {% set items = chart['items'] %}
-  {% if items %}
-  <div class="dashboard-chart-axis" aria-label="时间范围">
-    <span>{{ items[0].label }}</span><span>{{ items[(items|length) // 2].label }}</span><span>{{ items[-1].label }}</span>
+  <div class="chart-plot">
+    <div class="chart-yaxis" aria-hidden="true">
+      <span>{{ top }}</span><span>{{ mid | int if mid == mid | int else mid | round(1) }}</span><span>0</span>
+    </div>
+    <div class="chart-canvas">
+      <svg class="dashboard-line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="{{ label }}，峰值 {{ chart.max_value }}">
+        <line class="analytics-chart-grid-line" x1="0" y1="0" x2="100" y2="0"></line>
+        <line class="analytics-chart-grid-line" x1="0" y1="50" x2="100" y2="50"></line>
+        <line class="analytics-chart-baseline" x1="0" y1="100" x2="100" y2="100"></line>
+        <polyline points="{{ chart.points }}" class="chart-line chart-line-{{ tone }}"></polyline>
+      </svg>
+      {# 数据点标注用绝对定位的 HTML，避免 SVG 因 preserveAspectRatio=none 把文字拉伸变形。 #}
+      {% set count = items | length %}
+      {# 最大值只标第一次出现的那个点（多个点同为最大值时不重复标注），末点始终标注当前值。 #}
+      {% set values = items | map(attribute='value') | list %}
+      {% set peak_index = values.index(chart.max_value) if chart.max_value > 0 and chart.max_value in values else -1 %}
+      {% for item in items %}
+        {% if loop.last or loop.index0 == peak_index %}
+        <span class="chart-point-label{% if loop.last %} chart-point-last{% endif %}"
+              style="left: {{ 0 if count <= 1 else (loop.index0 / (count - 1) * 100) | round(2) }}%; top: {{ 100 if chart.max_value <= 0 else (100 - item.value / chart.max_value * 100) | round(2) }}%;">{{ item.value }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
   </div>
-  {# 收起逐小时数值以控制首屏密度，但保留全部原始读数；键盘与触屏均可按需展开。 #}
+  {% if items %}
+  {# X 轴：均分取 5 个时间刻度（不足 5 个点则全取），左右端点对齐图形边缘。 #}
+  {% set ticks = [] %}
+  {% if count <= 5 %}
+    {% for item in items %}{% set _ = ticks.append(item.label) %}{% endfor %}
+  {% else %}
+    {% for step in range(5) %}{% set _ = ticks.append(items[((count - 1) * step / 4) | round | int].label) %}{% endfor %}
+  {% endif %}
+  <div class="chart-xaxis" aria-label="时间范围">
+    {% for tick in ticks %}<span>{{ tick }}</span>{% endfor %}
+  </div>
+  {# 收起逐点数值以控制首屏密度，但保留全部原始读数；键盘与触屏均可按需展开。 #}
   <details class="dashboard-chart-detail">
     <summary>查看每小时数据</summary>
     <dl class="dashboard-chart-values" aria-label="{{ label }}明细">

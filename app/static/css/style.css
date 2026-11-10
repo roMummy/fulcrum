@@ -2282,13 +2282,61 @@ code {
   stroke: var(--primary);
 }
 
-.dashboard-chart-axis {
+/* 图形区：左侧 Y 轴刻度列 + 右侧画布；画布内的数值标注用绝对定位，不随 SVG 拉伸。 */
+.chart-plot {
   display: flex;
+  gap: 8px;
+}
+
+.chart-yaxis {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
   justify-content: space-between;
-  margin-top: 10px;
+  min-width: 28px;
+  height: 180px;
   color: var(--muted);
   font-family: "Albert Sans", "Noto Sans SC", sans-serif;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+}
+
+.chart-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chart-point-label {
+  position: absolute;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface, #fff);
+  color: var(--text, #1f2937);
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  pointer-events: none;
+  transform: translate(-50%, -140%);
+  white-space: nowrap;
+}
+
+/* 末点在右边缘，标注向左靠齐，避免溢出卡片。 */
+.chart-point-last {
+  transform: translate(-100%, -140%);
+}
+
+.chart-xaxis {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 0 0 36px;
+  color: var(--muted);
+  font-family: "Albert Sans", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 数值明细按需展开，替代原来常驻的二十四个柱块；不丢失读数，也不额外叠加卡片。 */
