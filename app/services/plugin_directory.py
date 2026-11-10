@@ -2114,6 +2114,11 @@ def _build_manifest(default_code: str, parsed: dict[str, Any]) -> PluginManifest
     )
 
 
+# 支持“群启用总开关”和“群内单独启停插件”的渠道。必须与群详情页提供这些开关的渠道一致
+# (main.GROUP_SCOPE_CHANNEL_TYPES),否则页面上能设置、调度却不认。
+GROUP_SCOPED_CHANNEL_TYPES = frozenset({"wechat_ipad", "wechat_winauto", "workwechat", "wechat_webridge"})
+
+
 def _load_group_scope_map(
     db: Session,
     *,
@@ -2121,7 +2126,7 @@ def _load_group_scope_map(
     context: PluginDispatchContext,
 ) -> dict[int, GroupPluginScope]:
     channel_type = str(channel.channel_type or "").strip()
-    if channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
+    if channel_type not in GROUP_SCOPED_CHANNEL_TYPES:
         return {}
     if str(context.chat_type or "").strip() != "group":
         return {}
@@ -2149,7 +2154,7 @@ def _load_group_chatroom(
     context: PluginDispatchContext,
 ) -> Chatroom | None:
     channel_type = str(channel.channel_type or "").strip()
-    if channel_type not in {"wechat_ipad", "wechat_winauto", "workwechat"}:
+    if channel_type not in GROUP_SCOPED_CHANNEL_TYPES:
         return None
     if str(context.chat_type or "").strip() != "group":
         return None

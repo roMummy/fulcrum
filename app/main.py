@@ -77,7 +77,7 @@ from app.services.ops import (
     record_health_check,
 )
 from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form
-from app.services.plugin_directory import sync_plugins_from_directory
+from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
 from app.services.plugin_schemas import (
     build_plugin_config_view,
     deep_merge_config,
@@ -231,7 +231,7 @@ app.include_router(provider_nodes_router)
 templates = Jinja2Templates(directory="app/templates")
 BUILTIN_CHANNEL_TYPES = list_supported_channel_types()
 # 支持群级插件启停、配置覆盖和纳管状态的渠道；微桥复用企微的群级作用域实现。
-GROUP_SCOPE_CHANNEL_TYPES = frozenset({"wechat_ipad", "wechat_winauto", "workwechat", "wechat_webridge"})
+GROUP_SCOPE_CHANNEL_TYPES = GROUP_SCOPED_CHANNEL_TYPES
 CHANNEL_TYPE_FORM_SCHEMA = serialize_channel_type_definitions()
 CHANNEL_TYPE_FORM_SCHEMA_BY_CODE = {item["code"]: item for item in CHANNEL_TYPE_FORM_SCHEMA}
 logger.info("application module initialized", extra={"app_env": settings.app_env, "log_dir": settings.log_dir})
