@@ -1,0 +1,45 @@
+{# 朋友圈动态卡片:首屏渲染与"显示更多"共用同一份。作者昵称/头像来自好友表(没有资料时显示微信 ID)。
+   图片只用预览图地址直接展示(不下载);地址失效时前端把它换成占位,不影响其他内容。 #}
+{% macro moment_posts(posts, identities) %}
+{% for post in posts %}
+{% set who = identities.get(post.wxid) or {} %}
+<article class="moment-card" data-id="{{ post.id }}">
+  <span class="wechat-avatar moment-avatar">{% if who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ who.initial or '?' }}{% endif %}</span>
+  <div class="moment-main">
+    <header class="moment-head">
+      <strong class="moment-name">{{ who.name or post.wxid }}</strong>
+      {% if who.show_id %}<small class="identity-id">{{ who.external_id }}</small>{% endif %}
+      {% if post.is_mine %}<span class="chip chip-outline">我</span>{% endif %}
+      {% if post.private %}<span class="chip chip-muted">私密</span>{% endif %}
+      <time class="moment-time">{{ post.time|bj_time if post.time else '-' }}</time>
+    </header>
+    {% if post.content %}<p class="moment-content">{{ post.content }}</p>{% endif %}
+    {% if post.media %}
+    <div class="moment-media{% if post.media|length == 1 %} moment-media-single{% endif %}">
+      {% for item in post.media %}
+      <span class="moment-thumb{% if post.is_video %} is-video{% endif %}" {% if item.width and item.height and post.media|length == 1 %}style="aspect-ratio: {{ item.width }} / {{ item.height }};"{% endif %}>
+        {% if item.preview %}<img src="{{ item.preview }}" alt="" loading="lazy" referrerpolicy="no-referrer" data-moment-img />{% endif %}
+        {% if post.is_video %}<span class="moment-play" aria-hidden="true"></span>{% if item.duration %}<span class="moment-duration">{{ '%d:%02d'|format((item.duration // 60)|int, (item.duration % 60)|int) }}</span>{% endif %}{% endif %}
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <footer class="moment-foot">
+      <span class="moment-stat{% if post.liked %} is-active{% endif %}">赞 {{ post.like_count }}</span>
+      <span class="moment-stat">评论 {{ post.comment_count }}</span>
+      {% if post.likes %}<span class="moment-likers muted-text">{{ post.likes[:8]|map(attribute='nickname')|select|join('、') }}{% if post.likes|length > 8 %} 等 {{ post.likes|length }} 人{% endif %}</span>{% endif %}
+    </footer>
+    {% if post.comments %}
+    <details class="disclosure moment-comments">
+      <summary>评论（{{ post.comments|length }}）</summary>
+      <ul>
+        {% for comment in post.comments %}
+        <li><strong>{{ comment.nickname or comment.wxid }}</strong>{% if comment.reply_wxid %}<span class="muted-text"> 回复</span>{% endif %}：{{ comment.content }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </div>
+</article>
+{% endfor %}
+{% endmacro %}

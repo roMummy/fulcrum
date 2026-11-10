@@ -803,6 +803,42 @@ class WebridgeDeviceSample(Base, TenantOwnedMixin):
     process_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class MomentsPost(Base, TenantOwnedMixin, TimestampMixin):
+    """朋友圈动态:从个人微信(微桥)账号的朋友圈里取回并缓存,供后台「朋友圈」页面查看。
+
+    同一个渠道里同一条动态(sns_id)只有一行,重复取回只更新点赞、评论等互动数据。
+    作者只有微信 ID,昵称与头像在页面上按好友表解析;媒体只保存预览图地址与基本信息,不下载文件。
+    """
+
+    __tablename__ = "moments_posts"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "sns_id", name="uq_moments_posts_channel_sns"),
+        # 页面按发布时间倒序展示
+        Index("ix_moments_posts_channel_created", "channel_id", "create_time"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    # 微信的动态 ID(20 位左右的十进制字符串,超出 BigInteger 的安全范围,按字符串存)
+    sns_id: Mapped[str] = mapped_column(String(32))
+    author_wxid: Mapped[str] = mapped_column(String(191), index=True)
+    create_time: Mapped[DateTime] = mapped_column(DateTime(timezone=True))
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 微信的动态类型:1 文字、2 图片、15 视频等,原样保存
+    post_type: Mapped[int] = mapped_column(Integer, default=0)
+    is_mine: Mapped[bool] = mapped_column(Boolean, default=False)
+    liked: Mapped[bool] = mapped_column(Boolean, default=False)
+    like_count: Mapped[int] = mapped_column(Integer, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, default=0)
+    private: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 媒体、点赞、评论:精简后的 JSON 数组
+    media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    likes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    comments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 最近一次从手机取回的时间
+    fetched_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai)
+
+
 class PaymentReceipt(Base, TenantOwnedMixin, TimestampMixin):
     """红包、转账的收款记录:自动抢红包、自动收款处理过的每一笔,记录来源、金额和结果,供后台明细与统计查询。
 

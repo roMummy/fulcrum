@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% from '_moment_posts.html' import moment_posts %}
+{% block hero_actions %}
+{% if channel and can_refresh %}
+<div class="hero-action-cluster">
+  <button class="btn btn-secondary" type="button" id="moments-older" data-direction="tail"{% if not summary.has_older %} disabled{% endif %}>加载更早</button>
+  <button class="btn" type="button" id="moments-refresh" data-direction="head">刷新</button>
+</div>
+{% endif %}
+{% endblock %}
+{% block content %}
+{% if not channel %}
+<section class="work-surface">
+  <div class="wechat-empty">还没有接入个人微信账号。接入后，可以在这里查看账号可见的朋友圈。</div>
+  <p class="muted-text" style="text-align:center;"><a class="btn" href="/channels/connect">去接入账号</a></p>
+</section>
+{% else %}
+<section class="moments-page" id="moments-page" data-channel-id="{{ channel.id }}" data-has-more="{{ 1 if feed.has_more else 0 }}" data-can-refresh="{{ 1 if can_refresh else 0 }}">
+  <div class="moments-bar">
+    {% if channels|length > 1 %}
+    <nav class="moments-accounts" aria-label="选择账号">
+      {% for item in channels %}<a class="chip {% if item.id == channel.id %}chip-success{% else %}chip-outline{% endif %}" href="/moments?channel_id={{ item.id }}">{{ item.name }}</a>{% endfor %}
+    </nav>
+    {% endif %}
+    <div class="chip-row" aria-live="polite">
+      <span class="chip chip-outline" id="moments-cached">已缓存 {{ summary.cached }} 条</span>
+      <span class="chip chip-muted" id="moments-refreshed">最近刷新 {{ summary.refreshed_at|bj_time if summary.refreshed_at else '从未' }}</span>
+      <span class="chip chip-success" id="moments-running" hidden>正在从手机取回…</span>
+    </div>
+  </div>
+  <p class="muted-text moments-note">内容来自这个微信账号能看到的好友朋友圈，每次从手机取回约 10 条，仅缓存文字、点赞评论和预览图地址，供后台查看。</p>
+
+  <div class="moments-feed" id="moments-feed">
+    {% if feed.posts %}{{ moment_posts(feed.posts, feed.identities) }}{% else %}
+    <div class="wechat-empty" id="moments-empty">还没有缓存的朋友圈。{% if can_refresh %}点右上角「刷新」从手机取回。{% endif %}</div>
+    {% endif %}
+  </div>
+  <div class="moments-more"><button class="btn btn-secondary" type="button" id="moments-more"{% if not feed.has_more %} hidden{% endif %}>显示更多</button></div>
+</section>
+<script src="/static/js/moments.js" defer></script>
+{% endif %}
+{% endblock %}

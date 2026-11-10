@@ -26,12 +26,13 @@ def build_tenant_navigation(path: str) -> dict[str, object]:
 
     normalized_path = str(path or "/").strip() or "/"
     in_chatroom_page = bool(_CHATROOM_PATH.match(normalized_path))
-    # 主导航只放日常运营要用的六项:群、好友、消息是核心资产,各自只有一个入口。
+    # 主导航只放日常运营要用的几项:群、好友、消息、朋友圈是核心资产,各自只有一个入口。
     primary_nav_items = [
         _item("总览", "/dashboard", normalized_path, ("/dashboard",)),
         {"label": "群管理", "href": "/chatrooms", "active": in_chatroom_page or _is_active(normalized_path, ("/chatrooms",))},
         _item("好友", "/contacts", normalized_path, ("/contacts",)),
         _item("消息", "/messages", normalized_path, ("/messages",)),
+        _item("朋友圈", "/moments", normalized_path, ("/moments",)),
         _item("积分", "/points", normalized_path, ("/points",)),
         _item("插件", "/plugins", normalized_path, ("/plugins",)),
         {

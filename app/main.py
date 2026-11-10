@@ -173,6 +173,7 @@ from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detai
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
 from app.services import payment_ledger
+from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -4467,6 +4468,96 @@ async def message_history(request: Request, conversation_id: int, before_id: int
         macro = templates.env.get_template("_message_rows.html").module.message_rows
         html = str(macro(page["messages"], page["identities"], page["attachments"])) if page["messages"] else ""
         return JSONResponse({"html": html, "has_more": page["has_more"], "count": len(page["messages"])})
+    finally:
+        db.close()
+
+
+def _moments_channels(db: Session) -> list[Channel]:
+    """可查看朋友圈的账号:个人微信(微桥)账号,不含已删除的。"""
+
+    return list(db.scalars(select(Channel).where(Channel.channel_type == "wechat_webridge", Channel.deleted_at.is_(None)).order_by(Channel.id.asc())).all())
+
+
+def _moments_channel(db: Session, channel_id: int) -> Channel:
+    channel = get_channel(db, channel_id) if channel_id else None
+    if channel is None or channel.channel_type != "wechat_webridge":
+        raise HTTPException(status_code=404, detail="WeBridge channel not found")
+    return channel
+
+
+@app.get("/moments", response_class=HTMLResponse)
+async def moments_page(request: Request, channel_id: int = 0):
+    """朋友圈:查看从个人微信账号取回并缓存的朋友圈动态;「刷新」「加载更早」向手机发起取回。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        channels = _moments_channels(db)
+        channel = next((item for item in channels if int(item.id) == int(channel_id)), channels[0] if channels else None)
+        feed = webridge_moments.build_feed(db, channel) if channel else None
+        return render(
+            request,
+            "moments.html",
+            page_title="朋友圈",
+            channels=channels,
+            channel=channel,
+            feed=feed,
+            summary=webridge_moments.summary(db, channel) if channel else None,
+            can_refresh=has_tenant_role(require_user(request), "operator"),
+        )
+    finally:
+        db.close()
+
+
+@app.get("/moments/feed")
+async def moments_feed(request: Request, channel_id: int, before_id: int = 0):
+    """朋友圈的增量加载:返回渲染好的动态卡片 HTML,页面直接追加(或整体替换)。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        channel = _moments_channel(db, channel_id)
+        feed = webridge_moments.build_feed(db, channel, before_id=max(before_id, 0))
+        macro = templates.env.get_template("_moment_posts.html").module.moment_posts
+        html = str(macro(feed["posts"], feed["identities"])) if feed["posts"] else ""
+        return JSONResponse({"html": html, "has_more": feed["has_more"], "last_id": feed["posts"][-1]["id"] if feed["posts"] else 0, "count": len(feed["posts"])})
+    finally:
+        db.close()
+
+
+@app.get("/moments/status")
+async def moments_status(request: Request, channel_id: int):
+    """刷新进度(页面刷新后轮询):idle / running / done / failed,以及新增条数、缓存总数。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        channel = _moments_channel(db, channel_id)
+        info = webridge_moments.summary(db, channel)
+        refreshed = info["refreshed_at"]
+        return JSONResponse({**info, "ok": True, "refreshed_at": refreshed.strftime("%Y-%m-%d %H:%M:%S") if refreshed else ""})
+    finally:
+        db.close()
+
+
+@app.post("/moments/refresh")
+async def moments_refresh(request: Request, channel_id: int = Form(...), direction: str = Form("head")):
+    """向手机发起一次朋友圈取回(head 刷新最新 / tail 取更早的)。脚本提交,返回 JSON;结果由 /moments/status 查询。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        channel = _moments_channel(db, channel_id)
+        try:
+            outcome = webridge_moments.request_refresh(db, channel, direction)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "notice": str(exc)}, status_code=400)
+        db.commit()
+        if outcome["started"]:
+            record_audit(db, "moments.refresh", "channel", channel.id, f"direction={direction}")
+            return JSONResponse({"ok": True, "started": True, "notice": "正在从手机取回朋友圈…"})
+        return JSONResponse({"ok": True, "started": False, "notice": outcome["reason"]})
     finally:
         db.close()
 

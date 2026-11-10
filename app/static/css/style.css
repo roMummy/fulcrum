@@ -6079,3 +6079,217 @@ details.disclosure > summary:hover::after {
 .ui-switch input[type="hidden"] {
   display: none;
 }
+
+/* ===== 朋友圈 ===== */
+.moments-page {
+  display: grid;
+  gap: 14px;
+  max-width: 760px;
+}
+
+.moments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.moments-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.moments-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.moments-feed {
+  display: grid;
+  gap: 16px;
+}
+
+.moment-card {
+  display: flex;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.moment-avatar {
+  flex: 0 0 auto;
+}
+
+.moment-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.moment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.moment-name {
+  color: var(--primary-strong);
+}
+
+.moment-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.moment-content {
+  margin: 8px 0 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.moment-media {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 420px;
+  margin-top: 10px;
+}
+
+.moment-media-single {
+  grid-template-columns: minmax(0, 260px);
+}
+
+/* 单张竖图/竖视频太高时截到一屏内能看清的高度(cover 裁切) */
+.moment-media-single .moment-thumb {
+  max-height: 340px;
+}
+
+.moment-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+}
+
+.moment-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 预览图地址失效:显示占位,不留破图标 */
+.moment-thumb.is-broken img {
+  display: none;
+}
+
+.moment-thumb.is-broken .moment-play,
+.moment-thumb.is-broken .moment-duration {
+  display: none;
+}
+
+.moment-thumb.is-broken::before {
+  content: "预览已失效";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.moment-thumb.is-broken.is-video::before {
+  content: "视频预览已失效";
+}
+
+.moment-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 50%;
+}
+
+.moment-play::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  border: solid transparent;
+  border-width: 8px 0 8px 13px;
+  border-left-color: #fff;
+}
+
+.moment-duration {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 7px;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.moment-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.moment-stat.is-active {
+  color: var(--primary-strong);
+  font-weight: 600;
+}
+
+.moment-comments {
+  margin-top: 8px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  --disclosure-inset: 12px;
+}
+
+.moment-comments > summary {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.moment-comments ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0 12px 10px;
+  list-style: none;
+  font-size: 13px;
+}
+
+.moments-more {
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .moment-card {
+    padding: 14px;
+  }
+}
+
+/* hidden 属性必须真的隐藏:.chip、.btn 这类设置了 display 的元素会盖过浏览器默认的 [hidden] 样式
+   (朋友圈的"正在取回"标签、群列表的"只采集"标签、群插件的"已自定义"标签都靠它显示/隐藏)。 */
+[hidden] {
+  display: none !important;
+}

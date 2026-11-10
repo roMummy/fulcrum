@@ -780,6 +780,24 @@ def _complete_payment_command(db: Session, channel: Channel, job: TaskJob, data:
     return {"ok": True, "job_id": int(job.id), "status": "completed"}
 
 
+def _complete_moments_command(db: Session, channel: Channel, job: TaskJob, data: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """朋友圈取回的回报:交给 moments 模块入库/安排下一次查询,任务一律记为完成。
+
+    朋友圈内容是好友的隐私,任务结果里只留状态和数量,不保存动态内容(内容在 moments_posts 里)。
+    """
+
+    from app.services.wechat_webridge import moments
+
+    ok = bool(payload.get("ok")) or bool(result.get("ok"))
+    moments.handle_result(db, channel, as_object(data.get("command")), ok, result)
+    inner = as_object(result.get("result")) or result
+    items = inner.get("items")
+    summary = {"ok": ok, "status": text(inner.get("status")), "count": len(items) if isinstance(items, list) else 0}
+    logger.info("moments command result", extra={"channel_id": channel.id, "job_id": job.id, **summary})
+    complete_job(db, job, result={"webridge": summary})
+    return {"ok": True, "job_id": int(job.id), "status": "completed"}
+
+
 def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]) -> dict[str, Any]:
     """按 command request_id 完成任务；重复回报返回已处理状态。"""
 
@@ -817,6 +835,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         result = as_object(payload.get("result"))
         if text(as_object(data.get("command")).get("type")) in PAYMENT_COMMANDS:
             return _complete_payment_command(db, channel, job, data, payload, result)
+        if text(as_object(data.get("command")).get("type")) in {"moments_list", "moments_operation"}:
+            return _complete_moments_command(db, channel, job, data, payload, result)
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
             counts = persist_directory_result(db, channel, command, result)
