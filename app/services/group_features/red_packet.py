@@ -10,6 +10,8 @@
 - 延迟期间服务重启会丢掉这个还没入队的领取(几秒内的窗口,红包本身不受影响,只是这次没抢);为此不做持久化的复杂方案。
 
 领取结果是业务结果(领到多少、已被领完、已过期),不是任务故障,由 wechat_webridge.service 记日志并记为完成。
+领取命令的回报只说明"已打开",没有金额:领取成功后这里再安排几次红包详情查询(schedule_detail),
+拿到我领到的金额(或确认已被领完)后回填收款记录。
 """
 
 from __future__ import annotations
@@ -73,31 +75,65 @@ def _is_own_packet(channel: Channel, sender_id: str) -> bool:
     return bool(own) and own == sender_id
 
 
+def _enqueue(tenant_id: int, channel_id: int, command_name: str, args: dict[str, Any], request_id: str, priority: int) -> int | None:
+    """把一条命令入队并唤醒手机轮询;同一个 request_id 已经入过队返回 None。在定时器线程里运行,自己开租户会话。"""
+
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        if channel is None or channel.deleted_at is not None:
+            return None
+        try:
+            # request_id 决定去重键,任务表对 (租户, 去重键) 有唯一约束:同一个命令只入一次。
+            with db.begin_nested():
+                job = webridge_service.enqueue_command(db, channel, command_name=command_name, args=args, request_id=request_id, priority=priority)
+        except IntegrityError:
+            return None
+        db.commit()
+        job_id = int(job.id)
+    # 命令已提交,叫醒挂起中的手机轮询,不必等下一次 1 秒检查。
+    wakeup.notify(channel_id)
+    return job_id
+
+
 def claim(tenant_id: int, channel_id: int, conversation_id: int, red_packet_id: str) -> None:
-    """到点后把领取命令入队并唤醒手机轮询。在定时器线程里运行,自己开租户会话;出错只记日志。"""
+    """到点后把领取命令入队。出错只记日志。"""
 
     try:
-        with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
-            channel = db.get(Channel, int(channel_id))
-            if channel is None or channel.deleted_at is not None:
-                return
-            try:
-                # 同一个红包只领一次:request_id 由红包 ID 决定,任务表对 (租户, 去重键) 有唯一约束。
-                with db.begin_nested():
-                    job = webridge_service.enqueue_command(
-                        db, channel, command_name=COMMAND_NAME, args={"red_packet_id": red_packet_id},
-                        request_id=f"redpacket_{red_packet_id}", priority=CLAIM_PRIORITY,
-                    )
-            except IntegrityError:
-                logger.info("red packet already queued", extra={"channel_id": channel_id, "red_packet_id": red_packet_id})
-                return
-            db.commit()
-            job_id = int(job.id)
-        # 命令已提交,叫醒挂起中的手机轮询,不必等下一次 1 秒检查。
-        wakeup.notify(channel_id)
+        job_id = _enqueue(tenant_id, channel_id, COMMAND_NAME, {"red_packet_id": red_packet_id}, f"redpacket_{red_packet_id}", CLAIM_PRIORITY)
+        if job_id is None:
+            logger.info("red packet claim not queued", extra={"channel_id": channel_id, "red_packet_id": red_packet_id})
+            return
         logger.info("red packet claim queued", extra={"channel_id": channel_id, "conversation_id": conversation_id, "red_packet_id": red_packet_id, "job_id": job_id})
     except Exception:
         logger.exception("red packet claim enqueue failed", extra={"channel_id": channel_id, "red_packet_id": red_packet_id})
+
+
+# 领取之后查红包详情的次数与等待时间(秒):手机端"打开红包"是异步的,刚打开时详情里我的金额可能还没有。
+DETAIL_COMMAND = "red_packet_detail"
+DETAIL_DELAYS = (2.0, 4.0, 8.0)
+MAX_DETAIL_ATTEMPTS = len(DETAIL_DELAYS)
+DETAIL_PRIORITY = 120
+
+
+def detail_request_id(red_packet_id: str, attempt: int) -> str:
+    return f"redpacket_detail_{red_packet_id}_{attempt}"
+
+
+def schedule_detail(tenant_id: int, channel_id: int, red_packet_id: str, attempt: int) -> None:
+    """安排第 attempt 次(从 1 开始)查询红包详情:到点才入队,查到金额就不再继续(见 payment_ledger.apply_red_packet_detail)。"""
+
+    if attempt < 1 or attempt > MAX_DETAIL_ATTEMPTS:
+        return
+    _schedule(DETAIL_DELAYS[attempt - 1], _enqueue_detail, tenant_id, channel_id, red_packet_id, attempt)
+
+
+def _enqueue_detail(tenant_id: int, channel_id: int, red_packet_id: str, attempt: int) -> None:
+    try:
+        job_id = _enqueue(tenant_id, channel_id, DETAIL_COMMAND, {"red_packet_id": red_packet_id}, detail_request_id(red_packet_id, attempt), DETAIL_PRIORITY)
+        if job_id is not None:
+            logger.info("red packet detail queued", extra={"channel_id": channel_id, "red_packet_id": red_packet_id, "attempt": attempt, "job_id": job_id})
+    except Exception:
+        logger.exception("red packet detail enqueue failed", extra={"channel_id": channel_id, "red_packet_id": red_packet_id, "attempt": attempt})
 
 
 def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:

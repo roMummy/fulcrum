@@ -4,9 +4,10 @@
 出现事件、决定处理时就写一行(状态 pending);手机回报命令结果后回填状态和金额。
 用户在手机上手动领取的红包/转账系统无从得知,不在记录里。
 
-金额:转账的事件自带金额;红包要领取后才知道,但协议文档没有写领取回报里金额字段的名字,
-所以这里按几个常见字段名尽量提取(amount_fen/amount_value/amount_yuan/amount_text),取不到时金额为空,
-同时把回报内容(截断)存进 result_json,拿到真实样例后可以据此补充解析。
+金额:转账的事件自带金额。红包的领取回报只说明"已打开"(opened),没有金额;金额要在领取之后
+再查一次红包详情(red_packet_detail)才知道:我领到的是 current_received_amount_cent,
+红包已领完(remaining_count=0)而我是 0 就是来晚了。手机端打开红包有一点延迟,所以详情最多查几次(见 red_packet 模块)。
+手机的原始回报(截断)都存进 result_json,便于核对。
 """
 
 from __future__ import annotations
@@ -136,7 +137,7 @@ def classify(kind: str, *, ok: bool, inner: Mapping[str, Any]) -> str:
     """把手机回报归为一种状态。
 
     转账:confirmed=true 才算收到(文档:ok、accepted 都不代表到账);等待超时/结果未知是"未确认到账"。
-    红包:成功即收到;失败时回报里带"已被领完/已过期"一类的词算"来晚了",其余算失败。
+    红包:领取成功只是"已打开",先记处理中,金额和结果等详情;失败时回报里带"已被领完/已过期"一类的词算"来晚了",其余算失败。
     """
 
     status = _text(inner.get("status"))
@@ -146,8 +147,9 @@ def classify(kind: str, *, ok: bool, inner: Mapping[str, Any]) -> str:
         if ok or status in _UNKNOWN_TRANSFER_STATUSES:
             return STATUS_UNCONFIRMED
         return STATUS_FAILED
-    if ok:
-        return STATUS_RECEIVED
+    if ok and inner.get("opened") is not False:
+        # 红包领取回报只说明已打开,到底领到多少要等详情查询确认(见 apply_red_packet_detail)。
+        return STATUS_PENDING
     return STATUS_MISSED if _MISSED_PATTERN.search(json.dumps(inner, ensure_ascii=False)) else STATUS_FAILED
 
 
@@ -171,6 +173,46 @@ def settle(db: Session, *, channel_id: int, kind: str, external_id: str, ok: boo
         row.amount_fen = found
     row.settled_at = now_shanghai()
     return row
+
+
+def apply_red_packet_detail(
+    db: Session, *, channel_id: int, external_id: str, ok: bool, result: Mapping[str, Any], attempt: int, max_attempts: int
+) -> str:
+    """用红包详情回填领取结果。返回 "final"(已有定论或不用再查)或 "retry"(还没查到结果,稍后再查一次)。
+
+    手机端的"打开红包"是异步的,刚打开时详情里我的金额可能还是 0,所以:
+    - 我领到了(current_received_amount_cent > 0):已收到,金额就是它;
+    - 红包已被领完(remaining_count = 0)而我是 0:来晚了;
+    - 还有剩余、我是 0,或者详情没查到:没到最后一次就再查一次,最后一次仍没结果记"未确认到账"。
+    调用方负责提交。
+    """
+
+    row = db.scalar(
+        select(PaymentReceipt).where(
+            PaymentReceipt.channel_id == int(channel_id), PaymentReceipt.kind == KIND_RED_PACKET, PaymentReceipt.external_id == _text(external_id)
+        )
+    )
+    if row is None or row.status != STATUS_PENDING:
+        return "final"
+    inner = result.get("result") if isinstance(result.get("result"), Mapping) else result
+    ready = ok and _text(inner.get("status")) == "detail_ready"
+    mine = inner.get("current_received_amount_cent") if ready else None
+    mine = int(mine) if isinstance(mine, (int, float)) and not isinstance(mine, bool) else None
+    remaining = inner.get("remaining_count") if ready else None
+    if mine:
+        verdict = STATUS_RECEIVED
+        row.amount_fen = mine
+    elif ready and remaining == 0:
+        verdict = STATUS_MISSED
+    elif attempt >= max_attempts:
+        verdict = STATUS_UNCONFIRMED
+    else:
+        return "retry"
+    row.status = verdict
+    row.result_status = _text(inner.get("status"))[:60] or None
+    row.result_json = json.dumps(result, ensure_ascii=False)[:RESULT_JSON_LIMIT]
+    row.settled_at = now_shanghai()
+    return "final"
 
 
 def _period_stats(db: Session, base_filters: list, since) -> dict[str, Any]:

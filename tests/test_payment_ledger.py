@@ -126,7 +126,8 @@ def test_transfer_event_is_recorded_with_amount_payer_and_chat(env) -> None:
 
 def _run(db, channel, request_id: str, reported: dict) -> None:
     for job in db.scalars(select(TaskJob).where(TaskJob.job_type == service.JOB_TYPE)).all():
-        job.status = "running"
+        if json.loads(job.payload_json).get("command", {}).get("request_id") == request_id:
+            job.status = "running"  # 手机已领取这条命令
     db.commit()
     with patch.object(service, "_enqueue_account_status"), patch.object(service, "_enqueue_device_status"):
         service.accept_command_result(db, channel, {**IDENTITY, "request_id": request_id, **reported})
@@ -158,21 +159,119 @@ def test_unconfirmed_and_failed_transfers_are_not_counted_as_received(env, repor
     assert _receipts(db)[0].status == status
 
 
-def test_red_packet_results_fill_status_and_amount(env) -> None:
+# 线上真实回报(2026-11-10 在 BOT-测试 群领到的 1 元红包):领取回报只说"已打开",没有金额;
+# 金额在随后查询的红包详情里:current_received_amount_cent 是"我领到的"。
+REAL_CLAIM = {
+    "ok": True,
+    "result": {"room_id": "49740991276@chatroom", "accepted": True, "red_packet_id": "rp_msg_3451183832849212577", "opened": True, "status": "opened"},
+}
+REAL_DETAIL = {
+    "ok": True,
+    "result": {
+        "status": "detail_ready", "red_packet_id": "rp_msg_3451183832849212577", "total_amount_cent": 100, "total_count": 2, "received_count": 2,
+        "remaining_count": 0, "remaining_amount_cent": 0, "current_received_amount_cent": 76, "current_received_amount": 0.76,
+    },
+}
+
+
+@pytest.fixture()
+def packet_flow(env, monkeypatch):
+    """红包领取全流程的小工具:领取入队、手机回报领取结果、手机回报详情;并记录安排了哪几次详情查询。"""
+
     db, channel, _room = env
-    for packet in ("rp_ok", "rp_late", "rp_broken"):
+    scheduled: list[tuple[float, str, tuple]] = []
+    monkeypatch.setattr(red_packet, "_schedule", lambda delay, func, *args: scheduled.append((delay, func.__name__, args)))
+    monkeypatch.setattr(red_packet, "tenant_session", _same_session(db))
+
+    def start_packet(packet: str) -> None:
         dispatch_group_features(db, channel, _packet_event(packet=packet), conversation_id=3)
-    # 把领取命令入队(定时器被测试替换掉了,这里直接走入队函数)
-    with patch.object(wakeup, "notify"), patch.object(red_packet, "tenant_session", _same_session(db)):
-        for packet in ("rp_ok", "rp_late", "rp_broken"):
+        with patch.object(wakeup, "notify"):
             red_packet.claim(1, channel.id, 3, packet)
-    _run(db, channel, "redpacket_rp_ok", {"ok": True, "result": {"ok": True, "status": "received", "amount_text": "￥0.88"}})
-    _run(db, channel, "redpacket_rp_late", {"ok": False, "result": {"ok": False, "status": "fully_claimed"}})
+
+    def detail(packet: str, attempt: int, reported: dict) -> None:
+        with patch.object(wakeup, "notify"):
+            red_packet._enqueue_detail(1, channel.id, packet, attempt)
+        _run(db, channel, red_packet.detail_request_id(packet, attempt), reported)
+
+    return db, channel, scheduled, start_packet, detail
+
+
+def _row(db, packet: str) -> PaymentReceipt:
+    return next(row for row in _receipts(db) if row.external_id == packet)
+
+
+def test_a_successful_claim_only_means_opened_so_the_amount_comes_from_the_detail(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    start_packet("rp_ok")
+    scheduled.clear()  # 去掉"延迟领取"的定时器,下面只看领取成功之后安排了什么
+    _run(db, channel, "redpacket_rp_ok", REAL_CLAIM)
+    # 领取回报没有金额:先是处理中,并安排第一次详情查询(2 秒后)
+    assert (_row(db, "rp_ok").status, _row(db, "rp_ok").amount_fen) == ("pending", None)
+    assert [(delay, name, args) for delay, name, args in scheduled] == [(2.0, "_enqueue_detail", (1, channel.id, "rp_ok", 1))]
+    # 详情里我领到了 0.76 元
+    scheduled.clear()
+    detail("rp_ok", 1, REAL_DETAIL)
+    row = _row(db, "rp_ok")
+    assert (row.status, row.amount_fen, row.result_status) == ("received", 76, "detail_ready") and scheduled == []
+    assert "current_received_amount_cent" in row.result_json  # 原始回报留存
+
+
+def test_detail_shows_the_packet_was_fully_claimed_by_others(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    start_packet("rp_late")
+    _run(db, channel, "redpacket_rp_late", REAL_CLAIM)
+    scheduled.clear()
+    late = {"ok": True, "result": {**REAL_DETAIL["result"], "current_received_amount_cent": 0, "current_received_amount": 0}}
+    detail("rp_late", 1, late)
+    assert (_row(db, "rp_late").status, _row(db, "rp_late").amount_fen) == ("missed", None) and scheduled == []
+
+
+def test_detail_is_retried_when_the_phone_has_not_finished_opening_and_gives_up_at_the_end(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    start_packet("rp_slow")
+    _run(db, channel, "redpacket_rp_slow", REAL_CLAIM)
+    scheduled.clear()
+    # 还有剩余、我还是 0:手机端可能还没处理完,再查一次(2s → 4s → 8s,共 3 次)
+    not_yet = {"ok": True, "result": {**REAL_DETAIL["result"], "current_received_amount_cent": 0, "remaining_count": 1}}
+    detail("rp_slow", 1, not_yet)
+    assert _row(db, "rp_slow").status == "pending" and scheduled == [(4.0, "_enqueue_detail", (1, channel.id, "rp_slow", 2))]
+    scheduled.clear()
+    detail("rp_slow", 2, {"ok": False, "result": {"ok": False, "error": "timeout"}})  # 查询本身失败也重试
+    assert _row(db, "rp_slow").status == "pending" and scheduled == [(8.0, "_enqueue_detail", (1, channel.id, "rp_slow", 3))]
+    scheduled.clear()
+    detail("rp_slow", 3, not_yet)  # 最后一次仍没结果:不再重试,记"未确认到账"
+    assert _row(db, "rp_slow").status == "unconfirmed" and scheduled == []
+
+
+def test_a_retry_that_finally_sees_the_amount_still_settles(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    start_packet("rp_2nd")
+    _run(db, channel, "redpacket_rp_2nd", REAL_CLAIM)
+    detail("rp_2nd", 1, {"ok": True, "result": {**REAL_DETAIL["result"], "current_received_amount_cent": 0, "remaining_count": 1}})
+    detail("rp_2nd", 2, REAL_DETAIL)
+    assert (_row(db, "rp_2nd").status, _row(db, "rp_2nd").amount_fen) == ("received", 76)
+
+
+def test_failed_claims_never_schedule_a_detail_query(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    for packet in ("rp_gone", "rp_broken"):
+        start_packet(packet)
+    scheduled.clear()
+    _run(db, channel, "redpacket_rp_gone", {"ok": False, "result": {"ok": False, "status": "fully_claimed"}})  # 来晚了
     _run(db, channel, "redpacket_rp_broken", {"ok": False, "result": {"ok": False, "status": "not_logged_in"}})
-    by_id = {row.external_id: row for row in _receipts(db)}
-    assert (by_id["rp_ok"].status, by_id["rp_ok"].amount_fen) == ("received", 88)
-    assert (by_id["rp_late"].status, by_id["rp_late"].amount_fen) == ("missed", None)  # 来晚了:被领完
-    assert by_id["rp_broken"].status == "failed"
+    assert (_row(db, "rp_gone").status, _row(db, "rp_broken").status) == ("missed", "failed") and scheduled == []
+
+
+def test_detail_for_an_unknown_or_already_settled_packet_is_harmless(packet_flow) -> None:
+    db, channel, scheduled, start_packet, detail = packet_flow
+    assert ledger.apply_red_packet_detail(db, channel_id=channel.id, external_id="nope", ok=True, result=REAL_DETAIL, attempt=1, max_attempts=3) == "final"
+    start_packet("rp_done")
+    _run(db, channel, "redpacket_rp_done", REAL_CLAIM)
+    detail("rp_done", 1, REAL_DETAIL)
+    # 已经有定论,后到的详情不再改动
+    other = {"ok": True, "result": {**REAL_DETAIL["result"], "current_received_amount_cent": 999}}
+    assert ledger.apply_red_packet_detail(db, channel_id=channel.id, external_id="rp_done", ok=True, result=other, attempt=2, max_attempts=3) == "final"
+    assert _row(db, "rp_done").amount_fen == 76
 
 
 def _same_session(db):

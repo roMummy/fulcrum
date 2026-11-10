@@ -719,7 +719,15 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
 
 # 这些命令的回报是业务结果(领到多少、已被领完、已过期、是否确认到账),不是任务故障。
 # 值是 (参数里的业务 ID 键名, 判断"确认成功"的方式):红包看 ok;转账必须 confirmed(文档:ok 与 accepted 都不算到账)。
-PAYMENT_COMMANDS = {"receive_red_packet": "red_packet_id", "receive_transfer": "transfer_id"}
+PAYMENT_COMMANDS = {"receive_red_packet": "red_packet_id", "red_packet_detail": "red_packet_id", "receive_transfer": "transfer_id"}
+
+
+def _schedule_red_packet_detail(channel: Channel, red_packet_id: str, *, attempt: int) -> None:
+    """安排一次红包详情查询(到点入队)。延迟导入:红包模块依赖本模块,不能在模块加载时互相导入。"""
+
+    from app.services.group_features import red_packet
+
+    red_packet.schedule_detail(int(channel.tenant_id), int(channel.id), red_packet_id, attempt)
 
 
 def _complete_payment_command(db: Session, channel: Channel, job: TaskJob, data: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -739,12 +747,27 @@ def _complete_payment_command(db: Session, channel: Channel, job: TaskJob, data:
         succeeded = bool(inner.get("confirmed"))
     else:
         succeeded = bool(payload.get("ok")) or bool(result.get("ok"))
-    # 回填收款记录(状态、金额、手机的原始回报);功能上线前入队的命令没有对应记录,settle 返回 None 即可。
+    # 回填收款记录(状态、金额、手机的原始回报);功能上线前入队的命令没有对应记录,找不到时什么也不做。
+    ok = bool(payload.get("ok")) or bool(result.get("ok"))
     if command_type == "receive_transfer":
-        kind, external_id = payment_ledger.KIND_TRANSFER, text(params.get("transfer_id") or params.get("message_id"))
+        payment_ledger.settle(db, channel_id=int(channel.id), kind=payment_ledger.KIND_TRANSFER, external_id=text(params.get("transfer_id") or params.get("message_id")), ok=ok, result=result)
+    elif command_type == "receive_red_packet":
+        red_packet_id = text(params.get("red_packet_id"))
+        row = payment_ledger.settle(db, channel_id=int(channel.id), kind=payment_ledger.KIND_RED_PACKET, external_id=red_packet_id, ok=ok, result=result)
+        if row is not None and row.status == payment_ledger.STATUS_PENDING:
+            # 领取回报只说明"已打开",没有金额:稍后查红包详情拿到我领到的金额。
+            _schedule_red_packet_detail(channel, red_packet_id, attempt=1)
     else:
-        kind, external_id = payment_ledger.KIND_RED_PACKET, text(params.get("red_packet_id"))
-    payment_ledger.settle(db, channel_id=int(channel.id), kind=kind, external_id=external_id, ok=bool(payload.get("ok")) or bool(result.get("ok")), result=result)
+        red_packet_id = text(params.get("red_packet_id"))
+        request_id = text(command.get("request_id"))
+        attempt = int(request_id.rsplit("_", 1)[-1]) if request_id.rsplit("_", 1)[-1].isdigit() else 1
+        from app.services.group_features import red_packet
+
+        outcome = payment_ledger.apply_red_packet_detail(
+            db, channel_id=int(channel.id), external_id=red_packet_id, ok=ok, result=result, attempt=attempt, max_attempts=red_packet.MAX_DETAIL_ATTEMPTS
+        )
+        if outcome == "retry":
+            _schedule_red_packet_detail(channel, red_packet_id, attempt=attempt + 1)
     log = logger.info if succeeded else logger.warning
     log(
         "payment command result",
