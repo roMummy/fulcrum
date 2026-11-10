@@ -4991,6 +4991,15 @@ code {
 
 /* ===== 群功能卡片(群详情「功能」标签) =====
    主次:卡片标题 + 总开关为主;设置区用浅底分小节铺开,不折叠。 */
+.gf-notice {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
 .gf-list {
   display: grid;
   gap: 16px;

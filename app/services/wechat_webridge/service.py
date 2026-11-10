@@ -165,12 +165,13 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 continue
             room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
             if room is None:
-                room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now)
+                # 新发现的群默认启用;已存在的群保持后台设置的启用状态,
+                # 同步群列表不能把手动停用的群重新打开。
+                room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now, is_active=True, management_status="enabled")
                 db.add(room)
             room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
             room.remark = str(item.get("remark") or "")[:255] or None
             room.status = "synced"
-            room.is_active = True
             room.last_seen_at = now
             room.last_synced_at = now
             room.member_count = int(item.get("member_count") or item.get("member_total") or item.get("member_num") or room.member_count or 0)

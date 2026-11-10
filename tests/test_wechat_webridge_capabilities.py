@@ -165,6 +165,31 @@ def test_persist_directory_result_reads_group_id_and_nick_name() -> None:
     assert db.added[0].display_name == "小柒"
 
 
+def test_groups_sync_enables_new_rooms_but_keeps_disabled_rooms_disabled() -> None:
+    """同步群列表:新群默认启用;已存在的群保持后台设置,手动停用的群不能被同步重新打开。"""
+
+    from app.models.entities import Chatroom
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    item = {"items": [{"account_id": "g1@chatroom", "nick_name": "新群"}]}
+    db = _FakeDirectoryDB()
+    service.persist_directory_result(db, channel, {"type": "groups_all"}, item)
+    assert db.added[0].is_active is True and db.added[0].management_status == "enabled"
+
+    class _ExistingDB(_FakeDirectoryDB):
+        def __init__(self, room) -> None:
+            super().__init__()
+            self.room = room
+
+        def scalar(self, *_args, **_kwargs):
+            return self.room
+
+    disabled = Chatroom(channel_id=2, external_id="g1@chatroom", name="旧名", is_active=False, management_status="disabled")
+    service.persist_directory_result(_ExistingDB(disabled), channel, {"type": "groups_all"}, item)
+    assert disabled.is_active is False and disabled.management_status == "disabled"
+    assert disabled.name == "新群"  # 资料照常更新,只是不改启用状态
+
+
 def test_reap_stale_commands_only_fails_timed_out_jobs_of_this_channel(tmp_path) -> None:
     """领取后超时未回报的命令要置为失败终态；未超时和其他渠道的任务不能被误伤。"""
 

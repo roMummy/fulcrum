@@ -54,9 +54,9 @@ def get_state(chatroom: Chatroom, feature: GroupFeature) -> tuple[bool, dict[str
 
 
 def is_enabled(chatroom: Chatroom | None, feature_key: str) -> bool:
-    """该群打开了这个能力即启用,不再依赖群的“纳管状态”。"""
+    """群已启用(总开关)且该能力已打开才算启用。"""
 
-    if chatroom is None:
+    if chatroom is None or not bool(getattr(chatroom, "is_active", False)):
         return False
     feature = get_feature(feature_key)
     return bool(feature and get_state(chatroom, feature)[0])

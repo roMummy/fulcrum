@@ -33,6 +33,9 @@
 
   {% if tab == 'features' %}
   {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
+  {% if not detail.is_active %}
+  <p class="gf-notice">本群当前未启用：插件和群功能都不会触发。请到“资料”标签或群管理列表启用本群。</p>
+  {% endif %}
   <div class="gf-list">
   {% for item in features %}
   <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card>
