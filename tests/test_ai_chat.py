@@ -95,21 +95,43 @@ def test_save_memories_dedupes_and_trims_to_limit() -> None:
 
 
 def test_chat_fallback_enqueues_without_catalog_only_when_enabled() -> None:
-    """没有任何可调度功能时：聊天兜底关闭不入队，打开才入队。"""
+    """没有任何可调度功能时：群聊看本群的「AI 对话」群功能,租户聊天开关只管私聊。"""
 
+    from app.models.entities import BotPlugin, Chatroom
     from app.services import plugin_directory as pd
+    from app.services.group_features.store import save_state
 
     db = _session()
     channel = _seed(db)
     # 把唯一启用的插件去掉，目录为空。
-    from app.models.entities import BotPlugin
     db.query(BotPlugin).delete()
     db.commit()
     plan = pd.build_static_dispatch_plan(db, channel, EVENT)
     assert pd._enqueue_ai_intent(db, plan, EVENT, raw_event_id=7, conversation_id=2, message_id=3) is False
+
+    # 租户聊天开关打开,群聊仍不聊天(该群没开 AI 对话)
     db.query(TenantAiSetting).update({"chat_enabled": True})
+    room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="1@chatroom", name="群", is_active=True)
+    db.add(room)
+    db.commit()
+    assert pd._enqueue_ai_intent(db, plan, EVENT, raw_event_id=7, conversation_id=2, message_id=3) is False
+
+    # 该群打开「AI 对话」才入队
+    save_state(room, "ai_chat", enabled=True)
     db.commit()
     assert pd._enqueue_ai_intent(db, plan, EVENT, raw_event_id=7, conversation_id=2, message_id=3) is True
+
+    # 私聊:由租户聊天开关控制
+    direct = {
+        "conversation": {"external_id": "wxid_a", "chat_type": "direct"},
+        "message": {"content": "在吗", "sender_id": "wxid_a", "message_type": "text"},
+        "details": {},
+    }
+    direct_plan = pd.build_static_dispatch_plan(db, channel, direct)
+    assert pd._enqueue_ai_intent(db, direct_plan, direct, raw_event_id=8, conversation_id=3, message_id=4) is True
+    db.query(TenantAiSetting).update({"chat_enabled": False})
+    db.commit()
+    assert pd._enqueue_ai_intent(db, direct_plan, direct, raw_event_id=9, conversation_id=3, message_id=5) is False
 
 
 def test_save_setting_persists_persona_and_chat_flag() -> None:

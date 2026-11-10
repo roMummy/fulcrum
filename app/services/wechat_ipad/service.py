@@ -1492,7 +1492,6 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
 
 
 def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
-    chatroom_extra = _parse_json(chatroom.extra_json)
     members = db.scalars(
         select(ChatroomMember)
         .where(ChatroomMember.chatroom_id == chatroom.id)
@@ -1626,8 +1625,6 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
         "name": chatroom.name or chatroom.external_id,
         "remark": chatroom.remark or "-",
         "owner_external_id": chatroom.owner_external_id or "-",
-        "auto_download_media_enabled": bool(chatroom_extra.get("auto_download_media")),
-        "auto_download_media_label": "已开启" if bool(chatroom_extra.get("auto_download_media")) else "未开启",
         "status": chatroom.status or "unknown",
         "status_label": _format_chatroom_status(chatroom.status),
         "management_status": chatroom.management_status or "discovered",

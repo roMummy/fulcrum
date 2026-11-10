@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{# 群详情：功能 / 插件 / 成员 / 消息 / 资料 五个标签，默认进入功能；技术字段统一折叠到“技术信息”。 #}
+{# 群详情：群功能 / 插件 / 成员 / 消息 / 资料 五个标签，默认进入群功能；技术字段统一折叠到“技术信息”。 #}
 {% set base_url = '/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
@@ -24,7 +24,7 @@
   </div>
 
   <nav class="tab-bar">
-    <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">功能 ({{ features|selectattr('enabled')|list|length }}/{{ features|length }})</a>
+    <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">群功能</a>
     <a href="{{ base_url }}?tab=plugins" class="{{ 'active' if tab == 'plugins' }}">插件 ({{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }})</a>
     <a href="{{ base_url }}?tab=members" class="{{ 'active' if tab == 'members' }}">成员 ({{ detail.members|length }})</a>
     <a href="{{ base_url }}?tab=messages" class="{{ 'active' if tab == 'messages' }}">消息</a>
@@ -33,10 +33,28 @@
 
   {% if tab == 'features' %}
   {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
-  {% if not detail.is_active %}
-  <p class="gf-notice">本群当前未启用：插件和群功能都不会触发。请到“资料”标签或群管理列表启用本群。</p>
-  {% endif %}
   <div class="gf-list">
+  {# 本群启用:总开关。关闭后机器人在本群不响应任何插件、群功能和 AI 对话。 #}
+  <form method="post" action="{{ base_url }}/management" class="gf-card{% if detail.is_active %} is-on{% endif %}" data-gf-card>
+    <input type="hidden" name="toggle" value="1" />
+    <input type="hidden" name="next" value="{{ base_url }}?tab=features" />
+    <header class="gf-head">
+      <div class="gf-head-copy">
+        <h3>本群启用</h3>
+        <p>关闭后，机器人在本群不响应任何插件、群功能和 AI 对话。</p>
+      </div>
+      <div class="gf-head-actions">
+        <label class="gf-master" title="在本群启用或停用">
+          <span class="gf-master-text" data-gf-state>{{ '已启用' if detail.is_active else '已停用' }}</span>
+          <span class="gf-switch">
+            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已启用" data-off-text="已停用"{% if detail.is_active %} checked{% endif %} />
+            <span class="gf-switch-track"></span>
+          </span>
+        </label>
+        <button class="btn btn-small" type="submit">保存</button>
+      </div>
+    </header>
+  </form>
   {% for item in features %}
   <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card>
     <header class="gf-head">
@@ -44,13 +62,16 @@
         <h3>{{ item.name }}</h3>
         <p>{{ item.description }}</p>
       </div>
-      <label class="gf-master" title="在本群开启或关闭">
-        <span class="gf-master-text" data-gf-state>{{ '已开启' if item.enabled else '未开启' }}</span>
-        <span class="gf-switch">
-          <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master{% if item.enabled %} checked{% endif %} />
-          <span class="gf-switch-track"></span>
-        </span>
-      </label>
+      <div class="gf-head-actions">
+        <label class="gf-master" title="在本群开启或关闭">
+          <span class="gf-master-text" data-gf-state>{{ '已开启' if item.enabled else '未开启' }}</span>
+          <span class="gf-switch">
+            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启"{% if item.enabled %} checked{% endif %} />
+            <span class="gf-switch-track"></span>
+          </span>
+        </label>
+        {% if not item.sections %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
+      </div>
     </header>
 
     {% if item.sections %}
@@ -78,6 +99,10 @@
             <span class="gf-field-label">{{ field.label }}</span>
             {% if field.kind == 'number' %}
             <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
+            {% elif field.kind == 'secret' %}
+            <input type="password" name="{{ field.name }}" autocomplete="new-password" placeholder="{{ '已配置，留空则保持不变' if field.configured else '未配置，沿用租户统一设置' }}" />
+            {% elif field.kind == 'textarea' %}
+            <textarea name="{{ field.name }}" rows="4" maxlength="2000">{{ field.value }}</textarea>
             {% else %}
             <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
             {% endif %}
@@ -91,9 +116,11 @@
     </div>
     {% endif %}
 
+    {% if item.sections %}
     <footer class="gf-foot">
       <button class="btn" type="submit">保存</button>
     </footer>
+    {% endif %}
   </form>
   {% endfor %}
   </div>
@@ -210,27 +237,6 @@
       <tr><th>本地状态</th><td>{{ detail.status_label }}</td></tr>
     </tbody>
   </table>
-  <form method="post" action="{{ base_url }}/management" class="form-grid top-gap">
-    <label class="full-row">
-      <span>群纳管状态（只有“已启用管理”的群会运行插件）</span>
-      <select name="management_status">
-        <option value="discovered" {% if detail.management_status == 'discovered' %}selected{% endif %}>待启用</option>
-        <option value="enabled" {% if detail.management_status == 'enabled' %}selected{% endif %}>已启用管理</option>
-        <option value="disabled" {% if detail.management_status == 'disabled' %}selected{% endif %}>已停用</option>
-        <option value="archived" {% if detail.management_status == 'archived' %}selected{% endif %}>已归档</option>
-      </select>
-    </label>
-    <button class="btn btn-secondary" type="submit">保存</button>
-  </form>
-  {% if detail.supports_media_download or channel.channel_type == 'wechat_ipad' %}
-  <form method="post" action="{{ base_url }}/media-download" style="margin-top:12px;">
-    <label style="display:flex;gap:8px;align-items:center;">
-      <input type="checkbox" name="enabled" value="true"{% if detail.auto_download_media_enabled %} checked{% endif %} />
-      <span>自动下载本群收到的图片、语音、视频{% if channel.channel_type == 'wechat_webridge' %}（占用手机资源，默认关闭）{% endif %}</span>
-    </label>
-    <button class="btn btn-secondary" type="submit" style="margin-top:10px;">保存附件设置</button>
-  </form>
-  {% endif %}
   <details style="margin-top:16px;">
     <summary class="muted-text">技术信息</summary>
     <p class="muted-text">群 #{{ detail.chatroom_id }} · 外部 ID <code>{{ detail.chatroom_external_id }}</code> · 群主 <code>{{ detail.owner_external_id }}</code> · 来源 {{ detail.observed_source }} · 同步深度 {{ detail.sync_depth_label }}</p>
@@ -247,7 +253,7 @@
       const state = card.querySelector("[data-gf-state]");
       const sync = () => {
         card.classList.toggle("is-on", master.checked);
-        if (state) state.textContent = master.checked ? "已开启" : "未开启";
+        if (state) state.textContent = master.checked ? master.dataset.onText : master.dataset.offText;
         card.querySelectorAll("[data-gf-depends]").forEach((el) => {
           const dep = card.querySelector(`[name="${el.dataset.gfDepends}"]`);
           el.classList.toggle("is-dim", !!dep && !dep.checked);

@@ -607,13 +607,19 @@ def _enqueue_ai_intent(
             context.chat_type, context.mentioned_self, context.message_text
         ):
             return False
-        setting = ai_dispatch.get_ai_setting(db)
-        if not ai_dispatch.is_ai_ready(setting):
+        # 本会话的 AI 解析:租户总开关、群里独立的模型/聊天开关都在这里合并判断。
+        resolved = ai_dispatch.resolve_for_conversation(
+            db,
+            channel_id=context.channel_id,
+            chat_type=context.chat_type,
+            conversation_external_id=context.conversation_external_id,
+        )
+        if resolved is None:
             return False
         # 目录只包含本群当前可用的插件，模型看不到也调不到未启用的能力；
-        # 没有可调度功能且没开聊天兜底时不入队，开了聊天兜底则直接进入聊天。
+        # 没有可调度功能且本会话没开聊天兜底时不入队，开了聊天兜底则直接进入聊天。
         catalog = ai_dispatch.build_catalog([item.plugin_code for item in static_plan.candidates])
-        if not catalog and not setting.chat_enabled:
+        if not catalog and not resolved.chat_enabled:
             return False
         # 同一条消息最多产生一个意图任务，重试和重复投递不会重复调用模型。
         dedupe_key = f"ai_intent:{context.channel_id}:{raw_event_id or message_id or 0}"

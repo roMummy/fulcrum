@@ -119,9 +119,6 @@ def build_webridge_chatroom_detail(db: Session, channel: Channel, chatroom: Chat
             "sync_button_label": "同步群成员",
             "member_section_hint": "成员来自手机插件的群成员同步；为空时点击右上角“同步群成员”，稍后刷新本页。",
             # 默认关闭:手机端回传媒体会占用串行通道、拖慢消息上报,需要时再按群开启。
-            "auto_download_media_enabled": bool(parse_config_json(chatroom.extra_json).get("auto_download_media")),
-            "auto_download_media_label": "已开启" if parse_config_json(chatroom.extra_json).get("auto_download_media") else "未开启",
-            "supports_media_download": True,
         }
     )
     return detail

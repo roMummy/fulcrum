@@ -12,11 +12,16 @@ from app.services.group_features.store import get_state, save_state
 FORM_PREFIX = "cfg_"
 
 
-def build_feature_cards(chatroom: Chatroom) -> list[dict[str, Any]]:
-    """生成页面渲染用的能力列表:每项含开关状态和按小节分好组、带当前值的配置项。"""
+def build_feature_cards(chatroom: Chatroom, channel_type: str = "") -> list[dict[str, Any]]:
+    """生成页面渲染用的能力列表:每项含开关状态和按小节分好组、带当前值的配置项。
+
+    限定了渠道类型的能力(如自动下载附件)只在对应渠道的群里显示。
+    """
 
     cards: list[dict[str, Any]] = []
     for feature in all_features():
+        if feature.channel_types and channel_type not in feature.channel_types:
+            continue
         enabled, config = get_state(chatroom, feature)
         sections: list[dict[str, Any]] = []
         for item in feature.fields:
@@ -27,7 +32,9 @@ def build_feature_cards(chatroom: Chatroom) -> list[dict[str, Any]]:
                 "label": item.label,
                 "kind": item.kind,
                 "hint": item.hint,
-                "value": config[item.key],
+                # 密钥不回显,只告诉页面是否已配置。
+                "value": "" if item.kind == "secret" else config[item.key],
+                "configured": bool(config[item.key]) if item.kind == "secret" else False,
                 "minimum": item.minimum,
                 "maximum": item.maximum,
                 "depends_on": FORM_PREFIX + item.depends_on if item.depends_on else "",

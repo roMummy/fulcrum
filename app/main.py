@@ -2424,7 +2424,7 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             detail=detail,
             # 群详情分为 功能/插件/成员/消息/资料 五个标签，非法值回落到功能。
             tab=tab if tab in ("features", "plugins", "members", "messages", "profile") else "features",
-            features=build_feature_cards(chatroom),
+            features=build_feature_cards(chatroom, channel.channel_type),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -3454,7 +3454,9 @@ async def update_channel_chatroom_management_action(
     request: Request,
     channel_id: int,
     chatroom_id: int,
-    management_status: str = Form(...),
+    management_status: str = Form(""),
+    enabled: str = Form(""),
+    toggle: str = Form(""),
     next: str = Form(""),
 ):
     user = enforce_role(request, "ops")
@@ -3466,6 +3468,11 @@ async def update_channel_chatroom_management_action(
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
+        # 群功能页的“本群启用”开关提交的是 toggle + enabled 复选框(未勾选时浏览器不提交 enabled)。
+        if toggle:
+            management_status = "enabled" if enabled else "disabled"
+        elif not management_status:
+            raise HTTPException(status_code=400, detail="management_status required")
         set_chatroom_management_status(chatroom, management_status)
         db.commit()
         record_audit(
@@ -3540,36 +3547,6 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
         message = str(overview.get("last_status_summary") or "已同步企微群列表")
         record_audit(db, "channel.workwechat.sync-chatrooms", "channel", channel.id, message)
         return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/media-download")
-async def update_wechat_ipad_chatroom_media_download_action(
-    request: Request,
-    channel_id: int,
-    chatroom_id: int,
-    enabled: str = Form("false"),
-):
-    user = enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        chatroom = db.get(Chatroom, chatroom_id)
-        if not chatroom or chatroom.channel_id != channel.id:
-            raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in {"wechat_ipad", "wechat_webridge"}:
-            raise HTTPException(status_code=400, detail="当前渠道不支持附件自动下载")
-        extra = parse_config_json(chatroom.extra_json)
-        is_enabled = str(enabled or "").strip().lower() == "true"
-        extra["auto_download_media"] = is_enabled
-        chatroom.extra_json = json.dumps(extra, ensure_ascii=False, sort_keys=True)
-        db.commit()
-        message = "已开启当前群的附件自动下载" if is_enabled else "已关闭当前群的附件自动下载"
-        record_audit(db, "channel.wechat-ipad.chatroom-media-download.update", "chatroom", chatroom.id, f"{message} by {user.username}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
     finally:
         db.close()
 

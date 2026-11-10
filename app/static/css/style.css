@@ -4991,31 +4991,17 @@ code {
 
 /* ===== 群功能卡片(群详情「功能」标签) =====
    主次:卡片标题 + 总开关为主;设置区用浅底分小节铺开,不折叠。 */
-.gf-notice {
-  margin: 0 0 14px;
-  padding: 10px 14px;
-  color: var(--warning);
-  background: var(--warning-soft);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-}
-
 .gf-list {
   display: grid;
   gap: 16px;
 }
 
+/* 卡片只靠底色和柔影分隔,不画外框线和段落分隔线。 */
 .gf-card {
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   overflow: hidden;
-  transition: border-color 300ms ease;
-}
-
-.gf-card.is-on {
-  border-color: var(--primary);
 }
 
 .gf-head {
@@ -5136,7 +5122,6 @@ code {
   gap: 18px;
   padding: 18px 20px;
   background: var(--surface-soft);
-  border-top: 1px solid var(--border);
   transition: opacity 250ms ease;
 }
 
@@ -5155,7 +5140,6 @@ code {
 .gf-switch-list {
   display: grid;
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
@@ -5172,7 +5156,7 @@ code {
 }
 
 .gf-row + .gf-row {
-  border-top: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--surface-muted);
 }
 
 .gf-inputs {
@@ -5237,7 +5221,30 @@ code {
   display: flex;
   justify-content: flex-end;
   padding: 14px 20px;
-  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.gf-head-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 16px;
+}
+
+.gf-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
+.gf-field textarea:focus-visible {
+  border-color: var(--primary);
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
 }
 
 @media (max-width: 720px) {

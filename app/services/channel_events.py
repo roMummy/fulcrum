@@ -567,13 +567,10 @@ def _chatroom_auto_download_media_enabled(
     )
     if group is None:
         return False
-    try:
-        import json
+    # 群功能「自动下载附件」:群已启用且该能力已打开才下载。
+    from app.services.group_features.store import is_enabled
 
-        payload = json.loads(group.extra_json or "{}")
-    except Exception:
-        payload = {}
-    return bool(payload.get("auto_download_media"))
+    return is_enabled(group, "media_download")
 
 
 def _update_chatroom_member_last_active(

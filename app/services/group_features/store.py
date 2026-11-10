@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from app.models.entities import Chatroom
+from app.services.security import encrypt_secret
 from app.services.group_features.registry import ConfigField, GroupFeature, get_feature
 
 EXTRA_KEY = "group_features"
@@ -73,7 +74,17 @@ def save_state(chatroom: Chatroom, feature_key: str, *, enabled: bool, config: d
     entry = features.get(feature_key) if isinstance(features.get(feature_key), dict) else {}
     entry["enabled"] = bool(enabled)
     if config is not None:
-        entry["config"] = {item.key: _coerce(item, config.get(item.key, item.default)) for item in feature.fields}
+        saved = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+        new_config: dict[str, Any] = {}
+        for item in feature.fields:
+            raw = config.get(item.key, item.default)
+            if item.kind == "secret":
+                # 密钥:填了就加密保存,留空保持原值(页面从不回显密钥,不能因为没填就清掉)。
+                plain = str(raw or "").strip()
+                new_config[item.key] = encrypt_secret(plain) if plain else str(saved.get(item.key) or "")
+            else:
+                new_config[item.key] = _coerce(item, raw)
+        entry["config"] = new_config
     features[feature_key] = entry
     extra[EXTRA_KEY] = features
     chatroom.extra_json = json.dumps(extra, ensure_ascii=False, sort_keys=True)

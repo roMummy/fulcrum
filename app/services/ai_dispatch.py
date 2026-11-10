@@ -18,7 +18,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.logging import get_logger
 from app.core.time import now_shanghai
-from app.models.entities import AiDecision, Message, TenantAiSetting
+from app.models.entities import AiDecision, Chatroom, Message, TenantAiSetting
 from app.services.plugin_runtime.text_generation import PluginTextGenerationClient, PluginTextGenerationError
 from app.services.security import decrypt_secret, encrypt_secret
 
@@ -115,6 +115,56 @@ def snapshot_setting(setting: TenantAiSetting) -> ModelConfig:
         chat_enabled=bool(setting.chat_enabled),
         persona=setting.persona or "",
     )
+
+
+@dataclass(frozen=True)
+class AiResolution:
+    """某个会话在本次消息上的 AI 解析结果:该用哪套模型、是否允许聊天。"""
+
+    setting: TenantAiSetting
+    config: ModelConfig
+    chat_enabled: bool
+
+
+def resolve_for_conversation(
+    db: Session,
+    *,
+    channel_id: int,
+    chat_type: str,
+    conversation_external_id: str | None,
+) -> AiResolution | None:
+    """决定本次消息走不走 AI、用哪套模型、能不能聊天;不可用返回 None。
+
+    - 租户「AI 助手」总开关是前提(意图路由和聊天都受它控制),额度也按租户统计。
+    - 群聊:聊天由本群的「AI 对话」群功能控制(群已启用为前提);群里填了的接口地址/模型/密钥/人格
+      覆盖租户设置,没填的项沿用租户设置。
+    - 私聊:聊天由租户设置里的开关控制,模型和人格用租户设置。
+    """
+
+    from app.services.group_features.ai_chat import get_override
+
+    setting = get_ai_setting(db)
+    if setting is None or not setting.enabled:
+        return None
+    override = None
+    chat_enabled = bool(setting.chat_enabled)
+    if chat_type == "group":
+        room = db.scalar(
+            select(Chatroom).where(Chatroom.channel_id == channel_id, Chatroom.external_id == str(conversation_external_id or ""))
+        )
+        override = get_override(room) if room is not None else None
+        chat_enabled = bool(room is not None and room.is_active and override and override.enabled)
+    config = ModelConfig(
+        api_base=(override.api_base if override and override.api_base else setting.api_base) or "",
+        model=(override.model if override and override.model else setting.model) or "",
+        api_key=(override.api_key if override and override.api_key else decrypt_secret(setting.api_key_encrypted)) or "",
+        chat_enabled=chat_enabled,
+        persona=(override.persona if override and override.persona else setting.persona) or "",
+    )
+    # 地址、模型、密钥合并后仍不齐全就不可用(例如租户没配、群里也没配全)。
+    if not (config.api_base and config.model and config.api_key):
+        return None
+    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled)
 
 
 def _build_client(config: ModelConfig) -> PluginTextGenerationClient:
@@ -272,15 +322,20 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
     event = payload.get("normalized_event")
     if channel is None or not isinstance(event, dict):
         return None
-    setting = get_ai_setting(db)
-    if not is_ai_ready(setting):
-        return None
     plan = build_static_dispatch_plan(db, channel, event)
+    resolved = resolve_for_conversation(
+        db,
+        channel_id=channel.id,
+        chat_type=plan.context.chat_type,
+        conversation_external_id=plan.context.conversation_external_id,
+    )
+    if resolved is None:
+        return None
     catalog = build_catalog([item.plugin_code for item in plan.candidates])
-    if not catalog and not setting.chat_enabled:
+    if not catalog and not resolved.chat_enabled:
         return None
     text = str((event.get("message") or {}).get("content") or "")
-    if used_today(db) >= int(setting.daily_limit or 0):
+    if used_today(db) >= int(resolved.setting.daily_limit or 0):
         record_decision(
             db,
             channel_id=channel.id,
@@ -292,16 +347,16 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
         db.commit()
         return None
     chat = None
-    if setting.chat_enabled:
+    if resolved.chat_enabled:
         chat = ai_chat.build_chat_input(
             db,
             channel_id=channel.id,
             conversation_id=payload.get("conversation_id"),
             sender_id=str(plan.context.sender_id or ""),
             text=text,
-            persona=setting.persona or "",
+            persona=resolved.config.persona,
         )
-    return snapshot_setting(setting), text, catalog, chat
+    return resolved.config, text, catalog, chat
 
 
 @contextmanager
@@ -363,6 +418,7 @@ def should_trigger(chat_type: str, mentioned_self: bool, text: str) -> bool:
 
 __all__ = [
     "AiIntent",
+    "AiResolution",
     "analyze_intent",
     "build_catalog",
     "effective_message_content",
@@ -370,6 +426,7 @@ __all__ = [
     "get_ai_setting",
     "is_ai_ready",
     "prepare_intent",
+    "resolve_for_conversation",
     "record_decision",
     "save_ai_setting",
     "should_trigger",

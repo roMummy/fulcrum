@@ -16,7 +16,7 @@ class ConfigField:
 
     key: str
     label: str
-    # text / textarea / number / bool
+    # text / textarea / number / bool / secret(密钥:加密保存,页面不回显,留空表示保持不变)
     kind: str = "text"
     default: Any = ""
     hint: str = ""
@@ -44,6 +44,8 @@ class GroupFeature:
     commands: tuple[str, ...] = ()
     # 事件型能力关心的消息类型(如 group_member_join);命令型留空。
     event_types: tuple[str, ...] = ()
+    # 只在这些渠道类型的群里提供(页面不显示其他渠道);留空表示所有渠道。
+    channel_types: tuple[str, ...] = ()
 
     def defaults(self) -> dict[str, Any]:
         return {item.key: item.default for item in self.fields}
@@ -85,4 +87,4 @@ def _ensure_loaded() -> None:
     if _loaded:
         return
     _loaded = True
-    from app.services.group_features import inactive_rank, member_change  # noqa: F401
+    from app.services.group_features import ai_chat, inactive_rank, media_download, member_change  # noqa: F401
