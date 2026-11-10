@@ -48,14 +48,16 @@ def _page(total: int, page: int) -> dict[str, Any]:
 def channel_options(db: Session) -> list[dict[str, Any]]:
     """可供筛选的渠道:只列出有群或好友资料的渠道,名称取渠道自己的显示名。"""
 
-    return [{"id": int(item.id), "name": item.name or f"账号 #{item.id}"} for item in db.scalars(select(Channel).order_by(Channel.id.asc())).all()]
+    return [{"id": int(item.id), "name": item.name or f"账号 #{item.id}"} for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.asc())).all()]
 
 
 def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int = 0, status: str = "", page: int = 1) -> dict[str, Any]:
     """群列表:每个群一行,带头像昵称、所属账号、成员数、纳管状态和是否开着插件。"""
 
     q = (keyword or "").strip()[:100]
-    stmt = select(Chatroom)
+    # 已删除账号的群不再出现在列表和汇总里(数据仍保留)。
+    visible = Chatroom.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None)))
+    stmt = select(Chatroom).where(visible)
     if channel_id:
         stmt = stmt.where(Chatroom.channel_id == channel_id)
     if status in MANAGEMENT_LABELS:
@@ -70,7 +72,7 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
     paging = _page(total, page)
     rooms = db.scalars(stmt.order_by(Chatroom.is_active.desc(), Chatroom.name.asc(), Chatroom.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
 
-    channels = {int(item.id): item for item in db.scalars(select(Channel)).all()}
+    channels = {int(item.id): item for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None))).all()}
     rows = [
         {
             "id": int(room.id),
@@ -86,9 +88,9 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
         for room in rooms
     ]
     summary = {
-        "total": int(db.scalar(select(func.count(Chatroom.id))) or 0),
-        "enabled": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.management_status == "enabled")) or 0),
-        "pending": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.management_status == "discovered")) or 0),
+        "total": int(db.scalar(select(func.count(Chatroom.id)).where(visible)) or 0),
+        "enabled": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "enabled")) or 0),
+        "pending": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "discovered")) or 0),
     }
     return {"rows": rows, "paging": paging, "keyword": q, "channel_id": channel_id, "status": status, "summary": summary}
 
@@ -97,7 +99,10 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
     """好友列表:每个好友一行,带头像昵称、备注、所属账号、共同所在的群数,并可发起聊天。"""
 
     q = (keyword or "").strip()[:100]
-    stmt = select(WorkWechatContact).where(WorkWechatContact.contact_kind == FRIEND_KIND)
+    stmt = select(WorkWechatContact).where(
+        WorkWechatContact.contact_kind == FRIEND_KIND,
+        WorkWechatContact.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None))),
+    )
     if channel_id:
         stmt = stmt.where(WorkWechatContact.channel_id == channel_id)
     if q:
@@ -113,7 +118,7 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
     paging = _page(total, page)
     contacts = db.scalars(stmt.order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
 
-    channels = {int(item.id): item for item in db.scalars(select(Channel)).all()}
+    channels = {int(item.id): item for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None))).all()}
     # 本页好友各自所在的群数、以及与好友的私聊会话,一次性批量取,避免逐行查询。
     external_ids = {item.contact_external_id for item in contacts}
     group_counts: dict[tuple[int, str], int] = {}

@@ -72,6 +72,9 @@ def ingest_normalized_event(
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_key = str(normalized.get("event_key") or "").strip()
+    # 已逻辑删除的账号不再接收任何事件。
+    if channel.deleted_at is not None:
+        return {"ok": True, "ignored": True, "reason": "channel_deleted", "raw_event_id": None, "mapped": False, "normalized": normalized}
     # 群设为“完全关闭”时不接收、不记录:不落原始事件、会话和消息,也不入队调度。
     if _group_collection_off(db, channel, normalized):
         logger.debug("inbound event ignored because group collection is off", extra={"channel_id": channel.id})

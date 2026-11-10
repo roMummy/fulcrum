@@ -147,7 +147,10 @@ def toggle_channel(db: Session, channel: Channel) -> Channel:
 
 
 def get_channel(db: Session, channel_id: int) -> Channel | None:
-    return db.get(Channel, channel_id)
+    """读取账号;已逻辑删除的账号视为不存在,详情和各类操作入口因此统一返回 404。"""
+
+    channel = db.get(Channel, channel_id)
+    return None if channel is not None and channel.deleted_at is not None else channel
 
 
 def delete_bot(db: Session, bot: Bot) -> None:

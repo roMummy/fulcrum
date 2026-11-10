@@ -52,6 +52,9 @@ class Channel(Base, TenantOwnedMixin, TimestampMixin):
     runtime_info_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="offline")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 逻辑删除时间:非空表示账号已被删除。数据(群、会话、消息)全部保留,但账号从清单隐藏、
+    # 不再接收事件和手机请求,占用的额度已释放。
+    deleted_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # 节点与发现账号绑定由服务端校验租户和父子关系，客户端任务不能临时改选账号。
     provider_node_id: Mapped[int | None] = mapped_column(ForeignKey("provider_nodes.id"), nullable=True, index=True)
     provider_account_id: Mapped[int | None] = mapped_column(

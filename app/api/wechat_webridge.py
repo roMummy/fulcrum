@@ -57,7 +57,8 @@ def _channel_tenant(channel_id: int) -> tuple[int, int]:
 
     with platform_session(SessionLocal) as db:
         channel = db.get(Channel, int(channel_id))
-        if channel is None or channel.channel_type != "wechat_webridge":
+        # 已逻辑删除的账号不再接受手机的事件、轮询和命令回报。
+        if channel is None or channel.channel_type != "wechat_webridge" or channel.deleted_at is not None:
             raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
         return int(channel.tenant_id), int(channel.id)
 

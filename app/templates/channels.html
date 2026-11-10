@@ -62,6 +62,13 @@
         </div>
       </dl>
       <div class="record-actions">
+        {# 只有未启用的账号可以删除:从清单隐藏并释放额度,聊天数据保留。 #}
+        {% if not row.channel.is_enabled %}
+        <form method="post" action="/channels/{{ row.channel.id }}/delete" onsubmit="return confirm('删除账号「{{ row.identity.name }}」？\n删除后会从清单中隐藏，并释放它占用的额度；聊天记录会保留。');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="btn btn-small btn-secondary" type="submit">删除</button>
+        </form>
+        {% endif %}
         <a class="record-action-trigger" href="/channels/{{ row.channel.id }}" aria-label="查看 {{ row.connection.display_name }}" title="查看详情">&#8250;</a>
       </div>
     </article>

@@ -49,6 +49,7 @@ from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
 from app.services.account_identity import account_identity, bot_identity
+from app.services.channel_deletion import ChannelDeletionError, delete_channel_account
 from app.services.chatroom_registry import (
     GROUP_MODE_COLLECT_ONLY,
     GROUP_MODE_OFF,
@@ -481,7 +482,7 @@ def _build_workwechat_contact_form_payload(**values: str) -> dict[str, Any]:
 
 
 def filtered_channels_query(db: Session):
-    return db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+    return db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
 
 
 def filtered_bindings_query(db: Session):
@@ -1585,7 +1586,7 @@ async def bots_page(request: Request):
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
         # 列表需要稳定的计数键，模板不再触碰已删除的分组、模板、标签和环境关系。
         channels_by_bot: dict[int, list[Channel]] = {}
-        for channel in db.scalars(select(Channel).order_by(Channel.id.asc())).all():
+        for channel in db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.asc())).all():
             channels_by_bot.setdefault(int(channel.bot_id), []).append(channel)
         bot_rows = [
             {
@@ -1616,7 +1617,7 @@ async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
         bot = get_bot(db, bot_id)
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
-        channels = db.scalars(select(Channel).where(Channel.bot_id == bot_id).order_by(Channel.id.desc())).all()
+        channels = db.scalars(select(Channel).where(Channel.bot_id == bot_id, Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
         bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == bot_id).order_by(BotPlugin.id.desc())).all()
         conversation_count = db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot_id)) or 0
         return render(
@@ -1771,7 +1772,7 @@ async def channels_page(request: Request):
         # 不再把 API Base、Webhook、适配 JSON 和执行端主键平铺给租户。
         channels = db.scalars(
             select(Channel)
-            .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES))
+            .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES), Channel.deleted_at.is_(None))
             .order_by(Channel.id.desc())
         ).all()
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
@@ -2879,6 +2880,31 @@ async def toggle_channel_action(request: Request, channel_id: int, csrf_token: s
         toggle_channel(db, channel)
         record_audit(db, "channel.toggle", "channel", channel.id, f"enabled={channel.is_enabled}")
         return RedirectResponse(url=f"/channels/{channel_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/delete")
+async def delete_channel_action(request: Request, channel_id: int, csrf_token: str = Form("")):
+    """删除未启用的账号(逻辑删除):从清单隐藏并释放额度,聊天数据全部保留。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        name = channel.name
+        try:
+            released = delete_channel_account(db, channel)
+        except ChannelDeletionError as exc:
+            return RedirectResponse(url=f"/channels?notice={quote(str(exc))}&tone=danger", status_code=303)
+        db.commit()
+        record_audit(db, "channel.delete", "channel", channel_id, f"逻辑删除账号 {name},释放额度 {released} 个")
+        return RedirectResponse(url=f"/channels?notice={quote('账号已删除，占用的额度已释放')}", status_code=303)
     finally:
         db.close()
 
@@ -4481,7 +4507,7 @@ async def messages_page(
             "query": urlencode({key: value for key, value in pagination_query.items() if value not in ("", 0, None)}),
         }
         bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
-        channels = db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+        channels = db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
         # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
         selected_chatroom = None
         selected_summary = next((row for row in conversation_summaries if int(row["conversation"].id) == conversation_id), None)
