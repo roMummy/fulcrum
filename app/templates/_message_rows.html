@@ -1,0 +1,31 @@
+{# 消息中心的消息行。首屏渲染、向上滚动加载更早、发送后拉取新消息三处共用,保证样式一致。
+   每行带 data-id,前端据此判断"更早/更新"的边界。 #}
+{% macro message_rows(messages, identities, attachments_by_message) %}
+{% for item in messages %}
+{% set who = identities.get(item.id) %}
+{% set is_out = item.direction == 'out' %}
+{% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}
+<div class="wechat-message-row {{ 'out' if is_out else 'in' }}" data-id="{{ item.id }}">
+  <span class="wechat-avatar">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if is_out else '?') }}{% endif %}</span>
+  <div class="wechat-message-main">
+    <div class="wechat-message-meta">
+      {{ who.name if who and who.name else ('我方' if is_out else '联系人') }}
+      {% if who and who.show_id and not is_out %}<small class="identity-id">{{ who.external_id }}</small>{% endif %}
+      · {{ item.created_at|bj_time if item.created_at else '-' }}
+      {% if is_out and item.status == 'failed' %}<span class="wechat-msg-status">发送失败</span>{% endif %}
+    </div>
+    <article class="wechat-message-bubble {{ 'out' if is_out else 'in' }}">
+      {% for attachment in attachment_items %}
+        {% if attachment.attachment_type == 'image' and attachment.storage_path %}<img class="wechat-media-image" src="/media/attachments/{{ attachment.id }}" alt="图片消息" loading="lazy" />
+        {% elif attachment.attachment_type == 'video' and attachment.storage_path %}<video class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></video>
+        {% elif attachment.attachment_type == 'voice' and attachment.storage_path %}<audio class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></audio>
+        {% else %}<a class="wechat-file-card" href="/media/attachments/{{ attachment.id }}">{{ attachment.attachment_type or '文件' }}{% if attachment.file_size %} · {{ attachment.file_size }} bytes{% endif %}</a>
+        {% endif %}
+      {% endfor %}
+      {% if item.message_type in ['xml', 'app', 'mini_program', 'card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) or '结构化消息' }}</div>
+      {% elif item.content %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) }}</div>{% endif %}
+    </article>
+  </div>
+</div>
+{% endfor %}
+{% endmacro %}

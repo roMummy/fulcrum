@@ -5545,3 +5545,312 @@ code {
   font-weight: 400;
   line-height: 1.5;
 }
+
+/* ===== 消息中心 =====
+   整页撑满窗口:左侧会话列表、右侧对话各自在内部滚动;高度由 messages.js 按窗口精确计算,这里的 calc 只是脚本未执行时的兜底。
+   不使用边框线分隔,层次靠卡片阴影和浅色底。 */
+.msg-center {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+  height: calc(100dvh - 200px);
+  min-height: 460px;
+}
+
+.wechat-conversation-list,
+.wechat-thread {
+  min-height: 0;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.wechat-conversation-list {
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.wechat-conversation-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  color: inherit;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  transition: background-color 200ms ease-in-out;
+}
+
+.wechat-conversation-item:hover {
+  background: var(--surface-soft);
+}
+
+.wechat-conversation-item.active {
+  background: var(--primary-soft);
+}
+
+.wechat-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-radius: 14px;
+  font-weight: 650;
+}
+
+.wechat-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wechat-conversation-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.wechat-conversation-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wechat-conversation-name,
+.wechat-conversation-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wechat-conversation-preview {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wechat-conversation-time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wechat-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.wechat-thread-head {
+  flex: 0 0 auto;
+  padding: 16px 22px 12px;
+}
+
+.wechat-thread-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.wechat-thread-head p {
+  margin: 4px 0 0;
+}
+
+/* 对话区占满剩余高度,只在这里滚动;底色比卡片略深,气泡才有层次。 */
+.wechat-thread-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 18px 22px;
+  overflow-y: auto;
+  background: var(--surface-soft);
+  overscroll-behavior: contain;
+}
+
+.wechat-load-hint {
+  padding: 4px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.wechat-message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.wechat-message-row.out {
+  flex-direction: row-reverse;
+}
+
+.wechat-message-row .wechat-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+}
+
+.wechat-message-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 76%;
+}
+
+.wechat-message-row.out .wechat-message-main {
+  align-items: flex-end;
+}
+
+.wechat-message-meta {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wechat-msg-status {
+  margin-left: 6px;
+  padding: 1px 8px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 999px;
+}
+
+.wechat-message-bubble {
+  max-width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-radius: 6px var(--radius-md) var(--radius-md) var(--radius-md);
+  box-shadow: 0 2px 10px rgba(72, 82, 140, 0.06);
+}
+
+.wechat-message-bubble.out {
+  background: var(--primary-soft);
+  border-radius: var(--radius-md) 6px var(--radius-md) var(--radius-md);
+  box-shadow: none;
+}
+
+.wechat-message-content {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.wechat-media-image {
+  display: block;
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+
+.wechat-media-player {
+  display: block;
+  max-width: 280px;
+}
+
+.wechat-file-card {
+  display: inline-block;
+  padding: 8px 12px;
+  color: var(--primary-strong);
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+
+.wechat-empty {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  color: var(--muted);
+}
+
+/* 发送框:一个圆角输入底座,文字区自动长高,发送按钮在右下角。 */
+.wechat-composer {
+  flex: 0 0 auto;
+  padding: 12px 18px 10px;
+  background: var(--surface);
+}
+
+.wechat-composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  transition: border-color 200ms ease-in-out, box-shadow 200ms ease-in-out, background-color 200ms ease-in-out;
+}
+
+.wechat-composer-box:focus-within {
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.wechat-composer-box textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  padding: 8px 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  line-height: 1.55;
+  outline: 0;
+  resize: none;
+}
+
+.wechat-send {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 16px;
+  color: #ffffff;
+  background: var(--primary-strong);
+  border: 0;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.18);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 550;
+  transition: background-color 200ms ease-in-out, box-shadow 200ms ease-in-out, opacity 200ms ease-in-out;
+}
+
+.wechat-send:hover:not(:disabled) {
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.24);
+}
+
+.wechat-send:disabled {
+  background: var(--border-strong);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.wechat-composer-hint {
+  margin: 6px 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wechat-composer-hint.is-error {
+  color: var(--danger);
+}
+
+@media (max-width: 900px) {
+  .msg-center {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 180px) minmax(0, 1fr);
+  }
+
+  .wechat-message-main {
+    max-width: 88%;
+  }
+}

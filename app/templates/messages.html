@@ -1,38 +1,65 @@
 {% extends 'base.html' %}
-{% from '_identity.html' import identity %}
+{% from '_message_rows.html' import message_rows %}
 {% block hero_actions %}
-<div class="hero-action-cluster"><span class="chip chip-outline">消息 {{ pagination.total if pagination else messages|length }}</span></div>
+{% if selected_total is not none %}<div class="hero-action-cluster"><span class="chip chip-outline">消息 {{ selected_total }}</span></div>{% endif %}
 {% endblock %}
 {% block content %}
-<style>
-  .wechat-message-layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;min-height:620px}.wechat-conversation-list,.wechat-thread{overflow:hidden}.wechat-conversation-list{padding:0}.wechat-conversation-item{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-color,#e5e7eb);text-decoration:none;color:inherit}.wechat-conversation-item.active{background:var(--surface-muted,#eef4ff)}.wechat-avatar{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-weight:700;flex:0 0 auto}.wechat-conversation-copy{min-width:0;flex:1}.wechat-conversation-head{display:flex;justify-content:space-between;gap:8px}.wechat-conversation-name,.wechat-conversation-preview{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wechat-conversation-preview{font-size:13px;color:var(--muted-text,#64748b);margin-top:5px}.wechat-conversation-time{font-size:12px;color:var(--muted-text,#64748b);white-space:nowrap}.wechat-thread{display:flex;flex-direction:column}.wechat-thread-head{padding:18px 20px;border-bottom:1px solid var(--border-color,#e5e7eb)}.wechat-thread-body{padding:20px;overflow:auto;max-height:660px;background:#f8fafc}.wechat-message-row{display:flex;gap:10px;margin:0 0 14px;align-items:flex-start}.wechat-message-row.out{flex-direction:row-reverse}.wechat-message-row .wechat-avatar{width:36px;height:36px;border-radius:10px;overflow:hidden}.wechat-message-main{max-width:78%;min-width:0;display:flex;flex-direction:column}.wechat-message-row.out .wechat-message-main{align-items:flex-end}.wechat-message-bubble{max-width:100%;margin:0;padding:11px 14px;border-radius:14px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.06)}.wechat-message-bubble.out{background:#95ec69}.wechat-message-meta{font-size:12px;color:var(--muted-text,#64748b);margin-bottom:5px}.wechat-message-content{white-space:pre-wrap;word-break:break-word;line-height:1.6}.wechat-media-image{display:block;max-width:280px;max-height:280px;border-radius:10px;object-fit:cover}.wechat-media-player{display:block;max-width:280px}.wechat-file-card{display:inline-block;padding:10px 12px;border-radius:9px;background:#f1f5f9;color:#1d4ed8;text-decoration:none}.wechat-empty{display:grid;place-items:center;min-height:480px;color:var(--muted-text,#64748b)}@media (max-width:900px){.wechat-message-layout{grid-template-columns:1fr}.wechat-conversation-list{max-height:300px}.wechat-thread-body{max-height:none}}
-</style>
-<section class="work-surface">
-  <div class="section-head"><div><h2>微信式消息中心</h2><p class="muted-text">左侧选择联系人或群聊，右侧查看消息历史。</p></div></div>
-  {% if conversation_summaries %}
-  <div class="wechat-message-layout">
-    <aside class="wechat-conversation-list">
-      {% for item in conversation_summaries %}<a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}"><span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span><span class="wechat-conversation-copy"><span class="wechat-conversation-head"><strong class="wechat-conversation-name">{{ item.display_name }}</strong><time class="wechat-conversation-time">{{ item.latest.created_at|bj_time if item.latest and item.latest.created_at else '-' }}</time></span><span class="wechat-conversation-preview">{{ item.latest.content|message_display(item.latest.message_type) if item.latest else '暂无消息' }}</span></span></a>{% endfor %}
-    </aside>
-    <section class="wechat-thread">
-      {% set selected = namespace(item=None) %}{% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{% set selected.item = item %}{% endif %}{% endfor %}
-      {% if selected.item %}<header class="wechat-thread-head"><h2>{{ selected.item.display_name }}</h2><p class="muted-text">{{ '群聊' if selected.item.conversation.chat_type == 'group' else '私聊' }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p></header>{% endif %}
-      <div class="wechat-thread-body" id="wechat-thread-body">
-        {% if selected_conversation_id and messages %}{% for item in messages|reverse %}{% set who = message_identities.get(item.id) %}<div class="wechat-message-row {{ 'out' if item.direction == 'out' else 'in' }}"><span class="wechat-avatar">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" style="width:100%;height:100%;object-fit:cover" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if item.direction == 'out' else '?') }}{% endif %}</span><div class="wechat-message-main"><div class="wechat-message-meta">{{ who.name if who and who.name else ('我方' if item.direction == 'out' else '联系人') }}{% if who and who.show_id and item.direction != 'out' %} <small class="identity-id">{{ who.external_id }}</small>{% endif %} · {{ item.created_at|bj_time if item.created_at else '-' }}</div><article class="wechat-message-bubble {{ 'out' if item.direction == 'out' else 'in' }}">{% set attachment_items = attachments_by_message.get(item.id, []) if attachments_by_message else [] %}{% if attachment_items %}{% for attachment in attachment_items %}{% if attachment.attachment_type == 'image' and attachment.storage_path %}<img class="wechat-media-image" src="/media/attachments/{{ attachment.id }}" alt="图片消息" loading="lazy" />{% elif attachment.attachment_type == 'video' and attachment.storage_path %}<video class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></video>{% elif attachment.attachment_type == 'voice' and attachment.storage_path %}<audio class="wechat-media-player" controls preload="metadata" src="/media/attachments/{{ attachment.id }}"></audio>{% else %}<a class="wechat-file-card" href="/media/attachments/{{ attachment.id }}">{{ attachment.attachment_type or '文件' }}{% if attachment.file_size %} · {{ attachment.file_size }} bytes{% endif %}</a>{% endif %}{% endfor %}{% endif %}{% if item.content and item.message_type not in ['xml','app','mini_program','card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) }}</div>{% elif item.message_type in ['xml','app','mini_program','card'] %}<div class="wechat-message-content">{{ item.content|message_display(item.message_type) or '结构化消息' }}</div>{% endif %}</article></div></div>{% endfor %}{% elif not selected_conversation_id %}<div class="wechat-empty">从左侧选择一个联系人或群聊</div>{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
-      </div>
-      {% if selected.item %}
-      {# 直接在消息中心回复:提交后回到本会话,由机器人通道异步发出。 #}
-      <form method="post" action="/messages/send" class="wechat-composer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border-color,#e5e7eb);">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <input type="hidden" name="conversation_id" value="{{ selected_conversation_id }}" />
-        <input name="content" placeholder="输入要发送的消息" autocomplete="off" required style="flex:1;" />
-        <button class="btn" type="submit">发送</button>
-      </form>
+{% if conversation_summaries %}
+{# 整页撑满窗口高度:左侧会话列表、右侧对话各自在内部滚动(高度由 messages.js 按窗口计算,样式里有兜底值)。 #}
+<section class="msg-center" id="msg-center" data-conversation-id="{{ selected_conversation_id or '' }}" data-has-more="{{ 1 if has_more_messages else 0 }}">
+  <aside class="wechat-conversation-list" aria-label="会话列表">
+    {% for item in conversation_summaries %}
+    <a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}">
+      <span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span>
+      <span class="wechat-conversation-copy">
+        <span class="wechat-conversation-head">
+          <strong class="wechat-conversation-name">{{ item.display_name }}</strong>
+          <time class="wechat-conversation-time">{{ item.latest.created_at|bj_time if item.latest and item.latest.created_at else '-' }}</time>
+        </span>
+        <span class="wechat-conversation-preview">{{ item.latest.content|message_display(item.latest.message_type) if item.latest else '暂无消息' }}</span>
+      </span>
+    </a>
+    {% endfor %}
+  </aside>
+
+  <section class="wechat-thread">
+    {% set selected = namespace(item=None) %}
+    {% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{% set selected.item = item %}{% endif %}{% endfor %}
+    {% if selected.item %}
+    <header class="wechat-thread-head">
+      <h2>{{ selected.item.display_name }}</h2>
+      <p class="muted-text">{{ '群聊' if selected.item.conversation.chat_type == 'group' else '私聊' }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p>
+    </header>
+    {% endif %}
+
+    <div class="wechat-thread-body" id="wechat-thread-body">
+      {% if not selected_conversation_id %}
+      <div class="wechat-empty">从左侧选择一个联系人或群聊</div>
+      {% else %}
+      <div class="wechat-load-hint" id="wechat-load-hint" hidden></div>
+      {% if messages %}{{ message_rows(messages, message_identities, attachments_by_message) }}{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
       {% endif %}
-      {% if selected_conversation_id and pagination %}<div class="list-pagination"><div class="list-pagination-summary">第 {{ pagination.page }} / {{ pagination.total_pages }} 页（第 1 页为最新），共 {{ pagination.total }} 条</div><div class="list-pagination-actions">{% if pagination.has_next %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}&page={{ pagination.next_page }}">更早消息</a>{% endif %}{% if pagination.has_prev %}<a class="btn btn-secondary" href="/messages?conversation_id={{ selected_conversation_id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}&page={{ pagination.prev_page }}">更新消息</a>{% endif %}</div></div>{% endif %}
-    </section>
-  </div>
-  {% else %}<div class="wechat-empty">暂无会话消息</div>{% endif %}
+    </div>
+
+    {% if selected.item %}
+    {# 发送框:由 messages.js 用 fetch 提交,不刷新页面;Enter 发送,Shift+Enter 换行。 #}
+    <form class="wechat-composer" id="wechat-composer" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="conversation_id" value="{{ selected_conversation_id }}" />
+      <div class="wechat-composer-box">
+        <textarea name="content" rows="1" maxlength="2000" placeholder="输入消息…" aria-label="消息内容"></textarea>
+        <button class="wechat-send" type="submit" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
+          <span>发送</span>
+        </button>
+      </div>
+      <p class="wechat-composer-hint" id="wechat-composer-hint" role="status">Enter 发送，Shift + Enter 换行</p>
+    </form>
+    {% endif %}
+  </section>
 </section>
-<script>(function(){var b=document.getElementById("wechat-thread-body");if(b){b.scrollTop=b.scrollHeight;}})();</script>
+<script src="/static/js/messages.js" defer></script>
+{% else %}
+<div class="work-surface"><div class="wechat-empty">暂无会话消息</div></div>
+{% endif %}
 {% endblock %}

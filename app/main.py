@@ -4301,8 +4301,17 @@ def _build_manual_plugin_execution_context(
     )
 
 
+# 消息中心单条发送内容的长度上限(微信文本消息本身有上限,这里取一个稳妥值)。
+MANUAL_MESSAGE_MAX_CHARS = 2000
+
+
 @app.post("/messages/send")
 async def send_manual_message_action(request: Request, conversation_id: int = Form(...), content: str = Form(...), csrf_token: str = Form("")):
+    """消息中心发送框提交的消息;由页面脚本 fetch 调用,返回 JSON,页面不刷新。
+
+    无论发送成败,经渠道适配器出站都会留下一条消息记录(失败的标记为 failed),前端据此把它拉进对话里。
+    """
+
     enforce_role(request, "ops")
     db = get_session()
     try:
@@ -4312,10 +4321,12 @@ async def send_manual_message_action(request: Request, conversation_id: int = Fo
             raise HTTPException(status_code=404, detail="Conversation not found")
         text_content = content.strip()
         if not text_content:
-            return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote('消息内容不能为空')}", status_code=303)
+            return JSONResponse({"ok": False, "notice": "消息内容不能为空"}, status_code=400)
+        if len(text_content) > MANUAL_MESSAGE_MAX_CHARS:
+            return JSONResponse({"ok": False, "notice": f"消息太长了，最多 {MANUAL_MESSAGE_MAX_CHARS} 字"}, status_code=400)
         channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
         if channel is None:
-            return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote('会话未绑定渠道，无法发送')}", status_code=303)
+            return JSONResponse({"ok": False, "notice": "会话未绑定渠道，无法发送"}, status_code=400)
         # 必须经过渠道适配器统一出站：微桥会在这里创建手机 poll 要领取的命令任务，
         # 之前只写消息表不入队，所以手机永远收不到后台发出的消息。
         message, adapter_result = dispatch_outbound_message(
@@ -4324,9 +4335,8 @@ async def send_manual_message_action(request: Request, conversation_id: int = Fo
         record_audit(db, "message.manual-send", "message", message.id, f"conversation={conversation.id}")
         if not adapter_result.get("ok"):
             notice = f"发送失败：{adapter_result.get('error_message') or adapter_result.get('error_code') or '未知错误'}"
-        else:
-            notice = "消息已提交，等待手机执行"
-        return RedirectResponse(url=f"/messages?conversation_id={conversation_id}&notice={quote(notice)}", status_code=303)
+            return JSONResponse({"ok": False, "notice": notice, "message_id": int(message.id)})
+        return JSONResponse({"ok": True, "notice": "消息已提交，等待手机执行", "message_id": int(message.id)})
     finally:
         db.close()
 
@@ -4349,52 +4359,70 @@ async def message_attachment_media(request: Request, attachment_id: int):
         db.close()
 
 
+# 消息中心一次加载的消息条数:首屏、每次向上滚动加载更早的消息、发送后拉取新消息都用这个数。
+MESSAGE_PAGE_SIZE = 30
+
+
+def load_conversation_messages(db: Session, conversation_id: int, *, before_id: int = 0, after_id: int = 0, limit: int = MESSAGE_PAGE_SIZE) -> dict[str, object]:
+    """读取会话里的一段消息,按时间从早到晚返回,并附带显示所需的身份和附件。
+
+    - 不带参数:最新的 limit 条(首屏);
+    - before_id:比这条更早的最近 limit 条(向上滚动加载更早);
+    - after_id:比这条更新的最多 limit 条(发送后拉取新消息)。
+    多取一条用来判断两个方向上是否还有更多。
+    """
+
+    base = select(Message).where(Message.conversation_id == conversation_id)
+    if after_id:
+        rows = list(db.scalars(base.where(Message.id > after_id).order_by(Message.id.asc()).limit(limit + 1)).all())
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+    else:
+        if before_id:
+            base = base.where(Message.id < before_id)
+        fetched = list(db.scalars(base.order_by(Message.id.desc()).limit(limit + 1)).all())
+        has_more = len(fetched) > limit
+        rows = list(reversed(fetched[:limit]))
+    identities = IdentityDirectory(db).for_messages(rows)
+    attachments: dict[int, list[MessageAttachment]] = {}
+    if rows:
+        for attachment in db.scalars(
+            select(MessageAttachment).where(MessageAttachment.message_id.in_([int(item.id) for item in rows])).order_by(MessageAttachment.id.asc())
+        ).all():
+            if attachment.message_id is not None:
+                attachments.setdefault(int(attachment.message_id), []).append(attachment)
+    return {"messages": rows, "has_more": has_more, "identities": identities, "attachments": attachments}
+
+
+@app.get("/messages/history")
+async def message_history(request: Request, conversation_id: int, before_id: int = 0, after_id: int = 0):
+    """消息中心的增量加载接口:返回渲染好的消息行 HTML,前端直接插入到对话里。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        if db.get(Conversation, conversation_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        page = load_conversation_messages(db, conversation_id, before_id=max(before_id, 0), after_id=max(after_id, 0))
+        macro = templates.env.get_template("_message_rows.html").module.message_rows
+        html = str(macro(page["messages"], page["identities"], page["attachments"])) if page["messages"] else ""
+        return JSONResponse({"html": html, "has_more": page["has_more"], "count": len(page["messages"])})
+    finally:
+        db.close()
+
+
 @app.get("/messages", response_class=HTMLResponse)
 async def messages_page(
     request: Request,
-    keyword: str = "",
-    direction: str = "",
     bot_id: int = 0,
     channel_id: int = 0,
     chat_type: str = "",
     conversation_id: int = 0,
-    page: int = 1,
 ):
     db = get_session()
     try:
-        normalized_keyword = keyword.strip()
-        normalized_direction = direction.strip().lower()
         normalized_chat_type = chat_type.strip().lower()
-        current_page = max(int(page or 1), 1)
-        page_size = 20
-
-        stmt = select(Message).join(Conversation, Message.conversation_id == Conversation.id)
-
-        if normalized_keyword:
-            like_keyword = f"%{normalized_keyword}%"
-            stmt = stmt.where(
-                or_(
-                    Message.content.ilike(like_keyword),
-                    Message.sender_name.ilike(like_keyword),
-                    Message.sender_id.ilike(like_keyword),
-                    Message.external_message_id.ilike(like_keyword),
-                )
-            )
-
-        if normalized_direction in {"in", "out"}:
-            stmt = stmt.where(Message.direction == normalized_direction)
-        else:
-            normalized_direction = ""
-
-        if bot_id:
-            stmt = stmt.where(Conversation.bot_id == bot_id)
-
-        if channel_id:
-            stmt = stmt.where(Conversation.channel_id == channel_id)
-
-        if normalized_chat_type in {"group", "direct"}:
-            stmt = stmt.where(Conversation.chat_type == normalized_chat_type)
-        else:
+        if normalized_chat_type not in {"group", "direct"}:
             normalized_chat_type = ""
 
         conversations_stmt = select(Conversation)
@@ -4429,45 +4457,10 @@ async def messages_page(
                     "identity": identity,
                 }
             )
-        if conversation_id:
-            stmt = stmt.where(Conversation.id == conversation_id)
 
-        total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-        total_pages = max((total + page_size - 1) // page_size, 1)
-        current_page = min(current_page, total_pages)
-        offset = (current_page - 1) * page_size
-        messages = db.scalars(stmt.order_by(Message.id.desc()).offset(offset).limit(page_size)).all()
-        message_identities = summary_directory.for_messages(messages)
-        message_ids = [int(item.id) for item in messages]
-        attachment_rows = db.scalars(
-            select(MessageAttachment).where(MessageAttachment.message_id.in_(message_ids) if message_ids else MessageAttachment.id == 0).order_by(MessageAttachment.id.asc())
-        ).all()
-        attachments_by_message: dict[int, list[MessageAttachment]] = {}
-        for attachment in attachment_rows:
-            if attachment.message_id is not None:
-                attachments_by_message.setdefault(int(attachment.message_id), []).append(attachment)
-        pagination_query = {
-            "keyword": normalized_keyword,
-            "direction": normalized_direction,
-            "bot_id": bot_id if bot_id else 0,
-            "channel_id": channel_id if channel_id else 0,
-            "chat_type": normalized_chat_type,
-        }
-        pagination = {
-            "page": current_page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": total_pages,
-            "has_prev": current_page > 1,
-            "has_next": current_page < total_pages,
-            "prev_page": current_page - 1 if current_page > 1 else 1,
-            "next_page": current_page + 1 if current_page < total_pages else total_pages,
-            "from_index": offset + 1 if total else 0,
-            "to_index": min(offset + len(messages), total),
-            "query": urlencode({key: value for key, value in pagination_query.items() if value not in ("", 0, None)}),
-        }
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
-        channels = db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
+        # 只有选中了会话才读消息;没有分页,更早的消息由页面向上滚动时通过 /messages/history 继续加载。
+        page = load_conversation_messages(db, conversation_id) if conversation_id else {"messages": [], "has_more": False, "identities": {}, "attachments": {}}
+        selected_total = int(db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id)) or 0) if conversation_id else None
         # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
         selected_chatroom = None
         selected_summary = next((row for row in conversation_summaries if int(row["conversation"].id) == conversation_id), None)
@@ -4482,21 +4475,15 @@ async def messages_page(
             request,
             "messages.html",
             page_title="消息中心",
-            messages=messages,
-            message_identities=message_identities,
-            attachments_by_message=attachments_by_message,
+            messages=page["messages"],
+            message_identities=page["identities"],
+            attachments_by_message=page["attachments"],
+            has_more_messages=page["has_more"],
+            selected_total=selected_total,
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,
             selected_chatroom=selected_chatroom,
-            notice=request.query_params.get("notice", ""),
-            pagination=pagination,
-            bots=bots,
-            channels=channels,
-            keyword=normalized_keyword,
-            direction=normalized_direction,
-            bot_id=bot_id,
             channel_id=channel_id,
-            chat_type=normalized_chat_type,
         )
     finally:
         db.close()
