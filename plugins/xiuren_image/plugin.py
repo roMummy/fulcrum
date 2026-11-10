@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,18 @@ from app.services.plugin_runtime.replies import image_reply, standard_replies, t
 from app.services.plugin_runtime.scheduler import enqueue_plugin_scheduled_action
 from app.services.plugin_runtime.state_store import PluginStateStore
 
-from plugins.xiuren_image.service import STATE_KEY, STATE_NAMESPACE, choose_cached_image, load_config, refresh_cached_images
+from plugins._shared.s3 import S3Error
+from plugins.xiuren_image.service import (
+    LOW_WATER,
+    REFRESH_COOLDOWN_SECONDS,
+    STATE_KEY,
+    STATE_NAMESPACE,
+    build_client,
+    discard_cached_file,
+    load_config,
+    prefetch_images,
+    take_cached_image,
+)
 
 
 def matches_event(context) -> dict[str, object]:
@@ -38,7 +49,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             ok=True,
             status="running",
             message="秀人图片插件运行正常。",
-            output={"commands": list(config.commands), "cache_size": config.cache_size, "refresh_enabled": config.refresh_enabled},
+            output={"commands": list(config.commands), "prefetch_count": config.prefetch_count, "source_configured": config.source_configured()},
         )
     if request.action != "execute":
         return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
@@ -46,7 +57,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
 
 
 def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """从当前租户绑定状态读取图片，缓存为空时只创建一次受控刷新任务。"""
+    """从预读取的图片池里随机发一张;池快用完时在后台再从 MinIO 预读一批。"""
 
     if request.action != "execute":
         return execute_action(request)
@@ -59,6 +70,8 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     try:
         if int(context.tenant_id) != require_tenant_id():
             return _error_result("当前插件上下文不属于当前租户。", "tenant_mismatch")
+        if not config.source_configured():
+            return _text_result("图片来源还没有配置，请管理员先在插件配置里填写 MinIO 信息。", "source_not_configured")
         scope = "group" if str(context.chat_type or "").strip().lower() == "group" else "user"
         identity = context.conversation_id if scope == "group" else context.sender_id
         decision = PluginRateLimiter(db, context).consume(scope, identity=identity, limit=config.rate_limit, window_seconds=config.rate_window_seconds)
@@ -66,10 +79,12 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
             return _error_result(f"请求太频繁，请 {decision.retry_after_seconds} 秒后再试。", "rate_limited")
         store = PluginStateStore(db, context)
         state = store.get(STATE_NAMESPACE, STATE_KEY) or {}
-        selected = choose_cached_image(int(context.tenant_id), config, state)
-        if selected is None:
-            _enqueue_refresh_if_needed(db, context, config)
-            return _text_result("图片资源正在准备中，请稍后再试。", "refresh_queued")
+        taken = take_cached_image(int(context.tenant_id), config, state)
+        if taken is None:
+            state = _enqueue_refresh_if_needed(db, context, config, state)
+            store.put(STATE_NAMESPACE, STATE_KEY, state)
+            return _text_result("图片正在准备中，请稍后再试。", "refresh_queued")
+        data, info = taken
         if config.points_cost > 0:
             points = PointsService(db).spend(
                 context,
@@ -81,7 +96,12 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
             )
             if not points.ok:
                 return _error_result(points.message, "insufficient_points")
-        data, _item = selected
+        # 扣费成功才把这张从池里移除并删文件;剩余不多时顺带安排下一批预读取。
+        new_state = info["state"]
+        discard_cached_file(int(context.tenant_id), config, info["taken"])
+        if len(new_state.get("files") or []) <= LOW_WATER:
+            new_state = _enqueue_refresh_if_needed(db, context, config, new_state)
+        store.put(STATE_NAMESPACE, STATE_KEY, new_state)
         return PluginExecutionResult(
             ok=True,
             status="completed",
@@ -93,39 +113,53 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
 
 
 def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """执行租户绑定级缓存刷新，状态写入与文件写入保持同一绑定边界。"""
+    """预读取一批图片:从 MinIO 随机抽 prefetch_count 张下载到本租户缓存目录。"""
 
     if request.action != "refresh_resources":
         return _error_result(f"不支持的秀人图片动作: {request.action}", "unsupported")
     context = request.context
     if context is None:
-        return _error_result("缓存刷新缺少可信插件上下文。", "trusted_context_required")
+        return _error_result("预读取缺少可信插件上下文。", "trusted_context_required")
     config = load_config(request.config)
-    if not config.refresh_enabled:
-        return _error_result("秀人图片刷新未启用。", "disabled")
+    if not config.source_configured():
+        return _error_result("图片来源还没有配置 MinIO。", "source_not_configured")
     try:
         store = PluginStateStore(db, context)
         previous = store.get(STATE_NAMESPACE, STATE_KEY) or {}
-        state = refresh_cached_images(PluginHttpClient(), int(context.tenant_id), config, previous)
+        state = prefetch_images(build_client(config), int(context.tenant_id), config, previous)
         store.put(STATE_NAMESPACE, STATE_KEY, state)
         return PluginExecutionResult(
             ok=True,
             status="completed",
-            message=f"图片缓存刷新完成，新增 {int(state.get('downloaded') or 0)} 张。",
-            output={"provider_status": "completed", "downloaded": int(state.get("downloaded") or 0), "failed": int(state.get("failed") or 0), "cached_count": len(state.get("files") or [])},
+            message=f"已从 MinIO 预读取 {int(state.get('downloaded') or 0)} 张图片。",
+            output={
+                "provider_status": "completed",
+                "downloaded": int(state.get("downloaded") or 0),
+                "failed": int(state.get("failed") or 0),
+                "listed": int(state.get("listed") or 0),
+                "cached_count": len(state.get("files") or []),
+            },
         )
+    except S3Error as exc:
+        # 只返回可读的中文原因,不回显密钥和内部细节。
+        return _error_result(f"读取 MinIO 失败：{exc}", "source_failed")
     except (PluginStateError, ValueError):
-        return _error_result("图片缓存刷新失败，请稍后重试。", "refresh_failed")
+        return _error_result("图片预读取失败，请稍后重试。", "refresh_failed")
 
 
-def _enqueue_refresh_if_needed(db: Session, context: PluginExecutionContext, config) -> None:
-    """缓存为空时按当前绑定和当前时间幂等入队，不在消息线程执行网络抓取。"""
+def _enqueue_refresh_if_needed(db: Session, context: PluginExecutionContext, config, state: dict) -> dict:
+    """安排一次后台预读取;刚入队过(冷却期内)不重复入队,返回带入队时间的新状态。"""
 
-    if not config.refresh_enabled or not config.source_urls:
-        return
+    queued_at = state.get("queued_at")
+    if queued_at:
+        try:
+            if (now_shanghai() - datetime.fromisoformat(str(queued_at))).total_seconds() < REFRESH_COOLDOWN_SECONDS:
+                return state
+        except ValueError:
+            pass
     binding = db.get(BotPlugin, int(context.binding_id))
     if binding is None:
-        return
+        return state
     enqueue_plugin_scheduled_action(
         db,
         binding,
@@ -135,6 +169,7 @@ def _enqueue_refresh_if_needed(db: Session, context: PluginExecutionContext, con
         high_side_effect=False,
         priority=70,
     )
+    return {**state, "queued_at": now_shanghai().isoformat()}
 
 
 def _validate_context(context: PluginExecutionContext | None) -> PluginExecutionResult | None:
