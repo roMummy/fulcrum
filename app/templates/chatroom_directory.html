@@ -48,13 +48,12 @@
         <td class="col-time">{{ item.last_seen_at|bj_time if item.last_seen_at else '-' }}</td>
         <td class="col-action">
           {# 行内开关:启用后机器人才会在这个群里工作;三档运行模式(含只采集消息、完全关闭)进入群页面设置。 #}
-          {% if item.management_status == 'archived' %}<span class="chip chip-muted">已关闭</span>{% elif not item.is_active %}<span class="chip chip-muted">只采集</span>{% endif %}
-          <form method="post" action="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}/management" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <input type="hidden" name="management_status" value="{{ 'disabled' if item.is_active else 'enabled' }}" />
-            <input type="hidden" name="next" value="/chatrooms" />
-            <button class="btn btn-small {% if item.is_active %}btn-secondary{% endif %}" type="submit">{{ '已启用' if item.is_active else '启用' }}</button>
-          </form>
+          <span class="chip chip-muted" data-mode-chip{% if item.is_active %} hidden{% endif %}>{{ '已关闭' if item.management_status == 'archived' else '只采集' }}</span>
+          {# 启用开关:点击即保存(开 = 正常运行,关 = 只采集消息);三档运行模式进入群页面设置。 #}
+          <span class="ui-switch" title="启用后机器人才会在这个群里工作">
+            <input type="checkbox" role="switch" aria-label="启用 {{ item.name }}" data-autosave-url="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}/management" data-autosave-key="management_status" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if item.is_active %} checked{% endif %} />
+            <span class="ui-switch-track"></span>
+          </span>
           <a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}">设置</a>
         </td>
       </tr>
@@ -82,4 +81,16 @@
   </form>
 </details>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  // 启用开关保存成功后同步行内的"只采集/已关闭"标签。
+  document.addEventListener('autosave:done', (event) => {
+    const chip = event.target.closest('td').querySelector('[data-mode-chip]');
+    if (!chip) return;
+    const mode = event.detail.response.management_status;
+    chip.hidden = mode === 'enabled';
+    chip.textContent = mode === 'archived' ? '已关闭' : '只采集';
+  });
+</script>
 {% endblock %}

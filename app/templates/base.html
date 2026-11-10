@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#f5f6fa" />
+  {# 页面脚本(fetch)提交时放进 X-CSRF-Token 请求头的令牌 #}
+  <meta name="csrf-token" content="{{ csrf_token|default('', true) }}" />
   <title>{{ page_title }} - 曜枢 AI</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
@@ -188,22 +190,26 @@
     })();
 
     (() => {
-      const forms = document.querySelectorAll("form:not([data-plugin-switch-form])");
+      const forms = document.querySelectorAll("form");
       if (!forms.length) return;
 
       // 普通表单提交后锁定提交按钮，减少用户连续点击造成重复创建、重复同步或重复重启。
       forms.forEach((form) => {
         form.addEventListener("submit", (event) => {
-          // 需要确认的提交已被统一弹窗(dialog.js)拦下,确认通过后才会重新提交。
-          if (event.defaultPrevented) return;
-          const submitters = form.querySelectorAll("button[type='submit'], input[type='submit']");
-          submitters.forEach((submitter) => {
-            submitter.dataset.originalText = submitter.textContent || "";
-            submitter.disabled = true;
-            if (submitter.tagName === "BUTTON") {
-                  submitter.textContent = "处理中…";
-            }
-          });
+          // 同一次提交事件里还有别的监听器:统一确认弹窗(dialog.js)会拦下需要确认的提交,页面脚本(消息发送框、
+          // 功能设置保存)会改用 fetch 提交。它们都靠 preventDefault 接管,所以等本次事件派发完再判断:
+          // 被接管的不是整页提交,不能锁按钮(否则脚本保存完按钮会一直停在"处理中…")。
+          setTimeout(() => {
+            if (event.defaultPrevented) return;
+            const submitters = form.querySelectorAll("button[type='submit'], input[type='submit']");
+            submitters.forEach((submitter) => {
+              submitter.dataset.originalText = submitter.textContent || "";
+              submitter.disabled = true;
+              if (submitter.tagName === "BUTTON") {
+                submitter.textContent = "处理中…";
+              }
+            });
+          }, 0);
         });
       });
     })();
@@ -255,6 +261,9 @@
   {# 全局下拉框增强:把原生 select 升级为统一调性的自绘下拉,表单与 change 事件保持原生行为。 #}
   {# 统一弹窗:appDialog.confirm / alert 与 data-confirm-* 声明式确认,替代浏览器默认弹窗。 #}
   <script src="/static/js/dialog.js" defer></script>
+  {# 统一提示条 appToast,以及"开关点击即保存"(data-autosave-*)。 #}
+  <script src="/static/js/toast.js" defer></script>
+  <script src="/static/js/switches.js" defer></script>
   <script src="/static/js/select.js" defer></script>
   {% block scripts %}{% endblock %}
 </body>

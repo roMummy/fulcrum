@@ -95,3 +95,33 @@ def save_state(chatroom: Chatroom, feature_key: str, *, enabled: bool, config: d
     features[feature_key] = entry
     extra[EXTRA_KEY] = features
     chatroom.extra_json = json.dumps(extra, ensure_ascii=False, sort_keys=True)
+
+
+def set_flag(chatroom: Chatroom, feature_key: str, field: str, value: bool) -> ConfigField | None:
+    """只改一个开关:field 为 "enabled" 改总开关,否则改对应的 bool 配置项;其余配置原样保留。
+
+    和 save_state 的区别:点开关即保存时,表单里别的输入框可能还有没保存的修改,也不能因此重新加密密钥,
+    所以这里直接改存储里的这一个键。返回被改的配置项(总开关返回 None);field 不是该功能的 bool 配置项抛 ValueError。
+    """
+
+    feature = get_feature(feature_key)
+    if feature is None:
+        raise ValueError(f"未知群功能: {feature_key}")
+    item = None
+    if field != "enabled":
+        item = next((f for f in feature.fields if f.key == field and f.kind == "bool"), None)
+        if item is None:
+            raise ValueError(f"{feature_key} 没有开关项: {field}")
+    extra = _load_extra(chatroom)
+    features = extra.get(EXTRA_KEY) if isinstance(extra.get(EXTRA_KEY), dict) else {}
+    entry = features.get(feature_key) if isinstance(features.get(feature_key), dict) else {}
+    if item is None:
+        entry["enabled"] = bool(value)
+    else:
+        config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+        config[item.key] = bool(value)
+        entry["config"] = config
+    features[feature_key] = entry
+    extra[EXTRA_KEY] = features
+    chatroom.extra_json = json.dumps(extra, ensure_ascii=False, sort_keys=True)
+    return item

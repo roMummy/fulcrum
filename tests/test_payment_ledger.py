@@ -19,10 +19,10 @@ from app.services import payment_ledger as ledger
 from app.services.group_features import red_packet
 from app.services.group_features.dispatch import dispatch_group_features
 from app.services.group_features.store import save_state
-from app.services.wechat_webridge import auto_receive, service, wakeup
+from app.services.wechat_webridge import service, wakeup
 from tests.test_ai_chat import _session
 from tests.test_ai_dispatch import _seed
-from tests.test_auto_receive_transfer import IDENTITY, _event as transfer_event, webridge_channel  # noqa: F401  (webridge_channel 是 fixture)
+from tests.test_group_transfer_receive import IDENTITY, _event as transfer_event
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 PACKET = "rp_msg_100"
@@ -35,7 +35,6 @@ def env(monkeypatch):
     db = _session()
     channel = _seed(db)
     channel.runtime_info_json = json.dumps({"webridge": IDENTITY})
-    auto_receive.set_enabled(channel, True)
     room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="1@chatroom", name="养生群", is_active=True)
     db.add_all([
         room,
@@ -44,6 +43,7 @@ def env(monkeypatch):
     ])
     db.commit()
     save_state(room, "red_packet", enabled=True, config={"delay_ms": 0})
+    save_state(room, "transfer_receive", enabled=True)
     db.commit()
     monkeypatch.setattr(red_packet, "_schedule", lambda delay, func, *args: None)
     return db, channel, room
@@ -111,15 +111,15 @@ def test_own_red_packets_are_not_recorded(env) -> None:
     assert _receipts(db) == []
 
 
-def test_transfer_event_is_recorded_with_amount_payer_and_chat(env) -> None:
+def test_transfer_event_is_recorded_with_amount_payer_and_group(env) -> None:
     db, channel, _room = env
     with patch.object(wakeup, "notify"):
-        auto_receive.handle_event(db, channel, transfer_event(sender="wxid_alice", amount_fen=2), conversation_id=4)
-        auto_receive.handle_event(db, channel, transfer_event(sender="wxid_alice", amount_fen=2), conversation_id=4)  # 重复投递
+        dispatch_group_features(db, channel, transfer_event(sender="wxid_alice", amount_fen=2), conversation_id=3)
+        dispatch_group_features(db, channel, transfer_event(sender="wxid_alice", amount_fen=2), conversation_id=3)  # 重复投递
     row = _receipts(db)[0]
     assert len(_receipts(db)) == 1
-    assert (row.kind, row.external_id, row.status, row.amount_fen) == ("transfer", "tx-1", "pending", 2)  # 事件里的 amount_text 为 ￥0.02
-    assert (row.sender_id, row.chat_type, row.chat_title) == ("wxid_alice", "direct", "张三")
+    assert (row.kind, row.external_id, row.status, row.amount_fen) == ("transfer", "tx-1", "pending", 2)  # 转账事件自带金额
+    assert (row.sender_id, row.sender_name, row.chat_type, row.chat_external_id, row.chat_title) == ("wxid_alice", "爱丽丝", "group", "1@chatroom", "养生群")
 
 
 # ---------- 结果回填 ----------
@@ -136,7 +136,7 @@ def _run(db, channel, request_id: str, reported: dict) -> None:
 def test_transfer_confirmation_settles_the_record(env) -> None:
     db, channel, _room = env
     with patch.object(wakeup, "notify"):
-        auto_receive.handle_event(db, channel, transfer_event(sender="wxid_alice"), conversation_id=4)
+        dispatch_group_features(db, channel, transfer_event(sender="wxid_alice"), conversation_id=3)
     _run(db, channel, "transfer_tx-1", {"ok": True, "result": {"ok": True, "status": "callback_ok", "confirmed": True}})
     row = _receipts(db)[0]
     assert (row.status, row.result_status, row.amount_fen) == ("received", "callback_ok", 2) and row.settled_at is not None
@@ -154,7 +154,7 @@ def test_transfer_confirmation_settles_the_record(env) -> None:
 def test_unconfirmed_and_failed_transfers_are_not_counted_as_received(env, reported, status) -> None:
     db, channel, _room = env
     with patch.object(wakeup, "notify"):
-        auto_receive.handle_event(db, channel, transfer_event(sender="wxid_alice"), conversation_id=4)
+        dispatch_group_features(db, channel, transfer_event(sender="wxid_alice"), conversation_id=3)
     _run(db, channel, "transfer_tx-1", reported)
     assert _receipts(db)[0].status == status
 
@@ -328,40 +328,58 @@ def test_ledger_stats_cover_today_week_and_all_time_and_filter_by_group(env) -> 
 
 # ---------- 页面 ----------
 
-def test_account_page_shows_the_transfer_ledger_collapsed_under_the_switch(webridge_channel) -> None:
-    client, ids, channel_id = webridge_channel
+@pytest.fixture()
+def webridge_channel(provider_page_context):  # noqa: F811
+    client, ids = provider_page_context
+    from app.models.entities import Channel as ChannelRow
+
     with ids["factory"]() as db:
-        db.add(PaymentReceipt(
-            tenant_id=ids["alpha"], channel_id=channel_id, kind="transfer", external_id="tx-9", chat_type="direct", chat_external_id="wxid_alice",
-            chat_title="张三", sender_id="wxid_alice", sender_name="爱丽丝", amount_fen=1250, status="received",
-        ))
+        channel = ChannelRow(tenant_id=ids["alpha"], bot_id=ids["bot"], name="微桥账号", channel_type="wechat_webridge", is_enabled=True)
+        db.add(channel)
         db.commit()
-    _login(client, "admin")
-    html = client.get(f"/channels/{channel_id}").text
-    section = html.split("自动收款", 1)[1]
-    assert "<details" in section and "收款明细与统计" in section and "累计收到 1 笔 · ¥12.50" in section
-    assert "爱丽丝" in section and "wxid_alice" in section and "¥12.50" in section and "已收到" in section and "私聊" in section
-    assert "<details class=\"pay-ledger\" open" not in html  # 默认折叠
+        return client, ids, int(channel.id)
 
 
-def test_group_page_shows_the_red_packet_ledger_only_for_this_group(webridge_channel) -> None:
+def _group_page(webridge_channel, rows):
+    """建一个群和若干收款记录,返回群页面 HTML。rows: (kind, external_id, chat, sender_name, fen)"""
+
     client, ids, channel_id = webridge_channel
     with ids["factory"]() as db:
         room = Chatroom(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=channel_id, external_id="1@chatroom", name="养生群", is_active=True)
         db.add(room)
         db.flush()
-        for external_id, chat, name, fen in (("r1", "1@chatroom", "老板", 88), ("r2", "2@chatroom", "别群的人", 99)):
+        for kind, external_id, chat, name, fen in rows:
             db.add(PaymentReceipt(
-                tenant_id=ids["alpha"], channel_id=channel_id, kind="red_packet", external_id=external_id, chat_type="group", chat_external_id=chat,
+                tenant_id=ids["alpha"], channel_id=channel_id, kind=kind, external_id=external_id, chat_type="group", chat_external_id=chat,
                 chat_title="群", sender_id=f"wxid_{external_id}", sender_name=name, amount_fen=fen, status="received",
             ))
         db.commit()
         room_id = int(room.id)
     _login(client, "admin")
-    html = client.get(f"/channels/{channel_id}/chatrooms/{room_id}").text
-    section = html.split("自动抢红包", 1)[1]
+    return client.get(f"/channels/{channel_id}/chatrooms/{room_id}").text
+
+
+def _card(html: str, key: str) -> str:
+    """群功能页里某个功能卡片的 HTML(从它的 form 开始,到下一张卡片之前),与卡片先后顺序无关。"""
+
+    start = html.index(f'data-gf-key="{key}"')
+    nxt = html.find("data-gf-card", start)
+    return html[start: nxt if nxt != -1 else len(html)]
+
+
+def test_group_page_shows_the_red_packet_ledger_only_for_this_group(webridge_channel) -> None:
+    html = _group_page(webridge_channel, [("red_packet", "r1", "1@chatroom", "老板", 88), ("red_packet", "r2", "2@chatroom", "别群的人", 99)])
+    section = _card(html, "red_packet")
     assert "收款明细与统计" in section and "累计收到 1 笔 · ¥0.88" in section and "老板" in section
     assert "别群的人" not in html  # 别的群的红包不会出现在这个群里
+
+
+def test_group_page_shows_the_transfer_ledger_under_the_auto_receive_card_and_not_mixed_with_red_packets(webridge_channel) -> None:
+    html = _group_page(webridge_channel, [("transfer", "t1", "1@chatroom", "爱丽丝", 1250), ("red_packet", "r1", "1@chatroom", "老板", 88), ("transfer", "t2", "2@chatroom", "别群的人", 500)])
+    section = _card(html, "transfer_receive")
+    assert "收款明细与统计" in section and "累计收到 1 笔 · ¥12.50" in section and "爱丽丝" in section
+    assert "老板" not in section and "别群的人" not in html
+    assert "<details class=\"pay-ledger disclosure\" open" not in html  # 默认折叠
 
 
 def test_a_non_duplicate_integrity_error_is_not_swallowed(env) -> None:

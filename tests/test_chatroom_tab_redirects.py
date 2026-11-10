@@ -31,8 +31,3 @@ def test_plugin_scope_actions_stay_on_the_plugins_tab(name: str) -> None:
     assert redirects, f"{name} 没有跳转到群详情"
     for query in redirects:
         assert query.startswith("tab=plugins&"), f"{name} 的跳转没有停留在插件标签: ?{query[:40]}"
-
-
-def test_feature_save_stays_on_the_features_tab() -> None:
-    source = inspect.getsource(main.update_chatroom_feature_action)
-    assert "tab=features" in source

@@ -87,7 +87,8 @@ from app.services.ops import (
     record_audit,
     record_health_check,
 )
-from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form
+from app.services.group_features.registry import get_feature as get_group_feature
+from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form, toggle_flag as toggle_group_feature_flag
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
 from app.services.plugin_schemas import (
     build_plugin_config_view,
@@ -172,7 +173,6 @@ from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detai
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
 from app.services import payment_ledger
-from app.services.wechat_webridge import auto_receive
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -2204,8 +2204,6 @@ async def channel_detail_page(request: Request, channel_id: int):
             page_title=f"账号详情 · {channel.name}",
             account=account_identity(channel),
             channel=channel,
-            auto_receive_transfer=auto_receive.is_enabled(channel) if channel.channel_type == "wechat_webridge" else False,
-            transfer_ledger=payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_TRANSFER) if channel.channel_type == "wechat_webridge" else None,
             binding=binding,
             connection=connection,
             quota=quota,
@@ -2277,29 +2275,6 @@ async def wechat_webridge_live_summary(request: Request, channel_id: int):
         if not channel or channel.channel_type != "wechat_webridge":
             raise HTTPException(status_code=404, detail="WeBridge channel not found")
         return JSONResponse(build_webridge_live_summary(db, channel))
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/wechat-webridge/settings")
-async def wechat_webridge_settings_action(request: Request, channel_id: int, auto_receive_transfer: str = Form(""), csrf_token: str = Form("")):
-    """保存微桥账号的自动化设置(目前是「自动收款」);勾选框没勾选时浏览器不提交该字段,所以按"字段是否存在"判断。"""
-
-    principal = enforce_role(request, "ops")
-    if not has_tenant_role(principal, "tenant_admin"):
-        raise HTTPException(status_code=403, detail="Permission denied")
-    db = get_session()
-    try:
-        require_tenant_csrf(db, request, csrf_token)
-        channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type != "wechat_webridge":
-            raise HTTPException(status_code=404, detail="WeBridge channel not found")
-        enabled = bool(auto_receive_transfer)
-        auto_receive.set_enabled(channel, enabled)
-        record_audit(db, "channel.auto-receive-transfer", "channel", channel.id, f"enabled={enabled}")
-        db.commit()
-        notice = "已开启自动收款：收到转账会自动确认收款" if enabled else "已关闭自动收款"
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 
@@ -2430,8 +2405,15 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             # 没单独保存过设置的能力跟随默认值:AI 对话跟随租户「AI 助手」里的聊天开关。
             features=build_feature_cards(chatroom, channel.channel_type, defaults={"ai_chat": bool(getattr(ai_dispatch.get_ai_setting(db), "chat_enabled", False))}),
             group_modes=GROUP_MODE_OPTIONS,
-            # 自动抢红包的明细与统计(仅微桥的群有这个功能)。
-            red_packet_ledger=payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_RED_PACKET, chat_external_id=chatroom.external_id) if channel.channel_type == "wechat_webridge" else None,
+            # 自动抢红包、自动收款的明细与统计,按群功能 key 取(仅微桥的群有这两个功能)。
+            ledgers=(
+                {
+                    "red_packet": payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_RED_PACKET, chat_external_id=chatroom.external_id),
+                    "transfer_receive": payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_TRANSFER, chat_external_id=chatroom.external_id),
+                }
+                if channel.channel_type == "wechat_webridge"
+                else {}
+            ),
             # 当前运行模式:完全关闭看状态,其余按总开关(is_active)区分正常运行与只采集。
             group_mode=GROUP_MODE_OFF if is_collection_off(chatroom) else (GROUP_MODE_RUN if chatroom.is_active else GROUP_MODE_COLLECT_ONLY),
             notice=request.query_params.get("notice", ""),
@@ -3490,10 +3472,14 @@ async def update_channel_chatroom_management_action(
     chatroom_id: int,
     management_status: str = Form(...),
     next: str = Form(""),
+    csrf_token: str = Form(""),
 ):
+    """切换群的运行模式。群详情页的单选框选中即生效(脚本 fetch 提交,返回 JSON);群列表页的行内开关是整页表单提交。"""
+
     user = enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         channel = get_channel(db, channel_id)
         if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3514,6 +3500,8 @@ async def update_channel_chatroom_management_action(
             "disabled": "本群已设为只采集消息：继续记录消息，但不触发任何功能",
             "archived": "本群已完全关闭：不接收、不记录消息，也不触发任何功能",
         }.get(chatroom.management_status, "已将该群标记为待启用")
+        if request.headers.get("X-Requested-With") == "fetch":
+            return JSONResponse({"ok": True, "notice": message, "management_status": chatroom.management_status})
         # 列表页行内开关带 next 回到列表;只接受站内路径,防止开放重定向。
         target = next if next.startswith("/") and not next.startswith("//") else f"/channels/{channel_id}/chatrooms/{chatroom_id}"
         separator = "&" if "?" in target else "?"
@@ -3578,14 +3566,24 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
         db.close()
 
 
+def _csrf_from_header(request: Request) -> str:
+    """页面脚本(fetch)提交时,CSRF 令牌放在 X-CSRF-Token 请求头里(令牌由页面 <meta name="csrf-token"> 提供)。"""
+
+    return request.headers.get("X-CSRF-Token", "")
+
+
 @app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/features/{feature_key}")
 async def update_chatroom_feature_action(request: Request, channel_id: int, chatroom_id: int, feature_key: str):
-    """保存群功能(成员变更提醒、潜水排行等)的开关与配置,存进群记录的 extra_json。"""
+    """保存群功能的设置(有文本/数字/密钥输入的设置区点「保存」时提交),存进群记录的 extra_json。
+
+    只服务页面脚本:返回 JSON,页面不刷新,脚本弹出成功提示。
+    """
 
     user = enforce_role(request, "ops")
     form = await request.form()
     db = get_session()
     try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3593,15 +3591,46 @@ async def update_chatroom_feature_action(request: Request, channel_id: int, chat
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
         try:
-            message = save_group_feature_form(chatroom, feature_key, form)
+            save_group_feature_form(chatroom, feature_key, form)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         db.commit()
-        record_audit(db, "channel.chatroom-feature.update", "chatroom", chatroom.id, f"{message} ({feature_key}) by {user.username}")
-        return RedirectResponse(
-            url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=features&notice={quote(message)}",
-            status_code=303,
-        )
+        record_audit(db, "channel.chatroom-feature.update", "chatroom", chatroom.id, f"{feature_key} by {user.username}")
+        feature = get_group_feature(feature_key)
+        return JSONResponse({"ok": True, "notice": f"已保存「{feature.name}」的设置"})
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/features/{feature_key}/toggle")
+async def toggle_chatroom_feature_action(request: Request, channel_id: int, chatroom_id: int, feature_key: str):
+    """点开关即保存:body 为 {"field": "enabled" | <某个开关配置项>, "value": true|false},只改这一个开关。"""
+
+    user = enforce_role(request, "ops")
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"ok": False, "notice": "请求格式不正确"}, status_code=400)
+    field = str((body or {}).get("field") or "")
+    value = (body or {}).get("value")
+    if not field or not isinstance(value, bool):
+        return JSONResponse({"ok": False, "notice": "请求格式不正确"}, status_code=400)
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        channel = get_channel(db, channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        chatroom = db.get(Chatroom, chatroom_id)
+        if not chatroom or chatroom.channel_id != channel.id:
+            raise HTTPException(status_code=404, detail="Chatroom not found")
+        try:
+            notice = toggle_group_feature_flag(chatroom, feature_key, field, value)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "notice": str(exc)}, status_code=400)
+        db.commit()
+        record_audit(db, "channel.chatroom-feature.toggle", "chatroom", chatroom.id, f"{feature_key}.{field}={value} by {user.username}")
+        return JSONResponse({"ok": True, "notice": notice})
     finally:
         db.close()
 
@@ -3848,10 +3877,14 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
     chatroom_id: int,
     bot_plugin_id: int,
     mode: str = Form(...),
+    csrf_token: str = Form(""),
 ):
+    """群内插件的启用/停用/恢复默认。群「插件」标签里的开关是脚本提交(返回 JSON,页面不刷新);恢复默认是整页表单提交。"""
+
     user = enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         channel = db.get(Channel, channel_id)
         if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Wechat chatroom channel not found")
@@ -3957,10 +3990,15 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
         # 群权限模式是运维人员在页面上直接操作的状态，先显式提交业务变更，再记录审计，避免依赖审计函数的隐式提交。
         db.commit()
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.mode", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}, mode={normalized_mode}")
+        if request.headers.get("X-Requested-With") == "fetch":
+            # custom:这个群是否单独设置过(启用/停用都算自定义,恢复默认才回到继承),页面据此显示"本群已自定义"和"恢复默认"。
+            return JSONResponse({"ok": True, "notice": message, "mode": normalized_mode, "custom": normalized_mode != "inherited"})
         return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     except ValueError as exc:
         db.rollback()
         # 服务层会在绑定和群不匹配等数据异常时抛 ValueError；这里转成页面提示，避免按钮操作直接落到 500 错误页。
+        if request.headers.get("X-Requested-With") == "fetch":
+            return JSONResponse({"ok": False, "notice": f"群权限保存失败：{exc}"}, status_code=400)
         return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote('群权限保存失败：' + str(exc))}", status_code=303)
     finally:
         db.close()
@@ -4141,16 +4179,20 @@ async def bind_plugin_action(
 
 
 @app.post("/plugins/{binding_id}/toggle")
-async def toggle_plugin_binding_action(request: Request, binding_id: int):
+async def toggle_plugin_binding_action(request: Request, binding_id: int, enabled: bool = Form(...), csrf_token: str = Form("")):
+    """插件运行页里某个绑定的启用/停用开关:点击即保存,提交目标状态(幂等),返回 JSON,由页面脚本弹出提示。"""
+
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
-        toggle_binding(db, binding)
-        record_audit(db, "plugin.toggle", "bot_plugin", binding.id, f"status={binding.status}")
-        return RedirectResponse(url="/plugins/runtime?notice=插件绑定状态已切换", status_code=303)
+        if (binding.status == "enabled") != enabled:
+            toggle_binding(db, binding)
+            record_audit(db, "plugin.toggle", "bot_plugin", binding.id, f"status={binding.status}")
+        return JSONResponse({"ok": True, "notice": f"插件绑定已{'启用' if binding.status == 'enabled' else '停用'}", "is_enabled": binding.status == "enabled"})
     finally:
         db.close()
 
@@ -4160,58 +4202,47 @@ async def toggle_plugin_direct_action(
     request: Request,
     bot_id: int = Form(...),
     plugin_id: int = Form(...),
-    redirect_to: str = Form("/plugins"),
-    open_bot_id: int = Form(0),
+    enabled: bool = Form(...),
+    csrf_token: str = Form(""),
 ):
+    """插件页里按机器人启停插件的开关:点击即保存,提交目标状态(幂等),返回 JSON 供页面脚本更新状态标签并弹出提示。
+
+    还没绑定过的插件第一次打开时会自动创建绑定并启用;关闭一个没绑定过的插件什么也不用做。
+    """
+
     enforce_role(request, "ops")
     db = get_session()
     try:
-        wants_json = "application/json" in str(request.headers.get("accept", "")).lower() or str(
-            request.headers.get("x-requested-with", "")
-        ).lower() == "xmlhttprequest"
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         plugin = db.get(Plugin, plugin_id)
         bot = db.get(Bot, bot_id)
         if not plugin or not bot:
             raise HTTPException(status_code=404, detail="Bot or plugin not found")
         binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
         if binding:
-            toggle_binding(db, binding)
-            message = f"{bot.name} 的 {plugin.display_name} 已{'启用' if binding.status == 'enabled' else '停用'}"
-            record_audit(db, "plugin.toggle-direct", "bot_plugin", binding.id, f"status={binding.status}")
-        else:
-            payload = BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status="enabled", config_json=None)
-            binding = bind_plugin(db, payload)
-            message = f"{bot.name} 的 {plugin.display_name} 已启用"
+            if (binding.status == "enabled") != enabled:
+                toggle_binding(db, binding)
+                record_audit(db, "plugin.toggle-direct", "bot_plugin", binding.id, f"status={binding.status}")
+        elif enabled:
+            binding = bind_plugin(db, BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status="enabled", config_json=None))
             record_audit(db, "plugin.toggle-direct", "bot_plugin", binding.id, "created=enabled")
-        enabled_count = db.scalar(
-            select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot_id, BotPlugin.status == "enabled")
-        ) or 0
+        is_enabled = bool(binding and str(binding.status or "").strip() == "enabled")
+        enabled_count = db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot_id, BotPlugin.status == "enabled")) or 0
         total_count = db.scalar(select(func.count(Plugin.id))) or 0
-        is_enabled = str(binding.status or "").strip() == "enabled"
-        if wants_json:
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "notice": message,
-                    "bot_id": bot_id,
-                    "plugin_id": plugin_id,
-                    "binding_id": binding.id,
-                    "is_bound": True,
-                    "is_enabled": is_enabled,
-                    "status_label": "已启用" if is_enabled else "已停用",
-                    "status_tone": "success" if is_enabled else "muted",
-                    "button_label": "关闭" if is_enabled else "开启",
-                    "enabled_count": int(enabled_count),
-                    "total_count": int(total_count),
-                }
-            )
-        target = redirect_to if redirect_to.startswith("/") else "/plugins"
-        if open_bot_id <= 0:
-            open_bot_id = bot_id
-        separator = "&" if "?" in target else "?"
-        return RedirectResponse(
-            url=f"{target}{separator}open_bot_id={open_bot_id}&notice={quote(message)}",
-            status_code=303,
+        return JSONResponse(
+            {
+                "ok": True,
+                "notice": f"{bot.name} 的 {plugin.display_name} 已{'启用' if is_enabled else '停用'}",
+                "bot_id": bot_id,
+                "plugin_id": plugin_id,
+                "binding_id": binding.id if binding else None,
+                "is_bound": binding is not None,
+                "is_enabled": is_enabled,
+                "status_label": "已启用" if is_enabled else "已停用",
+                "status_tone": "success" if is_enabled else "muted",
+                "enabled_count": int(enabled_count),
+                "total_count": int(total_count),
+            }
         )
     finally:
         db.close()

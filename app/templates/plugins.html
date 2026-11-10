@@ -45,11 +45,7 @@
       </summary>
       <div class="plugin-toggle-grid">
         {% for item in row["items"] %}
-        <form method="post" action="/plugins/toggle-direct" class="plugin-switch-card {% if item.is_enabled %}plugin-switch-card-enabled{% endif %}" data-plugin-switch-form>
-          <input type="hidden" name="bot_id" value="{{ row.bot_id }}" />
-          <input type="hidden" name="plugin_id" value="{{ item.plugin_id }}" />
-          <input type="hidden" name="redirect_to" value="/plugins" />
-          <input type="hidden" name="open_bot_id" value="{{ row.bot_id }}" />
+        <div class="plugin-switch-card {% if item.is_enabled %}plugin-switch-card-enabled{% endif %}" data-plugin-switch-card>
           <div class="plugin-switch-copy">
             <strong>{{ item.plugin_name }}</strong>
             <p><code>{{ item.plugin_code }}</code></p>
@@ -65,14 +61,14 @@
             <span class="chip chip-success">可执行</span>
             {% endif %}
           </div>
-          <button class="plugin-switch-toggle" type="submit" aria-label="{{ '关闭' if item.is_enabled else '开启' }} {{ item.plugin_name }}" data-toggle-button>
-            <span class="plugin-switch-track {% if item.is_enabled %}plugin-switch-track-on{% endif %}" data-toggle-track>
-              <span class="plugin-switch-thumb"></span>
+          {# 启停开关:点击即保存,提示由 switches.js 弹出;状态标签与"当前启用 n / m"由页面底部的小脚本同步。 #}
+          <label class="plugin-switch-row">
+            <span class="ui-switch">
+              <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin_name }}" data-autosave-url="/plugins/toggle-direct" data-autosave-key="enabled" data-autosave-form='{"bot_id": "{{ row.bot_id }}", "plugin_id": "{{ item.plugin_id }}"}'{% if item.is_enabled %} checked{% endif %} />
+              <span class="ui-switch-track"></span>
             </span>
-            <span data-toggle-label>{{ '关闭' if item.is_enabled else '开启' }}</span>
-          </button>
-          <p class="muted-text plugin-switch-feedback" data-plugin-feedback hidden></p>
-        </form>
+          </label>
+        </div>
         {% endfor %}
       </div>
     </details>
@@ -88,75 +84,29 @@
 
 <script>
 (() => {
-  const forms = document.querySelectorAll('[data-plugin-switch-form]');
-  if (!forms.length) return;
-  for (const form of forms) {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const button = form.querySelector('[data-toggle-button]');
-      const label = form.querySelector('[data-toggle-label]');
-      const track = form.querySelector('[data-toggle-track]');
-      const statusChip = form.querySelector('[data-status-chip]');
-      const bindChip = form.querySelector('[data-bind-chip]');
-      const feedback = form.querySelector('[data-plugin-feedback]');
-      const panel = form.closest('[data-bot-panel]');
-      const summary = panel ? panel.querySelector('[data-enabled-summary]') : null;
-      const previousLabel = label ? label.textContent : '';
-      if (button) button.disabled = true;
-      if (label) label.textContent = '处理中';
-      if (feedback) {
-        feedback.hidden = true;
-        feedback.textContent = '';
-      }
-      try {
-        const response = await fetch(form.action, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-          body: new FormData(form),
-          credentials: 'same-origin',
-        });
-        const payload = await response.json();
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.detail || payload.notice || '操作失败');
-        }
-        const isEnabled = Boolean(payload.is_enabled);
-        form.classList.toggle('plugin-switch-card-enabled', isEnabled);
-        if (track) track.classList.toggle('plugin-switch-track-on', isEnabled);
-        if (label) label.textContent = payload.button_label || (isEnabled ? '关闭' : '开启');
-        if (statusChip) {
-          statusChip.textContent = payload.status_label || (isEnabled ? '已启用' : '已停用');
-          statusChip.classList.remove('chip-success', 'chip-outline', 'chip-muted');
-          statusChip.classList.add(payload.status_tone === 'success' ? 'chip-success' : payload.status_tone === 'outline' ? 'chip-outline' : 'chip-muted');
-        }
-        if (bindChip) {
-          bindChip.textContent = payload.is_bound ? '已绑定' : '未绑定';
-          bindChip.classList.remove('chip-outline', 'chip-muted');
-          bindChip.classList.add(payload.is_bound ? 'chip-muted' : 'chip-outline');
-        }
-        if (summary) {
-          summary.textContent = summary.textContent.replace(/当前启用\s+\d+\s*\/\s*\d+/, `当前启用 ${payload.enabled_count} / ${payload.total_count}`);
-        }
-        if (feedback) {
-          feedback.hidden = false;
-          feedback.textContent = payload.notice || '已更新';
-        }
-      } catch (error) {
-        if (label) label.textContent = previousLabel || '重试';
-        if (feedback) {
-          feedback.hidden = false;
-          feedback.textContent = error instanceof Error ? error.message : '操作失败';
-        }
-      } finally {
-        if (button) button.disabled = false;
-        if (label && label.textContent === '处理中') {
-          label.textContent = previousLabel || '开启';
-        }
-      }
-    });
-  }
+  // 开关保存成功后(switches.js 触发 autosave:done)同步这张卡片的状态标签、绑定标签和机器人面板里的"当前启用 n / m"。
+  document.addEventListener('autosave:done', (event) => {
+    const card = event.target.closest('[data-plugin-switch-card]');
+    if (!card) return;
+    const payload = event.detail.response || {};
+    const isEnabled = Boolean(payload.is_enabled);
+    card.classList.toggle('plugin-switch-card-enabled', isEnabled);
+    const statusChip = card.querySelector('[data-status-chip]');
+    if (statusChip) {
+      statusChip.textContent = payload.status_label || (isEnabled ? '已启用' : '已停用');
+      statusChip.classList.remove('chip-success', 'chip-outline', 'chip-muted');
+      statusChip.classList.add(payload.status_tone === 'success' ? 'chip-success' : 'chip-muted');
+    }
+    const bindChip = card.querySelector('[data-bind-chip]');
+    if (bindChip) {
+      bindChip.textContent = payload.is_bound ? '已绑定' : '未绑定';
+      bindChip.classList.remove('chip-outline', 'chip-muted');
+      bindChip.classList.add(payload.is_bound ? 'chip-muted' : 'chip-outline');
+    }
+    const panel = card.closest('[data-bot-panel]');
+    const summary = panel ? panel.querySelector('[data-enabled-summary]') : null;
+    if (summary) summary.textContent = summary.textContent.replace(/当前启用\s+\d+\s*\/\s*\d+/, `当前启用 ${payload.enabled_count} / ${payload.total_count}`);
+  });
 })();
 </script>
 

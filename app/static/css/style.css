@@ -2554,46 +2554,6 @@ code {
   margin-top: 10px;
 }
 
-.plugin-switch-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-  padding: 0;
-  color: var(--primary-strong);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.plugin-switch-track {
-  position: relative;
-  width: 34px;
-  height: 18px;
-  background: #cbd5e1;
-  border-radius: 999px;
-  transition: background-color 300ms ease;
-}
-
-.plugin-switch-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  background: #fff;
-  border-radius: 50%;
-  transition: left 300ms ease;
-}
-
-.plugin-switch-track-on {
-  background: var(--primary);
-}
-
-.plugin-switch-track-on .plugin-switch-thumb {
-  left: 19px;
-}
 
 .plugin-detail-hero {
   display: grid;
@@ -4708,7 +4668,6 @@ code {
   .nav-popover-link,
   .record-action-trigger,
   .app-nav-trigger,
-  .plugin-switch-toggle,
   .dashboard-chart-detail summary {
     min-height: 44px;
   }
@@ -5233,8 +5192,9 @@ code {
   font-weight: 600;
 }
 
-/* 开关:真实的 checkbox 视觉隐藏但保留键盘与读屏可用,外观由 track/thumb 绘制。 */
-.gf-switch {
+/* 开关(全平台唯一的开关外观,.ui-switch):真实的 checkbox 视觉隐藏但保留键盘与读屏可用,外观由 track/thumb 绘制。
+   插件启停、群功能、群运行模式、AI 助手等所有开关都用它;点击即保存的开关由 switches.js 提交并弹出提示。 */
+.ui-switch {
   position: relative;
   display: inline-block;
   flex: 0 0 auto;
@@ -5242,7 +5202,7 @@ code {
   height: 24px;
 }
 
-.gf-switch input {
+.ui-switch input {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -5253,7 +5213,7 @@ code {
   cursor: pointer;
 }
 
-.gf-switch-track {
+.ui-switch-track {
   position: absolute;
   inset: 0;
   background: #cbd5e1;
@@ -5261,7 +5221,7 @@ code {
   transition: background-color 250ms ease;
 }
 
-.gf-switch-track::after {
+.ui-switch-track::after {
   content: "";
   position: absolute;
   top: 3px;
@@ -5274,31 +5234,31 @@ code {
   transition: transform 250ms ease;
 }
 
-.gf-switch input:checked + .gf-switch-track {
+.ui-switch input:checked + .ui-switch-track {
   background: var(--primary);
 }
 
-.gf-switch input:checked + .gf-switch-track::after {
+.ui-switch input:checked + .ui-switch-track::after {
   transform: translateX(20px);
 }
 
-.gf-switch input:focus-visible + .gf-switch-track {
+.ui-switch input:focus-visible + .ui-switch-track {
   box-shadow: 0 0 0 4px var(--focus);
 }
 
-.gf-switch-small {
+.ui-switch-small {
   width: 36px;
   height: 20px;
 }
 
-.gf-switch-small .gf-switch-track::after {
+.ui-switch-small .ui-switch-track::after {
   top: 3px;
   left: 3px;
   width: 14px;
   height: 14px;
 }
 
-.gf-switch-small input:checked + .gf-switch-track::after {
+.ui-switch-small input:checked + .ui-switch-track::after {
   transform: translateX(16px);
 }
 
@@ -5515,7 +5475,7 @@ code {
   font-weight: 500;
 }
 
-.form-grid .gf-switch input {
+.form-grid .ui-switch input {
   min-height: 0;
   padding: 0;
   background: transparent;
@@ -6020,4 +5980,102 @@ details.disclosure > summary:hover::after {
 
 .log-entry {
   --disclosure-inset: 12px;
+}
+
+/* ===== 提示条(appToast)与点击即保存的开关 ===== */
+.app-toast-host {
+  position: fixed;
+  right: 0;
+  bottom: 28px;
+  left: 0;
+  z-index: 1200;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.app-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 11px 18px 11px 14px;
+  color: var(--text);
+  background: var(--surface);
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft);
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.app-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.app-toast-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: var(--success);
+}
+
+/* 图标用圆形底色 + 白色符号叠出:成功是对勾,失败是感叹号,提示是 i。 */
+.app-toast-icon {
+  position: relative;
+}
+
+.app-toast-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  -webkit-mask: var(--toast-glyph) center / 12px no-repeat;
+  mask: var(--toast-glyph) center / 12px no-repeat;
+}
+
+.app-toast-success {
+  --toast-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+}
+
+.app-toast-danger {
+  --toast-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round'%3E%3Cpath d='M12 6v7'/%3E%3Cpath d='M12 18.2v.1'/%3E%3C/svg%3E");
+}
+
+.app-toast-danger .app-toast-icon {
+  background-color: var(--danger);
+}
+
+.app-toast-info {
+  --toast-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round'%3E%3Cpath d='M12 11v7'/%3E%3Cpath d='M12 5.8v.1'/%3E%3C/svg%3E");
+}
+
+.app-toast-info .app-toast-icon {
+  background-color: var(--info);
+}
+
+/* 提交中:开关暂时不可点,轻微变淡。 */
+.ui-switch.is-busy {
+  opacity: 0.6;
+}
+
+.ui-switch input:disabled {
+  cursor: progress;
+}
+
+/* 表单里的"启用"开关字段(员工、插件绑定):文字在左、开关在右,与其他开关行一致。 */
+.form-grid .switch-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+}
+
+.ui-switch input[type="hidden"] {
+  display: none;
 }

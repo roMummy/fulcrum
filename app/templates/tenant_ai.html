@@ -13,9 +13,9 @@
     <div class="full-row gf-switch-list gf-switch-list-soft">
       <label class="gf-row">
         <span class="gf-row-copy"><strong>启用 AI 助手</strong><small>关闭后所有群和私聊都不会触发 AI，已有的 /命令 不受影响</small></span>
-        <span class="gf-switch">
+        <span class="ui-switch">
           <input type="checkbox" name="enabled" role="switch"{% if setting and setting.enabled %} checked{% endif %} />
-          <span class="gf-switch-track"></span>
+          <span class="ui-switch-track"></span>
         </span>
       </label>
     </div>
@@ -25,9 +25,9 @@
     <div class="full-row gf-switch-list gf-switch-list-soft">
       <label class="gf-row">
         <span class="gf-row-copy"><strong>私聊启用聊天（人格 + 记忆）</strong><small>群里的聊天请到各群「群功能」的「AI 对话」里开启（未单独设置时跟随这里的开关），也可以给该群单独设置模型</small></span>
-        <span class="gf-switch">
+        <span class="ui-switch">
           <input type="checkbox" name="chat_enabled" role="switch"{% if setting and setting.chat_enabled %} checked{% endif %} />
-          <span class="gf-switch-track"></span>
+          <span class="ui-switch-track"></span>
         </span>
       </label>
     </div>

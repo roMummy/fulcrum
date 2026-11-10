@@ -1,6 +1,5 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{% from '_payment_ledger.html' import payment_ledger %}
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
@@ -51,33 +50,6 @@
   </div>
   {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
 </section>
-
-{% if channel.channel_type == 'wechat_webridge' %}
-{# 自动收款是账号级设置:转账多发生在私聊,不属于某个群,所以不放在群功能里;外观与群功能卡片一致。 #}
-<div class="gf-list">
-  <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/settings" class="gf-card{% if auto_receive_transfer %} is-on{% endif %}" data-gf-card data-gf-key="auto-receive-transfer-{{ channel.id }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <header class="gf-head">
-      <div class="gf-head-copy">
-        <h3>自动收款</h3>
-        <p>账号收到转账（私聊和群里的都算）时自动确认收款，钱进入这个微信的零钱。每笔只确认一次；超时未确认时不会自动重试，请到日志里核对。</p>
-      </div>
-      <div class="gf-head-actions">
-        <label class="gf-master" title="开启或关闭自动收款">
-          <span class="gf-master-text" data-gf-state>{{ '已开启' if auto_receive_transfer else '未开启' }}</span>
-          <span class="gf-switch">
-            <input type="checkbox" name="auto_receive_transfer" value="on" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启"{% if auto_receive_transfer %} checked{% endif %}{% if not can_manage_channel %} disabled{% endif %} />
-            <span class="gf-switch-track"></span>
-          </span>
-        </label>
-        {% if can_manage_channel %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
-      </div>
-    </header>
-    {# 自动收款:整个账号收到并处理过的转账明细与统计(折叠,默认收起) #}
-    {% if transfer_ledger %}{{ payment_ledger(transfer_ledger, show_chat=True) }}{% endif %}
-  </form>
-</div>
-{% endif %}
 
 {% if channel.channel_type == 'wechat_ipad' and wechat_ipad_overview %}
 <section class="work-surface account-business-summary">
@@ -273,7 +245,4 @@
   </div>
 </dialog>
 {% endif %}
-{% endblock %}
-{% block scripts %}
-<script src="/static/js/group-features.js" defer></script>
 {% endblock %}

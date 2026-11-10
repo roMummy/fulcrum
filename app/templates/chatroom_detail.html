@@ -37,14 +37,12 @@
   <div class="gf-list">
   {# 运行模式:三选一。只采集消息 = 继续记录但不触发功能;完全关闭 = 不接收也不触发。 #}
   <form method="post" action="{{ base_url }}/management" class="gf-card is-on" data-gf-card data-gf-key="mode" data-gf-open="1">
-    <input type="hidden" name="next" value="{{ base_url }}?tab=features" />
     <header class="gf-head">
       <div class="gf-head-copy" data-gf-toggle-title>
         <h3>运行模式</h3>
         <p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
       </div>
       <div class="gf-head-actions">
-        <button class="btn btn-small" type="submit">保存</button>
         <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true" aria-label="展开或收起设置" title="展开或收起设置"></button>
       </div>
     </header>
@@ -53,7 +51,8 @@
       <div class="gf-mode-list">
         {% for mode in group_modes %}
         <label class="gf-mode{% if mode.value == group_mode %} is-selected{% endif %}">
-          <input type="radio" name="management_status" value="{{ mode.value }}"{% if mode.value == group_mode %} checked{% endif %} />
+          {# 选中即生效:脚本提交后弹出提示;失败时回到原来的选项 #}
+          <input type="radio" name="management_status" value="{{ mode.value }}" data-autosave-url="{{ base_url }}/management" data-autosave-key="management_status" data-autosave-form="{}"{% if mode.value == group_mode %} checked{% endif %} />
           <span class="gf-mode-text"><strong>{{ mode.label }}</strong><small>{{ mode.hint }}</small></span>
         </label>
         {% endfor %}
@@ -62,7 +61,7 @@
     </div>
   </form>
   {% for item in features %}
-  <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card data-gf-key="{{ item.key }}">
+  <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card data-gf-key="{{ item.key }}"{% if item.has_inputs %} data-gf-save-url="{{ base_url }}/features/{{ item.key }}"{% endif %}>
     <header class="gf-head">
       <div class="gf-head-copy"{% if item.sections %} data-gf-toggle-title{% endif %}>
         <h3>{{ item.name }}</h3>
@@ -71,12 +70,12 @@
       <div class="gf-head-actions">
         <label class="gf-master" title="在本群开启或关闭">
           <span class="gf-master-text" data-gf-state>{{ '已开启' if item.enabled else '未开启' }}</span>
-          <span class="gf-switch">
-            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启"{% if item.enabled %} checked{% endif %} />
-            <span class="gf-switch-track"></span>
+          <span class="ui-switch">
+            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="{{ base_url }}/features/{{ item.key }}/toggle" data-autosave-json='{"field":"enabled"}'{% if item.enabled %} checked{% endif %} />
+            <span class="ui-switch-track"></span>
           </span>
         </label>
-        {% if item.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>{% else %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
+        {% if item.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>{% endif %}
       </div>
     </header>
 
@@ -92,9 +91,9 @@
           {% for field in section.switches %}
           <label class="gf-row"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
             <span class="gf-row-label">{{ field.label }}</span>
-            <span class="gf-switch gf-switch-small">
-              <input type="checkbox" name="{{ field.name }}" value="true" role="switch"{% if field.value %} checked{% endif %} />
-              <span class="gf-switch-track"></span>
+            <span class="ui-switch ui-switch-small">
+              <input type="checkbox" name="{{ field.name }}" value="true" role="switch" data-autosave-url="{{ base_url }}/features/{{ item.key }}/toggle" data-autosave-json='{"field":"{{ field.key }}"}'{% if field.value %} checked{% endif %} />
+              <span class="ui-switch-track"></span>
             </span>
           </label>
           {% endfor %}
@@ -122,13 +121,16 @@
       </section>
       {% endfor %}
     </div>
+    {# 只有设置区里有文本/数字/密钥输入时才需要保存按钮;开关点一下就已保存。 #}
+    {% if item.has_inputs %}
     <footer class="gf-foot">
       <button class="btn" type="submit">保存</button>
     </footer>
+    {% endif %}
     </div>
     {% endif %}
-    {# 自动抢红包:本群收到并处理过的红包明细与统计(折叠,默认收起) #}
-    {% if item.key == 'red_packet' and red_packet_ledger %}{{ payment_ledger(red_packet_ledger) }}{% endif %}
+    {# 自动抢红包、自动收款:本群收到并处理过的款项明细与统计(折叠,默认收起) #}
+    {% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}
   </form>
   {% endfor %}
   </div>
@@ -136,25 +138,24 @@
   {% elif tab == 'plugins' %}
   {% if detail.bindings %}
   {% for item in detail.bindings %}
-  <div class="plugin-row">
+  <div class="plugin-row" data-scope-row>
     <div>
       <h3>{{ item.plugin_name }}
-        {% if item.group_scope_status != 'inherited' %}<span class="chip chip-success">本群已自定义</span>{% endif %}
+        <span class="chip chip-success" data-scope-custom-chip{% if item.group_scope_status == 'inherited' %} hidden{% endif %}>本群已自定义</span>
       </h3>
       {% if item.plugin_description %}<p class="muted-text" style="margin:2px 0 0;">{{ item.plugin_description }}</p>{% endif %}
     </div>
     <div class="plugin-row-actions">
-      {# 开关沿用 mode 接口：已启用则切为强制停用，反之切为强制启用；“恢复默认”回到继承。 #}
-      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode">
-        <input type="hidden" name="mode" value="{{ 'disabled' if item.group_scope_enabled else 'enabled' }}" />
-        <button class="btn {% if item.group_scope_enabled %}btn-secondary{% endif %}" type="submit">{{ '已启用，点击停用' if item.group_scope_enabled else '已停用，点击启用' }}</button>
-      </form>
-      {% if item.group_scope_status != 'inherited' %}
-      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode">
+      {# 开关:点击即保存(启用/停用);“恢复默认”回到继承 bot 级状态。 #}
+      <span class="ui-switch" title="在本群启用或停用这个插件">
+        <input type="checkbox" role="switch" aria-label="在本群启用 {{ item.plugin_name }}" data-autosave-url="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-autosave-key="mode" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if item.group_scope_enabled %} checked{% endif %} />
+        <span class="ui-switch-track"></span>
+      </span>
+      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-scope-reset-form{% if item.group_scope_status == 'inherited' %} hidden{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <input type="hidden" name="mode" value="inherited" />
-        <button class="btn btn-secondary" type="submit">恢复默认</button>
+        <button class="btn btn-secondary btn-small" type="submit">恢复默认</button>
       </form>
-      {% endif %}
     </div>
     <details class="disclosure">
       <summary class="muted-text">高级配置与技术信息</summary>
@@ -254,6 +255,20 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/group-features.js" defer></script>
+<script>
+  (() => {
+    // 群内插件开关保存成功后:启用/停用都算"本群已自定义",显示标签和"恢复默认"按钮。
+    document.addEventListener("autosave:done", (event) => {
+      const row = event.target.closest("[data-scope-row]");
+      if (!row) return;
+      const custom = Boolean(event.detail.response.custom);
+      const chip = row.querySelector("[data-scope-custom-chip]");
+      const reset = row.querySelector("[data-scope-reset-form]");
+      if (chip) chip.hidden = !custom;
+      if (reset) reset.hidden = !custom;
+    });
+  })();
+</script>
 <script>
   (() => {
     document.querySelectorAll(".chatroom-scope-config-form").forEach((form) => {

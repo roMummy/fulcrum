@@ -96,9 +96,10 @@
         </td>
         <td class="col-action">
           <div class="actions">
-            <form method="post" action="/plugins/{{ item.id }}/toggle">
-              <button class="btn btn-small" type="submit">{{ '禁用' if item.status == 'enabled' else '启用' }}</button>
-            </form>
+            <span class="ui-switch" title="启用或停用这个绑定">
+              <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin.display_name }}" data-autosave-url="/plugins/{{ item.id }}/toggle" data-autosave-key="enabled" data-autosave-form="{}" data-binding-status{% if item.status == 'enabled' %} checked{% endif %} />
+              <span class="ui-switch-track"></span>
+            </span>
             <form method="post" action="/plugins/{{ item.id }}/reload">
               <button class="btn btn-small btn-secondary" type="submit">重载</button>
             </form>
@@ -111,4 +112,18 @@
     </tbody>
   </table>
 </section>
+{% endblock %}
+{% block scripts %}
+<script>
+  // 开关保存成功后同步这一行的"配置状态"标签(enabled / disabled)。
+  document.addEventListener('autosave:done', (event) => {
+    if (!event.target.matches('[data-binding-status]')) return;
+    const badge = event.target.closest('tr').querySelector('td.col-status .badge');
+    if (!badge) return;
+    const enabled = Boolean(event.detail.response.is_enabled);
+    badge.textContent = enabled ? 'enabled' : 'disabled';
+    badge.classList.toggle('badge-enabled', enabled);
+    badge.classList.toggle('badge-disabled', !enabled);
+  });
+</script>
 {% endblock %}

@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from app.models.entities import Chatroom
 from app.services.group_features.registry import all_features, get_feature
-from app.services.group_features.store import get_state, has_saved_state, save_state
+from app.services.group_features.store import get_state, has_saved_state, save_state, set_flag
 
 # 表单里配置项的字段名前缀,避免和 enabled 等控制字段重名。
 FORM_PREFIX = "cfg_"
@@ -31,6 +31,7 @@ def build_feature_cards(chatroom: Chatroom, channel_type: str = "", defaults: Ma
             if not sections or sections[-1]["title"] != item.group:
                 sections.append({"title": item.group, "switches": [], "inputs": []})
             field = {
+                "key": item.key,
                 "name": FORM_PREFIX + item.key,
                 "label": item.label,
                 "kind": item.kind,
@@ -51,6 +52,8 @@ def build_feature_cards(chatroom: Chatroom, channel_type: str = "", defaults: Ma
                 "description": feature.description,
                 "enabled": enabled,
                 "sections": sections,
+                # 有文本/数字/密钥输入的设置才需要"保存"按钮;只有开关的设置点一下就已保存。
+                "has_inputs": any(section["inputs"] for section in sections),
             }
         )
     return cards
@@ -72,3 +75,14 @@ def save_from_form(chatroom: Chatroom, feature_key: str, form: Mapping[str, Any]
     enabled = "enabled" in form
     save_state(chatroom, feature_key, enabled=enabled, config=config)
     return f"已{'开启' if enabled else '关闭'}「{feature.name}」"
+
+
+def toggle_flag(chatroom: Chatroom, feature_key: str, field: str, value: bool) -> str:
+    """点开关即保存:只改这一个开关,返回给用户看的提示。"""
+
+    feature = get_feature(feature_key)
+    if feature is None:
+        raise ValueError(f"未知群功能: {feature_key}")
+    item = set_flag(chatroom, feature_key, field, value)
+    state = "开启" if value else "关闭"
+    return f"已{state}「{feature.name}」" if item is None else f"已{state}「{item.label}」"
