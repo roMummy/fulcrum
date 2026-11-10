@@ -282,6 +282,8 @@ def _resolve_target_conversations(
                     Chatroom.external_id == external_id,
                 )
             )
+            if chatroom is not None and not bool(chatroom.is_active):
+                continue
             if chatroom is not None:
                 scope = db.scalar(
                     select(GroupPluginScope).where(

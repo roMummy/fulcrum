@@ -262,6 +262,7 @@ def _require_trusted_group_target(
             Chatroom.bot_id == int(binding.bot_id),
             Chatroom.channel_id == int(channel.id),
             Chatroom.external_id == str(conversation.external_id or ""),
+            Chatroom.is_active.is_(True),
         )
         .order_by(Chatroom.id.asc())
         .limit(1)

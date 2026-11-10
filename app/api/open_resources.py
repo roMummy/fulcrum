@@ -107,6 +107,7 @@ def _group_view(group: Chatroom) -> dict[str, Any]:
         "name": group.name or group.remark or group.external_id,
         "remark": group.remark,
         "status": group.status,
+        "is_active": bool(group.is_active),
         "member_count": int(group.member_count or 0),
         "last_synced_at": group.last_synced_at.isoformat() if group.last_synced_at else None,
     }

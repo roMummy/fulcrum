@@ -41,6 +41,7 @@ def test_open_resource_serializers_return_stable_business_fields() -> None:
         external_id="room@chatroom",
         name="客户群",
         status="active",
+        is_active=True,
         member_count=2,
     )
     assert _group_view(group)["external_id"] == "room@chatroom"

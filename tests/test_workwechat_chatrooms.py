@@ -97,6 +97,8 @@ class WorkWechatChatroomTests(unittest.TestCase):
         chatroom = self.db.query(Chatroom).filter_by(channel_id=self.channel.id, external_id="R:room-001").one()
         member = self.db.query(ChatroomMember).filter_by(chatroom_id=chatroom.id, member_external_id="user-001").one()
         self.assertEqual(chatroom.name, "企微测试群")
+        self.assertEqual(chatroom.management_status, "enabled")
+        self.assertTrue(chatroom.is_active)
         self.assertEqual(member.nickname, "张三")
 
         detail = build_workwechat_chatroom_detail(self.db, self.channel, chatroom)
@@ -313,6 +315,45 @@ class WorkWechatChatroomTests(unittest.TestCase):
 
         refreshed = self.db.query(Chatroom).filter_by(channel_id=self.channel.id, external_id="R:synced-room").one()
         self.assertEqual(refreshed.name, "已同步供应商群")
+
+    def test_message_ingest_keeps_existing_disabled_chatroom_inactive(self):
+        chatroom = Chatroom(
+            bot_id=self.bot.id,
+            channel_id=self.channel.id,
+            external_id="R:disabled-room",
+            name="已停用群",
+            status="profile_synced",
+            management_status="disabled",
+            is_active=False,
+        )
+        conversation = Conversation(
+            bot_id=self.bot.id,
+            channel_id=self.channel.id,
+            channel_type="workwechat",
+            external_id="R:disabled-room",
+            title="已停用群",
+            chat_type="group",
+        )
+        self.db.add_all([chatroom, conversation])
+        self.db.commit()
+
+        sync_workwechat_chatroom_from_message(
+            self.db,
+            self.channel,
+            {
+                "event_key": "evt-disabled",
+                "conversation": {"external_id": "R:disabled-room", "title": "已停用群", "chat_type": "group"},
+                "message": {"sender_id": "user-003", "sender_name": "王五", "message_type": "text", "content": "hello"},
+                "details": {"timestamp": "2026-06-05T04:00:00+00:00"},
+            },
+            conversation=conversation,
+        )
+        self.db.commit()
+
+        refreshed = self.db.query(Chatroom).filter_by(channel_id=self.channel.id, external_id="R:disabled-room").one()
+        self.assertEqual(refreshed.management_status, "disabled")
+        self.assertFalse(refreshed.is_active)
+
 
 if __name__ == "__main__":
     unittest.main()

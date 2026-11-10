@@ -1023,6 +1023,56 @@ consume_policy = "continue"
         skipped = dict(plan.skipped)
         self.assertEqual(skipped["weather"], "binding_disabled")
 
+    def test_static_dispatch_plan_skips_inactive_wechat_chatroom(self):
+        with SessionLocal() as db:
+            # 插件调度使用机器人主键，精简模型不再需要独立 slug。
+            bot = Bot(name="Dispatch Bot")
+            db.add(bot)
+            db.flush()
+            plugin_codes = {"dify", "message_summary"}
+            plugins = db.scalars(select(Plugin).where(Plugin.code.in_(plugin_codes))).all()
+            if len(plugins) < 2:
+                sync_plugins_from_directory(db, force=True)
+                plugins = db.scalars(select(Plugin).where(Plugin.code.in_(plugin_codes))).all()
+            self.assertEqual({item.code for item in plugins}, plugin_codes)
+            for plugin in plugins:
+                db.add(BotPlugin(bot_id=bot.id, plugin_id=plugin.id, status="enabled"))
+            channel = Channel(
+                bot_id=bot.id,
+                name="Wechat iPad Gate",
+                channel_type="wechat_ipad",
+                webhook_path="/webhooks/test/wechat-ipad",
+            )
+            db.add(channel)
+            db.flush()
+            chatroom = Chatroom(
+                bot_id=bot.id,
+                channel_id=channel.id,
+                external_id="room-discovered@chatroom",
+                name="待启用群",
+                registration_source="passive",
+                management_status="discovered",
+                is_registered=True,
+                is_active=False,
+            )
+            db.add(chatroom)
+            db.commit()
+
+            plan = build_static_dispatch_plan(
+                db,
+                channel,
+                {
+                    "conversation": {"external_id": "room-discovered@chatroom", "chat_type": "group"},
+                    "message": {"content": "/总结 今天群里发生了什么", "sender_id": "wxid_sender", "message_type": "text"},
+                    "details": {"mentioned_self": False},
+                },
+            )
+
+        self.assertEqual(plan.candidate_plugin_codes, ())
+        skipped = dict(plan.skipped)
+        self.assertEqual(skipped["dify"], "group_chatroom_inactive")
+        self.assertEqual(skipped["message_summary"], "group_chatroom_inactive")
+
     def test_run_single_job_executes_claimed_plugin_dispatch_job(self):
         with SessionLocal() as db:
             job = enqueue_job(

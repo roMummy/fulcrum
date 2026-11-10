@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope
-from app.services.chatroom_registry import mark_chatroom_discovered
+from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
 from app.services.plugin_runtime.registry import get_plugin_schema
 from app.services.plugin_schemas import deep_merge_config, dump_config_json, parse_config_json
 from app.services.wechat_ipad.chatrooms import (
@@ -62,6 +62,7 @@ def sync_wechat_winauto_chatroom_from_message(
         chatroom=chatroom,
         seen_at=synced_at,
         registration_source="passive",
+        enable_management=chatroom_created,
     )
 
     extra = _parse_json(chatroom.extra_json)
@@ -133,6 +134,7 @@ def sync_wechat_winauto_chatrooms(db: Session, channel: Channel) -> dict[str, An
             chatroom=chatroom,
             seen_at=observed_at,
             registration_source="passive",
+            enable_management=chatroom_created,
         )
         chatroom.name = str(conversation.title or external_id).strip() or external_id
         chatroom.last_synced_at = observed_at
@@ -214,6 +216,10 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
                 "owner_external_id": chatroom.owner_external_id or "-",
                 "status": chatroom.status or "message_observed",
                 "status_label": _format_chatroom_status(chatroom.status),
+                "management_status": chatroom.management_status or "discovered",
+                "management_status_label": format_chatroom_management_status(chatroom.management_status),
+                "management_status_tone": management_tone(chatroom.management_status),
+                "is_active": bool(chatroom.is_active),
                 "sync_depth_label": "会话样本",
                 "member_count": int(chatroom.member_count or 0),
                 "member_record_count": 0,
@@ -234,6 +240,9 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
         "binding_total": len(bindings),
         "binding_enabled_total": sum(1 for enabled in binding_enabled_map.values() if enabled),
         "member_snapshot_chatroom_count": 0,
+        "pending_chatroom_count": sum(1 for item in items if item["management_status"] == "discovered"),
+        "active_chatroom_count": sum(1 for item in items if item["is_active"]),
+        "disabled_chatroom_count": sum(1 for item in items if item["management_status"] == "disabled"),
         "inherited_chatroom_count": inherited_chatroom_count,
         "overridden_chatroom_count": overridden_chatroom_count,
         "supports_sync": True,
@@ -337,6 +346,10 @@ def build_wechat_winauto_chatroom_detail(db: Session, channel: Channel, chatroom
         "auto_download_media_label": "暂不支持",
         "status": chatroom.status or "message_observed",
         "status_label": _format_chatroom_status(chatroom.status),
+        "management_status": chatroom.management_status or "discovered",
+        "management_status_label": format_chatroom_management_status(chatroom.management_status),
+        "management_status_tone": management_tone(chatroom.management_status),
+        "is_active": bool(chatroom.is_active),
         "member_count": int(chatroom.member_count or 0),
         "member_record_count": 0,
         "last_synced_at": _format_dt(chatroom.last_synced_at),

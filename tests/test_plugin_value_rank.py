@@ -84,6 +84,7 @@ def value_rank_fixture(tmp_path: Path):
             external_id=conversation.external_id,
             name=conversation.title,
             status="active",
+            is_active=True,
             member_count=3,
         )
         binding = BotPlugin(

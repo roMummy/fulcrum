@@ -401,6 +401,8 @@ def _serialize_open_chatroom_option(*, channel: Channel, chatroom: Chatroom) -> 
         "chatroom_name": name,
         "chatroom_remark": chatroom.remark,
         "chatroom_status": chatroom.status,
+        "management_status": chatroom.management_status,
+        "is_active": bool(chatroom.is_active),
         "member_count": int(chatroom.member_count or 0),
     }
 

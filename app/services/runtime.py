@@ -112,6 +112,9 @@ def ensure_runtime_schema() -> None:
         Chatroom.__table__.create(bind=engine)
     else:
         _ensure_column("chatrooms", "registration_source", "VARCHAR(20) DEFAULT 'passive'")
+        _ensure_column("chatrooms", "management_status", "VARCHAR(30) DEFAULT 'discovered'")
+        _ensure_column("chatrooms", "is_registered", "BOOLEAN DEFAULT 1")
+        _ensure_column("chatrooms", "is_active", "BOOLEAN DEFAULT 0")
         _ensure_column("chatrooms", "first_seen_at", "DATETIME")
         _ensure_column("chatrooms", "last_seen_at", "DATETIME")
         _ensure_column("chatrooms", "operator_note", "TEXT")

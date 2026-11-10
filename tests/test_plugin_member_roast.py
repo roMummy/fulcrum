@@ -108,6 +108,7 @@ def member_roast_fixture(tmp_path: Path):
             external_id=conversation.external_id,
             name=conversation.title,
             status="active",
+            is_active=True,
             member_count=2,
         )
         context_binding = BotPlugin(

@@ -111,6 +111,7 @@ def epic_free_fixture(tmp_path: Path):
             channel_id=ipad.id,
             external_id="epic-disabled@chatroom",
             name="停用群",
+            is_active=True,
         )
         binding = BotPlugin(
             tenant_id=tenant.id,

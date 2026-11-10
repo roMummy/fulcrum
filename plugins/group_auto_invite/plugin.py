@@ -203,6 +203,7 @@ def _resolve_chatroom(
             Chatroom.tenant_id == int(context.tenant_id),
             Chatroom.bot_id == int(context.bot_id),
             Chatroom.channel_id == int(context.channel_id or 0),
+            Chatroom.is_active.is_(True),
             or_(
                 Chatroom.name == normalized,
                 Chatroom.remark == normalized,
@@ -230,6 +231,7 @@ def _load_mapped_chatroom(
             Chatroom.tenant_id == int(context.tenant_id),
             Chatroom.bot_id == int(context.bot_id),
             Chatroom.channel_id == int(context.channel_id or 0),
+            Chatroom.is_active.is_(True),
         )
     )
 

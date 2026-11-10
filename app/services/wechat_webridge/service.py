@@ -170,6 +170,7 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
             room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
             room.remark = str(item.get("remark") or "")[:255] or None
             room.status = "synced"
+            room.is_active = True
             room.last_seen_at = now
             room.last_synced_at = now
             room.member_count = int(item.get("member_count") or item.get("member_total") or item.get("member_num") or room.member_count or 0)

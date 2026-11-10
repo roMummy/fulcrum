@@ -11,7 +11,7 @@ from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, Message, TaskJob
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
-from app.services.chatroom_registry import mark_chatroom_discovered
+from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
 from app.services.plugin_runtime.registry import get_plugin_schema
 from app.services.plugin_schemas import deep_merge_config, dump_config_json, parse_config_json
 from app.services.wechat_ipad.chatrooms import (
@@ -58,6 +58,7 @@ def sync_workwechat_chatroom_from_message(
         chatroom=chatroom,
         seen_at=synced_at,
         registration_source="passive",
+        enable_management=chatroom_created,
     )
 
     chatroom.name = _infer_chatroom_name(conversation_payload, conversation, chatroom_external_id, current_name=chatroom.name)
@@ -181,6 +182,7 @@ def apply_workwechat_provider_chatroom_list(db: Session, channel: Channel, provi
             room=room,
             normalized=normalized,
             synced_at=synced_at,
+            enable_management=created,
         )
 
     return {"rooms": rooms, "created": provider_created, "updated": provider_updated}
@@ -268,6 +270,7 @@ def apply_workwechat_provider_chatroom_profile(
             room=room,
             normalized=normalized,
             synced_at=synced_at,
+            enable_management=False,
         )
         _refresh_conversation_title_from_chatroom(conversation, normalized["name"], target_external_id)
         return {"updated": True, "rooms": rooms}
@@ -364,6 +367,10 @@ def build_workwechat_chatroom_list(db: Session, channel: Channel) -> dict[str, A
                 "owner_external_id": chatroom.owner_external_id or "-",
                 "status": chatroom.status or "message_observed",
                 "status_label": _format_chatroom_status(chatroom.status),
+                "management_status": chatroom.management_status or "discovered",
+                "management_status_label": format_chatroom_management_status(chatroom.management_status),
+                "management_status_tone": management_tone(chatroom.management_status),
+                "is_active": bool(chatroom.is_active),
                 "sync_depth_label": _sync_depth_label(chatroom.status, local_member_count),
                 "member_count": member_count,
                 "member_record_count": local_member_count,
@@ -384,6 +391,9 @@ def build_workwechat_chatroom_list(db: Session, channel: Channel) -> dict[str, A
         "binding_total": len(bindings),
         "binding_enabled_total": sum(1 for enabled in binding_enabled_map.values() if enabled),
         "member_snapshot_chatroom_count": sum(1 for item in items if int(item["member_record_count"] or 0) > 0),
+        "pending_chatroom_count": sum(1 for item in items if item["management_status"] == "discovered"),
+        "active_chatroom_count": sum(1 for item in items if item["is_active"]),
+        "disabled_chatroom_count": sum(1 for item in items if item["management_status"] == "disabled"),
         "inherited_chatroom_count": inherited_chatroom_count,
         "overridden_chatroom_count": overridden_chatroom_count,
         "supports_sync": True,
@@ -431,6 +441,10 @@ def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Ch
         "auto_download_media_label": "暂不支持",
         "status": chatroom.status or "message_observed",
         "status_label": _format_chatroom_status(chatroom.status),
+        "management_status": chatroom.management_status or "discovered",
+        "management_status_label": format_chatroom_management_status(chatroom.management_status),
+        "management_status_tone": management_tone(chatroom.management_status),
+        "is_active": bool(chatroom.is_active),
         "member_count": max(int(chatroom.member_count or 0), len([item for item in members if item.status != "left"])),
         "member_record_count": len(member_items),
         "last_synced_at": _format_dt(chatroom.last_synced_at),
@@ -597,6 +611,7 @@ def _apply_provider_chatroom_profile(
     room: dict[str, Any],
     normalized: dict[str, Any],
     synced_at: datetime,
+    enable_management: bool,
 ) -> None:
     # provider 群列表是当前唯一稳定的企微群资料来源；字段更新集中在这里，避免全量同步和单群补资料行为不一致。
     mark_chatroom_discovered(
@@ -605,6 +620,7 @@ def _apply_provider_chatroom_profile(
         chatroom=chatroom,
         seen_at=synced_at,
         registration_source="passive",
+        enable_management=enable_management,
     )
     chatroom.name = normalized["name"] or chatroom.name or normalized["external_id"]
     chatroom.owner_external_id = normalized["owner_external_id"] or chatroom.owner_external_id
@@ -661,6 +677,7 @@ def _materialize_chatrooms_from_conversations(db: Session, channel: Channel) -> 
             chatroom=chatroom,
             seen_at=observed_at,
             registration_source="passive",
+            enable_management=created,
         )
         chatroom.name = _infer_chatroom_name(
             {"title": conversation.title},

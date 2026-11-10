@@ -18,6 +18,8 @@ from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation,
 from app.services.identity_directory import _avatar_from_extra, make_identity
 
 PAGE_SIZE = 30
+# 群纳管状态在列表里的中文说法。只有“已启用”的群才会运行插件。
+MANAGEMENT_LABELS = {"enabled": "已启用", "discovered": "待启用", "disabled": "已停用", "archived": "已归档"}
 # 渠道里“好友”类联系人;企微等其他渠道的联系人类型不同,这里只取个人好友。
 FRIEND_KIND = "friend"
 
@@ -48,20 +50,24 @@ def channel_options(db: Session) -> list[dict[str, Any]]:
     return [{"id": int(item.id), "name": item.name or f"账号 #{item.id}"} for item in db.scalars(select(Channel).order_by(Channel.id.asc())).all()]
 
 
-def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int = 0, page: int = 1) -> dict[str, Any]:
-    """群列表:每个群一行,带头像昵称、所属账号和成员数。"""
+def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int = 0, status: str = "", page: int = 1) -> dict[str, Any]:
+    """群列表:每个群一行,带头像昵称、所属账号、成员数、纳管状态和是否开着插件。"""
 
     q = (keyword or "").strip()[:100]
     stmt = select(Chatroom)
     if channel_id:
         stmt = stmt.where(Chatroom.channel_id == channel_id)
+    if status in MANAGEMENT_LABELS:
+        stmt = stmt.where(Chatroom.management_status == status)
+    else:
+        status = ""
     if q:
         like = _like(q)
         stmt = stmt.where(or_(Chatroom.name.like(like, escape="\\"), Chatroom.remark.like(like, escape="\\"), Chatroom.external_id.like(like, escape="\\")))
 
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     paging = _page(total, page)
-    rooms = db.scalars(stmt.order_by(Chatroom.name.asc(), Chatroom.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
+    rooms = db.scalars(stmt.order_by(Chatroom.is_active.desc(), Chatroom.name.asc(), Chatroom.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
 
     channels = {int(item.id): item for item in db.scalars(select(Channel)).all()}
     rows = [
@@ -71,12 +77,19 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
             "channel_name": (channels[int(room.channel_id)].name if int(room.channel_id) in channels else "") or f"账号 #{room.channel_id}",
             "identity": make_identity(room.external_id, room.remark or room.name, _avatar_from_extra(room.extra_json)),
             "member_count": int(room.member_count or 0),
+            "management_status": room.management_status or "discovered",
+            "management_label": MANAGEMENT_LABELS.get(room.management_status or "discovered", "待启用"),
+            "is_active": bool(room.is_active),
             "last_seen_at": room.last_seen_at or room.last_synced_at,
         }
         for room in rooms
     ]
-    summary = {"total": int(db.scalar(select(func.count(Chatroom.id))) or 0)}
-    return {"rows": rows, "paging": paging, "keyword": q, "channel_id": channel_id, "summary": summary}
+    summary = {
+        "total": int(db.scalar(select(func.count(Chatroom.id))) or 0),
+        "enabled": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.management_status == "enabled")) or 0),
+        "pending": int(db.scalar(select(func.count(Chatroom.id)).where(Chatroom.management_status == "discovered")) or 0),
+    }
+    return {"rows": rows, "paging": paging, "keyword": q, "channel_id": channel_id, "status": status, "summary": summary}
 
 
 def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int = 0, page: int = 1) -> dict[str, Any]:

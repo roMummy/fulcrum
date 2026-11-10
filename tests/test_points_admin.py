@@ -31,7 +31,7 @@ def db():
     scope.__enter__()
     ctx = tenant_session(factory)
     session = ctx.__enter__()
-    room = Chatroom(tenant_id=1, bot_id=1, channel_id=1, external_id=GROUP, name="运营群")
+    room = Chatroom(tenant_id=1, bot_id=1, channel_id=1, external_id=GROUP, name="运营群", management_status="enabled")
     session.add(room)
     session.flush()
     for wxid, nick in (("wxid_a", "小明"), ("wxid_b", "小红"), ("wxid_c", "小明二号")):

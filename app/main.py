@@ -48,7 +48,7 @@ from app.services.channel_catalog import (
 from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
-from app.services.chatroom_registry import upsert_manual_chatroom
+from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
 from app.services.login_proxy_pool import (
     LoginProxyPoolError,
     build_login_proxy_session_summary,
@@ -432,6 +432,8 @@ def build_channel_chatroom_summary(list_view: dict[str, Any] | None) -> dict[str
     recent_chatrooms = items[:8]
     return {
         "total": int(list_view.get("total") or len(items)),
+        "active_chatroom_count": int(list_view.get("active_chatroom_count") or 0),
+        "pending_chatroom_count": int(list_view.get("pending_chatroom_count") or 0),
         "member_snapshot_chatroom_count": int(list_view.get("member_snapshot_chatroom_count") or 0),
         "binding_total": int(list_view.get("binding_total") or 0),
         "binding_enabled_total": int(list_view.get("binding_enabled_total") or 0),
@@ -2437,19 +2439,19 @@ def _directory_pager_base(path: str, **params: Any) -> str:
 
 
 @app.get("/chatrooms", response_class=HTMLResponse)
-async def chatroom_directory_page(request: Request, q: str = "", channel_id: int = 0, page: int = 1):
-    """群管理唯一入口:所有账号的群合并展示,支持搜索与账号筛选。"""
+async def chatroom_directory_page(request: Request, q: str = "", channel_id: int = 0, status: str = "", page: int = 1):
+    """群管理唯一入口:所有账号的群合并展示,支持搜索、账号与状态筛选。"""
 
     db = get_session()
     try:
-        directory = build_chatroom_directory(db, keyword=q, channel_id=channel_id, page=page)
+        directory = build_chatroom_directory(db, keyword=q, channel_id=channel_id, status=status, page=page)
         return render(
             request,
             "chatroom_directory.html",
             page_title="群管理",
             directory=directory,
             channels=channel_options(db),
-            pager_base=_directory_pager_base("/chatrooms", q=directory["keyword"], channel_id=channel_id),
+            pager_base=_directory_pager_base("/chatrooms", q=directory["keyword"], channel_id=channel_id, status=directory["status"]),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -3443,6 +3445,45 @@ async def create_channel_chatroom_action(
             url=f"/channels/{channel_id}/chatrooms/{chatroom.id}?notice={quote('已创建群登记，默认待启用')}",
             status_code=303,
         )
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/management")
+async def update_channel_chatroom_management_action(
+    request: Request,
+    channel_id: int,
+    chatroom_id: int,
+    management_status: str = Form(...),
+    next: str = Form(""),
+):
+    user = enforce_role(request, "ops")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        chatroom = db.get(Chatroom, chatroom_id)
+        if not chatroom or chatroom.channel_id != channel.id:
+            raise HTTPException(status_code=404, detail="Chatroom not found")
+        set_chatroom_management_status(chatroom, management_status)
+        db.commit()
+        record_audit(
+            db,
+            f"channel.{channel.channel_type}.chatroom.management",
+            "chatroom",
+            chatroom.id,
+            f"status={chatroom.management_status}, operator={user.username}",
+        )
+        message = {
+            "enabled": "已启用该群，后续可参与插件调度",
+            "disabled": "已停用该群，插件调度会跳过",
+            "archived": "已归档该群",
+        }.get(chatroom.management_status, "已将该群标记为待启用")
+        # 列表页行内开关带 next 回到列表;只接受站内路径,防止开放重定向。
+        target = next if next.startswith("/") and not next.startswith("//") else f"/channels/{channel_id}/chatrooms/{chatroom_id}"
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(url=f"{target}{separator}notice={quote(message)}", status_code=303)
     finally:
         db.close()
 

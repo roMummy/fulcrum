@@ -16,12 +16,28 @@ def mark_chatroom_discovered(
     chatroom: Chatroom,
     seen_at: datetime | None = None,
     registration_source: str = "passive",
+    enable_management: bool = False,
 ) -> Chatroom:
     resolved_seen_at = _normalize_dt(seen_at)
     if not getattr(chatroom, "first_seen_at", None):
         chatroom.first_seen_at = resolved_seen_at
     chatroom.last_seen_at = resolved_seen_at
     chatroom.registration_source = str(getattr(chatroom, "registration_source", None) or registration_source or "passive")
+    # 自动发现的新群默认进入纳管，确保群首次产生消息后即可参与插件调度；
+    # 已存在群不会传入该标记，因此后台手动停用、归档或历史待启用状态都保持不变。
+    current_management_status = str(getattr(chatroom, "management_status", "") or "").strip().lower()
+    if enable_management and current_management_status not in {"disabled", "archived"}:
+        chatroom.management_status = "enabled"
+        chatroom.is_registered = True
+        chatroom.is_active = True
+    if not getattr(chatroom, "management_status", None):
+        chatroom.management_status = "discovered"
+    if chatroom.management_status == "pending_sync":
+        chatroom.management_status = "discovered"
+    if getattr(chatroom, "is_registered", None) is None:
+        chatroom.is_registered = True
+    if getattr(chatroom, "is_active", None) is None:
+        chatroom.is_active = False
     if not chatroom.bot_id:
         chatroom.bot_id = channel.bot_id
     if not chatroom.channel_id:
@@ -44,6 +60,7 @@ def upsert_manual_chatroom(
     chatroom = db.scalar(
         select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == normalized_external_id)
     )
+    created = False
     if not chatroom:
         chatroom = Chatroom(
             bot_id=channel.bot_id,
@@ -53,8 +70,12 @@ def upsert_manual_chatroom(
         )
         db.add(chatroom)
         db.flush()
+        created = True
     mark_chatroom_discovered(db, channel=channel, chatroom=chatroom, registration_source="manual")
     chatroom.registration_source = "manual"
+    chatroom.is_registered = True
+    if created and not chatroom.management_status:
+        chatroom.management_status = "discovered"
     if name is not None:
         chatroom.name = str(name or "").strip() or normalized_external_id
     elif not chatroom.name:
@@ -64,6 +85,46 @@ def upsert_manual_chatroom(
     if operator_note is not None:
         chatroom.operator_note = str(operator_note or "").strip() or None
     return chatroom
+
+
+def set_chatroom_management_status(chatroom: Chatroom, status: str) -> Chatroom:
+    normalized = str(status or "").strip().lower()
+    if normalized == "enabled":
+        chatroom.management_status = "enabled"
+        chatroom.is_registered = True
+        chatroom.is_active = True
+    elif normalized == "disabled":
+        chatroom.management_status = "disabled"
+        chatroom.is_registered = True
+        chatroom.is_active = False
+    elif normalized == "archived":
+        chatroom.management_status = "archived"
+        chatroom.is_registered = True
+        chatroom.is_active = False
+    else:
+        chatroom.management_status = "discovered"
+        chatroom.is_registered = True
+        chatroom.is_active = False
+    return chatroom
+
+
+def format_chatroom_management_status(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    return {
+        "enabled": "已启用管理",
+        "disabled": "已停用",
+        "archived": "已归档",
+        "discovered": "待启用",
+    }.get(normalized, normalized or "待启用")
+
+
+def management_tone(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized == "enabled":
+        return "success"
+    if normalized in {"disabled", "archived"}:
+        return "muted"
+    return "outline"
 
 
 def _normalize_dt(value: datetime | None) -> datetime:

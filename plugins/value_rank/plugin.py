@@ -358,6 +358,7 @@ def _require_group_base(
             Chatroom.bot_id == int(context.bot_id),
             Chatroom.channel_id == int(channel.id),
             Chatroom.external_id == str(conversation.external_id),
+            Chatroom.is_active.is_(True),
         )
     )
     if chatroom is None:

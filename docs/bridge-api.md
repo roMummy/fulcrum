@@ -208,6 +208,8 @@ GET /api/open/chatrooms?q=供应商&limit=100
       "chatroom_name": "供应商群",
       "chatroom_remark": "供应商对接",
       "chatroom_status": "active",
+      "management_status": "managed",
+      "is_active": true,
       "member_count": 18
     }
   ]

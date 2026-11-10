@@ -282,6 +282,7 @@ class OpenApiTestCase(unittest.TestCase):
                 external_id="R:other-bot-room",
                 name="另一个机器人供应商群",
                 status="active",
+                is_active=True,
             )
             db.add(chatroom)
             db.commit()
@@ -356,6 +357,7 @@ class OpenApiTestCase(unittest.TestCase):
                 external_id="R:supplier-room",
                 name="供应商群",
                 status="active",
+                is_active=True,
                 member_count=12,
             )
             db.add(chatroom)

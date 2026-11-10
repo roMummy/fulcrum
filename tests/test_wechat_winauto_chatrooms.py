@@ -80,6 +80,8 @@ class WechatWinAutoChatroomTests(unittest.TestCase):
         self.assertTrue(result["chatroom_created"])
         chatroom = self.db.query(Chatroom).filter_by(channel_id=self.channel.id, external_id="group:BOT-测试").one()
         self.assertEqual(chatroom.name, "BOT-测试")
+        self.assertEqual(chatroom.management_status, "enabled")
+        self.assertTrue(chatroom.is_active)
         self.assertEqual(chatroom.registration_source, "passive")
         scope_rows = self.db.query(GroupPluginScope).filter_by(channel_id=self.channel.id, chatroom_id=chatroom.id).all()
         self.assertEqual(len(scope_rows), 1)

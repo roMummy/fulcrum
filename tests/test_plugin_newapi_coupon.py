@@ -85,6 +85,9 @@ def coupon_fixture(tmp_path: Path):
             external_id=conversation.external_id,
             name=conversation.title,
             status="active",
+            management_status="managed",
+            is_registered=True,
+            is_active=True,
         )
         db.add(chatroom)
         db.flush()
