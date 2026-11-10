@@ -7,6 +7,17 @@ from app.models.entities import Channel, Conversation
 from .base import BaseChannelAdapter
 
 
+def _command_request_id(job: Any) -> str:
+    """出站命令任务里保存的 request_id;读不到(例如测试替身)返回空串。"""
+
+    from app.services.task_queue import parse_job_payload
+
+    try:
+        return str((parse_job_payload(job).get("command") or {}).get("request_id") or "")
+    except Exception:
+        return ""
+
+
 class WechatWeBridgeAdapter(BaseChannelAdapter):
     """把 WeBridge 事件和统一出站消息映射到长轮询命令队列。"""
 
@@ -53,6 +64,8 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             transport_status="queued",
             status="pending",
             external_status="pending",
+            # 命令的 request_id 记在消息上,手机回报结果时据此找回这条消息并更新状态(见 service.settle_outbound_message)。
+            raw_request={"job_id": int(job.id), "request_id": _command_request_id(job)},
             extra={"job_id": int(job.id), "command_type": message_type},
         )
 

@@ -24,7 +24,6 @@ from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
-from app.services.wechat_webridge.service import enqueue_message_command as enqueue_webridge_message_command
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 
@@ -1393,6 +1392,7 @@ def _dispatch_auto_outbound_messages(
             for item in payloads
         ]
 
+    from app.services.channel_adapters import dispatch_outbound_message
     from app.services.task_queue import enqueue_job
     from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
 
@@ -1432,12 +1432,31 @@ def _dispatch_auto_outbound_messages(
                 logger.error("auto outbound media dropped because public base url is missing", extra={"plugin_code": context.plugin_code})
                 results.append({"ok": False, "error": "public_base_url_missing", "payload": redact_base64_fields(payload)})
                 continue
-            try:
-                job = enqueue_webridge_message_command(db, channel, conversation, payload)
-            except ValueError as exc:
-                logger.error("auto outbound webridge mapping failed", extra={"plugin_code": context.plugin_code, "error": str(exc)})
-                results.append({"ok": False, "error": str(exc), "payload": redact_base64_fields(payload)})
+            # 微桥没有"出站 worker"这一步(手机直接 poll 命令),所以必须在入队的同时经统一出站函数留下消息记录,
+            # 否则消息中心和统计里完全看不到机器人发出的消息(之前直接入队命令,message_id 一直是 None)。
+            message, adapter_result = dispatch_outbound_message(db, channel, conversation, payload)
+            if not adapter_result.get("ok"):
+                error = str(adapter_result.get("error_message") or adapter_result.get("error_code") or "webridge_send_failed")
+                logger.error("auto outbound webridge send failed", extra={"plugin_code": context.plugin_code, "error": error})
+                results.append({"ok": False, "error": error, "message_id": int(message.id), "payload": redact_base64_fields(payload)})
                 continue
+            results.append(
+                {
+                    "ok": True,
+                    "queued": True,
+                    "job_id": adapter_result.get("job_id"),
+                    "message_id": int(message.id),
+                    "payload": payload,
+                    "adapter_result": {
+                        "ok": True,
+                        "provider": "queued",
+                        "transport_status": "queued",
+                        "status": "queued",
+                        "external_status": "pending",
+                    },
+                }
+            )
+            continue
         else:
             job = enqueue_job(
                 db,

@@ -13,7 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WebridgeDeviceSample, WorkWechatContact
+from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, Message, TaskJob, WebridgeDeviceSample, WorkWechatContact
 from app.services.identity_directory import looks_like_raw_id
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
@@ -97,6 +97,34 @@ def record_device_sample(db: Session, channel: Channel, device: dict[str, Any] |
     db.execute(delete(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == cid, WebridgeDeviceSample.bucket_start < now - timedelta(days=SAMPLE_RETENTION_DAYS)).execution_options(synchronize_session=False))
 
 
+def settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str = "") -> None:
+    """命令结束后更新对应的出站消息记录:手机执行成功标记已发出,失败或超时标记发送失败。
+
+    出站消息在入队时就已落库(状态为待执行),并把命令的 request_id 记在 raw_request_json 里;
+    这里按会话和 request_id 找回它。读取类命令(目录、状态等)没有对应消息,找不到时什么也不做。
+    调用方负责提交。
+    """
+
+    data = parse_job_payload(job)
+    request_id = text(as_object(data.get("command")).get("request_id"))
+    conversation_id = int(data.get("conversation_id") or 0)
+    if not request_id or not conversation_id:
+        return
+    pending = db.scalars(
+        select(Message)
+        .where(Message.conversation_id == conversation_id, Message.direction == "out", Message.external_status == "pending")
+        .order_by(Message.id.desc())
+        .limit(50)
+    ).all()
+    for message in pending:
+        if request_id in (message.raw_request_json or ""):
+            message.status = "sent" if ok else "failed"
+            message.external_status = "sent" if ok else "failed"
+            if error:
+                message.raw_response_json = json.dumps({"error": error}, ensure_ascii=False)
+            return
+
+
 def reap_stale_commands(db: Session, channel: Channel) -> int:
     """回收本渠道领取后超时未回报的命令，返回回收数量。
 
@@ -113,6 +141,7 @@ def reap_stale_commands(db: Session, channel: Channel) -> int:
     for job in jobs:
         if int(parse_job_payload(job).get("channel_id") or 0) != int(channel.id):
             continue
+        settle_outbound_message(db, job, ok=False, error="webridge_command_timeout")
         fail_job_terminal(db, job, error_message="webridge_command_timeout", result={"timeout_seconds": COMMAND_RUNNING_TIMEOUT_SECONDS})
         reaped += 1
     if reaped:
@@ -717,9 +746,11 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
                 _save_device_status(db, channel, as_object(result.get("result")) or result)
             elif command_type == "account_status":
                 _save_account_profile(db, channel, as_object(result.get("result")) or result)
+            settle_outbound_message(db, job, ok=True)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
+        settle_outbound_message(db, job, ok=False, error=text(result.get("error") or payload.get("error") or "webridge_command_failed"))
         fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
         logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}
