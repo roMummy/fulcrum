@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # 对外可访问的 MBA 基址。云端拉取模式下 provider 可能不在 MBA 同一台机器，
     # 如果后台通过 127.0.0.1 登录，必须用这个配置生成文件下载链接，避免 provider 下载时连到自己的本机。
     public_base_url: str = ""
+    # 图片库根目录(环境变量 MEDIA_LIBRARY_ROOT):把共享盘或本机目录只读挂进容器后在这里填容器内路径,
+    # 例如 /media-library。图片类插件的“图片目录”配置是它下面的子目录;留空则使用各租户自己的插件目录。
+    media_library_root: str = ""
     # 本地连接器扫码期间使用的临时 SOCKS 中继监听地址；只服务登录会话，终态立即失效。
     local_proxy_relay_host: str = "127.0.0.1"
     local_proxy_relay_port: int = 9165

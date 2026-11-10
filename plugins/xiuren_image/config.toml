@@ -1,10 +1,10 @@
 [plugin]
 code = "xiuren_image"
 display_name = "秀人图片"
-plugin_type = "scheduled"
-version = "3.0.0"
+plugin_type = "command"
+version = "3.1.0"
 author = "abot"
-description = "从 MinIO 随机预读取一批图片，收到命令后发送一张；池子快用完时后台再预读取下一批"
+description = "从图片目录随机预取一批图片,收到命令后发送一张,用完再取下一批"
 default_enabled = false
 
 [capability]
@@ -19,27 +19,14 @@ timeout_ms = 30000
 commands = ["图来", "秀人", "美图", "随机图片"]
 require_mention = false
 
-# MinIO 的访问密钥与私密密钥加密保存，页面不回显，留空表示保持不变。
-[secrets]
-fields = ["minio_access_key", "minio_secret_key"]
-
 [runtime]
 commands = ["图来", "秀人", "美图", "随机图片"]
-resource_dir = "images"
+# 图片目录:平台图片库根目录(环境变量 MEDIA_LIBRARY_ROOT)下的子目录,不能写绝对路径。
+# 平台没有配置图片库根目录时,使用本租户自己的插件目录。
+library_dir = "xiuren"
+# 每次从目录里随机预取的张数(只记路径,发图时再读取文件)
+prefetch_count = 20
 points_cost = 5
 rate_limit = 5
 rate_window_seconds = 60
-# 每次从 MinIO 预读取的张数(随机抽取,重复没有关系)
-prefetch_count = 20
-# MinIO 地址,格式 主机:端口,例如 192.168.2.32:9000(不要带 http://)
-minio_endpoint = ""
-minio_bucket = ""
-# 只读取桶里这个前缀下的图片,留空表示整个桶
-minio_prefix = ""
-# 地址是否使用 https
-minio_secure = false
-minio_region = "us-east-1"
-minio_access_key = ""
-minio_secret_key = ""
-request_timeout_seconds = 20
 max_image_bytes = 8388608

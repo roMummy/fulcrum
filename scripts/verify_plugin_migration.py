@@ -182,7 +182,6 @@ def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list
                 "plugins._shared",
                 "plugins._shared.media",
                 "plugins._shared.resources",
-                "plugins._shared.s3",
             }
             if node.module in allowed_internal:
                 imported_roots.discard("plugins")
