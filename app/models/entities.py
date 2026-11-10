@@ -839,6 +839,35 @@ class MomentsPost(Base, TenantOwnedMixin, TimestampMixin):
     fetched_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai)
 
 
+class MomentsMedia(Base, TenantOwnedMixin, TimestampMixin):
+    """朋友圈动态里某张图片/某个视频的本地副本。
+
+    朋友圈媒体在微信 CDN 上是加密的(浏览器直接请求会被拒绝,拿到的也是密文),只有手机能解开;
+    所以由手机下载、解密后传到我们的服务器(命令 moments_media_download + 上传地址),这里记录获取状态和文件位置。
+    点击页面上的占位卡片才会触发,同一个媒体只有一行。
+    """
+
+    __tablename__ = "moments_media"
+    __table_args__ = (UniqueConstraint("post_id", "mid", name="uq_moments_media_post_mid"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("moments_posts.id"), index=True)
+    sns_id: Mapped[str] = mapped_column(String(32))
+    # 微信里这个媒体的 ID(下载命令需要的 media_id)
+    mid: Mapped[str] = mapped_column(String(64))
+    # pending 等待手机传回 / downloaded 已保存 / failed 失败
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 上传令牌的摘要:手机上传文件的地址不带登录态,靠这个一次性令牌证明"是我们刚刚要它传的"(只存摘要,不存令牌)
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requested_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PaymentReceipt(Base, TenantOwnedMixin, TimestampMixin):
     """红包、转账的收款记录:自动抢红包、自动收款处理过的每一笔,记录来源、金额和结果,供后台明细与统计查询。
 

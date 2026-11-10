@@ -211,13 +211,17 @@ def test_media_comments_and_likes_are_compacted(env) -> None:
     db, channel = env
     many_media = [{"mid": f"m{i}", "type": 2, "width": 1, "height": 1, "preview_urls": [f"https://img.example.com/{i}"]} for i in range(20)]
     many_comments = [{"comment_id": str(i), "wxid": "w", "nickname": "某", "content": "字" * 900, "create_time": 1} for i in range(80)]
-    video = _item(5, type=15, media=[{"mid": "v", "type": 5, "width": 224, "height": 398, "preview_urls": ["https://img.example.com/v.jpg"], "videoDuration": 12.967, "dataUrl": "https://img.example.com/vd"}])
+    video = _item(5, type=15, media=[{"mid": "v", "type": 5, "width": 224, "height": 398, "totalSize": 16662778, "preview_urls": ["https://img.example.com/v.jpg"], "videoDuration": 12.967, "dataUrl": "https://img.example.com/vd"}])
     _report(db, channel, _start(db, channel), _done([_item(1, media=many_media, comments=many_comments, likes=["wxid_s", {"wxid": "wxid_d", "nickname": "丁"}]), video]))
     posts = {p.sns_id[-4:]: moments.decode(p) for p in _posts(db)}
-    assert len(posts["0001"]["media"]) == moments.MAX_MEDIA and posts["0001"]["media"][0]["preview"] == "https://img.example.com/0"
+    # 预览地址(微信 CDN 上的加密内容,浏览器加载不了)不保存;保存占位卡片需要的信息
+    assert len(posts["0001"]["media"]) == moments.MAX_MEDIA and "preview" not in posts["0001"]["media"][0]
+    assert all("img.example.com" not in (post.media_json or "") for post in _posts(db))
     assert len(posts["0001"]["comments"]) == moments.MAX_COMMENTS and len(posts["0001"]["comments"][0]["content"]) == 500
     assert posts["0001"]["likes"] == [{"wxid": "wxid_s", "nickname": ""}, {"wxid": "wxid_d", "nickname": "丁"}]
     assert posts["0005"]["is_video"] is True and posts["0005"]["media"][0]["duration"] == pytest.approx(12.967) and posts["0001"]["is_video"] is False
+    # 占位卡片上的说明:视频是时长 + 大小
+    assert posts["0005"]["media"][0]["meta"] == "0:13 · 15.9 MB"
 
 
 # ---------- 页面数据 ----------
@@ -257,7 +261,7 @@ def _seed_posts(ids, channel_id: int, count: int, wxid: str = "wxid_friend1") ->
             db.add(MomentsPost(
                 tenant_id=ids["alpha"], channel_id=channel_id, sns_id=f"9{n:019d}", author_wxid=wxid, create_time=now_shanghai() - timedelta(minutes=count - n),
                 content=f"虚构动态{n}", post_type=2, like_count=n, comment_count=1,
-                media_json=json.dumps([{"mid": "m", "type": 2, "width": 100, "height": 200, "preview": "https://img.example.com/p.jpg", "duration": 0, "title": "", "desc": ""}]),
+                media_json=json.dumps([{"mid": "m", "type": 2, "width": 100, "height": 200, "size": 2048, "duration": 0, "title": "", "desc": ""}]),
                 likes_json=json.dumps([{"wxid": "w", "nickname": "甲"}]), comments_json=json.dumps([{"id": "1", "wxid": "w2", "nickname": "乙", "content": "赞", "reply_wxid": "", "time": 1, "mine": False}]),
             ))
         db.commit()
@@ -282,7 +286,9 @@ def test_page_shows_cards_names_media_and_collapsed_comments(webridge_channel) -
     html = client.get("/moments").text
     assert html.count('class="moment-card"') == 3 and "已缓存 3 条" in html and "张三" in html
     assert html.index("虚构动态3") < html.index("虚构动态1")  # 最新在前
-    assert 'loading="lazy"' in html and 'referrerpolicy="no-referrer"' in html and "评论（1）" in html
+    # 媒体是占位卡片(点击才让手机下载解密),不再直接引用微信 CDN 的预览地址
+    assert "data-moment-media" in html and 'data-state="none"' in html and "点击获取" in html and "img.example.com" not in html and "<img src=\"https://" not in html.split('class="moment-media')[1].split("moment-foot")[0]
+    assert "评论（1）" in html
     assert '<details class="disclosure moment-comments">' in html  # 评论折叠,用统一的展开图标
     # 管理员有「刷新」「加载更早」;只读成员没有
     assert 'id="moments-refresh"' in html

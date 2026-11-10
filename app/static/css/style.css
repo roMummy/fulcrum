@@ -6164,62 +6164,6 @@ details.disclosure > summary:hover::after {
   object-fit: cover;
 }
 
-/* 预览图地址失效:显示占位,不留破图标 */
-.moment-thumb.is-broken img {
-  display: none;
-}
-
-.moment-thumb.is-broken .moment-play,
-.moment-thumb.is-broken .moment-duration {
-  display: none;
-}
-
-.moment-thumb.is-broken::before {
-  content: "预览已失效";
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.moment-thumb.is-broken.is-video::before {
-  content: "视频预览已失效";
-}
-
-.moment-play {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 40px;
-  height: 40px;
-  margin: -20px 0 0 -20px;
-  background: rgba(15, 23, 42, 0.5);
-  border-radius: 50%;
-}
-
-.moment-play::after {
-  content: "";
-  position: absolute;
-  top: 12px;
-  left: 16px;
-  border: solid transparent;
-  border-width: 8px 0 8px 13px;
-  border-left-color: #fff;
-}
-
-.moment-duration {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 1px 7px;
-  color: #fff;
-  background: rgba(15, 23, 42, 0.55);
-  border-radius: 999px;
-  font-size: 11px;
-}
-
 .moment-foot {
   display: flex;
   flex-wrap: wrap;
@@ -6499,4 +6443,69 @@ a.msg-card:hover,
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* 朋友圈媒体占位卡片:图标 + 说明,点击才让手机下载并传回;加载后换成图片/视频 */
+.moment-thumb {
+  cursor: pointer;
+  transition: box-shadow 200ms ease-in-out;
+}
+
+.moment-thumb:hover {
+  box-shadow: 0 4px 14px rgba(72, 82, 140, 0.18);
+}
+
+.moment-thumb:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.moment-thumb-body {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 6px;
+  text-align: center;
+}
+
+.moment-thumb-body small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.moment-thumb.is-loading .moment-thumb-body small {
+  color: var(--primary-strong);
+  animation: msg-media-pulse 1.4s ease-in-out infinite;
+}
+
+.moment-thumb.is-failed .moment-thumb-body small {
+  color: var(--danger);
+}
+
+.moment-thumb.is-loaded {
+  cursor: default;
+  background: transparent;
+}
+
+.moment-thumb.is-loaded:hover {
+  box-shadow: none;
+}
+
+.moment-thumb video {
+  background: #000;
+}
+
+.moment-media-single .moment-thumb.is-loaded {
+  max-height: none;
+  aspect-ratio: auto;
+}
+
+.moment-media-single .moment-thumb.is-loaded img,
+.moment-media-single .moment-thumb.is-loaded video {
+  height: auto;
+  max-height: 420px;
 }

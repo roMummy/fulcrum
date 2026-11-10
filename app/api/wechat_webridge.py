@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -29,7 +30,8 @@ from app.services.task_queue import parse_job_payload
 from app.services.wechat_webridge import wakeup
 from app.services.account_connections import finalize_account_connection, verify_account_connection
 from app.services.account_connections.contracts import AccountConnectionError
-from app.models.entities import MessageAttachment
+from app.models.entities import MessageAttachment, MomentsMedia
+from app.services import moments_media
 from app.services.inbound_media import store_uploaded_media_attachment
 from app.core.logging import get_logger
 
@@ -257,6 +259,59 @@ async def upload_media(
         except ValueError as exc:
             logger.exception("webridge media upload rejected", extra={"channel_id": channel_id, "attachment_id": attachment_id, "error_code": str(exc)})
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{channel_id}/agent/moments_upload")
+async def moments_upload(channel_id: int, media_id: int, request: Request):
+    """接收手机传回的朋友圈媒体(moments_media_download 的 upload 目标,请求体就是文件的原始字节)。
+
+    这个地址不带登录态,所以靠请求时生成的一次性令牌(请求头 X-Upload-Token)证明身份;
+    边收边写盘,超过大小上限立即拒绝;写完后再核对一次令牌并让它作废,保证同一个令牌只能成功一次。
+    """
+
+    tenant_id, actual_channel_id = _channel_tenant(channel_id)
+    token = request.headers.get(moments_media.UPLOAD_HEADER, "")
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > moments_media.MAX_BYTES:
+        raise HTTPException(status_code=413, detail="moments_media_too_large")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        if not moments_media.accepts_upload(db.get(MomentsMedia, int(media_id)), token, actual_channel_id):
+            raise HTTPException(status_code=403, detail="moments_upload_not_accepted")
+    directory = moments_media.storage_dir(actual_channel_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    partial = directory / f"{int(media_id)}.part"
+    size, head = 0, b""
+    try:
+        with partial.open("wb") as handle:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > moments_media.MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="moments_media_too_large")
+                if len(head) < 16:
+                    head += chunk[: 16 - len(head)]
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="moments_media_empty")
+        mime_type, extension = moments_media.sniff(head, request.headers.get("content-type", ""))
+        final = directory / f"{int(media_id)}{extension}"
+        os.replace(partial, final)
+        with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+            row = db.get(MomentsMedia, int(media_id))
+            if not moments_media.accepts_upload(row, token, actual_channel_id):
+                final.unlink(missing_ok=True)
+                raise HTTPException(status_code=409, detail="moments_upload_not_accepted")
+            moments_media.finish_upload(row, final, size, mime_type)
+            db.commit()
+    finally:
+        partial.unlink(missing_ok=True)
+    logger.info("moments media uploaded", extra={"channel_id": actual_channel_id, "media_id": media_id, "file_size": size, "mime_type": mime_type})
+    # 手机要求响应带非空 asset_id,用记录主键作为资源 ID。
+    return {"ok": True, "asset_id": str(media_id), "file_size": size}
 
 
 @router.post("/{channel_id}/commands")

@@ -1,4 +1,4 @@
-/* 朋友圈页面:刷新/加载更早(向手机发起取回并轮询进度)、显示更多(从缓存分页)、失效的预览图换成占位。 */
+/* 朋友圈页面:刷新/加载更早(向手机发起取回并轮询进度)、显示更多(从缓存分页)、图片/视频占位卡片(点击才让手机下载解密并传回)。 */
 (function () {
   "use strict";
 
@@ -34,11 +34,122 @@
     });
   }
 
-  // 预览图地址失效(过期或被拒绝)时换成占位,不影响其他内容。error 不冒泡,用捕获阶段接收。
-  feed.addEventListener("error", function (event) {
-    var image = event.target;
-    if (image && image.matches && image.matches("img[data-moment-img]")) image.closest(".moment-thumb").classList.add("is-broken");
-  }, true);
+  // ---------- 图片/视频:占位卡片,点击才让手机下载并解密,再传回服务器显示 ----------
+  // 朋友圈媒体在微信 CDN 上是加密的,浏览器直接请求会被拒绝,所以必须经手机。已经传回过的图片进入可视区自动显示。
+  var MEDIA_POLL_INTERVAL = 2000;
+  var MEDIA_POLL_LIMIT = 170; // 约 340 秒,与服务端 330 秒的超时对应
+
+  function setMediaState(tile, state, hint) {
+    tile.dataset.state = state;
+    tile.classList.toggle("is-loading", state === "loading");
+    tile.classList.toggle("is-failed", state === "failed");
+    var element = tile.querySelector("[data-media-hint]");
+    if (element && hint) element.textContent = hint;
+  }
+
+  function revealMedia(tile, userInitiated) {
+    var url = tile.dataset.url;
+    if (!url || tile.classList.contains("is-loaded")) return;
+    var video = tile.dataset.mediaType === "video";
+    var element = document.createElement(video ? "video" : "img");
+    if (video) {
+      element.controls = true;
+      element.preload = "metadata";
+      element.autoplay = !!userInitiated;
+    } else {
+      element.alt = "朋友圈图片";
+      element.loading = "lazy";
+    }
+    var placeholder = tile.innerHTML;
+    // 文件损坏或已被清理:回到占位卡片并允许重试
+    element.addEventListener("error", function () {
+      tile.classList.remove("is-loaded");
+      tile.innerHTML = placeholder;
+      setMediaState(tile, "failed", "加载失败，点击重试");
+    }, { once: true });
+    element.src = url;
+    tile.classList.add("is-loaded");
+    tile.innerHTML = "";
+    tile.appendChild(element);
+  }
+
+  function pollMedia(tile, attempt) {
+    var query = "post_id=" + encodeURIComponent(tile.dataset.postId) + "&mid=" + encodeURIComponent(tile.dataset.mid);
+    return getJson("/moments/media/status?" + query).then(function (data) {
+      if (data.state === "ready") {
+        tile.dataset.url = data.url;
+        revealMedia(tile, true);
+      } else if (data.state === "failed") {
+        setMediaState(tile, "failed", (data.error || "获取失败") + "，点击重试");
+      } else if (attempt < MEDIA_POLL_LIMIT) {
+        return new Promise(function (resolve) { setTimeout(resolve, MEDIA_POLL_INTERVAL); }).then(function () { return pollMedia(tile, attempt + 1); });
+      } else {
+        setMediaState(tile, "failed", "获取超时，点击重试");
+      }
+    }).catch(function () { setMediaState(tile, "failed", "网络异常，点击重试"); });
+  }
+
+  function loadMedia(tile) {
+    setMediaState(tile, "loading", "正在从手机获取…");
+    window.appPost("/moments/media/load", { post_id: tile.dataset.postId, mid: tile.dataset.mid }, false).then(function (result) {
+      var data = result.payload || {};
+      if (!result.ok || data.state === "failed") {
+        setMediaState(tile, "failed", (data.notice || data.error || "获取失败") + "，点击重试");
+        return null;
+      }
+      if (data.state === "ready") {
+        tile.dataset.url = data.url;
+        revealMedia(tile, true);
+        return null;
+      }
+      return pollMedia(tile, 0);
+    }).catch(function () { setMediaState(tile, "failed", "网络异常，点击重试"); });
+  }
+
+  function activateMedia(tile) {
+    var state = tile.dataset.state;
+    if (state === "loading" || tile.classList.contains("is-loaded")) return;
+    if (state === "ready") revealMedia(tile, true);
+    else if (canRefresh) loadMedia(tile);
+    else toast("只读成员不能让手机获取媒体", "info");
+  }
+
+  feed.addEventListener("click", function (event) {
+    var tile = event.target.closest("[data-moment-media]");
+    if (tile) activateMedia(tile);
+  });
+  feed.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    var tile = event.target.closest && event.target.closest("[data-moment-media]");
+    if (tile) {
+      event.preventDefault();
+      activateMedia(tile);
+    }
+  });
+
+  var mediaObserver = "IntersectionObserver" in window
+    ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          mediaObserver.unobserve(entry.target);
+          if (entry.target.isConnected && entry.target.dataset.state === "ready" && entry.target.dataset.mediaType === "image") revealMedia(entry.target, false);
+        });
+      }, { rootMargin: "300px 0px" })
+    : null;
+
+  function watchMedia(root) {
+    if (!mediaObserver) return;
+    root.querySelectorAll('[data-moment-media][data-state="ready"][data-media-type="image"]').forEach(function (tile) {
+      if (!tile.dataset.watched) {
+        tile.dataset.watched = "1";
+        mediaObserver.observe(tile);
+      }
+    });
+  }
+
+  watchMedia(feed);
+  // 刷新后重新渲染、显示更多追加进来的动态:新出现的卡片同样处理
+  new MutationObserver(function () { watchMedia(feed); }).observe(feed, { childList: true });
 
   // ---------- 显示更多:从缓存里取下一页 ----------
   function showMore() {

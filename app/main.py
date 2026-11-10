@@ -24,7 +24,7 @@ from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.tenant_context import require_tenant_id, tenant_scope
 from app.core.tenant_db import open_tenant_session, platform_session, tenant_session
 from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, format_shanghai_time, hour_bucket_shanghai, now_shanghai
-from app.models.entities import AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
+from app.models.entities import MomentsMedia, MomentsPost, AlertRecord, AuditLog, Bot, BotPlugin, Channel, Chatroom, Conversation, ErrorLog, HealthCheckRecord, Message, MessageActivityHourly, MessageAttachment, Plugin, PluginActivityHourly, PluginExecutionLog, RawWebhookEvent, TaskJob, WorkWechatContact
 from app.models.saas import BotBinding
 from app.schemas.forms import BotPluginBindCreate, BotUpdate, ChannelUpdate
 from app.services.auth import validate_password_change
@@ -172,7 +172,7 @@ from app.services.points_admin import adjust_points, build_points_accounts, buil
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
-from app.services import message_media, message_view, payment_ledger
+from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -4506,6 +4506,61 @@ def _moments_channel(db: Session, channel_id: int) -> Channel:
     if channel is None or channel.channel_type != "wechat_webridge":
         raise HTTPException(status_code=404, detail="WeBridge channel not found")
     return channel
+
+
+def _moments_post(db: Session, post_id: int) -> MomentsPost:
+    post = db.get(MomentsPost, int(post_id)) if post_id else None
+    if post is None:
+        raise HTTPException(status_code=404, detail="Moments post not found")
+    return post
+
+
+@app.post("/moments/media/load")
+async def load_moments_media(request: Request, post_id: int = Form(...), mid: str = Form(...)):
+    """点击朋友圈里的图片/视频占位卡片:让手机下载并解密,再传回服务器保存(已有文件或已在获取中则直接返回当前状态)。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        try:
+            outcome = moments_media.request(db, _moments_post(db, post_id), mid)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "notice": str(exc), "state": "failed", "url": "", "error": str(exc)}, status_code=400)
+        db.commit()
+        return JSONResponse({"ok": outcome["state"] != "failed", **outcome, "notice": outcome["error"]})
+    finally:
+        db.close()
+
+
+@app.get("/moments/media/status")
+async def moments_media_status(request: Request, post_id: int, mid: str):
+    """朋友圈媒体获取进度(页面轮询):none / loading / ready(带地址)/ failed(带原因)。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        post = _moments_post(db, post_id)
+        outcome = moments_media.status(db, moments_media.find(db, post.id, mid))
+        db.commit()  # 状态检查会把失败/超时落实到记录上
+        return JSONResponse({"ok": True, **outcome})
+    finally:
+        db.close()
+
+
+@app.get("/moments/media/file/{media_id}")
+async def moments_media_file(request: Request, media_id: int):
+    """朋友圈媒体文件(手机传回并保存的副本)。"""
+
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        row = db.get(MomentsMedia, int(media_id))
+        if row is None or row.status != "downloaded" or not row.storage_path or not Path(row.storage_path).is_file():
+            raise HTTPException(status_code=404, detail="Media not found")
+        return FileResponse(row.storage_path, media_type=row.mime_type or "application/octet-stream", headers={"Cache-Control": "private, max-age=3600"})
+    finally:
+        db.close()
 
 
 @app.get("/moments", response_class=HTMLResponse)

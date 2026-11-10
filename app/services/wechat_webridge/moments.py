@@ -25,8 +25,9 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import SHANGHAI_TZ, now_shanghai
-from app.models.entities import Channel, MomentsPost
+from app.models.entities import Channel, MomentsMedia, MomentsPost
 from app.services.identity_directory import IdentityDirectory
+from app.services.message_view import duration_label, size_label
 from app.services.wechat_webridge import service, wakeup
 
 logger = get_logger(__name__)
@@ -153,15 +154,17 @@ def handle_result(db: Session, channel: Channel, command: dict[str, Any], ok: bo
 # ---------- 入库 ----------
 
 def _compact_media(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """媒体只留下占位卡片需要的信息。预览地址(preview_urls)不保存:它是微信 CDN 上的加密内容,
+    浏览器直接请求会被拒绝,真要看得让手机下载解密(见 moments_media)。"""
+
     media = []
     for entry in (item.get("media") or [])[:MAX_MEDIA]:
         if not isinstance(entry, dict):
             continue
-        previews = [url for url in (entry.get("preview_urls") or []) if isinstance(url, str) and url]
         media.append(
             {
                 "mid": _text(entry.get("mid")), "type": _int(entry.get("type")), "width": _int(entry.get("width")), "height": _int(entry.get("height")),
-                "preview": previews[0] if previews else "", "duration": float(entry.get("videoDuration") or 0),
+                "duration": float(entry.get("videoDuration") or 0), "size": _int(entry.get("totalSize")),
                 "title": _text(entry.get("title"))[:100], "desc": _text(entry.get("desc"))[:200],
             }
         )
@@ -248,13 +251,18 @@ def decode(post: MomentsPost) -> dict[str, Any]:
         return value if isinstance(value, list) else []
 
     media = load(post.media_json)
+    video = any(m.get("duration") for m in media) or post.post_type == 15
+    for item in media:
+        # 占位卡片上的说明:视频是"0:13 · 15.9 MB",图片是大小
+        parts = [duration_label(item.get("duration") or 0) if video else "", size_label(_int(item.get("size")))]
+        item["meta"] = " · ".join(part for part in parts if part)
     return {
         "id": int(post.id), "sns_id": post.sns_id, "wxid": post.author_wxid, "time": post.create_time, "content": post.content or "",
         "post_type": post.post_type, "is_mine": bool(post.is_mine), "liked": bool(post.liked), "like_count": int(post.like_count or 0),
         "comment_count": int(post.comment_count or 0), "private": bool(post.private), "media": media,
         "comments": load(post.comments_json), "likes": load(post.likes_json),
         # 视频动态只有一张封面,图片动态可能有多张;模板据此决定画播放标记还是宫格
-        "is_video": any(m.get("duration") for m in media) or post.post_type == 15,
+        "is_video": video,
     }
 
 
@@ -272,6 +280,17 @@ def build_feed(db: Session, channel: Channel, *, before_id: int = 0, limit: int 
     rows = list(db.scalars(stmt.order_by(MomentsPost.create_time.desc(), MomentsPost.id.desc()).limit(limit + 1)).all())
     has_more = len(rows) > limit
     posts = [decode(row) for row in rows[:limit]]
+    # 每个媒体带上"手机传回来了吗":ready(可直接显示)/ pending / failed / none
+    stored = {
+        (int(item.post_id), item.mid): item
+        for item in db.scalars(select(MomentsMedia).where(MomentsMedia.post_id.in_([post["id"] for post in posts]))).all()
+    } if posts else {}
+    for post in posts:
+        for media in post["media"]:
+            item = stored.get((post["id"], media.get("mid")))
+            ready = item is not None and item.status == "downloaded" and bool(item.storage_path)
+            media["state"] = "ready" if ready else ("failed" if item is not None and item.status == "failed" else ("loading" if item is not None and item.status == "pending" else "none"))
+            media["url"] = f"/moments/media/file/{item.id}" if ready else ""
     directory = IdentityDirectory(db)
     authors = {post["wxid"] for post in posts}
     directory.preload(channel.id, authors)

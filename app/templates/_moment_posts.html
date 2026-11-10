@@ -15,11 +15,15 @@
     </header>
     {% if post.content %}<p class="moment-content">{{ post.content }}</p>{% endif %}
     {% if post.media %}
+    {# 媒体先显示占位卡片(微信 CDN 上的预览是加密的,浏览器直接加载不了):已下载的图片进入可视区自动显示,其余点击才让手机下载并传回(见 moments.js)。 #}
     <div class="moment-media{% if post.media|length == 1 %} moment-media-single{% endif %}">
       {% for item in post.media %}
-      <span class="moment-thumb{% if post.is_video %} is-video{% endif %}" {% if item.width and item.height and post.media|length == 1 %}style="aspect-ratio: {{ item.width }} / {{ item.height }};"{% endif %}>
-        {% if item.preview %}<img src="{{ item.preview }}" alt="" loading="lazy" referrerpolicy="no-referrer" data-moment-img />{% endif %}
-        {% if post.is_video %}<span class="moment-play" aria-hidden="true"></span>{% if item.duration %}<span class="moment-duration">{{ '%d:%02d'|format((item.duration // 60)|int, (item.duration % 60)|int) }}</span>{% endif %}{% endif %}
+      {% set kind = 'video' if post.is_video else 'image' %}
+      <span class="moment-thumb{% if post.is_video %} is-video{% endif %}" data-moment-media data-post-id="{{ post.id }}" data-mid="{{ item.mid }}" data-media-type="{{ kind }}" data-state="{{ item.state or 'none' }}" data-url="{{ item.url or '' }}" role="button" tabindex="0" aria-label="{{ '视频' if post.is_video else '图片' }}" {% if item.width and item.height and post.media|length == 1 %}style="aspect-ratio: {{ item.width }} / {{ item.height }};"{% endif %}>
+        <span class="moment-thumb-body">
+          <span class="msg-media-icon" data-icon="{{ kind }}" aria-hidden="true"></span>
+          <small data-media-hint>{{ item.meta ~ ' · ' if item.meta else '' }}{{ '点击查看' if item.state == 'ready' else ('获取失败，点击重试' if item.state == 'failed' else '点击获取') }}</small>
+        </span>
       </span>
       {% endfor %}
     </div>
