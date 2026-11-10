@@ -3558,8 +3558,8 @@ async def update_wechat_ipad_chatroom_media_download_action(
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type != "wechat_ipad":
-            raise HTTPException(status_code=400, detail="Channel is not wechat_ipad")
+        if channel.channel_type not in {"wechat_ipad", "wechat_webridge"}:
+            raise HTTPException(status_code=400, detail="当前渠道不支持附件自动下载")
         extra = parse_config_json(chatroom.extra_json)
         is_enabled = str(enabled or "").strip().lower() == "true"
         extra["auto_download_media"] = is_enabled

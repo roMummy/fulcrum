@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, Message, PluginExecutionLog
+from app.services.plugin_schemas import parse_config_json
 from app.services.points import PointsService
 from app.services.workwechat_chatrooms import build_workwechat_chatroom_detail
 
@@ -117,8 +118,10 @@ def build_webridge_chatroom_detail(db: Session, channel: Channel, chatroom: Chat
             "sync_action": f"/channels/{channel.id}/chatrooms/{chatroom.id}/sync",
             "sync_button_label": "同步群成员",
             "member_section_hint": "成员来自手机插件的群成员同步；为空时点击右上角“同步群成员”，稍后刷新本页。",
-            "auto_download_media_label": "暂不支持",
-            "supports_media_download": False,
+            # 默认关闭:手机端回传媒体会占用串行通道、拖慢消息上报,需要时再按群开启。
+            "auto_download_media_enabled": bool(parse_config_json(chatroom.extra_json).get("auto_download_media")),
+            "auto_download_media_label": "已开启" if parse_config_json(chatroom.extra_json).get("auto_download_media") else "未开启",
+            "supports_media_download": True,
         }
     )
     return detail

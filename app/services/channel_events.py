@@ -488,9 +488,9 @@ def _queue_inbound_media_fetch_if_needed(
     attachment_type = str(message.message_type or "").strip()
     if attachment_type not in {"image", "voice", "video"}:
         return
-    # WeBridge 手机端媒体必须由 upload_message_media 主动回传；它没有 wechat_ipad
-    # 的群级自动下载开关，因此私聊和群聊都进入统一附件流程。
-    if channel.channel_type == "wechat_ipad" and not _chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation):
+    # 手机端下载媒体很耗资源(上传一次最长可达数十秒并占用手机串行通道,会拖慢消息上报),
+    # 因此 iPad 与微桥统一按“群自动下载附件”开关控制,默认关闭;私聊不下载。
+    if not _chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation):
         return
     details = normalized.get("details")
     if not isinstance(details, dict):
