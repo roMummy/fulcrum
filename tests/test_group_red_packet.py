@@ -159,7 +159,7 @@ def test_claim_results_are_business_outcomes_and_never_failed_jobs(env, reported
     assert answer["status"] == "completed"
     db.refresh(job)
     # 不记成失败任务,否则每次"来晚了"都会触发管理后台的失败任务告警
-    assert job.status == "completed" and json.loads(job.result_json)["webridge"]["claimed"] is claimed
+    assert job.status == "completed" and json.loads(job.result_json)["webridge"]["succeeded"] is claimed
 
 
 # ---------- 长轮询唤醒 ----------

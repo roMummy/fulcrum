@@ -24,6 +24,7 @@ from app.services.inbound_media import download_wechat_media_attachment, mark_at
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
+from app.services.wechat_webridge import auto_receive
 from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
 from app.services.task_queue import (
     INBOUND_MEDIA_FETCH_JOB,
@@ -240,6 +241,11 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     message_id = _coerce_int(payload.get("message_id"))
     # 群功能(成员变更提醒、潜水排行等)只看群自己的开关,先于插件调度执行;
     # 命令被群功能处理后不再交给 AI 兜底。
+    # 自动收款是账号级设置(私聊和群里的转账都适用),先于群功能和插件执行;出错只记日志,不影响后面的调度。
+    try:
+        auto_receive.handle_event(db, channel, normalized_event, conversation_id=conversation_id)
+    except Exception:
+        logger.exception("auto receive transfer failed", extra={"channel_id": channel.id})
     executed_features = dispatch_group_features(db, channel, normalized_event, conversation_id=conversation_id)
     dispatch_report = build_dispatch_report(
         db,

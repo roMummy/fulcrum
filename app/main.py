@@ -171,6 +171,7 @@ from app.services.points_admin import adjust_points, build_points_accounts, buil
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
+from app.services.wechat_webridge import auto_receive
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -2202,6 +2203,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             page_title=f"账号详情 · {channel.name}",
             account=account_identity(channel),
             channel=channel,
+            auto_receive_transfer=auto_receive.is_enabled(channel) if channel.channel_type == "wechat_webridge" else False,
             binding=binding,
             connection=connection,
             quota=quota,
@@ -2273,6 +2275,29 @@ async def wechat_webridge_live_summary(request: Request, channel_id: int):
         if not channel or channel.channel_type != "wechat_webridge":
             raise HTTPException(status_code=404, detail="WeBridge channel not found")
         return JSONResponse(build_webridge_live_summary(db, channel))
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/wechat-webridge/settings")
+async def wechat_webridge_settings_action(request: Request, channel_id: int, auto_receive_transfer: str = Form(""), csrf_token: str = Form("")):
+    """保存微桥账号的自动化设置(目前是「自动收款」);勾选框没勾选时浏览器不提交该字段,所以按"字段是否存在"判断。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type != "wechat_webridge":
+            raise HTTPException(status_code=404, detail="WeBridge channel not found")
+        enabled = bool(auto_receive_transfer)
+        auto_receive.set_enabled(channel, enabled)
+        record_audit(db, "channel.auto-receive-transfer", "channel", channel.id, f"enabled={enabled}")
+        db.commit()
+        notice = "已开启自动收款：收到转账会自动确认收款" if enabled else "已关闭自动收款"
+        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 

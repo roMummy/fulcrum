@@ -716,19 +716,37 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
     return commands
 
 
-def _complete_red_packet_claim(db: Session, channel: Channel, job: TaskJob, data: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    """领取红包的回报是业务结果(领到多少、已被领完、已过期),不是任务故障:一律记为完成并写日志。
+# 这些命令的回报是业务结果(领到多少、已被领完、已过期、是否确认到账),不是任务故障。
+# 值是 (参数里的业务 ID 键名, 判断"确认成功"的方式):红包看 ok;转账必须 confirmed(文档:ok 与 accepted 都不算到账)。
+PAYMENT_COMMANDS = {"receive_red_packet": "red_packet_id", "receive_transfer": "transfer_id"}
+
+
+def _complete_payment_command(db: Session, channel: Channel, job: TaskJob, data: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """领取红包、确认收款的回报:一律记为完成并写日志,按成败区分日志级别。
 
     "来晚了,已被领完"是抢红包的常态;如果每次都记成失败任务,管理后台的失败任务数和告警会被刷满。
-    手机的失败回报里仍带着业务结果(协议文档:失败时 HTTP 400 但响应体含业务结果),日志里按成败区分。
+    手机的失败回报里仍带着业务结果(协议文档:失败时 HTTP 400 但响应体含业务结果)。
+    转账:只有 confirmed=true(callback_ok)才算确认收到;"confirm_invoked"/"callback_unknown"是结果未知,
+    文档要求不要直接重试、应查询 get_transfer_status,所以这里只记警告,由人工核对。
     """
 
-    claimed = bool(payload.get("ok")) or bool(result.get("ok"))
-    params = as_object(as_object(data.get("command")).get("params"))
-    detail = json.dumps(result, ensure_ascii=False)[:300]
-    log = logger.info if claimed else logger.warning
-    log("red packet claim result", extra={"channel_id": channel.id, "job_id": job.id, "red_packet_id": text(params.get("red_packet_id")), "claimed": claimed, "result": detail})
-    complete_job(db, job, result={"webridge": {**_compact_result_for_storage(payload, {}), "claimed": claimed}})
+    command = as_object(data.get("command"))
+    command_type = text(command.get("type"))
+    params = as_object(command.get("params"))
+    inner = as_object(result.get("result")) or result
+    if command_type == "receive_transfer":
+        succeeded = bool(inner.get("confirmed"))
+    else:
+        succeeded = bool(payload.get("ok")) or bool(result.get("ok"))
+    log = logger.info if succeeded else logger.warning
+    log(
+        "payment command result",
+        extra={
+            "channel_id": channel.id, "job_id": job.id, "command": command_type, "target_id": text(params.get(PAYMENT_COMMANDS[command_type])),
+            "succeeded": succeeded, "status": text(inner.get("status")), "result": json.dumps(result, ensure_ascii=False)[:300],
+        },
+    )
+    complete_job(db, job, result={"webridge": {**_compact_result_for_storage(payload, {}), "succeeded": succeeded}})
     return {"ok": True, "job_id": int(job.id), "status": "completed"}
 
 
@@ -767,8 +785,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if job.status in {"completed", "failed"}:
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
         result = as_object(payload.get("result"))
-        if text(as_object(data.get("command")).get("type")) == "receive_red_packet":
-            return _complete_red_packet_claim(db, channel, job, data, payload, result)
+        if text(as_object(data.get("command")).get("type")) in PAYMENT_COMMANDS:
+            return _complete_payment_command(db, channel, job, data, payload, result)
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
             counts = persist_directory_result(db, channel, command, result)

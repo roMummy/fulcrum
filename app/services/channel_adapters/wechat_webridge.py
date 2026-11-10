@@ -107,7 +107,7 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "mentioned_self": bool(body.get("is_at")),
             "content_xml": body.get("content_xml"),
             "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
-            "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
+            "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "message_id", "from_user", "to_user", "payer_username", "receiver_username", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
             "contact": {key: body.get(key) for key in ("contact_id", "contact_ref", "encrypt_username", "ticket", "nickname") if body.get(key) is not None},
             "group": {key: body.get(key) for key in ("room_id", "member_id", "member_ids", "group_name", "operation") if body.get(key) is not None},
             "moment": {key: body.get(key) for key in ("sns_id", "media_id", "author_id", "operation_id") if body.get(key) is not None},

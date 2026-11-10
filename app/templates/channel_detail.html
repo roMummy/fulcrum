@@ -51,6 +51,26 @@
   {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
 </section>
 
+{% if channel.channel_type == 'wechat_webridge' %}
+<section class="work-surface">
+  <div class="section-head"><div><h2>自动化</h2></div></div>
+  {# 自动收款是账号级设置:转账多发生在私聊,不属于某个群,所以不放在群功能里。 #}
+  <form method="post" action="/channels/{{ channel.id }}/wechat-webridge/settings" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="full-row gf-switch-list gf-switch-list-soft">
+      <label class="gf-row">
+        <span class="gf-row-copy"><strong>自动收款</strong><small>账号收到转账（私聊和群里的都算）时自动确认收款，钱进入这个微信的零钱。每笔只确认一次；超时未确认时不会自动重试，请到日志里核对</small></span>
+        <span class="gf-switch">
+          <input type="checkbox" name="auto_receive_transfer" role="switch"{% if auto_receive_transfer %} checked{% endif %}{% if not can_manage_channel %} disabled{% endif %} />
+          <span class="gf-switch-track"></span>
+        </span>
+      </label>
+    </div>
+    {% if can_manage_channel %}<div class="full-row"><button class="btn" type="submit">保存</button></div>{% endif %}
+  </form>
+</section>
+{% endif %}
+
 {% if channel.channel_type == 'wechat_ipad' and wechat_ipad_overview %}
 <section class="work-surface account-business-summary">
   <div class="toolbar">
