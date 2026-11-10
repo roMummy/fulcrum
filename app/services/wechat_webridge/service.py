@@ -185,10 +185,12 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
         room_id = _directory_id(params, "room_id", "chatroom_id", "conversation_id")
         room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == room_id)) if room_id else None
         if room:
+            seen_ids: set[str] = set()
             for item in _result_items(result, "members", "items"):
                 external_id = _directory_id(item, "account_id", "user_name", "wxid", "id")
                 if not external_id:
                     continue
+                seen_ids.add(external_id)
                 member = db.scalar(select(ChatroomMember).where(ChatroomMember.chatroom_id == room.id, ChatroomMember.member_external_id == external_id))
                 if member is None:
                     member = ChatroomMember(chatroom_id=room.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=external_id)
@@ -201,12 +203,30 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 member.last_synced_at = now
                 member.extra_json = json.dumps({"avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
                 counts["members"] += 1
-            room.member_count = max(room.member_count, counts["members"])
+            # 以前的群友要保留:这次名单里已经没有的成员只标记为已退群,不删除,历史发言与积分都还在。
+            # 名单为空或返回自带“被截断/还有更多”标记时不是完整名单,不做标记,避免一次异常返回误伤全员。
+            if seen_ids and not (result.get("truncated") or result.get("has_more")):
+                counts["members_left"] = _mark_missing_members_left(db, room, seen_ids, now)
+                room.member_count = len(seen_ids)
+            else:
+                room.member_count = max(room.member_count, counts["members"])
             room.last_synced_at = now
     if any(counts.values()):
         db.flush()
         logger.info("webridge directory persisted", extra={"channel_id": channel.id, "command_name": command_name, **counts})
     return counts
+
+
+def _mark_missing_members_left(db: Session, room: Chatroom, seen_ids: set[str], now: Any) -> int:
+    """把本群成员表中不在 seen_ids 里的在群成员标记为 left,返回标记人数。"""
+
+    marked = 0
+    for member in db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == room.id, ChatroomMember.status != "left")).all():
+        if member.member_external_id not in seen_ids:
+            member.status = "left"
+            member.last_synced_at = now
+            marked += 1
+    return marked
 
 
 # task_jobs.result_json 是 TEXT（上限 65535 字节），大群成员列表可达 6 万字符以上，

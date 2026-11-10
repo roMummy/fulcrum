@@ -134,6 +134,9 @@ class _FakeDirectoryDB:
     def scalar(self, *_args, **_kwargs):
         return None
 
+    def scalars(self, *_args, **_kwargs):
+        return SimpleNamespace(all=lambda: [])
+
     def add(self, obj) -> None:
         self.added.append(obj)
 
@@ -188,6 +191,47 @@ def test_groups_sync_enables_new_rooms_but_keeps_disabled_rooms_disabled() -> No
     service.persist_directory_result(_ExistingDB(disabled), channel, {"type": "groups_all"}, item)
     assert disabled.is_active is False and disabled.management_status == "disabled"
     assert disabled.name == "新群"  # 资料照常更新,只是不改启用状态
+
+
+def test_room_members_sync_marks_missing_members_left_and_keeps_them() -> None:
+    """同步群成员:名单里没有的老群友保留并标记已退群;回群的恢复在群;不完整名单不动。"""
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.tenant_context import tenant_scope
+    from app.core.tenant_db import tenant_session
+    from app.models.entities import Chatroom, ChatroomMember
+
+    engine = create_engine("sqlite://")
+    for table in (Chatroom, ChatroomMember):
+        table.__table__.create(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge")
+    command = {"type": "room_members", "params": {"room_id": "g@chatroom"}}
+
+    def members(*ids: str) -> dict:
+        return {"members": [{"account_id": i, "nick_name": f"昵称{i}"} for i in ids]}
+
+    with tenant_scope(1):
+        with tenant_session(factory) as db:
+            room = Chatroom(tenant_id=1, bot_id=1, channel_id=2, external_id="g@chatroom", name="群", member_count=3)
+            db.add(room)
+            db.flush()
+            for ext, status in (("a", "active"), ("b", "active"), ("c", "left")):
+                db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=2, member_external_id=ext, nickname=ext, status=status))
+            db.flush()
+            status_of = lambda: {m.member_external_id: m.status for m in db.scalars(select(ChatroomMember))}
+
+            # 名单只剩 a、c:b 被标记已退群(仍在表里),c 回群恢复在群
+            counts = service.persist_directory_result(db, channel, command, members("a", "c"))
+            assert status_of() == {"a": "active", "b": "left", "c": "active"}
+            assert counts["members_left"] == 1 and room.member_count == 2
+
+            # 空名单、被截断的名单都不是完整名单:不做任何标记
+            service.persist_directory_result(db, channel, command, {"members": []})
+            service.persist_directory_result(db, channel, command, {**members("a"), "truncated": True})
+            assert status_of() == {"a": "active", "b": "left", "c": "active"}
 
 
 def test_reap_stale_commands_only_fails_timed_out_jobs_of_this_channel(tmp_path) -> None:
