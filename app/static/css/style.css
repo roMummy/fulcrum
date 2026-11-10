@@ -5509,3 +5509,39 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 表单里的开关行(如 AI 助手页):在 .form-grid 内也保持"文字在左、开关在右",并避免被表单输入框样式撑变形。 */
+.gf-switch-list-soft {
+  background: var(--surface-soft);
+}
+
+.form-grid .gf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-grid .gf-switch input {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.gf-row-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gf-row-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
