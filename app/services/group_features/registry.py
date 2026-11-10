@@ -87,4 +87,4 @@ def _ensure_loaded() -> None:
     if _loaded:
         return
     _loaded = True
-    from app.services.group_features import ai_chat, inactive_rank, media_download, member_change  # noqa: F401
+    from app.services.group_features import ai_chat, inactive_rank, media_download, member_change, red_packet  # noqa: F401

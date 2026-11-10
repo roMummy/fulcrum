@@ -473,8 +473,20 @@ def enqueue_media_upload_command(
 
 
 
-def enqueue_command(db: Session, channel: Channel, *, command_name: str, args: dict[str, Any], request_id: str = "") -> TaskJob:
-    """把任意 WeBridge 命令放入当前渠道队列，供联系人、群组、媒体和高级能力复用。"""
+def enqueue_command(
+    db: Session,
+    channel: Channel,
+    *,
+    command_name: str,
+    args: dict[str, Any],
+    request_id: str = "",
+    priority: int = 90,
+    available_at: datetime | None = None,
+) -> TaskJob:
+    """把任意 WeBridge 命令放入当前渠道队列，供联系人、群组、媒体和高级能力复用。
+
+    available_at 不为空时命令要到那个时间才会被手机领取(延迟下发);priority 越大越先被领取。
+    """
 
     normalized_name = text(command_name)
     if not normalized_name or normalized_name.startswith("/") or len(normalized_name) > 100:
@@ -489,8 +501,9 @@ def enqueue_command(db: Session, channel: Channel, *, command_name: str, args: d
             "channel_id": int(channel.id),
             "command": {"request_id": normalized_request_id, "type": normalized_name, "params": args},
         },
-        priority=90,
+        priority=priority,
         dedupe_key=f"webridge:{channel.id}:{normalized_request_id}",
+        available_at=available_at,
     )
 
 
@@ -703,6 +716,22 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
     return commands
 
 
+def _complete_red_packet_claim(db: Session, channel: Channel, job: TaskJob, data: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """领取红包的回报是业务结果(领到多少、已被领完、已过期),不是任务故障:一律记为完成并写日志。
+
+    "来晚了,已被领完"是抢红包的常态;如果每次都记成失败任务,管理后台的失败任务数和告警会被刷满。
+    手机的失败回报里仍带着业务结果(协议文档:失败时 HTTP 400 但响应体含业务结果),日志里按成败区分。
+    """
+
+    claimed = bool(payload.get("ok")) or bool(result.get("ok"))
+    params = as_object(as_object(data.get("command")).get("params"))
+    detail = json.dumps(result, ensure_ascii=False)[:300]
+    log = logger.info if claimed else logger.warning
+    log("red packet claim result", extra={"channel_id": channel.id, "job_id": job.id, "red_packet_id": text(params.get("red_packet_id")), "claimed": claimed, "result": detail})
+    complete_job(db, job, result={"webridge": {**_compact_result_for_storage(payload, {}), "claimed": claimed}})
+    return {"ok": True, "job_id": int(job.id), "status": "completed"}
+
+
 def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]) -> dict[str, Any]:
     """按 command request_id 完成任务；重复回报返回已处理状态。"""
 
@@ -738,6 +767,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if job.status in {"completed", "failed"}:
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
         result = as_object(payload.get("result"))
+        if text(as_object(data.get("command")).get("type")) == "receive_red_packet":
+            return _complete_red_packet_claim(db, channel, job, data, payload, result)
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
             counts = persist_directory_result(db, channel, command, result)

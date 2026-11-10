@@ -26,6 +26,7 @@ from app.services.wechat_webridge.service import (
     identity_matches,
 )
 from app.services.task_queue import parse_job_payload
+from app.services.wechat_webridge import wakeup
 from app.services.account_connections import finalize_account_connection, verify_account_connection
 from app.services.account_connections.contracts import AccountConnectionError
 from app.models.entities import MessageAttachment
@@ -183,15 +184,28 @@ async def poll(channel_id: int, request: Request):
     body = await _json(request)
     tenant_id, _ = _channel_tenant(channel_id)
     deadline = time.monotonic() + POLL_HOLD_SECONDS
-    while True:
-        try:
-            commands = await run_in_threadpool(_claim_once, channel_id, tenant_id, body)
-        except ValueError as exc:
-            logger.exception("webridge poll rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if commands or time.monotonic() >= deadline or await request.is_disconnected():
-            return {"commands": commands}
-        await asyncio.sleep(POLL_CHECK_INTERVAL_SECONDS)
+    # 挂起期间登记一个唤醒事件:新命令入队、或延迟命令到点时,入队方会立刻叫醒这里(见 wakeup),
+    # 不必等下一次 1 秒检查;检查间隔仍保留作为兜底。
+    wake = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    wakeup.register(channel_id, loop, wake)
+    try:
+        while True:
+            # 先清除再查询:查询之后、等待之前到来的通知不会丢(事件保持已触发状态,等待立刻返回)。
+            wake.clear()
+            try:
+                commands = await run_in_threadpool(_claim_once, channel_id, tenant_id, body)
+            except ValueError as exc:
+                logger.exception("webridge poll rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if commands or time.monotonic() >= deadline or await request.is_disconnected():
+                return {"commands": commands}
+            try:
+                await asyncio.wait_for(wake.wait(), timeout=POLL_CHECK_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        wakeup.unregister(channel_id, loop, wake)
 
 
 @router.post("/{channel_id}/agent/command_result")
