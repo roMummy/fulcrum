@@ -51,7 +51,7 @@ class ChatInput:
     bank_id: str = ""
     memory_enabled: bool = False
     memory_all: bool = False
-    # 记忆里发言人用代号;own_label 是对方自己的代号,speaker_names 是 代号->当前昵称,召回后据此换成称呼。
+    # 记忆里发言人用微信 ID;own_label 是对方自己的 ID,speaker_names 是 ID->当前昵称,召回后据此换成称呼。
     own_label: str = ""
     speaker_names: tuple[tuple[str, str], ...] = ()
     # 记忆库的可读显示名(群名)。
@@ -118,7 +118,7 @@ def build_chat_input(
 
 
 def collect_speaker_names(db: Session, *, tenant_id: int, conversation_id: int | None, limit: int = 400) -> tuple[tuple[str, str], ...]:
-    """本会话最近发言的成员:代号 -> 当前昵称(取最新一条;昵称就是 wxid 的不收,聊天时会写成"另一位群友")。"""
+    """本会话最近发言的成员:微信 ID -> 当前昵称(取最新一条;昵称就是 wxid 的不收,聊天时会写成"另一位群友")。"""
 
     if not conversation_id:
         return ()
@@ -129,7 +129,7 @@ def collect_speaker_names(db: Session, *, tenant_id: int, conversation_id: int |
         .order_by(Message.id.desc())
         .limit(limit)
     ).all():
-        label = ai_memory.speaker_label(tenant_id, str(sender_id))
+        label = ai_memory.speaker_label(str(sender_id))
         name = ai_memory.safe_name(sender_name)
         if label not in names and name and not looks_like_raw_id(name):
             names[label] = name

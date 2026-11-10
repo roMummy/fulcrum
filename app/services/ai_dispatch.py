@@ -379,7 +379,7 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
             ),
             memory_enabled=resolved.memory_enabled and ai_memory.is_configured(),
             memory_all=resolved.memory_all,
-            own_label=ai_memory.speaker_label(int(channel.tenant_id), str(plan.context.sender_id or "")),
+            own_label=ai_memory.speaker_label(str(plan.context.sender_id or "")),
             speaker_names=ai_chat.collect_speaker_names(db, tenant_id=int(channel.tenant_id), conversation_id=conversation_id),
             bank_name=resolved.group_name or "私聊",
         )

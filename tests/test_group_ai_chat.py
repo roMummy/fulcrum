@@ -180,8 +180,8 @@ def test_prepare_intent_builds_chat_context_with_memory_bank(monkeypatch) -> Non
     prepared = ai_dispatch.prepare_intent(db, _payload(channel))
     chat = prepared[3]
     assert (chat.bank_id, chat.sender_name, chat.chat_type, chat.memory_enabled) == ("t1-1@chatroom", "小明", "group", True)
-    # 记忆里用代号;聊天时能把代号换回对方当前的昵称(这里对方自己只有 wxid 以外的昵称"小明")
-    assert chat.own_label == ai_memory.speaker_label(1, "wxid_a") and chat.bank_name == "群"
+    # 记忆里用微信 ID;聊天时能把 ID 换回对方当前的昵称(这里对方自己只有 wxid 以外的昵称"小明")
+    assert chat.own_label == ai_memory.speaker_label("wxid_a") and chat.bank_name == "群"
 
     save_state(room, "ai_chat", enabled=True, config={"memory_enabled": False})
     assert ai_dispatch.prepare_intent(db, _payload(channel))[3].memory_enabled is False

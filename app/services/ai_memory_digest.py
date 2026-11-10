@@ -5,7 +5,7 @@
 - 开启后从当前最新一条消息开始记,不回溯历史。
 - 触发条件:有效消息攒满 BATCH_SIZE 条,或最后一条有效消息之后空闲 IDLE_SECONDS 秒。
 - 有效消息:群里的入站文本,排除命令(/ 或 # 开头)、卡片/XML、过短的闲话。机器人自己的消息是出站,天然不在其中。
-- 一批作为一份"群聊记录"写入(每行"成员代号: 内容",不打个人标签;记忆里不出现昵称,昵称可能带误导性),这样谁说了什么、对话上下文都保留,
+- 一批作为一份"群聊记录"写入(每行"成员微信ID: 内容",不打个人标签;记忆里不出现昵称,昵称可能带误导性,微信 ID 稳定、事后可对账),这样谁说了什么、对话上下文都保留,
   召回时任何人提问都能用到群里的共同背景。
 - 每个群每天最多整理 MAX_FLUSHES_PER_DAY 批,防止刷屏时成本失控。
 - 网络写入在数据库会话之外进行;写入失败不推进游标,下一轮重试(断路保护见 ai_memory)。
@@ -138,7 +138,7 @@ def plan_group_digest(db: Session, chatroom: Chatroom, conversation: Conversatio
     used = 0
     included: list[Message] = []
     for row in eligible[:MAX_BATCH]:
-        line = f"{ai_memory.speaker_label(int(chatroom.tenant_id), str(row.sender_id))}: {clean_text(row.content)[:LINE_CHARS]}"
+        line = f"{ai_memory.speaker_label(str(row.sender_id))}: {clean_text(row.content)[:LINE_CHARS]}"
         if included and used + len(line) > MAX_BATCH_CHARS:
             break
         lines.append(line)

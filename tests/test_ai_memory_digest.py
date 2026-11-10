@@ -94,7 +94,7 @@ def test_waits_below_threshold_then_flushes_at_thirty(env) -> None:
     plan = digest.plan_group_digest(db, room, conversation, now=NOW)
     assert plan is not None and plan.count == 30
     lines = plan.content.split("\n")
-    label = ai_memory.speaker_label(1, "wxid_a")
+    label = ai_memory.speaker_label("wxid_a")
     assert len(lines) == 30 and lines[0] == f"{label}: 今天天气真不错啊第0条"
     assert "小明" not in plan.content  # 记忆里不出现昵称
     assert plan.bank_id == "t1-1@chatroom" and plan.bank_name == "养生群"
@@ -110,7 +110,7 @@ def test_flushes_after_twenty_idle_minutes_but_not_before(env) -> None:
     assert plan is not None and plan.count == 5
 
 
-def test_transcript_uses_codes_never_nicknames_and_filters_noise(env) -> None:
+def test_transcript_uses_wxids_never_nicknames_and_filters_noise(env) -> None:
     db, room, conversation = env
     _start(env)
     _add(db, ["我最近搬到上海了，换了新工作"], name="北京小王", minutes_ago=30)  # 带误导性的昵称
@@ -122,14 +122,14 @@ def test_transcript_uses_codes_never_nicknames_and_filters_noise(env) -> None:
     _add(db, ["没有发言人ID的消息也不能记"], minutes_ago=25)[0].sender_id = None
     db.commit()
     plan = digest.plan_group_digest(db, room, conversation, now=NOW)
-    a_, c_ = ai_memory.speaker_label(1, "wxid_a"), ai_memory.speaker_label(1, "wxid_c")
+    a_, c_ = "wxid_a", "wxid_c"  # 记忆里是发言人的微信 ID,事后可对账
     assert plan.content.split("\n") == [
         f"{a_}: 我最近搬到上海了，换了新工作",
-        f"{a_}: 我家的猫叫团子，特别能吃",  # 同一个人(同一 sender_id)用同一个代号
+        f"{a_}: 我家的猫叫团子，特别能吃",  # 同一个人(同一 sender_id)始终是同一个 ID
         f"{c_}: 我买了紫铜版的散热件",
     ]
-    # 整份记录里不出现任何昵称(包括带误导性的"北京小王"和 wxid)
-    for nickname in ("北京小王", "我二弟最牛逼", "小红", "wxid_"):
+    # 整份记录里不出现任何昵称(包括带误导性的"北京小王"、"我二弟最牛逼",以及昵称恰好是另一个 wxid 的情况)
+    for nickname in ("北京小王", "我二弟最牛逼", "小红", "wxid_abcdef123"):
         assert nickname not in plan.content
 
 
@@ -198,7 +198,7 @@ def test_run_flushes_one_untagged_async_transcript_and_advances_the_cursor(wired
     assert digest.run_for_tenant(now=NOW) == 1
     _, path, body = hs.requests[-1]
     item = body["items"][0]
-    label = ai_memory.speaker_label(1, "wxid_a")
+    label = ai_memory.speaker_label("wxid_a")
     assert path == "/v1/default/banks/t1-1@chatroom/memories" and body["async"] is True
     assert "tags" not in item and "多人对话" in item["context"] and item["content"].startswith(f"{label}: 我下个月要去日本旅游")
     # 库有可读的显示名(群名)和抽取规则;发给记忆服务的所有内容里没有昵称
