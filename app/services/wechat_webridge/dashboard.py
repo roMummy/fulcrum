@@ -13,8 +13,8 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.time import now_shanghai
-from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, WebridgeDeviceSample, WorkWechatContact
+from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.models.entities import Chatroom, ChatroomMember, Channel, Conversation, Message, RawWebhookEvent, WebridgeDeviceSample, WorkWechatContact
 from app.services.identity_directory import IdentityDirectory, make_identity
 
 PAGE_SIZE = 20
@@ -216,6 +216,79 @@ STATE_LABELS = (
 )
 
 
+# 上报延迟超过该秒数视为“明显滞后”，摘要标签据此提示。
+LAG_WARN_SECONDS = 30
+
+
+def _event_lag_seconds(payload_json: str | None) -> int | None:
+    """单条微桥消息事件的上报延迟：手机抓到消息的时刻减去微信消息产生时刻。
+
+    只统计消息事件；缺少时间戳、或时钟偏差导致为负的事件返回 None，不参与统计。
+    延迟出现在手机抓取之前，说明是手机/微信侧滞后，而不是服务端处理慢。
+    """
+
+    try:
+        payload = json.loads(payload_json or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("event_name") not in (None, "message"):
+        return None
+    body = payload.get("body") if isinstance(payload.get("body"), dict) else {}
+    created = body.get("create_time")
+    captured = payload.get("captured_at_ms")
+    if not isinstance(created, (int, float)) or not isinstance(captured, (int, float)) or created <= 0:
+        return None
+    lag = round(captured / 1000 - created)
+    return lag if lag >= 0 else None
+
+
+def _percentile(values: list[int], ratio: float) -> int:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, max(0, int(len(ordered) * ratio + 0.5) - 1))]
+
+
+def build_webridge_lag(db: Session, channel: Channel, *, hours: int = 24) -> dict[str, Any]:
+    """近 hours 小时的消息上报延迟：最近 1 小时 p90 / 最大值，以及按小时的 p90 趋势。
+
+    直接读取已落库的原始事件，不额外建表；每小时取 p90 是为了让偶发批量滞后可见，
+    又不被个别极端值淹没。
+    """
+
+    now = now_shanghai()
+    rows = db.execute(
+        select(RawWebhookEvent.created_at, RawWebhookEvent.payload_json).where(
+            RawWebhookEvent.channel_id == int(channel.id),
+            RawWebhookEvent.source == "wechat_webridge",
+            RawWebhookEvent.created_at >= now - timedelta(hours=hours),
+        )
+    ).all()
+    by_hour: dict[Any, list[int]] = {}
+    recent: list[int] = []
+    for created_at, payload_json in rows:
+        lag = _event_lag_seconds(payload_json)
+        if lag is None:
+            continue
+        # 数据库取回的时间可能不带时区，统一转成北京时间后再比较和分桶。
+        created_at = ensure_shanghai_datetime(created_at)
+        by_hour.setdefault(created_at.replace(minute=0, second=0, microsecond=0), []).append(lag)
+        if created_at >= now - timedelta(hours=1):
+            recent.append(lag)
+    items = [{"label": hour.strftime("%H:%M"), "value": _percentile(values, 0.9)} for hour, values in sorted(by_hour.items())]
+    peak = max((item["value"] for item in items), default=0)
+    count = len(items)
+    points = " ".join(
+        f"{0 if count <= 1 else round(index / (count - 1) * 100, 2)},{100 if peak <= 0 else round(100 - item['value'] / peak * 100, 2)}"
+        for index, item in enumerate(items)
+    )
+    return {
+        "recent_p90": _percentile(recent, 0.9) if recent else None,
+        "recent_max": max(recent) if recent else None,
+        "recent_count": len(recent),
+        "chart": {"max_value": peak, "points": points, "items": items},
+        "warn": bool(recent) and _percentile(recent, 0.9) >= LAG_WARN_SECONDS,
+    }
+
+
 def _chart(samples: list[WebridgeDeviceSample], field: str, label_format: str = "%H:%M") -> dict[str, Any]:
     """把采样序列转换为 _dashboard_chart.html 的 trend_chart 宏需要的结构；NULL 采样跳过。"""
 
@@ -286,7 +359,10 @@ def build_webridge_live_summary(db: Session, channel: Channel) -> dict[str, Any]
 
     system_ok = isinstance(dev.get("system_memory"), dict) and dev["system_memory"].get("ok")
     pending, running = count_backlog(db, channel)
+    lag = build_webridge_lag(db, channel, hours=1)
     return {
+        "lag_p90": lag["recent_p90"],
+        "lag_warn": lag["warn"],
         "online": bool(runtime.get("online")),
         "last_seen_at": runtime.get("last_seen_at"),
         "battery_percent": num("battery", "percent"),
@@ -325,6 +401,7 @@ def build_webridge_device_panel(db: Session, channel: Channel, *, hours: int = 2
     samples = samples[::10] if len(samples) > 144 else samples
     capabilities = runtime.get("capabilities") if isinstance(runtime.get("capabilities"), list) else []
     return {
+        "lag": build_webridge_lag(db, channel),
         "hardware": _hardware_items(dev),
         "battery_chart": _chart(samples, "battery_percent"),
         "memory_chart": _chart(samples, "memory_used_percent"),

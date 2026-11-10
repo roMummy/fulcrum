@@ -21,6 +21,8 @@
       <span class="chip chip-outline" data-live="battery">电量 {{ (live.battery_percent ~ '%') if live.battery_percent is not none else '-' }}{% if live.battery_state %} · {{ live.battery_state }}{% endif %}</span>
       <span class="chip chip-outline" data-live="memory">内存 {{ (live.memory_used_percent ~ '%') if live.memory_used_percent is not none else '-' }}</span>
       <span class="chip {% if live.pending or live.running %}chip-success{% else %}chip-outline{% endif %}" data-live="backlog">积压 {{ live.pending }}{% if live.running %} · 执行中 {{ live.running }}{% endif %}</span>
+      {# 消息延迟 = 手机抓到消息的时刻 - 消息产生时刻（最近 1 小时 p90）；偏高说明手机/微信侧在后台被限制。 #}
+      <span class="chip {% if live.lag_warn %}chip-success{% else %}chip-outline{% endif %}" data-live="lag" title="最近 1 小时消息上报延迟（90% 的消息不超过该秒数）">上报延迟 {{ (live.lag_p90 ~ ' 秒') if live.lag_p90 is not none else '-' }}</span>
       <span class="chip chip-muted" data-live="seen">心跳 {{ live.last_seen_at|bj_time if live.last_seen_at else '-' }}</span>
     </div>
   </div>
@@ -34,6 +36,7 @@
     </div>
     {% if not device.fields %}<p class="muted-text">手机尚未上报运行状态（state），登录、授权、缓存等字段会在上报后显示。</p>{% endif %}
     <div class="panel-grid panel-grid-balanced top-gap">
+      {% if device.lag.chart['items'] %}<div><h3>消息上报延迟（秒，每小时 p90）</h3>{{ trend_chart(device.lag.chart, '近 24 小时消息上报延迟趋势') }}<p class="muted-text">最近 1 小时 {{ device.lag.recent_count }} 条，p90 {{ device.lag.recent_p90 if device.lag.recent_p90 is not none else '-' }} 秒，最大 {{ device.lag.recent_max if device.lag.recent_max is not none else '-' }} 秒。延迟出现在手机抓取之前，通常是手机或微信被系统限制后台。</p></div>{% endif %}
       <div><h3>待处理命令</h3>{{ trend_chart(device.pending_chart, '近 24 小时待处理命令趋势') }}</div>
       {% if device.battery_chart['items'] %}<div><h3>电量 %</h3>{{ trend_chart(device.battery_chart, '近 24 小时电量趋势', 'success') }}</div>{% endif %}
       {% if device.memory_chart['items'] %}<div><h3>系统内存已用 %</h3>{{ trend_chart(device.memory_chart, '近 24 小时系统内存使用趋势') }}</div>{% endif %}
@@ -128,6 +131,9 @@
         set("battery", "电量 " + pct(d.battery_percent) + (d.battery_state ? " · " + d.battery_state : ""));
         set("memory", "内存 " + pct(d.memory_used_percent));
         set("backlog", "积压 " + d.pending + (d.running ? " · 执行中 " + d.running : ""));
+        set("lag", "上报延迟 " + (d.lag_p90 === null || d.lag_p90 === undefined ? "-" : d.lag_p90 + " 秒"));
+        const lagNode = box.querySelector('[data-live="lag"]');
+        if (lagNode) lagNode.className = "chip " + (d.lag_warn ? "chip-success" : "chip-outline");
         set("seen", "心跳 " + (d.last_seen_at ? new Date(d.last_seen_at).toLocaleTimeString("zh-CN", { hour12: false }) : "-"));
       } catch (error) { /* 网络抖动不打扰操作人员 */ }
     };
