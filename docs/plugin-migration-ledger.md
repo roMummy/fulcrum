@@ -31,10 +31,8 @@
 | `game_task` | 无固定外部成本 | 无 | 已审核 | `d6beb3c` | 状态插件与目录组合验证 15 passed |
 | `global_news` | 租户承担 LLM 成本 | API Key | 已审核 | `88839bb` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_ai_content_plugins.py -k global_news`（3 passed）；插件相关组合验证 37 passed |
 | `group_auto_invite` | 无固定外部成本 | 无 | 已审核 | `c039963` | 群插件定向验证 6 passed |
-| `group_member_change` | 无固定外部成本 | 无 | 已审核 | `6c730dd` | 群插件定向验证 3 passed |
 | `group_virtual` | 无固定外部成本 | 无 | 已审核 | `7a04bb1` | 群插件定向验证 7 passed |
 | `guess_song` | 租户承担音乐聚合服务成本 | 可选 API Key | 已审核 | `a751040` | 群插件定向验证 8 passed |
-| `inactive_rank` | 无固定外部成本 | 无 | 已审核 | `f7e2b83` | `PYTHONPATH=. .venv/bin/pytest -q tests/test_existing_group_plugins.py -k inactive_rank`（1 passed） |
 | `jd_sign_token` | 租户自行维护京东令牌 | Token | 已审核 | `2506b03` | 状态插件与目录组合验证 15 passed |
 | `lucky_pot` | 无固定外部成本 | 无 | 已审核 | `d84a5cb` | 状态插件与目录组合验证 15 passed |
 | `message_push_task` | 无固定外部成本 | 无 | 已审核 | `6ce75c4` | 状态插件与目录组合验证 15 passed |

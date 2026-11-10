@@ -23,10 +23,8 @@ EXISTING_PLUGIN_CODES = {
     "game_task",
     "global_news",
     "group_auto_invite",
-    "group_member_change",
     "group_virtual",
     "guess_song",
-    "inactive_rank",
     "jd_sign_token",
     "lucky_pot",
     "message_push_task",
@@ -128,7 +126,7 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
     # 六个成人插件已经全部进入 SaaS 原生目录，校验器应返回成功，避免后续
     # 为了兼容迁移中间状态而保留第二套目录统计逻辑。
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "目录插件总数: 44" in result.stdout
-    assert "A-BOT 目标插件数: 42" in result.stdout
+    assert "目录插件总数: 42" in result.stdout
+    assert "A-BOT 目标插件数: 40" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
     assert "错误数量: 0" in result.stdout

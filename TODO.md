@@ -48,8 +48,6 @@
 - [x] `guess_song`：已创建迁移骨架
 - [x] `message_sign`：已创建迁移骨架
 - [x] `point_trade`：已创建迁移骨架
-- [x] `inactive_rank`：已创建迁移骨架
-- [x] `group_member_change`：已创建迁移骨架
 - [x] `group_auto_invite`：已创建迁移骨架
 - [x] `group_virtual`：已创建迁移骨架
 - [x] `douyu`：已创建迁移骨架

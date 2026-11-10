@@ -22,6 +22,7 @@ from app.services.channel_adapters import dispatch_outbound_message
 from app.services.channel_runtime import run_due_channel_tasks
 from app.services.inbound_media import download_wechat_media_attachment, mark_attachment_failed
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
+from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
 from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
 from app.services.task_queue import (
@@ -203,6 +204,9 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     raw_event_id = _coerce_int(payload.get("raw_event_id"))
     conversation_id = _coerce_int(payload.get("conversation_id"))
     message_id = _coerce_int(payload.get("message_id"))
+    # 群功能(成员变更提醒、潜水排行等)只看群自己的开关,先于插件调度执行;
+    # 命令被群功能处理后不再交给 AI 兜底。
+    executed_features = dispatch_group_features(db, channel, normalized_event, conversation_id=conversation_id)
     dispatch_report = build_dispatch_report(
         db,
         channel,
@@ -210,6 +214,7 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
         raw_event_id=raw_event_id,
         conversation_id=conversation_id,
         message_id=message_id,
+        skip_ai_intent=consumed_command(executed_features),
     )
     dispatch_payload = serialize_dispatch_report(dispatch_report)
     _record_plugin_dispatch_errors(
@@ -245,6 +250,7 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
         "dispatch": dispatch_payload,
         "raw_event_id": raw_event_id,
         "executed_plugins": list(dispatch_report.executed_plugin_codes),
+        "executed_group_features": executed_features,
     }
 
 

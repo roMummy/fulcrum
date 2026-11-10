@@ -76,6 +76,7 @@ from app.services.ops import (
     record_audit,
     record_health_check,
 )
+from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form
 from app.services.plugin_directory import sync_plugins_from_directory
 from app.services.plugin_schemas import (
     build_plugin_config_view,
@@ -2395,7 +2396,7 @@ async def setup_action(
 
 
 @app.get("/channels/{channel_id}/chatrooms/{chatroom_id}", response_class=HTMLResponse)
-async def channel_chatroom_detail_page(request: Request, channel_id: int, chatroom_id: int, tab: str = "plugins"):
+async def channel_chatroom_detail_page(request: Request, channel_id: int, chatroom_id: int, tab: str = "features"):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
@@ -2421,8 +2422,9 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             channel=channel,
             chatroom=chatroom,
             detail=detail,
-            # 群详情分为 插件/成员/消息/资料 四个标签，非法值回落到插件。
-            tab=tab if tab in ("plugins", "members", "messages", "profile") else "plugins",
+            # 群详情分为 功能/插件/成员/消息/资料 五个标签，非法值回落到功能。
+            tab=tab if tab in ("features", "plugins", "members", "messages", "profile") else "features",
+            features=build_feature_cards(chatroom),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -3568,6 +3570,34 @@ async def update_wechat_ipad_chatroom_media_download_action(
         message = "已开启当前群的附件自动下载" if is_enabled else "已关闭当前群的附件自动下载"
         record_audit(db, "channel.wechat-ipad.chatroom-media-download.update", "chatroom", chatroom.id, f"{message} by {user.username}")
         return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/features/{feature_key}")
+async def update_chatroom_feature_action(request: Request, channel_id: int, chatroom_id: int, feature_key: str):
+    """保存群功能(成员变更提醒、潜水排行等)的开关与配置,存进群记录的 extra_json。"""
+
+    user = enforce_role(request, "ops")
+    form = await request.form()
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        chatroom = db.get(Chatroom, chatroom_id)
+        if not chatroom or chatroom.channel_id != channel.id:
+            raise HTTPException(status_code=404, detail="Chatroom not found")
+        try:
+            message = save_group_feature_form(chatroom, feature_key, form)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        db.commit()
+        record_audit(db, "channel.chatroom-feature.update", "chatroom", chatroom.id, f"{message} ({feature_key}) by {user.username}")
+        return RedirectResponse(
+            url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=features&notice={quote(message)}",
+            status_code=303,
+        )
     finally:
         db.close()
 

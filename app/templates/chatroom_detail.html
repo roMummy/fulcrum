@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{# 群详情：插件 / 成员 / 消息 / 资料 四个标签，默认进入插件；技术字段统一折叠到“技术信息”。 #}
+{# 群详情：功能 / 插件 / 成员 / 消息 / 资料 五个标签，默认进入功能；技术字段统一折叠到“技术信息”。 #}
 {% set base_url = '/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
@@ -24,13 +24,60 @@
   </div>
 
   <nav class="tab-bar">
+    <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">功能 ({{ features|selectattr('enabled')|list|length }}/{{ features|length }})</a>
     <a href="{{ base_url }}?tab=plugins" class="{{ 'active' if tab == 'plugins' }}">插件 ({{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }})</a>
     <a href="{{ base_url }}?tab=members" class="{{ 'active' if tab == 'members' }}">成员 ({{ detail.members|length }})</a>
     <a href="{{ base_url }}?tab=messages" class="{{ 'active' if tab == 'messages' }}">消息</a>
     <a href="{{ base_url }}?tab=profile" class="{{ 'active' if tab == 'profile' }}">资料</a>
   </nav>
 
-  {% if tab == 'plugins' %}
+  {% if tab == 'features' %}
+  {# 群功能:直接在群里开关,不需要机器人绑定插件;配置存在群自己的记录里。 #}
+  {% if detail.management_status != 'enabled' %}
+  <p class="muted-text">本群还不是“已启用管理”状态，群功能暂不生效；请先到“资料”标签启用管理。</p>
+  {% endif %}
+  {% for item in features %}
+  <div class="plugin-row">
+    <form method="post" action="{{ base_url }}/features/{{ item.key }}">
+      <h3>{{ item.name }}{% if item.enabled %} <span class="chip chip-success">已开启</span>{% endif %}</h3>
+      <p class="muted-text" style="margin:2px 0 8px;">{{ item.description }}</p>
+      <label style="display:flex;gap:8px;align-items:center;">
+        <input type="checkbox" name="enabled" value="true"{% if item.enabled %} checked{% endif %} />
+        <span>在本群开启</span>
+      </label>
+      {% if item.fields %}
+      <details style="margin-top:8px;"{% if item.enabled %} open{% endif %}>
+        <summary class="muted-text">设置</summary>
+        <div class="form-grid top-gap">
+          {% for field in item.fields %}
+          {% if field.kind == 'bool' %}
+          <label class="full-row" style="display:flex;gap:8px;align-items:center;">
+            <input type="checkbox" name="{{ field.name }}" value="true"{% if field.value %} checked{% endif %} />
+            <span>{{ field.label }}</span>
+          </label>
+          {% elif field.kind == 'number' %}
+          <label>
+            <span>{{ field.label }}</span>
+            <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
+            {% if field.hint %}<small class="muted-text">{{ field.hint }}</small>{% endif %}
+          </label>
+          {% else %}
+          <label class="full-row">
+            <span>{{ field.label }}</span>
+            <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
+            {% if field.hint %}<small class="muted-text">{{ field.hint }}</small>{% endif %}
+          </label>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
+      <button class="btn" type="submit" style="margin-top:10px;">保存</button>
+    </form>
+  </div>
+  {% endfor %}
+
+  {% elif tab == 'plugins' %}
   {% if detail.bindings %}
   {% for item in detail.bindings %}
   <div class="plugin-row">

@@ -47,10 +47,8 @@ DISPLAY_NAME_OVERRIDES = {
     "game_task": "游戏任务",
     "global_news": "全球新闻",
     "group_auto_invite": "自动拉群",
-    "group_member_change": "群成员变更",
     "group_virtual": "群虚拟",
     "guess_song": "猜歌",
-    "inactive_rank": "潜水排行",
     "jd_sign_token": "京东签到令牌",
     "lucky_pot": "幸运池",
     "message_push_task": "消息推送任务",
@@ -535,7 +533,10 @@ def build_dispatch_report(
     raw_event_id: int | None = None,
     conversation_id: int | None = None,
     message_id: int | None = None,
+    skip_ai_intent: bool = False,
 ) -> PluginDispatchReport:
+    """skip_ai_intent:命令已被群功能处理时为 True,不再交给 AI 兜底重复响应。"""
+
     static_plan = build_static_dispatch_plan(db, channel, normalized_event)
     logger.info(
         "building dispatch report",
@@ -550,7 +551,7 @@ def build_dispatch_report(
     # 规则没有任何插件命中时，把消息交给 AI 核心调度：只入队一个独立的意图任务就返回，
     # 模型调用不在调度主链里同步等待。意图任务完成后会把改写好的命令作为新的
     # plugin_dispatch 任务重新入队，仍走本函数的同一条匹配与执行链。
-    if not any(item.matched for item in decisions):
+    if not skip_ai_intent and not any(item.matched for item in decisions):
         _enqueue_ai_intent(db, static_plan, normalized_event, raw_event_id=raw_event_id, conversation_id=conversation_id, message_id=message_id)
     executions = execute_dispatch_plan(
         db,

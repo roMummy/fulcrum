@@ -1,3 +1,9 @@
+"""群成员变更提醒:同步群成员加入、退出和群昵称变化,并按群开关在群里发送通知与欢迎卡片。
+
+原先是 group_member_change 插件,现在属于群自身能力:不需要机器人绑定,
+在群详情页「功能」里打开即可;成员状态同步和通知都只看本群配置。
+"""
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -6,15 +12,17 @@ from typing import Any, Mapping
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
 from app.core.time import now_shanghai
-from app.models.entities import Chatroom, ChatroomMember, Conversation
-from app.services.plugin_runtime.contracts import (
-    PluginExecutionContext,
-    PluginExecutionRequest,
-    PluginExecutionResult,
-)
-from app.services.plugin_runtime.replies import standard_replies, text_reply
+from app.models.entities import Channel, Chatroom, ChatroomMember
+from app.services.group_features.dispatch import FeatureContext, register_handler
+from app.services.group_features.registry import ConfigField, GroupFeature, register
+from app.services.plugin_runtime.replies import PluginReplyError, link_reply, text_reply
 
+logger = get_logger(__name__)
+
+# 每次事件最多给几位新成员发欢迎卡片,防止一次拉很多人时刷屏。
+MAX_WELCOME_CARDS = 3
 
 JOIN_PATTERNS = (
     '"$names$"加入了群聊',
@@ -43,122 +51,107 @@ REMOVED_PATTERNS = (
 )
 VALID_CHANGE_TYPES = {"join", "left", "removed", "rename"}
 
+FEATURE = register(
+    GroupFeature(
+        key="member_change",
+        name="群成员变更提醒",
+        description="成员加入、退出、改群昵称时在群里通知,并可对新成员发送欢迎卡片。",
+        event_types=("event", "system", "text", "group_member_join", "group_member_leave", "group_member_nickname_change"),
+        fields=(
+            ConfigField("notify_join", "新成员加入时通知", kind="bool", default=True),
+            ConfigField("notify_leave", "成员退出或被移出时通知", kind="bool", default=True),
+            ConfigField("notify_rename", "成员修改群昵称时通知", kind="bool", default=True),
+            ConfigField("card_enabled", "新成员加入时发送欢迎卡片", kind="bool", default=False),
+            ConfigField(
+                "card_title", "卡片标题", default="欢迎 {nickname} 加入本群",
+                hint="可用变量:{nickname} 新成员昵称,{now} 当前时间",
+            ),
+            ConfigField("card_desc", "卡片描述", default="{now}", hint="可用变量同上"),
+            ConfigField("card_url", "卡片点击后打开的页面", hint="必须以 http:// 或 https:// 开头;群成员手机能打开才能点开"),
+            ConfigField("card_thumb_url", "卡片缩略图地址", hint="可留空;以 http:// 或 https:// 开头的图片地址"),
+        ),
+    )
+)
 
-def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
-    """普通入口只汇报运行状态，成员数据更新必须经过可信数据库入口。"""
 
-    if request.action == "reload":
-        return PluginExecutionResult(
-            ok=True,
-            status="running",
-            message="群成员变更插件已就绪。",
-            output={},
-        )
-    if request.action != "execute":
-        return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的动作: {request.action}")
-    return _error_result("群成员变更只能由真实群聊事件触发。", "trusted_context_required")
+def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
+    """同步成员状态并生成通知;不是成员增减事件的消息返回 None(与本能力无关)。"""
 
-
-def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """使用可信群会话更新成员状态，并对加入、退出、移除和改群昵称生成群内变动通知。"""
-
-    if request.action != "execute":
-        return execute_action(request)
-    context, chatroom, error = _require_group_context(db, request.context)
-    if error is not None or context is None or chatroom is None:
-        return error or _error_result("群成员变更缺少可信群聊上下文。", "trusted_context_required")
-
-    parsed = _parse_structured_member_change(request.payload)
+    parsed = parse_member_change(ctx.normalized_event)
     if parsed is None:
-        parsed = _parse_wechat_member_change(str(request.payload.get("content") or "").strip())
-    if parsed is None:
-        return PluginExecutionResult(
-            ok=True,
-            status="completed",
-            message="当前事件不包含成员增减。",
-            output={"provider_status": "ignored"},
-        )
+        return None
 
     change_type = str(parsed["change_type"])
     members = list(parsed["members"])
-    previous = _lookup_previous_names(db, context=context, chatroom=chatroom, members=members) if change_type == "rename" else {}
-    updated_count = _apply_member_change(
-        db,
-        context=context,
-        chatroom=chatroom,
-        change_type=change_type,
-        members=members,
-        new_name=str(parsed.get("new_name") or ""),
+    new_name = str(parsed.get("new_name") or "")
+    previous = lookup_previous_names(ctx.db, chatroom=ctx.chatroom, members=members) if change_type == "rename" else {}
+    apply_member_change(
+        ctx.db, channel=ctx.channel, chatroom=ctx.chatroom,
+        change_type=change_type, members=members, new_name=new_name,
     )
     # 微桥事件自带变更后的群人数,直接校准,不必等下一次全量同步。
     if isinstance(parsed.get("after_count"), int):
-        chatroom.member_count = int(parsed["after_count"])
-    reply_text = _build_reply_text(
-        change_type,
-        members,
-        new_name=str(parsed.get("new_name") or ""),
-        old_name=str(parsed.get("old_name") or ""),
-        previous=previous,
+        ctx.chatroom.member_count = int(parsed["after_count"])
+
+    # 状态同步无论通知开关如何都会做;下面只决定要不要发消息。
+    notify_key = {"join": "notify_join", "left": "notify_leave", "removed": "notify_leave", "rename": "notify_rename"}[change_type]
+    if not ctx.config.get(notify_key):
+        return []
+
+    replies: list[dict[str, Any]] = []
+    reply_text = build_reply_text(
+        change_type, members,
+        new_name=new_name, old_name=str(parsed.get("old_name") or ""), previous=previous,
     )
-    output: dict[str, Any] = {
-        "provider_status": f"member_{change_type}",
-        "change_type": change_type,
-        "member_count": len(members),
-        "db_updated_member_count": updated_count,
-    }
     if reply_text:
-        output["reply_text"] = reply_text
-        output["replies"] = standard_replies([text_reply(reply_text)])
-    return PluginExecutionResult(
-        ok=True,
-        status="completed",
-        message="群成员状态已更新。",
-        output=output,
-    )
+        replies.append(text_reply(reply_text))
+    if change_type == "join" and ctx.config.get("card_enabled"):
+        replies.extend(build_welcome_cards(ctx.config, members))
+    return replies
 
 
-def _require_group_context(
-    db: Session,
-    context: PluginExecutionContext | None,
-) -> tuple[PluginExecutionContext | None, Chatroom | None, PluginExecutionResult | None]:
-    """从平台注入的会话主键解析群，不读取载荷中的渠道号或群号。"""
+def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """为新成员生成欢迎卡片;地址不合法时只记日志并跳过,不影响文字通知。"""
 
-    if (
-        context is None
-        or context.conversation_id is None
-        or context.channel_id is None
-        or context.chat_type != "group"
-    ):
-        return None, None, _error_result("请在群聊事件中使用群成员变更插件。", "trusted_context_required")
-    conversation = db.get(Conversation, int(context.conversation_id))
-    if (
-        conversation is None
-        or int(conversation.tenant_id) != int(context.tenant_id)
-        or int(conversation.bot_id) != int(context.bot_id)
-        or int(conversation.channel_id or 0) != int(context.channel_id)
-        or conversation.chat_type != "group"
-    ):
-        return None, None, _error_result("当前群聊上下文无效。", "trusted_context_required")
-    chatroom = db.scalar(
-        select(Chatroom).where(
-            Chatroom.tenant_id == int(context.tenant_id),
-            Chatroom.bot_id == int(context.bot_id),
-            Chatroom.channel_id == int(context.channel_id),
-            Chatroom.external_id == str(conversation.external_id),
-        )
-    )
-    if chatroom is None:
-        return None, None, _error_result("当前群还没有建立成员资料。", "chatroom_not_found")
-    return context, chatroom, None
+    now_text = now_shanghai().strftime("%Y-%m-%d %H:%M")
+    cards: list[dict[str, Any]] = []
+    for item in members[:MAX_WELCOME_CARDS]:
+        nickname = item.get("display_name") or item.get("external_id") or ""
+
+        def fill(template: str) -> str:
+            # 用 replace 而不是 format:配置里可能出现不相干的花括号。
+            return str(template or "").replace("{nickname}", nickname).replace("{now}", now_text)
+
+        try:
+            cards.append(
+                link_reply(
+                    url=str(config.get("card_url") or ""),
+                    title=fill(config.get("card_title")),
+                    description=fill(config.get("card_desc")),
+                    thumb_url=str(config.get("card_thumb_url") or ""),
+                )
+            )
+        except PluginReplyError as exc:
+            logger.warning("欢迎卡片配置无效,已跳过", extra={"reason": str(exc)})
+            break
+    return cards
 
 
-def _parse_structured_member_change(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    """读取渠道适配器生成的通用成员事件，不直接解析 Telegram 私有字段。"""
+def parse_member_change(normalized_event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """先读渠道适配器生成的通用成员事件,没有再按微信系统消息 XML 解析。"""
 
-    normalized_event = payload.get("normalized_event")
-    if not isinstance(normalized_event, Mapping):
-        return None
-    details = normalized_event.get("details")
+    parsed = _parse_structured_member_change(normalized_event)
+    if parsed is not None:
+        return parsed
+    message = normalized_event.get("message") if isinstance(normalized_event, Mapping) else None
+    content = str((message or {}).get("content") or "").strip() if isinstance(message, Mapping) else ""
+    return _parse_wechat_member_change(content)
+
+
+def _parse_structured_member_change(normalized_event: Mapping[str, Any]) -> dict[str, Any] | None:
+    """读取渠道适配器生成的通用成员事件,不直接解析 Telegram 私有字段。"""
+
+    details = normalized_event.get("details") if isinstance(normalized_event, Mapping) else None
     if not isinstance(details, Mapping):
         return None
     member_change = details.get("member_change")
@@ -229,7 +222,7 @@ def _parse_wechat_link_members(root: ET.Element, link_name: str) -> list[dict[st
 
 
 def _normalize_members(value: Any) -> list[dict[str, str]]:
-    """校验通用成员列表，只保留平台定义的公开字段。"""
+    """校验通用成员列表,只保留平台定义的公开字段。"""
 
     if not isinstance(value, (list, tuple)):
         return []
@@ -247,37 +240,39 @@ def _normalize_members(value: Any) -> list[dict[str, str]]:
     return members
 
 
-def _apply_member_change(
+def _find_member(db: Session, *, chatroom: Chatroom, external_id: str) -> ChatroomMember | None:
+    return db.scalar(
+        select(ChatroomMember).where(
+            ChatroomMember.tenant_id == int(chatroom.tenant_id),
+            ChatroomMember.chatroom_id == int(chatroom.id),
+            ChatroomMember.member_external_id == external_id,
+        )
+    )
+
+
+def apply_member_change(
     db: Session,
     *,
-    context: PluginExecutionContext,
+    channel: Channel,
     chatroom: Chatroom,
     change_type: str,
     members: list[dict[str, str]],
     new_name: str = "",
 ) -> int:
-    """在当前租户和当前群内更新成员，退出与移除统一进入 left 状态；rename 只改群内昵称。"""
+    """在当前租户和当前群内更新成员,退出与移除统一进入 left 状态;rename 只改群内昵称。"""
 
     current = now_shanghai()
     updated_count = 0
     for item in members:
         external_id = item["external_id"]
         display_name = item["display_name"]
-        member = db.scalar(
-            select(ChatroomMember).where(
-                ChatroomMember.tenant_id == int(context.tenant_id),
-                ChatroomMember.bot_id == int(context.bot_id),
-                ChatroomMember.channel_id == int(context.channel_id or 0),
-                ChatroomMember.chatroom_id == int(chatroom.id),
-                ChatroomMember.member_external_id == external_id,
-            )
-        )
+        member = _find_member(db, chatroom=chatroom, external_id=external_id)
         if member is None:
             member = ChatroomMember(
-                tenant_id=int(context.tenant_id),
+                tenant_id=int(chatroom.tenant_id),
                 chatroom_id=int(chatroom.id),
-                bot_id=int(context.bot_id),
-                channel_id=int(context.channel_id or 0),
+                bot_id=int(channel.bot_id),
+                channel_id=int(channel.id),
                 member_external_id=external_id,
             )
             db.add(member)
@@ -296,10 +291,9 @@ def _apply_member_change(
     return updated_count
 
 
-def _lookup_previous_names(
+def lookup_previous_names(
     db: Session,
     *,
-    context: PluginExecutionContext,
     chatroom: Chatroom,
     members: list[dict[str, str]],
 ) -> dict[str, dict[str, str]]:
@@ -307,13 +301,7 @@ def _lookup_previous_names(
 
     result: dict[str, dict[str, str]] = {}
     for item in members:
-        member = db.scalar(
-            select(ChatroomMember).where(
-                ChatroomMember.tenant_id == int(context.tenant_id),
-                ChatroomMember.chatroom_id == int(chatroom.id),
-                ChatroomMember.member_external_id == item["external_id"],
-            )
-        )
+        member = _find_member(db, chatroom=chatroom, external_id=item["external_id"])
         if member is not None:
             result[item["external_id"]] = {
                 "nickname": str(member.nickname or "").strip(),
@@ -322,7 +310,7 @@ def _lookup_previous_names(
     return result
 
 
-def _build_reply_text(
+def build_reply_text(
     change_type: str,
     members: list[dict[str, str]],
     *,
@@ -349,10 +337,4 @@ def _build_reply_text(
     return "📋 群成员变动通知:\n" + "\n".join(lines)
 
 
-def _error_result(message: str, provider_status: str) -> PluginExecutionResult:
-    return PluginExecutionResult(
-        ok=False,
-        status="error",
-        message=message,
-        output={"provider_status": provider_status},
-    )
+register_handler(FEATURE, handle)
