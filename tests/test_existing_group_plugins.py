@@ -108,7 +108,6 @@ def group_plugin_fixture(tmp_path: Path):
             external_id="group-primary",
             name="主测试群",
             status="active",
-            is_active=True,
         )
         forged_chatroom = Chatroom(
             tenant_id=tenant.id,
@@ -117,7 +116,6 @@ def group_plugin_fixture(tmp_path: Path):
             external_id="group-forged",
             name="伪造目标群",
             status="active",
-            is_active=True,
         )
         db.add_all([primary_chatroom, forged_chatroom])
         db.flush()
@@ -128,7 +126,6 @@ def group_plugin_fixture(tmp_path: Path):
             external_id="invite-room@chatroom",
             name="产品交流群",
             status="active",
-            is_active=True,
         )
         db.add(invite_chatroom)
         db.flush()

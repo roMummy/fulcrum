@@ -260,8 +260,6 @@ def _require_trusted_group_message(
                 Chatroom.external_id == conversation_external_id,
             )
         )
-        if chatroom is not None and not bool(chatroom.is_active):
-            return None, _error_result("当前群未启用机器人功能。", "group_inactive")
         if chatroom is not None:
             menu_scope = db.scalar(
                 select(GroupPluginScope).where(

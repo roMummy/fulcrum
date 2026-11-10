@@ -42,7 +42,7 @@ def env():
                 tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge",
                 external_id="g@chatroom", chat_type="group",
             )
-            room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="g@chatroom", name="群", is_active=True)
+            room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="g@chatroom", name="群")
             db.add_all([conversation, room])
             db.flush()
             current = now_shanghai()
@@ -102,9 +102,7 @@ def test_store_defaults_off_and_roundtrip(env):
     save_state(room, "inactive_rank", enabled=False)
     assert get_state(room, get_feature("inactive_rank")) == (False, {"default_days": 30, "default_limit": 50})
     assert json.loads(room.extra_json)["auto_download_media"] is True
-    # 不依赖群的纳管状态:群 is_active=False 时,打开开关照样生效
     save_state(room, "inactive_rank", enabled=True)
-    room.is_active = False
     assert is_enabled(room, "inactive_rank")
 
 
@@ -121,14 +119,13 @@ def test_save_from_form_checkbox_semantics(env):
         save_from_form(room, "not_exist", {})
 
 
-def test_dispatch_follows_group_switch_only(env, sent):
+def test_dispatch_follows_group_switch(env, sent):
     event = _text_event("潜水排行")
     # 默认关闭:不执行
     assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == []
     assert sent == []
-    # 打开即执行,与群的纳管状态无关
+    # 打开即执行
     save_state(env.room, "inactive_rank", enabled=True)
-    env.room.is_active = False
     assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == ["inactive_rank"]
 
 

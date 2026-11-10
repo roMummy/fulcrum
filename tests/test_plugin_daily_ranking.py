@@ -96,7 +96,6 @@ def daily_ranking_fixture(tmp_path: Path):
             external_id=target.external_id,
             name=target.title,
             status="active",
-            is_active=True,
             member_count=3,
         )
         binding = BotPlugin(

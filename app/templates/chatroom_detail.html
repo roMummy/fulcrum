@@ -18,7 +18,6 @@
     <div>{{ identity({'name': detail.name, 'external_id': detail.chatroom_external_id, 'avatar_url': detail.avatar_url|default(''), 'initial': (detail.name or '?')[:1], 'show_id': false}, 'lg') }}</div>
     <div class="chip-row">
       <span class="chip chip-outline">{{ detail.member_record_count }} 名成员</span>
-      <span class="chip {% if detail.management_status == 'enabled' %}chip-success{% else %}chip-muted{% endif %}">{{ detail.management_status_label }}</span>
       <span class="chip chip-outline">最近同步 {{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</span>
     </div>
   </div>
@@ -207,18 +206,6 @@
       <tr><th>本地状态</th><td>{{ detail.status_label }}</td></tr>
     </tbody>
   </table>
-  <form method="post" action="{{ base_url }}/management" class="form-grid top-gap">
-    <label class="full-row">
-      <span>群纳管状态（只有“已启用管理”的群会运行插件）</span>
-      <select name="management_status">
-        <option value="discovered" {% if detail.management_status == 'discovered' %}selected{% endif %}>待启用</option>
-        <option value="enabled" {% if detail.management_status == 'enabled' %}selected{% endif %}>已启用管理</option>
-        <option value="disabled" {% if detail.management_status == 'disabled' %}selected{% endif %}>已停用</option>
-        <option value="archived" {% if detail.management_status == 'archived' %}selected{% endif %}>已归档</option>
-      </select>
-    </label>
-    <button class="btn btn-secondary" type="submit">保存</button>
-  </form>
   {% if detail.supports_media_download or channel.channel_type == 'wechat_ipad' %}
   <form method="post" action="{{ base_url }}/media-download" style="margin-top:12px;">
     <label style="display:flex;gap:8px;align-items:center;">

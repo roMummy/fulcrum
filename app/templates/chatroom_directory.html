@@ -1,11 +1,9 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
-{# 群管理:所有账号的群合在一起。一行一个群,点整行进入群页面,启用/停用直接在行内完成。 #}
+{# 群管理:所有账号的群合在一起。一行一个群,点整行进入群页面设置功能和插件。 #}
 {% block hero_actions %}
 <div class="chip-row">
   <span class="chip chip-outline">共 {{ directory.summary.total }} 个群</span>
-  <span class="chip chip-success">已启用 {{ directory.summary.enabled }}</span>
-  {% if directory.summary.pending %}<span class="chip chip-muted">待启用 {{ directory.summary.pending }}</span>{% endif %}
 </div>
 {% endblock %}
 {% block content %}
@@ -20,24 +18,16 @@
       </select>
     </label>
     {% endif %}
-    <label class="compact-filter-field"><span>状态</span>
-      <select name="status">
-        <option value="">全部</option>
-        <option value="enabled" {% if directory.status == 'enabled' %}selected{% endif %}>已启用</option>
-        <option value="discovered" {% if directory.status == 'discovered' %}selected{% endif %}>待启用</option>
-        <option value="disabled" {% if directory.status == 'disabled' %}selected{% endif %}>已停用</option>
-      </select>
-    </label>
     <div class="compact-filter-actions">
       <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword or directory.channel_id or directory.status %}<a class="btn btn-secondary" href="/chatrooms">清除</a>{% endif %}
+      {% if directory.keyword or directory.channel_id %}<a class="btn btn-secondary" href="/chatrooms">清除</a>{% endif %}
     </div>
   </form>
 
   {% if directory.rows %}
   <div class="table-scroll">
   <table class="table">
-    <thead><tr><th>群</th>{% if channels|length > 1 %}<th>账号</th>{% endif %}<th class="col-compact">成员</th><th class="col-time">最近动态</th><th class="col-action">机器人</th></tr></thead>
+    <thead><tr><th>群</th>{% if channels|length > 1 %}<th>账号</th>{% endif %}<th class="col-compact">成员</th><th class="col-time">最近动态</th><th class="col-action">操作</th></tr></thead>
     <tbody>
       {% for item in directory.rows %}
       <tr>
@@ -46,13 +36,6 @@
         <td class="col-compact">{{ item.member_count or '-' }}</td>
         <td class="col-time">{{ item.last_seen_at|bj_time if item.last_seen_at else '-' }}</td>
         <td class="col-action">
-          {# 行内开关:启用后机器人才会在这个群里工作;设置各个插件进入群页面。 #}
-          <form method="post" action="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}/management" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            <input type="hidden" name="management_status" value="{{ 'disabled' if item.is_active else 'enabled' }}" />
-            <input type="hidden" name="next" value="/chatrooms" />
-            <button class="btn btn-small {% if item.is_active %}btn-secondary{% endif %}" type="submit">{{ '已启用' if item.is_active else '启用' }}</button>
-          </form>
           <a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}">设置</a>
         </td>
       </tr>
@@ -62,12 +45,12 @@
   </div>
   {% include '_pager.html' %}
   {% else %}
-  <p class="muted-text">{{ '没有匹配的群。' if directory.keyword or directory.status or directory.channel_id else '还没有群。接入账号并同步后,群会出现在这里。' }}</p>
-  {% if not (directory.keyword or directory.status or directory.channel_id) %}<a class="btn" href="/channels">去接入账号</a>{% endif %}
+  <p class="muted-text">{{ '没有匹配的群。' if directory.keyword or directory.channel_id else '还没有群。接入账号并同步后,群会出现在这里。' }}</p>
+  {% if not (directory.keyword or directory.channel_id) %}<a class="btn" href="/channels">去接入账号</a>{% endif %}
   {% endif %}
 </section>
 
-{# 还没收到消息的群可以先手工登记;登记后默认待启用,是低频操作,所以折叠。 #}
+{# 还没收到消息的群可以先手工登记,是低频操作,所以折叠。 #}
 {% if channels %}
 <details class="work-surface">
   <summary>手动登记群</summary>

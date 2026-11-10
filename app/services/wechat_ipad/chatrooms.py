@@ -53,7 +53,6 @@ def sync_wechat_ipad_chatroom_from_message(
         chatroom=chatroom,
         seen_at=synced_at,
         registration_source="passive",
-        enable_management=chatroom_created,
     )
 
     inferred_name = _infer_chatroom_name(conversation_payload, conversation, chatroom_external_id)
@@ -166,7 +165,6 @@ def upsert_wechat_ipad_chatroom_profile(
         chatroom=chatroom,
         seen_at=resolved_synced_at,
         registration_source="passive",
-        enable_management=chatroom_created,
     )
 
     profile = _normalize_chatroom_profile(profile_payload or {}, normalized_chatroom_id)

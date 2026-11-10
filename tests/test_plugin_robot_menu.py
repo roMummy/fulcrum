@@ -89,7 +89,6 @@ def robot_menu_fixture(tmp_path: Path):
             channel_id=channel.id,
             external_id="menu-room@chatroom",
             name="菜单群",
-            is_active=True,
         )
         db.add(chatroom)
         db.flush()

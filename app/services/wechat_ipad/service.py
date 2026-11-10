@@ -13,7 +13,6 @@ from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, GroupPluginScope, Plugin
 from app.services.channel_events import ingest_inbound_event
-from app.services.chatroom_registry import format_chatroom_management_status, management_tone
 from app.services.plugin_runtime.registry import get_plugin_schema
 from app.services.plugin_schemas import deep_merge_config, dump_config_json, parse_config_json
 from app.services.wechat_ipad.client import WechatIpadApiClient
@@ -1456,10 +1455,6 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
                 "owner_external_id": chatroom.owner_external_id or "-",
                 "status": chatroom.status or "unknown",
                 "status_label": _format_chatroom_status(chatroom.status),
-                "management_status": chatroom.management_status or "discovered",
-                "management_status_label": format_chatroom_management_status(chatroom.management_status),
-                "management_status_tone": management_tone(chatroom.management_status),
-                "is_active": bool(chatroom.is_active),
                 "sync_depth_label": _build_chatroom_detail_sync_depth(
                     chatroom=chatroom,
                     member_items=[{}] * member_record_count,
@@ -1483,9 +1478,6 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
         "binding_total": len(bindings),
         "binding_enabled_total": sum(1 for enabled in binding_enabled_map.values() if enabled),
         "member_snapshot_chatroom_count": member_snapshot_chatroom_count,
-        "pending_chatroom_count": sum(1 for item in items if item["management_status"] == "discovered"),
-        "active_chatroom_count": sum(1 for item in items if item["is_active"]),
-        "disabled_chatroom_count": sum(1 for item in items if item["management_status"] == "disabled"),
         "inherited_chatroom_count": inherited_chatroom_count,
         "overridden_chatroom_count": overridden_chatroom_count,
     }
@@ -1630,10 +1622,6 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
         "auto_download_media_label": "已开启" if bool(chatroom_extra.get("auto_download_media")) else "未开启",
         "status": chatroom.status or "unknown",
         "status_label": _format_chatroom_status(chatroom.status),
-        "management_status": chatroom.management_status or "discovered",
-        "management_status_label": format_chatroom_management_status(chatroom.management_status),
-        "management_status_tone": management_tone(chatroom.management_status),
-        "is_active": bool(chatroom.is_active),
         "member_count": int(chatroom.member_count or 0),
         "member_record_count": len(member_items),
         "last_synced_at": _format_beijing_time(chatroom.last_synced_at),

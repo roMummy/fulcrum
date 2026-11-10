@@ -420,7 +420,6 @@ def point_trade_fixture(tmp_path: Path):
             external_id="trade-room",
             name="积分群",
             status="active",
-            is_active=True,
         )
         db.add(chatroom)
         db.flush()

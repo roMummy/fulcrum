@@ -412,7 +412,6 @@ def build_static_dispatch_plan(
     candidates: list[PluginDispatchCandidate] = []
     skipped: list[tuple[str, str]] = []
     discovered_map = {item.manifest.code: item for item in discover_plugins()}
-    group_chatroom = _load_group_chatroom(db, channel=channel, context=context)
     group_scope_map = _load_group_scope_map(db, channel=channel, context=context)
 
     for binding in bindings:
@@ -467,18 +466,6 @@ def build_static_dispatch_plan(
         if _is_denied_by_binding_scope(binding, context):
             skipped.append((plugin_code, "binding_scope_rejected"))
             logger.debug("static plan skipped plugin", extra={"plugin_code": plugin_code, "reason": "binding_scope_rejected"})
-            continue
-        if group_chatroom is not None and not bool(getattr(group_chatroom, "is_active", False)):
-            skipped.append((plugin_code, "group_chatroom_inactive"))
-            logger.debug(
-                "static plan skipped plugin",
-                extra={
-                    "plugin_code": plugin_code,
-                    "reason": "group_chatroom_inactive",
-                    "chatroom_id": getattr(group_chatroom, "id", None),
-                    "management_status": getattr(group_chatroom, "management_status", None),
-                },
-            )
             continue
         scope = group_scope_map.get(binding.id)
         scope_status = str(getattr(scope, "scope_status", "") or "inherited")

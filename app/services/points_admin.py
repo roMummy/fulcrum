@@ -89,12 +89,12 @@ def _identity_for(resolved: dict[tuple[str, str], dict[str, Any]], group_id: str
 
 
 def group_options(db: Session) -> list[dict[str, Any]]:
-    """可选的群:所有已纳管的群,加上有过积分账户的群。
+    """可选的群:所有群,加上有过积分账户的群。
 
     没人有积分的新群也必须能选到,否则无法给里面的成员发放第一笔积分。
     """
 
-    rooms = db.scalars(select(Chatroom).where(Chatroom.management_status == "enabled")).all()
+    rooms = db.scalars(select(Chatroom)).all()
     names = {room.external_id: (room.remark or room.name or room.external_id) for room in rooms}
     extra_ids = {str(item) for item in db.scalars(select(PointsAccount.group_id).distinct()).all() if item} - set(names)
     for gid, identity in _room_names(db, extra_ids).items():

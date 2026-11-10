@@ -34,8 +34,6 @@ def invite_group_members(
         # chatroom_id 来自插件配置，但最终授权仍以这里加载到的租户资源为准，
         # 即使配置被篡改也不能邀请到其他机器人或其他租户的群。
         return _error("chatroom_not_found", "目标群不属于当前机器人渠道")
-    if not chatroom.is_active:
-        return _error("chatroom_inactive", "目标群尚未启用管理")
 
     members = _normalize_member_ids(member_external_ids)
     if not members:

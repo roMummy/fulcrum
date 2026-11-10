@@ -27,23 +27,22 @@ def db():
     session.close()
 
 
-def _room(db, idx: int, name: str, channel_id: int = 1, status: str = "discovered") -> Chatroom:
-    room = Chatroom(bot_id=1, channel_id=channel_id, external_id=f"{idx}@chatroom", name=name, management_status=status, tenant_id=1, is_active=status == "enabled")
+def _room(db, idx: int, name: str, channel_id: int = 1) -> Chatroom:
+    room = Chatroom(bot_id=1, channel_id=channel_id, external_id=f"{idx}@chatroom", name=name, tenant_id=1)
     db.add(room)
     return room
 
 
-def test_search_and_status_filter(db) -> None:
+def test_search_by_keyword(db) -> None:
     db.add(Channel(id=1, name="微桥一号", channel_type="wechat_webridge", bot_id=1, tenant_id=1))
-    _room(db, 1, "运营群", status="enabled")
+    _room(db, 1, "运营群")
     _room(db, 2, "测试群")
     db.commit()
 
     result = build_chatroom_directory(db, keyword="运营")
     assert [row["identity"]["name"] for row in result["rows"]] == ["运营群"]
-    assert build_chatroom_directory(db, status="discovered")["rows"][0]["identity"]["name"] == "测试群"
-    # 非法状态值被忽略,不应把列表筛空。
-    assert build_chatroom_directory(db, status="bogus")["paging"]["total"] == 2
+    # 不带条件时所有群都在列表里,不再有纳管状态筛选。
+    assert build_chatroom_directory(db)["summary"]["total"] == 2
 
 
 def test_like_wildcards_are_escaped(db) -> None:
