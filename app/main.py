@@ -171,6 +171,7 @@ from app.services.points_admin import adjust_points, build_points_accounts, buil
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
 from app.services.identity_directory import IdentityDirectory
+from app.services import payment_ledger
 from app.services.wechat_webridge import auto_receive
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -2204,6 +2205,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             account=account_identity(channel),
             channel=channel,
             auto_receive_transfer=auto_receive.is_enabled(channel) if channel.channel_type == "wechat_webridge" else False,
+            transfer_ledger=payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_TRANSFER) if channel.channel_type == "wechat_webridge" else None,
             binding=binding,
             connection=connection,
             quota=quota,
@@ -2428,6 +2430,8 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             # 没单独保存过设置的能力跟随默认值:AI 对话跟随租户「AI 助手」里的聊天开关。
             features=build_feature_cards(chatroom, channel.channel_type, defaults={"ai_chat": bool(getattr(ai_dispatch.get_ai_setting(db), "chat_enabled", False))}),
             group_modes=GROUP_MODE_OPTIONS,
+            # 自动抢红包的明细与统计(仅微桥的群有这个功能)。
+            red_packet_ledger=payment_ledger.build_ledger(db, channel_id=channel.id, kind=payment_ledger.KIND_RED_PACKET, chat_external_id=chatroom.external_id) if channel.channel_type == "wechat_webridge" else None,
             # 当前运行模式:完全关闭看状态,其余按总开关(is_active)区分正常运行与只采集。
             group_mode=GROUP_MODE_OFF if is_collection_off(chatroom) else (GROUP_MODE_RUN if chatroom.is_active else GROUP_MODE_COLLECT_ONLY),
             notice=request.query_params.get("notice", ""),

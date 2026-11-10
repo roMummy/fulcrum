@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, Message, TaskJob, WebridgeDeviceSample, WorkWechatContact
+from app.services import payment_ledger
 from app.services.identity_directory import looks_like_raw_id
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
@@ -738,6 +739,12 @@ def _complete_payment_command(db: Session, channel: Channel, job: TaskJob, data:
         succeeded = bool(inner.get("confirmed"))
     else:
         succeeded = bool(payload.get("ok")) or bool(result.get("ok"))
+    # 回填收款记录(状态、金额、手机的原始回报);功能上线前入队的命令没有对应记录,settle 返回 None 即可。
+    if command_type == "receive_transfer":
+        kind, external_id = payment_ledger.KIND_TRANSFER, text(params.get("transfer_id") or params.get("message_id"))
+    else:
+        kind, external_id = payment_ledger.KIND_RED_PACKET, text(params.get("red_packet_id"))
+    payment_ledger.settle(db, channel_id=int(channel.id), kind=kind, external_id=external_id, ok=bool(payload.get("ok")) or bool(result.get("ok")), result=result)
     log = logger.info if succeeded else logger.warning
     log(
         "payment command result",

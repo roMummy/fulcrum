@@ -23,7 +23,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.models.entities import Channel
+from app.models.entities import Channel, Conversation
+from app.services import payment_ledger
 from app.services.wechat_webridge import service, wakeup
 
 logger = get_logger(__name__)
@@ -84,6 +85,19 @@ def handle_event(db: Session, channel: Channel, normalized_event: Mapping[str, A
         return False
 
     args = {key: value for key, value in (("transfer_id", transfer_id), ("message_id", message_id)) if value}
+    # 先入库(待处理):记下付款人、会话和金额(转账事件自带金额)。同一笔转账重复投递时返回 None,不再重复处理。
+    chat = normalized_event.get("conversation") if isinstance(normalized_event.get("conversation"), Mapping) else {}
+    conversation = db.get(Conversation, int(conversation_id)) if conversation_id else None
+    receipt = payment_ledger.record_incoming(
+        db, channel_id=int(channel.id), kind=payment_ledger.KIND_TRANSFER, external_id=transfer_id or message_id,
+        chat_type=_text(chat.get("chat_type")) or "direct", chat_external_id=_text(chat.get("external_id")),
+        chat_title=(conversation.title if conversation is not None else "") or "",
+        sender_id=_text(message.get("sender_id")), sender_name=_text(message.get("sender_name")),
+        amount_fen=payment_ledger.extract_amount_fen(payment),
+    )
+    if receipt is None:
+        logger.info("transfer already recorded", extra={"channel_id": channel.id, "transfer_id": transfer_id})
+        return False
     try:
         # 同一笔转账只收一次:request_id 由转账 ID 决定,任务表对 (租户, 去重键) 有唯一约束。
         with db.begin_nested():

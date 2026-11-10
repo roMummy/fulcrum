@@ -1,0 +1,43 @@
+{# 收款明细与统计:折叠卡片,默认收起,标题行显示累计摘要。
+   自动抢红包(群功能卡片里,只看这个群)和自动收款(账号详情页,看整个账号)共用。 #}
+{% macro payment_ledger(ledger, show_chat=False) %}
+{% set total = ledger.periods[-1] %}
+<details class="pay-ledger">
+  <summary>
+    <span class="pay-ledger-title">收款明细与统计</span>
+    <span class="pay-ledger-sum">累计收到 {{ total.received }} 笔 · {{ total.amount }}</span>
+  </summary>
+  <div class="pay-ledger-body">
+    <div class="pay-stats">
+      {% for period in ledger.periods %}
+      <div class="pay-stat">
+        <span class="pay-stat-label">{{ period.label }}</span>
+        <strong>{{ period.amount }}</strong>
+        <small>收到 {{ period.received }} 笔{% if ledger.kind == 'red_packet' and period.missed %} · 来晚了 {{ period.missed }}{% endif %}{% if period.attention %} · <span class="pay-attention">需核对 {{ period.attention }}</span>{% endif %}</small>
+      </div>
+      {% endfor %}
+    </div>
+    {% if ledger.rows %}
+    <div class="pay-table-wrap">
+      <table class="table pay-table">
+        <thead><tr><th class="col-time">时间</th><th>来源</th>{% if show_chat %}<th>会话</th>{% endif %}<th>金额</th><th>状态</th></tr></thead>
+        <tbody>
+          {% for item in ledger.rows %}
+          <tr>
+            <td class="col-time">{{ item.time|bj_time if item.time else '-' }}</td>
+            <td>{{ item.sender_name or item.sender_id or '-' }}{% if item.sender_name and item.sender_id %} <small class="identity-id">{{ item.sender_id }}</small>{% endif %}</td>
+            {% if show_chat %}<td>{{ '私聊' if item.chat_type == 'direct' else (item.chat_title or '群聊') }}</td>{% endif %}
+            <td>{{ item.amount }}</td>
+            <td><span class="chip {% if item.tone == 'success' %}chip-success{% elif item.tone == 'muted' %}chip-muted{% else %}chip-outline{% endif %}{% if item.tone == 'danger' or item.tone == 'warning' %} pay-chip-{{ item.tone }}{% endif %}" {% if item.result_status %}title="手机回报：{{ item.result_status }}"{% endif %}>{{ item.status_label }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted-text pay-note">最近 {{ ledger.rows|length }} 条{% if ledger.total > ledger.rows|length %}，共 {{ ledger.total }} 条{% endif %}。只记录系统自动处理的{{ '红包' if ledger.kind == 'red_packet' else '转账' }}，在手机上手动{{ '领取' if ledger.kind == 'red_packet' else '收款' }}的不在其中。{% if ledger.kind == 'red_packet' %}红包金额取自领取结果，取不到时显示“-”。{% endif %}</p>
+    {% else %}
+    <p class="muted-text pay-note">还没有记录。开启后，系统自动处理的{{ '红包' if ledger.kind == 'red_packet' else '转账' }}会显示在这里。</p>
+    {% endif %}
+  </div>
+</details>
+{% endmacro %}

@@ -5854,3 +5854,115 @@ code {
     max-width: 88%;
   }
 }
+
+/* ===== 收款明细与统计(自动抢红包 / 自动收款底下的折叠卡片) ===== */
+.pay-ledger {
+  margin: 14px 20px 18px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+}
+
+.gf-card .pay-ledger {
+  margin-top: 0;
+}
+
+/* 放在已有内边距的卡片里(账号详情页)时不再额外缩进。 */
+.work-surface .pay-ledger {
+  margin: 14px 0 0;
+}
+
+.pay-ledger > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.pay-ledger > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pay-ledger > summary::after {
+  content: "展开";
+  flex: 0 0 auto;
+  color: var(--primary-strong);
+  font-size: 12px;
+}
+
+.pay-ledger[open] > summary::after {
+  content: "收起";
+}
+
+.pay-ledger-title {
+  font-weight: 600;
+}
+
+.pay-ledger-sum {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pay-ledger-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.pay-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pay-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.pay-stat-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pay-stat strong {
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.pay-stat small {
+  color: var(--muted);
+}
+
+.pay-attention,
+.pay-chip-danger {
+  color: var(--danger);
+}
+
+.pay-chip-warning {
+  color: var(--warning);
+}
+
+.pay-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.pay-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .pay-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

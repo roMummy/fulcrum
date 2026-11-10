@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
+{% from '_payment_ledger.html' import payment_ledger %}
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
@@ -68,6 +69,8 @@
     </div>
     {% if can_manage_channel %}<div class="full-row"><button class="btn" type="submit">保存</button></div>{% endif %}
   </form>
+  {# 自动收款:整个账号收到并处理过的转账明细与统计(折叠,默认收起) #}
+  {% if transfer_ledger %}{{ payment_ledger(transfer_ledger, show_chat=True) }}{% endif %}
 </section>
 {% endif %}
 

@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
+{% from '_payment_ledger.html' import payment_ledger %}
 {# 群详情：群功能 / 插件 / 成员 / 消息 / 资料 五个标签，默认进入群功能；技术字段统一折叠到“技术信息”。 #}
 {% set base_url = '/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id %}
 {% block hero_actions %}
@@ -121,6 +122,8 @@
       <button class="btn" type="submit">保存</button>
     </footer>
     {% endif %}
+    {# 自动抢红包:本群收到并处理过的红包明细与统计(折叠,默认收起) #}
+    {% if item.key == 'red_packet' and red_packet_ledger %}{{ payment_ledger(red_packet_ledger) }}{% endif %}
   </form>
   {% endfor %}
   </div>

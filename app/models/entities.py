@@ -803,6 +803,44 @@ class WebridgeDeviceSample(Base, TenantOwnedMixin):
     process_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class PaymentReceipt(Base, TenantOwnedMixin, TimestampMixin):
+    """红包、转账的收款记录:自动抢红包、自动收款处理过的每一笔,记录来源、金额和结果,供后台明细与统计查询。
+
+    出现红包/转账事件、决定处理时就写入(状态 pending),手机回报结果后更新。
+    同一个渠道里同一种、同一个 ID 只有一行(事件重复投递不会重复记)。
+    只记录系统自动处理的;用户在手机上手动领取的无从得知,不在其中。
+    """
+
+    __tablename__ = "payment_receipts"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "kind", "external_id", name="uq_payment_receipts_target"),
+        # 明细按时间倒序展示、统计按时间段汇总
+        Index("ix_payment_receipts_channel_created", "channel_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    # red_packet 红包 / transfer 转账
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    # 红包 ID(red_packet_id)或转账 ID(transfer_id,没有时用 message_id)
+    external_id: Mapped[str] = mapped_column(String(191))
+    # 来自哪个会话:群或私聊(外部 ID 用于按群筛选,标题是当时的名称)
+    chat_type: Mapped[str] = mapped_column(String(20), default="group")
+    chat_external_id: Mapped[str] = mapped_column(String(191), index=True)
+    chat_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 来源:发红包/付款的人(微信 ID 与当时的昵称;昵称可能变,微信 ID 稳定)
+    sender_id: Mapped[str | None] = mapped_column(String(191), nullable=True)
+    sender_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 金额(分)。转账在事件里就带金额;红包要领取后才知道,领取回报里取不到时为 NULL。
+    amount_fen: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # pending 处理中 / received 已收到 / missed 来晚了(被领完或已过期) / unconfirmed 已发出确认但没有确认到账 / failed 失败
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # 手机回报的原始状态(如 callback_ok),以及回报内容的截断副本,便于核对和以后调整解析
+    result_status: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    settled_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class TenantAiSetting(Base, TenantOwnedMixin, TimestampMixin):
     """租户的大模型配置：AI 是平台核心能力，每个租户只有一份，成本由租户自担。"""
 

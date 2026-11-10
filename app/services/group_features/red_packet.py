@@ -24,6 +24,7 @@ from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.models.entities import Channel
+from app.services import payment_ledger
 from app.services.group_features.dispatch import FeatureContext, register_handler
 from app.services.group_features.registry import ConfigField, GroupFeature, register
 from app.services.wechat_webridge import service as webridge_service
@@ -110,6 +111,14 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
         return None
     if _is_own_packet(ctx.channel, str(ctx.message.get("sender_id") or "")):
         logger.info("own red packet skipped", extra={"channel_id": ctx.channel.id, "red_packet_id": red_packet_id})
+        return []
+    # 先入库(待处理):记下来源和群,同一个红包重复投递时这里返回 None,不再重复安排领取。
+    receipt = payment_ledger.record_incoming(
+        ctx.db, channel_id=int(ctx.channel.id), kind=payment_ledger.KIND_RED_PACKET, external_id=red_packet_id, chat_type="group",
+        chat_external_id=str(ctx.conversation.external_id), chat_title=str(ctx.chatroom.remark or ctx.chatroom.name or ctx.conversation.title or ""),
+        sender_id=str(ctx.message.get("sender_id") or ""), sender_name=str(ctx.message.get("sender_name") or ""),
+    )
+    if receipt is None:
         return []
     try:
         delay_ms = max(0, min(int(ctx.config.get("delay_ms", DEFAULT_DELAY_MS)), MAX_DELAY_MS))
