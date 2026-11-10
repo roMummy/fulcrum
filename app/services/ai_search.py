@@ -116,7 +116,12 @@ def _call(query: str) -> str:
         str(settings.exa_mcp_url).strip(),
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            # 必须带自己的 User-Agent:Python 默认的 "Python-urllib" 会被 Exa 前面的防护直接拒绝(403)。
+            "User-Agent": "multi-bot-saas/1.0",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:

@@ -28,6 +28,7 @@ SAMPLE = (
 
 class _FakeExa(BaseHTTPRequestHandler):
     requests: list[dict] = []
+    user_agents: list[str] = []
     status = 200
     text = SAMPLE
 
@@ -37,6 +38,7 @@ class _FakeExa(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
         type(self).requests.append(body)
+        type(self).user_agents.append(self.headers.get("User-Agent", ""))
         payload = json.dumps({"result": {"content": [{"type": "text", "text": type(self).text}]}}, ensure_ascii=False)
         data = f"event: message\ndata: {payload}\n\n".encode()
         self.send_response(type(self).status)
@@ -48,6 +50,7 @@ class _FakeExa(BaseHTTPRequestHandler):
 @pytest.fixture()
 def exa(monkeypatch):
     _FakeExa.requests = []
+    _FakeExa.user_agents = []
     _FakeExa.status = 200
     _FakeExa.text = SAMPLE
     server = HTTPServer(("127.0.0.1", 0), _FakeExa)
@@ -87,7 +90,8 @@ def test_search_calls_exa_with_the_query_and_limits_results(exa) -> None:
     assert request["method"] == "tools/call" and request["params"]["name"] == "web_search_exa"
     assert request["params"]["arguments"] == {"query": "北京 今天天气", "numResults": ai_search.MAX_HITS}
     assert hits is not None and len(hits) == 2
-
+    # 线上实测:不带自己的 User-Agent(Python-urllib 默认值)会被 Exa 返回 403
+    assert exa.user_agents[-1] and not exa.user_agents[-1].startswith("Python-urllib")
 
 def test_rate_limit_pauses_searching_for_a_while(exa) -> None:
     exa.status = 429
