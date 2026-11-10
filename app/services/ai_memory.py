@@ -76,13 +76,15 @@ _ID_PATTERN = re.compile(r"wxid_[0-9A-Za-z]+")
 
 
 def speaker_label(sender_id: str) -> str:
-    """发言人在记忆里的标识:就是发言人的微信 ID(wxid)。
+    """发言人在记忆里的标识:就是我们系统里这位用户的 ID(成员表的 member_external_id / 消息的 sender_id)。
 
-    记忆里不出现昵称——昵称可能是玩笑、外号或带误导性的词(城市、职业、品牌……),换昵称也会让记忆对不上人;
-    wxid 是稳定的,事后可以拿它到成员表里对账。聊天时再把 wxid 换成对方当前的昵称(见 render_labels)。
+    不假设 ID 的形式:wxid_xxx、自定义微信号、企业微信的 R:xxx 都原样保留(它是平台分配的,不是用户随便填的文字),
+    所以事后可以拿它到成员表里对账。只去掉空白、控制字符和书名号/方括号(它们会破坏"ID: 内容"这种行格式)。
+    记忆里不出现昵称——昵称可能是玩笑、外号或带误导性的词,换昵称也会让记忆对不上人;
+    聊天时再把 ID 换成对方当前的昵称(见 render_labels)。
     """
 
-    return re.sub(r"[\s:：「」\[\]]", "", str(sender_id or ""))[:64]
+    return re.sub(r"[\s\x00-\x1f\x7f「」\[\]]", "", str(sender_id or ""))[:64]
 
 
 def safe_name(value: object) -> str:
@@ -93,7 +95,8 @@ def safe_name(value: object) -> str:
 
 
 def render_labels(text: str, own_id: str, names: dict[str, str]) -> str:
-    """把召回记忆里的 wxid 换成聊天里能用的称呼:对方自己 -> "对方";已知成员 -> 「当前昵称」;其他 wxid -> "另一位群友"。"""
+    """把召回记忆里的用户 ID 换成聊天里能用的称呼:对方自己 -> "对方";已知成员 -> 「当前昵称」;
+    其他 wxid_ 开头的未知 ID -> "另一位群友"(非 wxid_ 形式的未知 ID 没法凭形状识别,所以已知成员要尽量全,见 collect_speaker_names)。"""
 
     def form_of_address(member_id: str) -> str:
         if member_id == own_id:
@@ -110,15 +113,15 @@ def render_labels(text: str, own_id: str, names: dict[str, str]) -> str:
 
 # 记忆库级抽取规则:库创建/更新时写入,对该库之后的每次写入都生效。
 BANK_MISSION = (
-    "这是微信群聊的长期记忆。成员用微信 ID 表示(形如 wxid_xxxx),它只是稳定标识,没有任何含义,不要解释、拆分或推断它;"
-    "记录事实时直接用这个 ID 指代那位成员。"
+    "这是微信群聊的长期记忆。成员用平台里的用户 ID 表示(如 wxid_xxxx、自定义微信号或企业微信 ID),它只是稳定标识,"
+    "没有任何含义,不要解释、拆分或推断它;记录事实时直接用这个 ID 原样指代那位成员。"
     "只记录成员在发言里明确说出的稳定信息、计划、偏好、已做的决定,以及群里反复讨论的话题和结论。"
     "昵称、外号、网名、群名、被 @ 的名字都只是称呼,可能是玩笑或带误导性,不是事实:"
     "不要因为这些名字里出现的词(地名、职业、品牌、性别、年龄等)就推断任何人的信息,也不要把它们当作人物或实体。"
     "不要记录寒暄、玩笑、一次性的闲聊、情绪、转发的广告,也不要记录密码、证件号、银行卡等敏感信息。"
 )
 BATCH_CONTEXT = (
-    "微信群聊天记录,多人对话,每行是“成员微信ID: 内容”。分别记录各成员自己说出的稳定信息和计划;"
+    "微信群聊天记录,多人对话,每行是“成员ID: 内容”。分别记录各成员自己说出的稳定信息和计划;"
     "不要把某人说的话记到别人身上;文中出现的昵称、@ 的名字只是称呼,不是事实,不要当作人物。"
 )
 
@@ -222,7 +225,7 @@ def should_remember(text: str) -> bool:
 def retain(bank: str, *, label: str, sender_id: str, text: str, chat_type: str, bank_name: str = "", when: datetime | None = None) -> bool:
     """把一条用户发言异步写入记忆;返回是否已成功提交(失败只记日志,不影响聊天)。
 
-    内容里用发言人的微信 ID(不用昵称),并在 context 里说明场景,这样记忆服务会把"我在北京"记成关于这个人的事实,
+    内容里用发言人的用户 ID(不用昵称),并在 context 里说明场景,这样记忆服务会把"我在北京"记成关于这个人的事实,
     而不是机器人自己的经历。时间戳让"下个月""昨天"这类说法能换算成具体日期。
     """
 
@@ -255,7 +258,7 @@ def retain(bank: str, *, label: str, sender_id: str, text: str, chat_type: str, 
 def retain_batch(bank: str, *, content: str, when: datetime | None = None, bank_name: str = "") -> bool:
     """把一段多人群聊记录异步写入记忆(不打个人标签:这是群里的共同背景,召回时任何人提问都能用到)。
 
-    每行是"成员微信ID: 内容",由记忆服务分别抽取各人的信息;失败只返回 False,由调用方决定是否重试。
+    每行是"成员ID: 内容",由记忆服务分别抽取各人的信息;失败只返回 False,由调用方决定是否重试。
     """
 
     if not is_configured() or _circuit_open() or not _clean(content, 10):
@@ -319,7 +322,7 @@ def clear_tenant_memories(tenant_id: int) -> int | None:
 def with_recalled_memories(chat):
     """给聊天上下文补上召回的记忆(会访问网络,必须在不持有数据库会话时调用)。
 
-    记忆里是发言人的微信 ID,这里换成聊天能用的称呼:对方自己 -> "对方",已知成员 -> 「当前昵称」(仅用于称呼)。
+    记忆里是发言人的用户 ID,这里换成聊天能用的称呼:对方自己 -> "对方",已知成员 -> 「当前昵称」(仅用于称呼)。
     """
 
     if not getattr(chat, "memory_enabled", False) or not chat.bank_id:

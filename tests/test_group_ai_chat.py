@@ -189,3 +189,31 @@ def test_prepare_intent_builds_chat_context_with_memory_bank(monkeypatch) -> Non
     save_state(room, "ai_chat", enabled=True, config={"memory_enabled": True})
     monkeypatch.setattr(settings, "hindsight_url", "")
     assert ai_dispatch.prepare_intent(db, _payload(channel))[3].memory_enabled is False
+
+
+def test_speaker_names_come_from_recent_messages_and_the_member_table() -> None:
+    """称呼映射不只靠最近发言:群成员表里没发过言的成员(含非 wxid_ 形式的 ID)也要能换成昵称。"""
+
+    from app.models.entities import ChatroomMember, Conversation, Message
+    from app.services import ai_chat
+
+    db = _session()
+    channel = _seed(db)
+    room = _room(db, channel)
+    db.add(Conversation(id=2, tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id="1@chatroom", chat_type="group"))
+    db.flush()
+    db.add_all([
+        Message(conversation_id=2, direction="in", sender_id="wxid_a", sender_name="旧昵称", content="x", message_type="text"),
+        Message(conversation_id=2, direction="in", sender_id="wxid_a", sender_name="新昵称", content="y", message_type="text"),
+        Message(conversation_id=2, direction="in", sender_id="wxid_b", sender_name="wxid_b", content="z", message_type="text"),  # 昵称就是 ID:不收
+        Message(conversation_id=2, direction="out", sender_id=None, sender_name=None, content="bot", message_type="text"),
+        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="liuwei123", nickname="老刘", display_name="", status="active"),
+        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="R:10086", nickname="企微用户", display_name="群里的名字", status="active"),
+        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_a", nickname="成员表里的旧名", display_name="", status="active"),
+        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_c", nickname="wxid_c", display_name="", status="active"),
+    ])
+    db.commit()
+    names = dict(ai_chat.collect_speaker_names(db, conversation_id=2, chatroom_id=room.id))
+    # 最近发言里的最新昵称优先于成员表;成员表补全没发过言的;昵称是 ID 的不收
+    assert names == {"wxid_a": "新昵称", "liuwei123": "老刘", "R:10086": "群里的名字"}
+    assert ai_chat.collect_speaker_names(db, conversation_id=None) == ()

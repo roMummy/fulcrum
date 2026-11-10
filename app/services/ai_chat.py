@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.models.entities import Message
+from app.models.entities import ChatroomMember, Message
 from app.services import ai_memory
 from app.services.identity_directory import looks_like_raw_id
 from app.services.ai_dispatch import MODEL_TIMEOUT_SECONDS, ModelConfig, _build_client
@@ -117,12 +117,18 @@ def build_chat_input(
     )
 
 
-def collect_speaker_names(db: Session, *, tenant_id: int, conversation_id: int | None, limit: int = 400) -> tuple[tuple[str, str], ...]:
-    """本会话最近发言的成员:微信 ID -> 当前昵称(取最新一条;昵称就是 wxid 的不收,聊天时会写成"另一位群友")。"""
+def collect_speaker_names(
+    db: Session, *, conversation_id: int | None, chatroom_id: int | None = None, limit: int = 400
+) -> tuple[tuple[str, str], ...]:
+    """本群成员的 用户 ID -> 当前昵称,用来把召回记忆里的 ID 换成称呼。
 
+    先取最近发言里的最新昵称,再用群成员表补全没有最近发言的成员(这样非 wxid_ 形式的 ID 也能换);
+    昵称为空或本身就是 ID 的不收,聊天时会写成"另一位群友"。
+    """
+
+    names: dict[str, str] = {}
     if not conversation_id:
         return ()
-    names: dict[str, str] = {}
     for sender_id, sender_name in db.execute(
         select(Message.sender_id, Message.sender_name)
         .where(Message.conversation_id == conversation_id, Message.direction == "in", Message.sender_id.is_not(None))
@@ -133,6 +139,16 @@ def collect_speaker_names(db: Session, *, tenant_id: int, conversation_id: int |
         name = ai_memory.safe_name(sender_name)
         if label not in names and name and not looks_like_raw_id(name):
             names[label] = name
+    if chatroom_id:
+        for member_id, display_name, nickname in db.execute(
+            select(ChatroomMember.member_external_id, ChatroomMember.display_name, ChatroomMember.nickname)
+            .where(ChatroomMember.chatroom_id == chatroom_id)
+            .limit(2000)
+        ).all():
+            label = ai_memory.speaker_label(str(member_id))
+            name = ai_memory.safe_name(display_name or nickname)
+            if label and label not in names and name and not looks_like_raw_id(name) and name != label:
+                names[label] = name
     return tuple(names.items())
 
 

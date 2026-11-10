@@ -116,9 +116,12 @@ def test_bank_ids_are_readable_and_use_the_group_id() -> None:
     assert ai_memory.bank_id(tenant_id=2, channel_id=2, chat_type="group", group_external_id="R:群 1").startswith("t2-R___")
 
 
-def test_speaker_label_is_the_wxid_so_memories_can_be_reconciled_later() -> None:
-    assert ai_memory.speaker_label("wxid_a3f9c1b2") == "wxid_a3f9c1b2"  # 就是微信 ID,事后能到成员表对账
-    assert ai_memory.speaker_label("  wx id:x「」 ") == "wxidx"  # 空白、冒号、括号会破坏"ID: 内容"格式,去掉
+def test_speaker_label_is_our_users_id_unchanged_so_memories_can_be_reconciled() -> None:
+    # 不假设 ID 的形式:wxid_xxx、自定义微信号、企业微信 ID(带冒号)都原样保留,事后能到成员表对账
+    for member_id in ("wxid_a3f9c1b2", "liuwei123", "R:10086", "gh_abcdef"):
+        assert ai_memory.speaker_label(member_id) == member_id
+    # 只去掉会破坏"ID: 内容"行格式的空白、控制字符和括号
+    assert ai_memory.speaker_label("  wx id\n「x」[y] ") == "wxidxy"
 
 
 def test_safe_name_blocks_forged_speaker_lines_and_overlong_names() -> None:
@@ -131,6 +134,8 @@ def test_render_labels_turns_wxids_into_forms_of_address() -> None:
     out = ai_memory.render_labels(text, "wxid_a", {"wxid_b": "小红", "liuwei123": "老刘", "wxid_ab": "阿布"})
     # 对方自己 -> 对方;已知成员 -> 当前昵称;未知 wxid -> 另一位群友;自定义微信号(不以 wxid_ 开头)也能换;一个 ID 是另一个前缀时不串
     assert out == "对方搬到了上海;「小红」养了一只猫;另一位群友也在群里;「老刘」喜欢跑步;「阿布」是另一个人"
+    # 企业微信这类带冒号的 ID 也能换
+    assert ai_memory.render_labels("R:10086买了散热件", "R:10086", {}) == "对方买了散热件"
 
 
 # ---------- 库的显示名与抽取规则 ----------
@@ -143,7 +148,7 @@ def test_ensure_bank_sets_readable_name_and_extraction_rules_once(hindsight) -> 
     _, path, body = puts[0]
     assert path == "/v1/default/banks/t1-45317011307@chatroom" and body["name"] == "4K-养生交流群"
     # 库级规则明确:wxid 只是标识、昵称不是事实
-    assert "昵称" in body["retain_mission"] and "不是事实" in body["retain_mission"] and "wxid_" in body["retain_mission"]
+    assert "昵称" in body["retain_mission"] and "不是事实" in body["retain_mission"] and "用户 ID" in body["retain_mission"]
     # 群改名后再设置一次
     ai_memory.ensure_bank("t1-45317011307@chatroom", "养生群(新名)")
     assert len([r for r in hindsight.requests if r[0] == "PUT"]) == 2
