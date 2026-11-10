@@ -4,7 +4,6 @@
 {% block hero_actions %}
 <div class="chip-row">
   <span class="chip chip-outline">近 24 小时</span>
-  <span class="chip {% if alert_summary.total %}chip-outline{% else %}chip-success{% endif %}">告警 {{ alert_summary.total }}</span>
 </div>
 {% endblock %}
 {% block content %}
@@ -192,122 +191,6 @@
       <p class="muted-text">当前还没有活跃群组数据。</p>
       {% endfor %}
     </div>
-  </section>
-</div>
-
-<div class="panel-grid panel-grid-balanced overview-card-grid">
-  <section class="page-section">
-    <div class="section-head">
-      <div>
-
-        <h2>告警摘要</h2>
-      </div>
-    </div>
-    <div class="metric-band metric-band-compact">
-      <div class="metric-item">
-        <span>严重</span>
-        <strong>{{ alert_summary.level_counts.critical }}</strong>
-      </div>
-      <div class="metric-item">
-        <span>警告</span>
-        <strong>{{ alert_summary.level_counts.warning }}</strong>
-      </div>
-      <div class="metric-item">
-        <span>提示</span>
-        <strong>{{ alert_summary.level_counts.info }}</strong>
-      </div>
-    </div>
-    <ul class="event-list">
-      {% for item in alert_summary.recent_items %}
-      <li>
-        <span class="badge badge-{{ item.level }}">{{ item.level }}</span>
-        <div>
-          <strong>{{ item.title }}</strong>
-          <p>{{ item.message }}</p>
-        </div>
-      </li>
-      {% else %}
-      <li>
-        <span class="badge badge-running">OK</span>
-        <div>
-          <strong>当前没有未恢复告警</strong>
-          <p>系统目前没有新的阻断项。</p>
-        </div>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
-
-  <section class="page-section">
-    <div class="section-head">
-      <div>
-
-        <h2>待处理风险</h2>
-      </div>
-    </div>
-    <ul class="list">
-      {% for item in risk_items %}
-      <li>{{ item }}</li>
-      {% endfor %}
-    </ul>
-  </section>
-</div>
-
-<div class="panel-grid panel-grid-balanced overview-card-grid">
-  <section class="page-section">
-    <div class="section-head">
-      <div>
-
-        <h2>最近日志异常</h2>
-      </div>
-    </div>
-    <ul class="event-list">
-      {% for item in recent_errors %}
-      <li>
-        <span class="badge badge-{{ item.level|lower }}">{{ item.level }}</span>
-        <div>
-          <strong>{{ item.source }}</strong>
-          <p>{{ item.message }}</p>
-        </div>
-      </li>
-      {% else %}
-      <li>
-        <span class="badge badge-running">OK</span>
-        <div>
-          <strong>暂无错误记录</strong>
-          <p>最近没有新的错误日志。</p>
-        </div>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
-
-  <section class="page-section">
-    <div class="section-head">
-      <div>
-
-        <h2>最近任务状态</h2>
-      </div>
-    </div>
-    <ul class="event-list">
-      {% for item in recent_failed_jobs %}
-      <li>
-        <span class="badge badge-{{ item.status|lower }}">{{ item.status }}</span>
-        <div>
-          <strong>{{ item.job_type }}</strong>
-          <p>ID #{{ item.id }}{% if item.error_message %} · {{ item.error_message }}{% endif %}</p>
-        </div>
-      </li>
-      {% else %}
-      <li>
-        <span class="badge badge-running">OK</span>
-        <div>
-          <strong>任务队列正常</strong>
-          <p>当前没有待处理或失败任务。</p>
-        </div>
-      </li>
-      {% endfor %}
-    </ul>
   </section>
 </div>
 

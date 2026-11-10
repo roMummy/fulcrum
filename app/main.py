@@ -891,28 +891,6 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
     }
 
 
-def build_dashboard_alert_summary(db: Session) -> dict[str, object]:
-    open_alerts = db.scalars(select(AlertRecord).where(AlertRecord.status == "open").order_by(AlertRecord.id.desc()).limit(50)).all()
-    level_counts = {
-        "critical": sum(1 for item in open_alerts if str(item.level or "").lower() == "critical"),
-        "warning": sum(1 for item in open_alerts if str(item.level or "").lower() == "warning"),
-        "info": sum(1 for item in open_alerts if str(item.level or "").lower() == "info"),
-    }
-    recent_items = [
-        {
-            "title": str(item.title or "-"),
-            "message": str(item.message or "-"),
-            "level": str(item.level or "warning").lower(),
-            "created_at": item.created_at,
-        }
-        for item in open_alerts[:5]
-    ]
-    return {
-        "total": len(open_alerts),
-        "level_counts": level_counts,
-        "recent_items": recent_items,
-    }
-
 def build_wechat_ipad_flow_payload(db: Session, channel: Channel) -> dict[str, object]:
     """把协议运行态收口为扫码页面唯一需要的四类业务状态。"""
 
@@ -1421,7 +1399,6 @@ async def dashboard(request: Request):
             "errors": db.scalar(select(func.count(ErrorLog.id))) or 0,
             "conversations": db.scalar(select(func.count(Conversation.id))) or 0,
         }
-        recent_errors = db.scalars(select(ErrorLog).order_by(ErrorLog.id.desc()).limit(5)).all()
         ops_snapshot = {
             "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True))) or 0,
             "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True))) or 0,
@@ -1449,9 +1426,6 @@ async def dashboard(request: Request):
             "failed_jobs": db.scalar(select(func.count(TaskJob.id)).where(TaskJob.status == "failed")) or 0,
             "pending_jobs": db.scalar(select(func.count(TaskJob.id)).where(TaskJob.status.in_(("pending", "running")))) or 0,
         }
-        recent_failed_jobs = db.scalars(
-            select(TaskJob).where(TaskJob.status.in_(("failed", "running", "pending"))).order_by(TaskJob.id.desc()).limit(6)
-        ).all()
         total_open_alerts = db.scalar(select(func.count(AlertRecord.id)).where(AlertRecord.status == "open")) or 0
         active_bot_stmt = (
             select(func.count(func.distinct(Conversation.bot_id)))
@@ -1533,18 +1507,6 @@ async def dashboard(request: Request):
         }
         trend_series = build_dashboard_trend_series(db, hours=24)
         rankings = build_dashboard_rankings(db)
-        alert_summary = build_dashboard_alert_summary(db)
-        risk_items: list[str] = []
-        if ops_snapshot["abnormal_channels"]:
-            risk_items.append(f"当前有 {ops_snapshot['abnormal_channels']} 个启用渠道状态异常，建议优先看渠道页和错误页。")
-        if ops_snapshot["failed_jobs"]:
-            risk_items.append(f"任务队列里有 {ops_snapshot['failed_jobs']} 个失败任务，可能影响插件或出站链路。")
-        if not ops_snapshot["online_channels"]:
-            risk_items.append("当前没有在线渠道，相关入站、出站和状态同步能力可能不可用。")
-        if alert_summary["total"]:
-            risk_items.append(f"当前有 {alert_summary['total']} 条未恢复告警，请优先关注首页告警摘要和监控页。")
-        if not risk_items:
-            risk_items.append("当前没有明显阻断项，建议继续关注最近错误和待处理任务。")
         bot_rows = []
         for bot in db.scalars(select(Bot).order_by(Bot.id.desc())).all():
             bot_rows.append(
@@ -1569,11 +1531,7 @@ async def dashboard(request: Request):
             dashboard_metrics=dashboard_metrics,
             trend_series=trend_series,
             rankings=rankings,
-            alert_summary=alert_summary,
-            recent_errors=recent_errors,
             ops_snapshot=ops_snapshot,
-            recent_failed_jobs=recent_failed_jobs,
-            risk_items=risk_items,
             bot_rows=bot_rows,
         )
     finally:

@@ -39,7 +39,7 @@
 | 25 | 机器人详情 `bot_detail.html` | 绑定与配置分组、移除重复眉题 | D/M；`bot-detail` |
 | 26 | 节点清单 `provider_nodes.html` | 紧凑状态清单 | D/M；`nodes` |
 | 27 | 节点详情 `provider_node_detail.html` | 分组层次、时间信息不放大 | D/M；`node-detail` |
-| 28 | 运营能力 `plugins.html` | 目录改条目、警告可见、详情承载技术信息 | D/M/T；`plugins` |
+| 28 | 插件 `plugins.html` | 目录改条目、警告可见、详情承载技术信息 | D/M/T；`plugins` |
 | 29 | 能力详情 `plugin_detail.html` | 共享详情、密钥字段与弹窗样式覆盖 | D/M；`plugin-detail` |
 | 30 | 运行状态 `plugin_runtime.html` | 紧凑指标和执行记录 | D/M；`plugin-runtime` |
 | 31 | 会话清单 `conversations.html` | 共享紧凑筛选与表格 | D/M；`conversations` |

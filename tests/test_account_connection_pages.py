@@ -170,7 +170,7 @@ def test_tenant_navigation_uses_business_modules_only(provider_page_context) -> 
     page = client.get("/channels")
     assert page.status_code == 200
     navigation = page.text.split('<nav class="app-primary-nav"', 1)[1].split("</nav>", 1)[0]
-    for label in ("总览", "账号接入", "运营能力", "消息", "套餐", "企业设置"):
+    for label in ("总览", "账号接入", "插件", "消息", "套餐", "企业设置"):
         assert label in navigation
     for removed_label in ("机器人", "Provider", "租户设置", "更多"):
         assert removed_label not in navigation
@@ -185,3 +185,14 @@ def test_provider_pages_use_enterprise_wechat_client_copy(provider_page_context)
     assert page.status_code == 200
     assert "企业微信客户端" in page.text
     assert "Provider 节点" not in page.text
+
+
+def test_dashboard_hides_operations_diagnostics_from_tenant_users(provider_page_context) -> None:
+    """告警摘要、待处理风险、最近日志异常、最近任务状态是运维信息,租户用户处理不了,首页不再展示(平台后台才看这些)。"""
+
+    client, _ids = provider_page_context
+    _login(client, "admin")
+    page = client.get("/dashboard")
+    assert page.status_code == 200
+    for hidden in ("告警摘要", "待处理风险", "最近日志异常", "最近任务状态"):
+        assert hidden not in page.text
