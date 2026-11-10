@@ -23,9 +23,10 @@
     <label class="compact-filter-field"><span>状态</span>
       <select name="status">
         <option value="">全部</option>
-        <option value="enabled" {% if directory.status == 'enabled' %}selected{% endif %}>已启用</option>
+        <option value="enabled" {% if directory.status == 'enabled' %}selected{% endif %}>正常运行</option>
         <option value="discovered" {% if directory.status == 'discovered' %}selected{% endif %}>待启用</option>
-        <option value="disabled" {% if directory.status == 'disabled' %}selected{% endif %}>已停用</option>
+        <option value="disabled" {% if directory.status == 'disabled' %}selected{% endif %}>只采集消息</option>
+        <option value="archived" {% if directory.status == 'archived' %}selected{% endif %}>已关闭</option>
       </select>
     </label>
     <div class="compact-filter-actions">
@@ -46,7 +47,8 @@
         <td class="col-compact">{{ item.member_count or '-' }}</td>
         <td class="col-time">{{ item.last_seen_at|bj_time if item.last_seen_at else '-' }}</td>
         <td class="col-action">
-          {# 行内开关:启用后机器人才会在这个群里工作;设置各个插件进入群页面。 #}
+          {# 行内开关:启用后机器人才会在这个群里工作;三档运行模式(含只采集消息、完全关闭)进入群页面设置。 #}
+          {% if item.management_status == 'archived' %}<span class="chip chip-muted">已关闭</span>{% elif not item.is_active %}<span class="chip chip-muted">只采集</span>{% endif %}
           <form method="post" action="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}/management" style="display:inline;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
             <input type="hidden" name="management_status" value="{{ 'disabled' if item.is_active else 'enabled' }}" />

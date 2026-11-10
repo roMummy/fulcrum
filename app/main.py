@@ -49,7 +49,15 @@ from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
 from app.services.account_identity import account_identity, bot_identity
-from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
+from app.services.chatroom_registry import (
+    GROUP_MODE_COLLECT_ONLY,
+    GROUP_MODE_OFF,
+    GROUP_MODE_OPTIONS,
+    GROUP_MODE_RUN,
+    is_collection_off,
+    set_chatroom_management_status,
+    upsert_manual_chatroom,
+)
 from app.services.login_proxy_pool import (
     LoginProxyPoolError,
     build_login_proxy_session_summary,
@@ -2433,6 +2441,9 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             # 群详情分为 功能/插件/成员/消息/资料 五个标签，非法值回落到功能。
             tab=tab if tab in ("features", "plugins", "members", "messages", "profile") else "features",
             features=build_feature_cards(chatroom, channel.channel_type),
+            group_modes=GROUP_MODE_OPTIONS,
+            # 当前运行模式:完全关闭看状态,其余按总开关(is_active)区分正常运行与只采集。
+            group_mode=GROUP_MODE_OFF if is_collection_off(chatroom) else (GROUP_MODE_RUN if chatroom.is_active else GROUP_MODE_COLLECT_ONLY),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -3462,9 +3473,7 @@ async def update_channel_chatroom_management_action(
     request: Request,
     channel_id: int,
     chatroom_id: int,
-    management_status: str = Form(""),
-    enabled: str = Form(""),
-    toggle: str = Form(""),
+    management_status: str = Form(...),
     next: str = Form(""),
 ):
     user = enforce_role(request, "ops")
@@ -3476,11 +3485,6 @@ async def update_channel_chatroom_management_action(
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        # 群功能页的“本群启用”开关提交的是 toggle + enabled 复选框(未勾选时浏览器不提交 enabled)。
-        if toggle:
-            management_status = "enabled" if enabled else "disabled"
-        elif not management_status:
-            raise HTTPException(status_code=400, detail="management_status required")
         set_chatroom_management_status(chatroom, management_status)
         db.commit()
         record_audit(
@@ -3491,9 +3495,9 @@ async def update_channel_chatroom_management_action(
             f"status={chatroom.management_status}, operator={user.username}",
         )
         message = {
-            "enabled": "已启用该群，后续可参与插件调度",
-            "disabled": "已停用该群，插件调度会跳过",
-            "archived": "已归档该群",
+            "enabled": "本群已设为正常运行：采集消息，并响应插件、群功能和 AI",
+            "disabled": "本群已设为只采集消息：继续记录消息，但不触发任何功能",
+            "archived": "本群已完全关闭：不接收、不记录消息，也不触发任何功能",
         }.get(chatroom.management_status, "已将该群标记为待启用")
         # 列表页行内开关带 next 回到列表;只接受站内路径,防止开放重定向。
         target = next if next.startswith("/") and not next.startswith("//") else f"/channels/{channel_id}/chatrooms/{chatroom_id}"

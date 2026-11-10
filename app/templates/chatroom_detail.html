@@ -34,26 +34,26 @@
   {% if tab == 'features' %}
   {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
   <div class="gf-list">
-  {# 本群启用:总开关。关闭后机器人在本群不响应任何插件、群功能和 AI 对话。 #}
-  <form method="post" action="{{ base_url }}/management" class="gf-card{% if detail.is_active %} is-on{% endif %}" data-gf-card>
-    <input type="hidden" name="toggle" value="1" />
+  {# 运行模式:三选一。只采集消息 = 继续记录但不触发功能;完全关闭 = 不接收也不触发。 #}
+  <form method="post" action="{{ base_url }}/management" class="gf-card is-on">
     <input type="hidden" name="next" value="{{ base_url }}?tab=features" />
     <header class="gf-head">
       <div class="gf-head-copy">
-        <h3>本群启用</h3>
-        <p>关闭后，机器人在本群不响应任何插件、群功能和 AI 对话。</p>
+        <h3>运行模式</h3>
+        <p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
       </div>
-      <div class="gf-head-actions">
-        <label class="gf-master" title="在本群启用或停用">
-          <span class="gf-master-text" data-gf-state>{{ '已启用' if detail.is_active else '已停用' }}</span>
-          <span class="gf-switch">
-            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已启用" data-off-text="已停用"{% if detail.is_active %} checked{% endif %} />
-            <span class="gf-switch-track"></span>
-          </span>
-        </label>
-        <button class="btn btn-small" type="submit">保存</button>
-      </div>
+      <button class="btn btn-small" type="submit">保存</button>
     </header>
+    <div class="gf-body">
+      <div class="gf-mode-list">
+        {% for mode in group_modes %}
+        <label class="gf-mode{% if mode.value == group_mode %} is-selected{% endif %}">
+          <input type="radio" name="management_status" value="{{ mode.value }}"{% if mode.value == group_mode %} checked{% endif %} />
+          <span class="gf-mode-text"><strong>{{ mode.label }}</strong><small>{{ mode.hint }}</small></span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
   </form>
   {% for item in features %}
   <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card>

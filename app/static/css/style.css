@@ -5257,3 +5257,54 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 群运行模式:三个并排的选项卡片,选中项用主色底。 */
+.gf-mode-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.gf-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color 250ms ease;
+}
+
+.gf-mode.is-selected {
+  background: var(--primary-soft);
+}
+
+.gf-mode input {
+  margin-top: 3px;
+  accent-color: var(--primary);
+}
+
+.gf-mode-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gf-mode-text strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gf-mode-text small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .gf-mode-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

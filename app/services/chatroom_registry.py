@@ -108,14 +108,39 @@ def set_chatroom_management_status(chatroom: Chatroom, status: str) -> Chatroom:
     return chatroom
 
 
+# 群的三档运行模式,复用管理状态字段:
+#   enabled  正常运行:采集消息,并触发插件、群功能和 AI;
+#   disabled 只采集消息:继续接收并记录消息,但不触发任何插件、群功能和 AI;
+#   archived 完全关闭:不接收、不记录消息,也不触发任何功能。
+GROUP_MODE_RUN = "enabled"
+GROUP_MODE_COLLECT_ONLY = "disabled"
+GROUP_MODE_OFF = "archived"
+
+# 状态在页面上的中文说法(群管理列表、群详情共用)。
+MANAGEMENT_STATUS_LABELS = {
+    "enabled": "正常运行",
+    "disabled": "只采集消息",
+    "archived": "已关闭",
+    "discovered": "待启用",
+}
+
+# 群详情页「运行模式」的三个选项:值、名称、说明。
+GROUP_MODE_OPTIONS = (
+    {"value": GROUP_MODE_RUN, "label": "正常运行", "hint": "采集消息，并响应插件、群功能和 AI 对话"},
+    {"value": GROUP_MODE_COLLECT_ONLY, "label": "只采集消息", "hint": "继续接收并记录消息，但不触发任何插件、群功能和 AI 对话"},
+    {"value": GROUP_MODE_OFF, "label": "完全关闭", "hint": "不接收、不记录消息，也不触发任何功能"},
+)
+
+
 def format_chatroom_management_status(status: str | None) -> str:
     normalized = str(status or "").strip().lower()
-    return {
-        "enabled": "已启用管理",
-        "disabled": "已停用",
-        "archived": "已归档",
-        "discovered": "待启用",
-    }.get(normalized, normalized or "待启用")
+    return MANAGEMENT_STATUS_LABELS.get(normalized, normalized or "待启用")
+
+
+def is_collection_off(chatroom: Chatroom | None) -> bool:
+    """群是否处于“完全关闭”:入站消息直接丢弃,不采集。"""
+
+    return chatroom is not None and str(getattr(chatroom, "management_status", "") or "").strip().lower() == GROUP_MODE_OFF
 
 
 def management_tone(status: str | None) -> str:

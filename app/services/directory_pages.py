@@ -15,11 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.services.points import PointsService
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, WorkWechatContact
+from app.services.chatroom_registry import MANAGEMENT_STATUS_LABELS
 from app.services.identity_directory import _avatar_from_extra, make_identity
 
 PAGE_SIZE = 30
-# 群纳管状态在列表里的中文说法。只有“已启用”的群才会运行插件。
-MANAGEMENT_LABELS = {"enabled": "已启用", "discovered": "待启用", "disabled": "已停用", "archived": "已归档"}
+# 群运行模式在列表里的中文说法,与群详情共用 chatroom_registry 里的定义。
+MANAGEMENT_LABELS = MANAGEMENT_STATUS_LABELS
 # 渠道里“好友”类联系人;企微等其他渠道的联系人类型不同,这里只取个人好友。
 FRIEND_KIND = "friend"
 

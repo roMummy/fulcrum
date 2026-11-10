@@ -15,6 +15,7 @@ from app.services.channel_adapters import get_channel_adapter
 from app.services.inbound_media import create_wechat_media_attachment
 from app.services.message_state import refresh_conversation_last_message_at
 from app.services.open_webhooks import dispatch_open_message_event
+from app.services.chatroom_registry import is_collection_off
 from app.services.task_queue import INBOUND_MEDIA_FETCH_JOB, PLUGIN_DISPATCH_JOB, WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
 from app.services.workwechat_cloud_poll import is_cloud_poll_enabled, notify_cloud_job_enqueued
 from app.services.wechat_ipad.cache import has_chatroom as wechat_cache_has_chatroom
@@ -49,6 +50,19 @@ def ingest_inbound_event(
     )
 
 
+def _group_collection_off(db: Session, channel: Channel, normalized: dict[str, Any]) -> bool:
+    """入站事件所在的群是否被设为“完全关闭”。"""
+
+    conversation = normalized.get("conversation")
+    if not isinstance(conversation, dict) or str(conversation.get("chat_type") or "") != "group":
+        return False
+    external_id = str(conversation.get("external_id") or "").strip()
+    if not external_id:
+        return False
+    room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
+    return is_collection_off(room)
+
+
 def ingest_normalized_event(
     db: Session,
     channel: Channel,
@@ -58,6 +72,10 @@ def ingest_normalized_event(
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_key = str(normalized.get("event_key") or "").strip()
+    # 群设为“完全关闭”时不接收、不记录:不落原始事件、会话和消息,也不入队调度。
+    if _group_collection_off(db, channel, normalized):
+        logger.debug("inbound event ignored because group collection is off", extra={"channel_id": channel.id})
+        return {"ok": True, "ignored": True, "reason": "group_collection_off", "raw_event_id": None, "mapped": False, "normalized": normalized}
     logger.debug(
         "ingesting normalized event",
         extra={"channel_id": channel.id, "channel_type": channel.channel_type, "event_key": event_key or "-"},
