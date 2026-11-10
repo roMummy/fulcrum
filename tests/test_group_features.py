@@ -102,10 +102,10 @@ def test_store_defaults_off_and_roundtrip(env):
     save_state(room, "inactive_rank", enabled=False)
     assert get_state(room, get_feature("inactive_rank")) == (False, {"default_days": 30, "default_limit": 50})
     assert json.loads(room.extra_json)["auto_download_media"] is True
-    # 群未启用管理时一律视为未启用
+    # 不依赖群的纳管状态:群 is_active=False 时,打开开关照样生效
     save_state(room, "inactive_rank", enabled=True)
     room.is_active = False
-    assert not is_enabled(room, "inactive_rank")
+    assert is_enabled(room, "inactive_rank")
 
 
 def test_save_from_form_checkbox_semantics(env):
@@ -121,13 +121,15 @@ def test_save_from_form_checkbox_semantics(env):
         save_from_form(room, "not_exist", {})
 
 
-def test_dispatch_ignores_disabled_and_inactive_groups(env, sent):
+def test_dispatch_follows_group_switch_only(env, sent):
     event = _text_event("潜水排行")
-    assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == []
-    save_state(env.room, "inactive_rank", enabled=True)
-    env.room.is_active = False
+    # 默认关闭:不执行
     assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == []
     assert sent == []
+    # 打开即执行,与群的纳管状态无关
+    save_state(env.room, "inactive_rank", enabled=True)
+    env.room.is_active = False
+    assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == ["inactive_rank"]
 
 
 def test_inactive_rank_command_replies_and_blocks_ai(env, sent):

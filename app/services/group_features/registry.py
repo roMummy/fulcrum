@@ -23,6 +23,10 @@ class ConfigField:
     # number 类型的取值范围,超出会被钳制;其他类型忽略。
     minimum: int | None = None
     maximum: int | None = None
+    # 页面上的小节标题;同一能力里 group 相同的配置项排在一起,留空归入未命名小节。
+    group: str = ""
+    # 依赖另一个 bool 配置项的 key:被依赖项关闭时,本项在页面上变淡(仍可编辑、仍会保存)。
+    depends_on: str = ""
 
 
 @dataclass(frozen=True)

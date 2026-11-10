@@ -28,8 +28,8 @@ FEATURE = register(
         description=f"群成员发「潜水排行」查看谁最久没发言;可带参数,如「潜水排行 30 5」(天数最大 {MAX_DAYS},名数最大 {MAX_LIMIT})。",
         commands=("潜水排行",),
         fields=(
-            ConfigField("default_days", "默认统计天数", kind="number", default=60, minimum=1, maximum=MAX_DAYS),
-            ConfigField("default_limit", "默认展示人数", kind="number", default=10, minimum=1, maximum=MAX_LIMIT),
+            ConfigField("default_days", "默认统计天数", kind="number", default=60, minimum=1, maximum=MAX_DAYS, group="默认参数", hint="多少天没发言算潜水"),
+            ConfigField("default_limit", "默认展示人数", kind="number", default=10, minimum=1, maximum=MAX_LIMIT, group="默认参数", hint="榜单最多列出几人"),
         ),
     )
 )

@@ -58,17 +58,23 @@ FEATURE = register(
         description="成员加入、退出、改群昵称时在群里通知,并可对新成员发送欢迎卡片。",
         event_types=("event", "system", "text", "group_member_join", "group_member_leave", "group_member_nickname_change"),
         fields=(
-            ConfigField("notify_join", "新成员加入时通知", kind="bool", default=True),
-            ConfigField("notify_leave", "成员退出或被移出时通知", kind="bool", default=True),
-            ConfigField("notify_rename", "成员修改群昵称时通知", kind="bool", default=True),
-            ConfigField("card_enabled", "新成员加入时发送欢迎卡片", kind="bool", default=False),
+            ConfigField("notify_join", "新成员加入时通知", kind="bool", default=True, group="通知方式"),
+            ConfigField("notify_leave", "成员退出或被移出时通知", kind="bool", default=True, group="通知方式"),
+            ConfigField("notify_rename", "成员修改群昵称时通知", kind="bool", default=True, group="通知方式"),
+            ConfigField("card_enabled", "新成员加入时发送欢迎卡片", kind="bool", default=False, group="欢迎卡片"),
             ConfigField(
-                "card_title", "卡片标题", default="欢迎 {nickname} 加入本群",
+                "card_title", "卡片标题", default="欢迎 {nickname} 加入本群", group="欢迎卡片", depends_on="card_enabled",
                 hint="可用变量:{nickname} 新成员昵称,{now} 当前时间",
             ),
-            ConfigField("card_desc", "卡片描述", default="{now}", hint="可用变量同上"),
-            ConfigField("card_url", "卡片点击后打开的页面", hint="必须以 http:// 或 https:// 开头;群成员手机能打开才能点开"),
-            ConfigField("card_thumb_url", "卡片缩略图地址", hint="可留空;以 http:// 或 https:// 开头的图片地址"),
+            ConfigField("card_desc", "卡片描述", default="{now}", group="欢迎卡片", depends_on="card_enabled", hint="可用变量同上"),
+            ConfigField(
+                "card_url", "点击后打开的页面", group="欢迎卡片", depends_on="card_enabled",
+                hint="必须以 http:// 或 https:// 开头;群成员手机能打开才能点开",
+            ),
+            ConfigField(
+                "card_thumb_url", "缩略图地址", group="欢迎卡片", depends_on="card_enabled",
+                hint="可留空;以 http:// 或 https:// 开头的图片地址",
+            ),
         ),
     )
 )

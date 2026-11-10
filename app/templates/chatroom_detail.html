@@ -32,50 +32,68 @@
   </nav>
 
   {% if tab == 'features' %}
-  {# 群功能:直接在群里开关,不需要机器人绑定插件;配置存在群自己的记录里。 #}
-  {% if detail.management_status != 'enabled' %}
-  <p class="muted-text">本群还不是“已启用管理”状态，群功能暂不生效；请先到“资料”标签启用管理。</p>
-  {% endif %}
+  {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
+  <div class="gf-list">
   {% for item in features %}
-  <div class="plugin-row">
-    <form method="post" action="{{ base_url }}/features/{{ item.key }}">
-      <h3>{{ item.name }}{% if item.enabled %} <span class="chip chip-success">已开启</span>{% endif %}</h3>
-      <p class="muted-text" style="margin:2px 0 8px;">{{ item.description }}</p>
-      <label style="display:flex;gap:8px;align-items:center;">
-        <input type="checkbox" name="enabled" value="true"{% if item.enabled %} checked{% endif %} />
-        <span>在本群开启</span>
+  <form method="post" action="{{ base_url }}/features/{{ item.key }}" class="gf-card{% if item.enabled %} is-on{% endif %}" data-gf-card>
+    <header class="gf-head">
+      <div class="gf-head-copy">
+        <h3>{{ item.name }}</h3>
+        <p>{{ item.description }}</p>
+      </div>
+      <label class="gf-master" title="在本群开启或关闭">
+        <span class="gf-master-text" data-gf-state>{{ '已开启' if item.enabled else '未开启' }}</span>
+        <span class="gf-switch">
+          <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master{% if item.enabled %} checked{% endif %} />
+          <span class="gf-switch-track"></span>
+        </span>
       </label>
-      {% if item.fields %}
-      <details style="margin-top:8px;"{% if item.enabled %} open{% endif %}>
-        <summary class="muted-text">设置</summary>
-        <div class="form-grid top-gap">
-          {% for field in item.fields %}
-          {% if field.kind == 'bool' %}
-          <label class="full-row" style="display:flex;gap:8px;align-items:center;">
-            <input type="checkbox" name="{{ field.name }}" value="true"{% if field.value %} checked{% endif %} />
-            <span>{{ field.label }}</span>
+    </header>
+
+    {% if item.sections %}
+    <div class="gf-body">
+      {% for section in item.sections %}
+      <section class="gf-section">
+        {% if section.title %}<h4>{{ section.title }}</h4>{% endif %}
+        {% if section.switches %}
+        <div class="gf-switch-list">
+          {% for field in section.switches %}
+          <label class="gf-row"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
+            <span class="gf-row-label">{{ field.label }}</span>
+            <span class="gf-switch gf-switch-small">
+              <input type="checkbox" name="{{ field.name }}" value="true" role="switch"{% if field.value %} checked{% endif %} />
+              <span class="gf-switch-track"></span>
+            </span>
           </label>
-          {% elif field.kind == 'number' %}
-          <label>
-            <span>{{ field.label }}</span>
-            <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
-            {% if field.hint %}<small class="muted-text">{{ field.hint }}</small>{% endif %}
-          </label>
-          {% else %}
-          <label class="full-row">
-            <span>{{ field.label }}</span>
-            <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
-            {% if field.hint %}<small class="muted-text">{{ field.hint }}</small>{% endif %}
-          </label>
-          {% endif %}
           {% endfor %}
         </div>
-      </details>
-      {% endif %}
-      <button class="btn" type="submit" style="margin-top:10px;">保存</button>
-    </form>
-  </div>
+        {% endif %}
+        {% if section.inputs %}
+        <div class="gf-inputs">
+          {% for field in section.inputs %}
+          <label class="gf-field{% if field.kind != 'number' %} gf-field-wide{% endif %}"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
+            <span class="gf-field-label">{{ field.label }}</span>
+            {% if field.kind == 'number' %}
+            <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
+            {% else %}
+            <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
+            {% endif %}
+            {% if field.hint %}<small>{{ field.hint }}</small>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <footer class="gf-foot">
+      <button class="btn" type="submit">保存</button>
+    </footer>
+  </form>
   {% endfor %}
+  </div>
 
   {% elif tab == 'plugins' %}
   {% if detail.bindings %}
@@ -218,6 +236,25 @@
 </section>
 {% endblock %}
 {% block scripts %}
+<script>
+  (() => {
+    // 群功能卡片:总开关切换时同步文案和设置区明暗;“依赖”某个开关的项在该开关关闭时变淡。
+    document.querySelectorAll("[data-gf-card]").forEach((card) => {
+      const master = card.querySelector("[data-gf-master]");
+      const state = card.querySelector("[data-gf-state]");
+      const sync = () => {
+        card.classList.toggle("is-on", master.checked);
+        if (state) state.textContent = master.checked ? "已开启" : "未开启";
+        card.querySelectorAll("[data-gf-depends]").forEach((el) => {
+          const dep = card.querySelector(`[name="${el.dataset.gfDepends}"]`);
+          el.classList.toggle("is-dim", !!dep && !dep.checked);
+        });
+      };
+      card.addEventListener("change", sync);
+      sync();
+    });
+  })();
+</script>
 <script>
   (() => {
     document.querySelectorAll(".chatroom-scope-config-form").forEach((form) => {

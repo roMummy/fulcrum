@@ -1,7 +1,7 @@
 """群功能的统一入口:入站事件/命令来了,看群开关,命中就执行并把回复入队发送。
 
 接在 plugin_directory.build_dispatch_report 之前调用,和插件调度互不影响:
-群功能只看群自己的开关,不依赖机器人绑定。
+群功能只看群自己的开关,不依赖机器人绑定,也不依赖群的纳管状态。
 """
 
 from __future__ import annotations
@@ -96,8 +96,8 @@ def dispatch_group_features(
     if conversation is None:
         return []
     chatroom = _find_chatroom(db, channel, conversation)
-    # 群未启用管理时一律不执行,与插件调度的口径一致。
-    if chatroom is None or not bool(chatroom.is_active):
+    # 群功能只看群自己的开关,不依赖群的“纳管状态”。
+    if chatroom is None:
         return []
 
     message = normalized_event.get("message") if isinstance(normalized_event.get("message"), Mapping) else {}

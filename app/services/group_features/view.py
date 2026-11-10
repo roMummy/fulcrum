@@ -13,29 +13,34 @@ FORM_PREFIX = "cfg_"
 
 
 def build_feature_cards(chatroom: Chatroom) -> list[dict[str, Any]]:
-    """生成页面渲染用的能力列表:每项含开关状态和带当前值的配置项。"""
+    """生成页面渲染用的能力列表:每项含开关状态和按小节分好组、带当前值的配置项。"""
 
     cards: list[dict[str, Any]] = []
     for feature in all_features():
         enabled, config = get_state(chatroom, feature)
+        sections: list[dict[str, Any]] = []
+        for item in feature.fields:
+            if not sections or sections[-1]["title"] != item.group:
+                sections.append({"title": item.group, "switches": [], "inputs": []})
+            field = {
+                "name": FORM_PREFIX + item.key,
+                "label": item.label,
+                "kind": item.kind,
+                "hint": item.hint,
+                "value": config[item.key],
+                "minimum": item.minimum,
+                "maximum": item.maximum,
+                "depends_on": FORM_PREFIX + item.depends_on if item.depends_on else "",
+            }
+            # 开关项和输入项分开摆:开关排成一列,输入框排成整齐的两列。
+            sections[-1]["switches" if item.kind == "bool" else "inputs"].append(field)
         cards.append(
             {
                 "key": feature.key,
                 "name": feature.name,
                 "description": feature.description,
                 "enabled": enabled,
-                "fields": [
-                    {
-                        "name": FORM_PREFIX + item.key,
-                        "label": item.label,
-                        "kind": item.kind,
-                        "hint": item.hint,
-                        "value": config[item.key],
-                        "minimum": item.minimum,
-                        "maximum": item.maximum,
-                    }
-                    for item in feature.fields
-                ],
+                "sections": sections,
             }
         )
     return cards
