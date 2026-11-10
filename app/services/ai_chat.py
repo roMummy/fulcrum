@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -34,6 +35,12 @@ CHAT_MAX_TOKENS = 1024
 # 一次回复最多联网搜索几轮;模型输出的搜索标记 [[搜索: 关键词]](中英文冒号都认)。
 MAX_SEARCH_ROUNDS = 2
 _SEARCH_MARK = re.compile(r"\[\[\s*搜索\s*[:：]\s*([^\]\n]{0,200}?)\s*\]\]")
+# 明显在问实时信息的词:命中就直接预搜索(见 prefetch_query)。词表宁缺毋滥,模糊的话题仍交给模型自己决定要不要搜。
+_TIME_SENSITIVE = re.compile(
+    r"天气|气温|下雨|下雪|空气质量|限行|价格|多少钱|报价|汇率|股价|金价|油价|新闻|热搜|最新|比分|赛程|票房|上映|开奖"
+)
+# 开头的 @称呼:@名字 后面跟着微信的特殊空格 U+2005。
+_MENTION = re.compile(r"@[^\s ]+[\s ]*")
 # 模型一直想搜索、却没给出正文时的兜底回复。
 SEARCH_UNAVAILABLE_REPLY = "这个我现在没查到，稍后再问我一次吧。"
 
@@ -193,21 +200,50 @@ def _chat_user_prompt(chat: ChatInput) -> str:
     return f"对方{who}说：{chat.text}" if who else chat.text
 
 
-def generate_reply(config: ModelConfig, chat: ChatInput) -> str:
+def prefetch_query(chat: ChatInput) -> str:
+    """对方的话明显是在问需要实时查询的事(天气、价格、新闻、比分……)时,返回直接拿去搜索的关键词,否则返回空串。
+
+    这样可以省掉"先让模型决定要不要搜"那次模型往返(每次约 3–5 秒)。误判的代价只是多搜一次、多一点提示词;
+    模型看了结果觉得无关会自己忽略,结果不够时仍可以再主动搜索。
+    """
+
+    if not chat.web_search or not ai_search.available(chat.tenant_id) or not _TIME_SENSITIVE.search(chat.text):
+        return ""
+    # 去掉开头的 @机器人 称呼(@名字 后面跟的是微信的特殊空格),只留问题本身。
+    return clean_line(_MENTION.sub("", chat.text), ai_search.QUERY_CHARS)
+
+
+def prepare_context(chat: ChatInput) -> tuple[ChatInput, str | None]:
+    """第二阶段(无会话)的准备:召回长期记忆,并和"预搜索"并行进行,返回补全后的聊天上下文与预搜索结果文本。
+
+    预搜索失败(None)时返回 None,按普通流程走,不影响聊天。
+    """
+
+    query = prefetch_query(chat)
+    if not query:
+        return ai_memory.with_recalled_memories(chat), None
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-prefetch") as pool:
+        search_future = pool.submit(ai_search.search, query, chat.tenant_id)
+        recalled = ai_memory.with_recalled_memories(chat)
+        hits = search_future.result()
+    return recalled, (None if hits is None else ai_search.render_for_prompt(query, hits))
+
+
+def generate_reply(config: ModelConfig, chat: ChatInput, prefetched: str | None = None) -> str:
     """第二阶段（无会话）：按人格生成回复；失败抛 PluginTextGenerationError，由调用方记录。
 
     允许联网搜索时是一个小循环:模型整条回复是 [[搜索: 关键词]] 就由我们去搜,把结果接在 user 消息后面再问一次,
-    最多搜 MAX_SEARCH_ROUNDS 轮;不依赖模型的原生工具调用能力。回复里出现搜索标记但此时不能搜索时,标记一律不发给用户。
+    最多搜 MAX_SEARCH_ROUNDS 轮(预搜索算一轮);不依赖模型的原生工具调用能力。
+    回复里出现搜索标记但此时不能搜索时,标记一律不发给用户。
     """
 
     client = _build_client(config)
     base_prompt = _chat_user_prompt(chat)
-    user_prompt = base_prompt
-    searched: list[str] = []
-    for round_no in range(MAX_SEARCH_ROUNDS + 1):
-        can_search = chat.web_search and round_no < MAX_SEARCH_ROUNDS and ai_search.available(chat.tenant_id)
+    searched: list[str] = [prefetched] if prefetched else []
+    for _ in range(MAX_SEARCH_ROUNDS + 1):
+        can_search = chat.web_search and len(searched) < MAX_SEARCH_ROUNDS and ai_search.available(chat.tenant_id)
         result = client.generate(
-            user_prompt=user_prompt,
+            user_prompt="\n\n".join([base_prompt, *searched]),
             system_prompt=_chat_system_prompt(chat, can_search=can_search),
             user_id=f"chat-{chat.sender_id}"[:64],
             timeout_seconds=MODEL_TIMEOUT_SECONDS,
@@ -222,5 +258,4 @@ def generate_reply(config: ModelConfig, chat: ChatInput) -> str:
         if not can_search or not query:
             return _SEARCH_MARK.sub("", text).strip()[:REPLY_CHARS_LIMIT] or SEARCH_UNAVAILABLE_REPLY
         searched.append(ai_search.render_for_prompt(query, ai_search.search(query, chat.tenant_id)))
-        user_prompt = base_prompt + "\n\n" + "\n\n".join(searched)
     return SEARCH_UNAVAILABLE_REPLY

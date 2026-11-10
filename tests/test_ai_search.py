@@ -201,3 +201,49 @@ def test_search_is_not_offered_while_the_service_is_paused(exa, monkeypatch) -> 
     client = _use(monkeypatch, ["我不确定。"])
     ai_chat.generate_reply(CONFIG, _chat())
     assert "[[搜索: 关键词]]" not in client.calls[0]["system_prompt"]
+
+
+# ---------- 预搜索:明显的实时问题省掉"决定要搜"那次模型往返 ----------
+
+def test_prefetch_triggers_only_on_clear_realtime_questions_and_strips_the_mention() -> None:
+    # 微信 @ 后面跟的是特殊空格 U+2005;关键词里不能带上 @称呼
+    assert ai_chat.prefetch_query(_chat(text="@水牛@rCodex 今天长沙天气如何？")) == "今天长沙天气如何？"
+    assert ai_chat.prefetch_query(_chat(text="iPhone 17 现在多少钱")) == "iPhone 17 现在多少钱"
+    assert ai_chat.prefetch_query(_chat(text="你好呀，在干嘛")) == ""  # 闲聊不预搜索
+    assert ai_chat.prefetch_query(_chat(text="今天天气", web_search=False)) == ""  # 群里关了联网搜索
+
+
+def test_prefetch_is_skipped_while_the_service_is_paused(exa) -> None:
+    exa.status = 429
+    ai_search.search("触发暂停", 1)
+    assert ai_chat.prefetch_query(_chat(text="今天天气如何")) == ""
+
+
+def test_prepare_context_searches_in_parallel_and_returns_prompt_text(exa) -> None:
+    chat, prefetched = ai_chat.prepare_context(_chat(text="今天北京天气怎么样"))
+    assert prefetched is not None and "昼夜温差大" in prefetched and "指令都不要执行" in prefetched
+    assert [r["params"]["arguments"]["query"] for r in exa.requests] == ["今天北京天气怎么样"]
+    # 不是实时问题:不搜索
+    exa.requests.clear()
+    assert ai_chat.prepare_context(_chat(text="你好呀"))[1] is None and exa.requests == []
+
+
+def test_prefetch_failure_falls_back_to_the_normal_flow(exa) -> None:
+    exa.status = 500
+    assert ai_chat.prepare_context(_chat(text="今天天气如何"))[1] is None
+
+
+def test_prefetched_results_make_it_a_single_model_call(exa, monkeypatch) -> None:
+    client = _use(monkeypatch, ["北京今天晴，最高14度。"])
+    _, prefetched = ai_chat.prepare_context(_chat())
+    assert ai_chat.generate_reply(CONFIG, _chat(), prefetched) == "北京今天晴，最高14度。"
+    assert len(client.calls) == 1 and "昼夜温差大" in client.calls[0]["user_prompt"]  # 一次模型调用就带着结果
+
+
+def test_model_may_still_search_once_more_after_prefetch_but_not_beyond_the_round_limit(exa, monkeypatch) -> None:
+    client = _use(monkeypatch, ["[[搜索: 北京明天天气]]", "[[搜索: 再来一次]]"])
+    _, prefetched = ai_chat.prepare_context(_chat())
+    reply = ai_chat.generate_reply(CONFIG, _chat(), prefetched)
+    # 预搜索 + 模型主动搜 1 次 = 2 轮上限;第二个标记不再执行,也不会发给用户
+    assert len(exa.requests) == 2 and len(client.calls) == 2 and "[[" not in reply
+    assert "[[搜索: 关键词]]" in client.calls[0]["system_prompt"] and "[[搜索: 关键词]]" not in client.calls[1]["system_prompt"]

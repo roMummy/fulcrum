@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -104,18 +105,31 @@ def _execute_intent(job_id: int) -> None:
     # 阶段二：不持有任何数据库会话，慢的模型调用只占用线程。
     # 有可调度功能先做意图路由；模型认为不是功能请求（或根本没有功能目录）时，
     # 若开了聊天兜底，就按人格直接聊天。路由出错、被拒绝等情况不聊天，避免误回。
+    route_started = time.monotonic()
     intent = ai_dispatch.analyze_intent(config, text, catalog) if catalog else ai_dispatch.AiIntent(status="no_match", reason="没有可调度功能")
+    route_seconds = time.monotonic() - route_started
     chat_reply = ""
+    timing: dict[str, float] = {}
     if chat is not None and intent.status == "no_match":
-        # 聊天前按当前话题召回长期记忆(带超时和断路保护,记忆服务出问题时返回空,不影响聊天)。
-        chat = ai_memory.with_recalled_memories(chat)
+        # 聊天前并行完成:按当前话题召回长期记忆,以及(问天气/价格这类实时问题时)直接预搜索。
+        # 都带超时和断路保护,出问题时返回空,不影响聊天。
+        started = time.monotonic()
+        chat, prefetched = ai_chat.prepare_context(chat)
+        timing["prepare"] = time.monotonic() - started
         try:
-            chat_reply = ai_chat.generate_reply(config, chat)
+            started = time.monotonic()
+            chat_reply = ai_chat.generate_reply(config, chat, prefetched)
+            timing["reply"] = time.monotonic() - started
         except Exception as exc:
             logger.warning("ai chat reply failed", extra={"job_id": job_id})
             intent = ai_dispatch.AiIntent(status="error", reason=str(exc)[:200])
         else:
             intent = ai_dispatch.AiIntent(status="chatted", reason="按人格聊天")
+        # 分步耗时(秒):下次觉得慢时直接看这条日志就知道慢在哪一步。
+        logger.info(
+            "ai chat timing",
+            extra={"job_id": job_id, "route": round(route_seconds, 1), "prefetched": prefetched is not None, **{k: round(v, 1) for k, v in timing.items()}},
+        )
 
     # 阶段三：短会话，落决策记录并下发结果。
     with tenant_session(TenantSessionLocal) as db:
