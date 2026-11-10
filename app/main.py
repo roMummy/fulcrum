@@ -49,6 +49,7 @@ from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
 from app.services.account_identity import account_identity, bot_identity
+from app.services import ai_dispatch
 from app.services.channel_deletion import ChannelDeletionError, delete_channel_account
 from app.services.chatroom_registry import (
     GROUP_MODE_COLLECT_ONLY,
@@ -2441,7 +2442,8 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             detail=detail,
             # 群详情分为 功能/插件/成员/消息/资料 五个标签，非法值回落到功能。
             tab=tab if tab in ("features", "plugins", "members", "messages", "profile") else "features",
-            features=build_feature_cards(chatroom, channel.channel_type),
+            # 没单独保存过设置的能力跟随默认值:AI 对话跟随租户「AI 助手」里的聊天开关。
+            features=build_feature_cards(chatroom, channel.channel_type, defaults={"ai_chat": bool(getattr(ai_dispatch.get_ai_setting(db), "chat_enabled", False))}),
             group_modes=GROUP_MODE_OPTIONS,
             # 当前运行模式:完全关闭看状态,其余按总开关(is_active)区分正常运行与只采集。
             group_mode=GROUP_MODE_OFF if is_collection_off(chatroom) else (GROUP_MODE_RUN if chatroom.is_active else GROUP_MODE_COLLECT_ONLY),

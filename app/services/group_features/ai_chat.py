@@ -13,14 +13,14 @@ from dataclasses import dataclass
 
 from app.models.entities import Chatroom
 from app.services.group_features.registry import ConfigField, GroupFeature, register
-from app.services.group_features.store import get_state
+from app.services.group_features.store import get_state, has_saved_state
 from app.services.security import decrypt_secret
 
 FEATURE = register(
     GroupFeature(
         key="ai_chat",
         name="AI 对话",
-        description="群友 @ 机器人说的不是功能时,机器人按人格直接聊天并记住对方。需先在「AI 助手」里启用 AI 总开关。",
+        description="群友 @ 机器人说的不是功能时,机器人按人格直接聊天并记住对方。未单独设置时跟随租户「AI 助手」里的聊天开关;需先启用 AI 总开关。",
         fields=(
             ConfigField(
                 "api_base", "接口地址", group="独立模型(可选,留空沿用租户统一设置)", hint="例如 https://api.openai.com/v1",
@@ -28,6 +28,10 @@ FEATURE = register(
             ConfigField("model", "模型名称", group="独立模型(可选,留空沿用租户统一设置)", hint="例如 gpt-4o-mini"),
             ConfigField("api_key", "密钥", kind="secret", group="独立模型(可选,留空沿用租户统一设置)", hint="只保存加密后的值,页面不会回显"),
             ConfigField("persona", "人格设定", kind="textarea", group="人格(可选)", hint="留空沿用租户统一人格;最多 2000 字"),
+            ConfigField(
+                "memory_enabled", "记住聊过的内容(长期记忆)", kind="bool", default=True, group="长期记忆",
+                hint="按群、按人记住称呼、喜好、计划等,聊天时按话题回想;需要平台已部署记忆服务",
+            ),
         ),
     )
 )
@@ -38,6 +42,9 @@ class GroupAiOverride:
     """本群的 AI 对话配置快照(密钥已解密,只在调用模型前短暂持有)。"""
 
     enabled: bool
+    # 这个群是否单独设置过开关;没设置过时聊天开关跟随租户设置。
+    explicit: bool = False
+    memory_enabled: bool = True
     api_base: str = ""
     model: str = ""
     api_key: str = ""
@@ -48,6 +55,8 @@ def get_override(chatroom: Chatroom) -> GroupAiOverride:
     enabled, config = get_state(chatroom, FEATURE)
     return GroupAiOverride(
         enabled=enabled,
+        explicit=has_saved_state(chatroom, FEATURE),
+        memory_enabled=bool(config.get("memory_enabled", True)),
         api_base=str(config.get("api_base") or "").strip().rstrip("/"),
         model=str(config.get("model") or "").strip(),
         api_key=decrypt_secret(str(config.get("api_key") or "")) or "",

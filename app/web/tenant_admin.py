@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.db import TenantSessionLocal
 from app.core.tenant_db import open_tenant_session
@@ -21,8 +21,9 @@ from app.services.tenant_admin import (
     reset_tenant_user_password,
     update_tenant_user,
 )
-from app.models.entities import AiDecision, AiMemory
-from app.services import ai_chat, ai_dispatch
+from app.models.entities import AiDecision
+from app.core.tenant_context import require_tenant_id
+from app.services import ai_chat, ai_dispatch, ai_memory
 from app.services.tenant_admin import require_tenant_mutation_allowed
 from app.services.local_proxy_connector import (
     LocalProxyConnectorError,
@@ -331,7 +332,9 @@ def _ai_page_response(request: Request, db, *, notice: str = "", tone: str = "")
 
     setting = ai_dispatch.get_ai_setting(db)
     decisions = db.scalars(select(AiDecision).order_by(AiDecision.id.desc()).limit(30)).all()
-    memory_count = int(db.scalar(select(func.count(AiMemory.id))) or 0)
+    # 记忆库个数来自记忆服务;服务没配置或连不上时为 None,页面据此提示。
+    banks = ai_memory.list_banks(require_tenant_id())
+    memory_count = None if banks is None else len(banks)
     context = _tenant_context(
         request,
         page_title="AI 助手",
@@ -382,9 +385,10 @@ async def tenant_ai_save_action(
         require_tenant_csrf(db, request, csrf_token)
         require_tenant_mutation_allowed(principal)
         if action == "clear_memory":
-            removed = ai_chat.clear_memories(db)
-            db.commit()
-            return _redirect("/tenant/ai", f"已清空 {removed} 条记忆")
+            removed = ai_memory.clear_tenant_memories(require_tenant_id())
+            if removed is None:
+                return _redirect("/tenant/ai", "记忆服务未配置或暂时连不上，没有清空", danger=True)
+            return _redirect("/tenant/ai", f"已清空 {removed} 个记忆库")
         setting = ai_dispatch.save_ai_setting(
             db,
             enabled=enabled == "on",

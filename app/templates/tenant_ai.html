@@ -19,7 +19,11 @@
     <div class="full-row form-actions-inline">
       <button class="btn" type="submit" name="action" value="save">保存</button>
       <button class="btn btn-secondary" type="submit" name="action" value="test">保存并测试连接</button>
-      <button class="btn btn-secondary" type="submit" name="action" value="clear_memory" data-confirm-mode="confirm" data-confirm-tone="danger" data-confirm-title="清空 AI 记忆" data-confirm-message="将删除 AI 记住的所有人的长期记忆，无法恢复。" data-confirm-points="之后机器人不再记得群友的称呼、喜好等信息|聊天人格设定和已有的聊天记录不受影响" data-confirm-confirm-text="清空记忆">清空记忆（当前 {{ memory_count }} 条）</button>
+      {% if memory_count is none %}
+      <span class="muted-text">长期记忆：记忆服务未配置或暂时连不上</span>
+      {% else %}
+      <button class="btn btn-secondary" type="submit" name="action" value="clear_memory" data-confirm-mode="confirm" data-confirm-tone="danger" data-confirm-title="清空 AI 记忆" data-confirm-message="将删除 AI 记住的所有群和私聊里每个人的长期记忆，无法恢复。" data-confirm-points="之后机器人不再记得群友的称呼、喜好、计划等信息|聊天人格设定和已有的聊天记录不受影响" data-confirm-confirm-text="清空记忆">清空记忆（当前 {{ memory_count }} 个记忆库）</button>
+      {% endif %}
     </div>
     {% endif %}
   </form>

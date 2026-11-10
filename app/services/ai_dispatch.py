@@ -124,6 +124,8 @@ class AiResolution:
     setting: TenantAiSetting
     config: ModelConfig
     chat_enabled: bool
+    # 是否使用长期记忆(群里可单独关闭);只在聊天时有意义。
+    memory_enabled: bool = True
 
 
 def resolve_for_conversation(
@@ -136,8 +138,8 @@ def resolve_for_conversation(
     """决定本次消息走不走 AI、用哪套模型、能不能聊天;不可用返回 None。
 
     - 租户「AI 助手」总开关是前提(意图路由和聊天都受它控制),额度也按租户统计。
-    - 群聊:聊天由本群的「AI 对话」群功能控制(群已启用为前提);群里填了的接口地址/模型/密钥/人格
-      覆盖租户设置,没填的项沿用租户设置。
+    - 群聊:聊天由本群的「AI 对话」群功能控制(群已启用为前提);**群里没单独设置过时跟随租户的聊天开关**,
+      设置过就以群为准。群里填了的接口地址/模型/密钥/人格覆盖租户设置,没填的项沿用租户设置。
     - 私聊:聊天由租户设置里的开关控制,模型和人格用租户设置。
     """
 
@@ -148,12 +150,15 @@ def resolve_for_conversation(
         return None
     override = None
     chat_enabled = bool(setting.chat_enabled)
+    memory_enabled = True
     if chat_type == "group":
         room = db.scalar(
             select(Chatroom).where(Chatroom.channel_id == channel_id, Chatroom.external_id == str(conversation_external_id or ""))
         )
         override = get_override(room) if room is not None else None
-        chat_enabled = bool(room is not None and room.is_active and override and override.enabled)
+        wants_chat = (override.enabled if override.explicit else bool(setting.chat_enabled)) if override else False
+        chat_enabled = bool(room is not None and room.is_active and wants_chat)
+        memory_enabled = bool(override.memory_enabled) if override else True
     config = ModelConfig(
         api_base=(override.api_base if override and override.api_base else setting.api_base) or "",
         model=(override.model if override and override.model else setting.model) or "",
@@ -164,7 +169,7 @@ def resolve_for_conversation(
     # 地址、模型、密钥合并后仍不齐全就不可用(例如租户没配、群里也没配全)。
     if not (config.api_base and config.model and config.api_key):
         return None
-    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled)
+    return AiResolution(setting=setting, config=config, chat_enabled=chat_enabled, memory_enabled=memory_enabled)
 
 
 def _build_client(config: ModelConfig) -> PluginTextGenerationClient:
@@ -315,7 +320,7 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
     """
 
     from app.models.entities import Channel
-    from app.services import ai_chat
+    from app.services import ai_chat, ai_memory
     from app.services.plugin_directory import build_static_dispatch_plan
 
     channel = db.get(Channel, int(payload.get("channel_id") or 0))
@@ -348,13 +353,23 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
         return None
     chat = None
     if resolved.chat_enabled:
+        conversation_id = payload.get("conversation_id")
         chat = ai_chat.build_chat_input(
             db,
             channel_id=channel.id,
-            conversation_id=payload.get("conversation_id"),
+            conversation_id=conversation_id,
             sender_id=str(plan.context.sender_id or ""),
             text=text,
             persona=resolved.config.persona,
+            sender_name=str((event.get("message") or {}).get("sender_name") or ""),
+            chat_type=plan.context.chat_type,
+            bank_id=ai_memory.bank_id(
+                tenant_id=int(channel.tenant_id),
+                channel_id=int(channel.id),
+                conversation_id=conversation_id,
+                chat_type=plan.context.chat_type,
+            ),
+            memory_enabled=resolved.memory_enabled and ai_memory.is_configured(),
         )
     return resolved.config, text, catalog, chat
 

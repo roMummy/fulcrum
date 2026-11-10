@@ -54,6 +54,13 @@ def get_state(chatroom: Chatroom, feature: GroupFeature) -> tuple[bool, dict[str
     return bool(saved.get("enabled")), config
 
 
+def has_saved_state(chatroom: Chatroom, feature: GroupFeature) -> bool:
+    """这个群是否单独保存过该能力的设置(没保存过的能力可以跟随默认值,如 AI 对话跟随租户的聊天开关)。"""
+
+    saved = (_load_extra(chatroom).get(EXTRA_KEY) or {}).get(feature.key)
+    return isinstance(saved, dict) and "enabled" in saved
+
+
 def is_enabled(chatroom: Chatroom | None, feature_key: str) -> bool:
     """群已启用(总开关)且该能力已打开才算启用。"""
 

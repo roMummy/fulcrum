@@ -6,16 +6,17 @@ from typing import Any, Mapping
 
 from app.models.entities import Chatroom
 from app.services.group_features.registry import all_features, get_feature
-from app.services.group_features.store import get_state, save_state
+from app.services.group_features.store import get_state, has_saved_state, save_state
 
 # 表单里配置项的字段名前缀,避免和 enabled 等控制字段重名。
 FORM_PREFIX = "cfg_"
 
 
-def build_feature_cards(chatroom: Chatroom, channel_type: str = "") -> list[dict[str, Any]]:
+def build_feature_cards(chatroom: Chatroom, channel_type: str = "", defaults: Mapping[str, bool] | None = None) -> list[dict[str, Any]]:
     """生成页面渲染用的能力列表:每项含开关状态和按小节分好组、带当前值的配置项。
 
     限定了渠道类型的能力(如自动下载附件)只在对应渠道的群里显示。
+    defaults:能力的默认开关(如 AI 对话跟随租户的聊天开关),只在这个群没单独保存过设置时生效。
     """
 
     cards: list[dict[str, Any]] = []
@@ -23,6 +24,8 @@ def build_feature_cards(chatroom: Chatroom, channel_type: str = "") -> list[dict
         if feature.channel_types and channel_type not in feature.channel_types:
             continue
         enabled, config = get_state(chatroom, feature)
+        if not has_saved_state(chatroom, feature) and defaults and feature.key in defaults:
+            enabled = bool(defaults[feature.key])
         sections: list[dict[str, Any]] = []
         for item in feature.fields:
             if not sections or sections[-1]["title"] != item.group:

@@ -21,7 +21,7 @@ from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.models.entities import Channel, TaskJob
-from app.services import ai_chat, ai_dispatch
+from app.services import ai_chat, ai_dispatch, ai_memory
 from app.services.task_queue import (
     AI_INTENT_JOB,
     claim_next_job,
@@ -107,6 +107,8 @@ def _execute_intent(job_id: int) -> None:
     intent = ai_dispatch.analyze_intent(config, text, catalog) if catalog else ai_dispatch.AiIntent(status="no_match", reason="没有可调度功能")
     chat_reply = ""
     if chat is not None and intent.status == "no_match":
+        # 聊天前按当前话题召回长期记忆(带超时和断路保护,记忆服务出问题时返回空,不影响聊天)。
+        chat = ai_memory.with_recalled_memories(chat)
         try:
             chat_reply = ai_chat.generate_reply(config, chat)
         except Exception as exc:
@@ -129,13 +131,15 @@ def _execute_intent(job_id: int) -> None:
             logger.exception("ai intent deliver failed", extra={"job_id": job_id})
             return
 
-    # 阶段四：回复已发出，再慢慢提取长期记忆；失败不影响已完成的聊天。
-    if chat is not None and chat_reply and ai_chat.should_extract_memory(text):
-        items = ai_chat.extract_memories(config, chat, chat_reply)
-        if items:
-            with tenant_session(TenantSessionLocal) as db:
-                ai_chat.save_memories(db, chat, items)
-                db.commit()
+    # 阶段四：回复已发出，再把这条发言异步写入长期记忆；记忆服务在后台抽取事实，失败不影响已完成的聊天。
+    if chat is not None and chat_reply and chat.memory_enabled and chat.bank_id:
+        ai_memory.retain(
+            chat.bank_id,
+            sender_id=chat.sender_id,
+            sender_name=chat.sender_name,
+            text=chat.text,
+            chat_type=chat.chat_type,
+        )
 
 
 def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], event: dict[str, Any], command_text: str) -> None:

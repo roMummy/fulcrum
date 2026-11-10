@@ -29,21 +29,54 @@ def _resolve(db, channel, chat_type="group", external="1@chatroom"):
     return ai_dispatch.resolve_for_conversation(db, channel_id=channel.id, chat_type=chat_type, conversation_external_id=external)
 
 
-def test_group_chat_follows_group_switch_and_inherits_tenant_model() -> None:
+def test_group_chat_follows_tenant_switch_until_group_sets_its_own() -> None:
     db = _session()
     channel = _seed(db)
     room = _room(db, channel)
-    # 没开 AI 对话:群里不聊天,但路由(意图)仍可用
+    # 租户聊天开关关着:没设置过的群不聊天,但路由(意图)仍可用
     resolved = _resolve(db, channel)
     assert resolved is not None and resolved.chat_enabled is False
-    # 打开后聊天开启,模型沿用租户设置
-    save_state(room, "ai_chat", enabled=True)
+    # 租户开着:没单独设置过的群直接跟随,模型沿用租户设置
+    db.query(TenantAiSetting).update({"chat_enabled": True})
+    db.commit()
     resolved = _resolve(db, channel)
     assert resolved.chat_enabled is True
     assert (resolved.config.api_base, resolved.config.model, resolved.config.api_key) == ("https://llm.test/v1", "m", "k")
+    # 群里明确关闭:以群为准
+    save_state(room, "ai_chat", enabled=False)
+    assert _resolve(db, channel).chat_enabled is False
+    # 群里明确打开:租户关着也聊
+    db.query(TenantAiSetting).update({"chat_enabled": False})
+    save_state(room, "ai_chat", enabled=True)
+    assert _resolve(db, channel).chat_enabled is True
     # 群已停用:总开关优先,不聊天
     room.is_active = False
     assert _resolve(db, channel).chat_enabled is False
+
+
+def test_feature_card_shows_inherited_default_until_saved() -> None:
+    from app.services.group_features.view import build_feature_cards
+
+    db = _session()
+    channel = _seed(db)
+    room = _room(db, channel)
+    card = lambda defaults: next(c for c in build_feature_cards(room, "wechat_webridge", defaults) if c["key"] == "ai_chat")
+    assert card({"ai_chat": True})["enabled"] is True and card({"ai_chat": False})["enabled"] is False
+    save_state(room, "ai_chat", enabled=False)
+    assert card({"ai_chat": True})["enabled"] is False  # 保存过就以群为准
+
+
+def test_memory_switch_defaults_on_and_can_be_turned_off_per_group() -> None:
+    db = _session()
+    channel = _seed(db)
+    room = _room(db, channel)
+    db.query(TenantAiSetting).update({"chat_enabled": True})
+    db.commit()
+    assert _resolve(db, channel).memory_enabled is True
+    save_state(room, "ai_chat", enabled=True, config={"memory_enabled": False})
+    assert _resolve(db, channel).memory_enabled is False
+    # 私聊没有群设置:记忆默认开
+    assert _resolve(db, channel, "direct", "wxid_a").memory_enabled is True
 
 
 def test_group_overrides_model_partially_and_persona() -> None:
@@ -118,3 +151,39 @@ def test_media_download_is_a_channel_limited_group_feature() -> None:
     # 群停用后不再下载
     room.is_active = False
     assert channel_events._chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation) is False
+
+
+def _payload(channel) -> dict:
+    return {
+        "channel_id": channel.id,
+        "conversation_id": 2,
+        "normalized_event": {
+            "conversation": {"external_id": "1@chatroom", "chat_type": "group"},
+            "message": {"content": "你好呀", "sender_id": "wxid_a", "sender_name": "小明", "message_type": "text"},
+            "details": {"mentioned_self": True},
+        },
+    }
+
+
+def test_prepare_intent_builds_chat_context_with_memory_bank(monkeypatch) -> None:
+    """聊天上下文带上记忆库名、发言人昵称和记忆开关;未部署记忆服务或群里关闭时记忆不启用。"""
+
+    from app.core.settings import settings
+
+    db = _session()
+    channel = _seed(db)
+    room = _room(db, channel)
+    db.query(TenantAiSetting).update({"chat_enabled": True})
+    db.commit()
+
+    monkeypatch.setattr(settings, "hindsight_url", "http://hindsight:8888")
+    prepared = ai_dispatch.prepare_intent(db, _payload(channel))
+    chat = prepared[3]
+    assert (chat.bank_id, chat.sender_name, chat.chat_type, chat.memory_enabled) == (f"t1-ch{channel.id}-g2", "小明", "group", True)
+
+    save_state(room, "ai_chat", enabled=True, config={"memory_enabled": False})
+    assert ai_dispatch.prepare_intent(db, _payload(channel))[3].memory_enabled is False
+
+    save_state(room, "ai_chat", enabled=True, config={"memory_enabled": True})
+    monkeypatch.setattr(settings, "hindsight_url", "")
+    assert ai_dispatch.prepare_intent(db, _payload(channel))[3].memory_enabled is False

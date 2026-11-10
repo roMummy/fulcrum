@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # 图片库根目录(环境变量 MEDIA_LIBRARY_ROOT):把共享盘或本机目录只读挂进容器后在这里填容器内路径,
     # 例如 /media-library。图片类插件的“图片目录”配置是它下面的子目录;留空则使用各租户自己的插件目录。
     media_library_root: str = ""
+    # AI 长期记忆服务(Hindsight)的地址(环境变量 HINDSIGHT_URL),例如 http://hindsight:8888;留空表示不启用长期记忆。
+    hindsight_url: str = ""
     # 本地连接器扫码期间使用的临时 SOCKS 中继监听地址；只服务登录会话，终态立即失效。
     local_proxy_relay_host: str = "127.0.0.1"
     local_proxy_relay_port: int = 9165

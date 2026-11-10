@@ -824,21 +824,6 @@ class TenantAiSetting(Base, TenantOwnedMixin, TimestampMixin):
     persona: Mapped[str] = mapped_column(Text, default="")
 
 
-class AiMemory(Base, TenantOwnedMixin):
-    """AI 聊天的长期记忆：按渠道和发言人保存模型提取出的单条事实，如喜好、称呼、近况。"""
-
-    __tablename__ = "ai_memories"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
-    conversation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # 记忆归属的发言人；同一个人在不同群里共享记忆，注入提示时只带这个人自己的记忆。
-    sender_id: Mapped[str] = mapped_column(String(128), index=True)
-    # 单行短文本，写入前已清洗并限制长度。
-    content: Mapped[str] = mapped_column(String(200))
-    created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, index=True)
-
-
 class AiDecision(Base, TenantOwnedMixin):
     """AI 调度决策记录：谁说了什么、AI 理解成什么、结果如何，用于复盘和额度统计。"""
 
