@@ -2362,7 +2362,6 @@ code {
 
 /* 数值明细按需展开，替代原来常驻的二十四个柱块；不丢失读数，也不额外叠加卡片。 */
 .dashboard-chart-detail summary {
-  width: fit-content;
   min-height: 36px;
   padding: 8px 0;
   color: var(--primary-strong);
@@ -2607,13 +2606,8 @@ code {
   font-size: 28px;
 }
 
-.plugin-detail-description,
-.plugin-toggle-summary-hint {
+.plugin-detail-description {
   color: var(--muted);
-}
-
-.plugin-toggle-summary-hint {
-  font-size: 11px;
 }
 
 .plugin-detail-tech {
@@ -4431,17 +4425,6 @@ code {
     display: none;
   }
 
-  .compact-filter-summary::after {
-    content: "+";
-    color: var(--signal);
-    font-size: 18px;
-    line-height: 1;
-  }
-
-  .compact-filter[open] > .compact-filter-summary::after {
-    content: "-";
-  }
-
   .compact-filter:not([open]) > .compact-filter-form {
     display: none;
   }
@@ -5879,23 +5862,10 @@ code {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
-  cursor: pointer;
-  list-style: none;
 }
 
-.pay-ledger > summary::-webkit-details-marker {
-  display: none;
-}
-
-.pay-ledger > summary::after {
-  content: "展开";
-  flex: 0 0 auto;
-  color: var(--primary-strong);
-  font-size: 12px;
-}
-
-.pay-ledger[open] > summary::after {
-  content: "收起";
+.pay-ledger {
+  --disclosure-inset: 16px;
 }
 
 .pay-ledger-sum {
@@ -5967,17 +5937,17 @@ code {
 
 /* ===== 功能卡片的设置区折叠 ===== */
 .gf-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 14px;
-  color: var(--secondary-text);
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: var(--muted);
   background: var(--secondary);
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 13px;
   transition: background-color 200ms ease-in-out, color 200ms ease-in-out;
 }
 
@@ -5986,11 +5956,7 @@ code {
   background: var(--primary-soft);
 }
 
-.gf-toggle svg {
-  transition: transform 200ms ease-in-out;
-}
-
-.gf-card.is-open .gf-toggle svg {
+.gf-card.is-open .gf-toggle::before {
   transform: rotate(180deg);
 }
 
@@ -6000,4 +5966,58 @@ code {
 
 .gf-collapse[hidden] {
   display: none;
+}
+
+/* ===== 展开/收起:整个工程统一用右侧的小箭头图标(不用"展开""设置"这类小文字) =====
+   图标只画一份(--icon-chevron),<details class="disclosure"> 的右侧箭头、功能卡片的折叠按钮都用它;展开时翻转。
+   下拉菜单(更多、账号菜单、"…"操作)是弹出菜单,不属于展开内容,不使用这套图标。 */
+:root {
+  --icon-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+details.disclosure > summary {
+  position: relative;
+  padding-right: calc(var(--disclosure-inset, 0px) + 28px);
+  cursor: pointer;
+  list-style: none;
+}
+
+details.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.disclosure > summary::after,
+.gf-toggle::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background-color: var(--muted);
+  -webkit-mask: var(--icon-chevron) center / contain no-repeat;
+  mask: var(--icon-chevron) center / contain no-repeat;
+  transition: transform 200ms ease-in-out, background-color 200ms ease-in-out;
+}
+
+details.disclosure > summary::after {
+  position: absolute;
+  top: 50%;
+  right: var(--disclosure-inset, 0px);
+  margin-top: -8px;
+}
+
+details.disclosure[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+details.disclosure > summary:hover::after {
+  background-color: var(--primary-strong);
+}
+
+/* 自己带内边距的展开块:箭头与文字左侧对称留出同样的边距。 */
+.plugin-toggle-panel,
+.action-disclosure {
+  --disclosure-inset: 17px;
+}
+
+.log-entry {
+  --disclosure-inset: 12px;
 }

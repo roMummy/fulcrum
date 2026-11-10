@@ -2,7 +2,7 @@
    自动抢红包(群功能卡片里,只看这个群)和自动收款(账号详情页,看整个账号)共用。 #}
 {% macro payment_ledger(ledger, show_chat=False) %}
 {% set total = ledger.periods[-1] %}
-<details class="pay-ledger">
+<details class="pay-ledger disclosure">
   <summary>
     <span class="pay-ledger-title">收款明细与统计</span>
     <span class="pay-ledger-sum">累计收到 {{ total.received }} 笔 · {{ total.amount }}</span>

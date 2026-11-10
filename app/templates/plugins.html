@@ -36,13 +36,12 @@
   {% if plugin_toggle_matrix %}
   <div class="plugin-toggle-stack">
     {% for row in plugin_toggle_matrix %}
-    <details class="plugin-toggle-panel" data-bot-panel="{{ row.bot_id }}" {% if open_bot_id == row.bot_id %}open{% endif %}>
+    <details class="plugin-toggle-panel disclosure" data-bot-panel="{{ row.bot_id }}" {% if open_bot_id == row.bot_id %}open{% endif %}>
       <summary class="plugin-toggle-panel-head">
         <div>
           <h3>{{ row.bot_name }}</h3>
           <p class="muted-text" data-enabled-summary>当前启用 {{ row.enabled_count }} / {{ row.total_count }}</p>
         </div>
-        <span class="plugin-toggle-summary-hint">展开配置插件开关</span>
       </summary>
       <div class="plugin-toggle-grid">
         {% for item in row["items"] %}
@@ -175,7 +174,7 @@
   </div>
   {# 插件条件较多，但仍共用单一紧凑工具栏；窄屏只在条件生效时保持展开。 #}
   {% set filter_active = plugin_filters.q or plugin_filters.plugin_type or plugin_filters.category or plugin_filters.execution_state or plugin_filters.manifest_state %}
-  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
+  <details class="compact-filter disclosure" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选插件</span>
       <span class="compact-filter-summary-text">显示 {{ filtered_plugin_count }} / {{ total_plugin_count }}</span>

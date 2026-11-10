@@ -41,7 +41,7 @@
 <section class="work-surface">
   {# 联系人筛选直接服务于下方列表，窄屏仅在条件生效时保持展开。 #}
   {% set filter_active = list_view.filters.query or list_view.filters.contact_kind or list_view.filters.sync_status %}
-  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
+  <details class="compact-filter disclosure" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选联系人</span>
       <span class="compact-filter-summary-text">{% if filter_active %}已应用条件{% else %}姓名 / 类型 / 状态{% endif %}</span>

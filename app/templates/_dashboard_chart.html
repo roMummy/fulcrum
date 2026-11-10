@@ -42,8 +42,8 @@
     {% for tick in ticks %}<span>{{ tick }}</span>{% endfor %}
   </div>
   {# 收起逐点数值以控制首屏密度，但保留全部原始读数；键盘与触屏均可按需展开。 #}
-  <details class="dashboard-chart-detail">
-    <summary>查看每小时数据</summary>
+  <details class="dashboard-chart-detail disclosure">
+    <summary>每小时数据</summary>
     <dl class="dashboard-chart-values" aria-label="{{ label }}明细">
       {% for item in items %}<div><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>{% endfor %}
     </dl>

@@ -26,8 +26,8 @@
       <span class="chip chip-muted" data-live="seen">心跳 {{ live.last_seen_at|bj_time if live.last_seen_at else '-' }}</span>
     </div>
   </div>
-  <details>
-    <summary class="muted-text">展开详情</summary>
+  <details class="disclosure">
+    <summary class="muted-text">详细信息</summary>
     <p class="muted-text top-gap">注册于 {{ device.registered_at|bj_time if device.registered_at else '-' }}</p>
     <div class="stats-grid compact-grid">
       {% for item in device.hardware %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}
@@ -43,7 +43,7 @@
       {% if device.cache_chart['items'] %}<div><h3>缓存消息数</h3>{{ trend_chart(device.cache_chart, '近 24 小时缓存消息趋势', 'success') }}</div>{% endif %}
       {% if device.event_chart['items'] %}<div><h3>待上传事件</h3>{{ trend_chart(device.event_chart, '近 24 小时待上传事件趋势') }}</div>{% endif %}
     </div>
-    <details class="top-gap">
+    <details class="disclosure top-gap">
       <summary class="muted-text">其他上报与能力列表（{{ device.capability_count }} 项）</summary>
       {% if device.extra %}<div class="stats-grid compact-grid top-gap">{% for item in device.extra %}<div class="metric-item metric-item-text"><span>{{ item.label }}</span><strong class="value-break">{{ item.value }}</strong></div>{% endfor %}</div>{% endif %}
       <p class="muted-text value-break">{{ device.capabilities|join('、') if device.capabilities else '暂无能力上报' }}</p>

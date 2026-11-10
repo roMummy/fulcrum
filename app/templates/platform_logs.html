@@ -20,7 +20,7 @@
   <div class="section-head"><div><h2>{{ 'Error 日志' if active_tab == 'error' else 'Info 日志' }}</h2></div><span class="chip chip-outline">第 {{ pagination.page }} 页 · 最新在前</span></div>
   {# 文件选择属于日志结果控制区；只有用户显式提交条件时才在窄屏保持展开。 #}
   {% set filter_active = request.query_params.get('source_file') or keyword or level %}
-  <details class="compact-filter" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
+  <details class="compact-filter disclosure" open data-filter-active="{{ 'true' if filter_active else 'false' }}">
     <summary class="compact-filter-summary">
       <span>筛选日志</span>
       <span class="compact-filter-summary-text">{{ source_file }}{% if keyword %} · {{ keyword }}{% endif %}</span>
@@ -37,7 +37,7 @@
   {# 阅读框自身滚动,页面不再滚动;每条日志:时间、级别、来源、中文标题、关键字段,点击展开原文/堆栈。 #}
   <div class="log-reader" role="log">
     {% for entry in log_lines %}
-    <details class="log-entry log-{{ entry.level|lower }}">
+    <details class="log-entry disclosure log-{{ entry.level|lower }}">
       <summary>
         <span class="log-time">{{ entry.date[5:] }} {{ entry.time }}</span>
         <span class="log-level">{{ {'INFO': '信息', 'WARNING': '警告', 'ERROR': '错误', 'CRITICAL': '严重', 'DEBUG': '调试'}.get(entry.level, entry.level) }}</span>

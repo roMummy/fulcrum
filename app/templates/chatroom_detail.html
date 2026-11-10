@@ -44,8 +44,8 @@
         <p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
       </div>
       <div class="gf-head-actions">
-        <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true">设置 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
         <button class="btn btn-small" type="submit">保存</button>
+        <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true" aria-label="展开或收起设置" title="展开或收起设置"></button>
       </div>
     </header>
     <div class="gf-collapse" data-gf-collapse>
@@ -76,11 +76,11 @@
             <span class="gf-switch-track"></span>
           </span>
         </label>
-        {% if item.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false">设置 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>{% else %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
+        {% if item.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>{% else %}<button class="btn btn-small" type="submit">保存</button>{% endif %}
       </div>
     </header>
 
-    {# 设置区:默认收起,点"设置"展开;展开状态记在浏览器里。没有设置项的功能(只有开关)没有这一块。 #}
+    {# 设置区:默认收起,点右侧的箭头图标展开;展开状态记在浏览器里。没有设置项的功能(只有开关)没有这一块。 #}
     {% if item.sections %}
     <div class="gf-collapse" data-gf-collapse hidden>
     <div class="gf-body">
@@ -156,7 +156,7 @@
       </form>
       {% endif %}
     </div>
-    <details>
+    <details class="disclosure">
       <summary class="muted-text">高级配置与技术信息</summary>
       <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/config" class="chatroom-scope-config-form top-gap">
         <span class="chatroom-scope-label">本群配置覆盖（JSON，仅保存与默认不同的部分）</span>
@@ -245,7 +245,7 @@
       <tr><th>本地状态</th><td>{{ detail.status_label }}</td></tr>
     </tbody>
   </table>
-  <details style="margin-top:16px;">
+  <details class="disclosure" style="margin-top:16px;">
     <summary class="muted-text">技术信息</summary>
     <p class="muted-text">群 #{{ detail.chatroom_id }} · 外部 ID <code>{{ detail.chatroom_external_id }}</code> · 群主 <code>{{ detail.owner_external_id }}</code> · 来源 {{ detail.observed_source }} · 同步深度 {{ detail.sync_depth_label }}</p>
   </details>
