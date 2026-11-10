@@ -97,5 +97,17 @@ def upgrade() -> None:
             )
 
 
+    # 旧插件目录删除后,启动同步会删除 plugins 行并级联删除绑定;但执行日志和小时统计
+    # 通过外键指向它们,不先清掉会让同步失败、应用停在“数据库未就绪”(readyz 503)。
+    # 这些只是已下线插件的历史记录,随插件一起清理。
+    for table in ("plugin_execution_logs", "plugin_activity_hourly"):
+        bind.execute(
+            sa.text(
+                f"DELETE FROM {table} WHERE plugin_id IN "
+                "(SELECT id FROM plugins WHERE code IN ('group_member_change', 'inactive_rank'))"
+            )
+        )
+
+
 def downgrade() -> None:
     """旧插件目录已删除,无法还原绑定;群功能配置留在 extra_json 里不影响旧版本运行。"""
