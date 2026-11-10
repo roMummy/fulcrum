@@ -1,6 +1,6 @@
 # Hindsight(AI 记忆系统)部署:外部 PostgreSQL(pgvector)+ Hindsight 完整镜像。
 # 用法:cp .env.example .env 并填好,然后 docker compose up -d。
-# 对外只监听 127.0.0.1(UI 用 ssh 隧道访问);multi-bot-saas 的 app 容器通过共享网络用 http://hindsight:8888 访问。
+# 管理界面 9999 对局域网开放(需登录密钥),API 8888 只监听 127.0.0.1;multi-bot-saas 的 app 容器通过共享网络用 http://hindsight:8888 访问。
 services:
   hindsight-db:
     build:
@@ -32,8 +32,10 @@ services:
     # 201 只有 7.7G 内存且还跑着应用与数据库,给 Hindsight 设上限,防止拖垮其他服务。
     mem_limit: 3g
     ports:
+      # 管理界面(Control Plane)开放到局域网,登录需要 CP_ACCESS_KEY;
+      # API(8888)只监听本机,应用容器走 docker 网络访问,不对局域网开放(它本身没有鉴权)。
+      - "9999:9999"
       - "127.0.0.1:8888:8888"
-      - "127.0.0.1:9999:9999"
     environment:
       HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${PG_PASSWORD}@hindsight-db:5432/hindsight
       # 记忆抽取用的 LLM(OpenAI 兼容接口)。
@@ -49,6 +51,8 @@ services:
       # bge-m3 的分词器与 Hindsight 不同,输入上限调小一些留余量。
       HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS: "2048"
       HINDSIGHT_API_WORKER_ID: hindsight-201
+      # 管理界面的登录密钥;不设置时界面是公开的。
+      HINDSIGHT_CP_ACCESS_KEY: ${CP_ACCESS_KEY:?请在 .env 里设置 CP_ACCESS_KEY}
       # 201 访问不了 huggingface.co,首次启动下载重排等模型要走镜像站。
       HF_ENDPOINT: https://hf-mirror.com
     networks:
