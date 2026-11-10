@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     media_library_root: str = ""
     # AI 长期记忆服务(Hindsight)的地址(环境变量 HINDSIGHT_URL),例如 http://hindsight:8888;留空表示不启用长期记忆。
     hindsight_url: str = ""
+    # AI 联网搜索使用的 Exa MCP 服务地址(环境变量 EXA_MCP_URL),默认是 Exa 官方免费服务;租户不能改,所以不会被指向内部地址。
+    exa_mcp_url: str = "https://mcp.exa.ai/mcp"
     # 本地连接器扫码期间使用的临时 SOCKS 中继监听地址；只服务登录会话，终态立即失效。
     local_proxy_relay_host: str = "127.0.0.1"
     local_proxy_relay_port: int = 9165

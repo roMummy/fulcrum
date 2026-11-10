@@ -153,6 +153,23 @@ def test_media_download_is_a_channel_limited_group_feature() -> None:
     assert channel_events._chatroom_auto_download_media_enabled(db, channel=channel, conversation=conversation) is False
 
 
+def test_web_search_defaults_on_and_can_be_turned_off_per_group() -> None:
+    db = _session()
+    channel = _seed(db)
+    room = _room(db, channel)
+    db.query(TenantAiSetting).update({"chat_enabled": True})
+    db.commit()
+    # 默认开;租户 ID 带进聊天上下文,用来按租户计搜索额度
+    assert _resolve(db, channel).web_search is True
+    chat = ai_dispatch.prepare_intent(db, _payload(channel))[3]
+    assert chat.web_search is True and chat.tenant_id == 1
+    save_state(room, "ai_chat", enabled=True, config={"web_search": False})
+    assert _resolve(db, channel).web_search is False
+    assert ai_dispatch.prepare_intent(db, _payload(channel))[3].web_search is False
+    # 私聊没有群设置:默认开
+    assert _resolve(db, channel, "direct", "wxid_a").web_search is True
+
+
 def _payload(channel) -> dict:
     return {
         "channel_id": channel.id,

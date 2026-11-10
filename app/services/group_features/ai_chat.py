@@ -29,6 +29,10 @@ FEATURE = register(
             ConfigField("api_key", "密钥", kind="secret", group="独立模型(可选,留空沿用租户统一设置)", hint="只保存加密后的值,页面不会回显"),
             ConfigField("persona", "人格设定", kind="textarea", group="人格(可选)", hint="留空沿用租户统一人格;最多 2000 字"),
             ConfigField(
+                "web_search", "联网搜索", kind="bool", default=True, group="联网搜索",
+                hint="对方问到最新消息、天气、价格等时,机器人会先上网查再回答;搜索词会发送到第三方搜索服务(Exa),每天有次数上限",
+            ),
+            ConfigField(
                 "memory_enabled", "记住聊过的内容(长期记忆)", kind="bool", default=True, group="长期记忆",
                 hint="按群、按人记住称呼、喜好、计划等,聊天时按话题回想;需要平台已部署记忆服务",
             ),
@@ -52,6 +56,8 @@ class GroupAiOverride:
     memory_enabled: bool = True
     # 记住群里所有聊天(由后台批量整理),而不只是 @ 机器人的那句。
     memory_all: bool = False
+    # 聊天时是否允许联网搜索。
+    web_search: bool = True
     api_base: str = ""
     model: str = ""
     api_key: str = ""
@@ -65,6 +71,7 @@ def get_override(chatroom: Chatroom) -> GroupAiOverride:
         explicit=has_saved_state(chatroom, FEATURE),
         memory_enabled=bool(config.get("memory_enabled", True)),
         memory_all=bool(config.get("memory_all", False)),
+        web_search=bool(config.get("web_search", True)),
         api_base=str(config.get("api_base") or "").strip().rstrip("/"),
         model=str(config.get("model") or "").strip(),
         api_key=decrypt_secret(str(config.get("api_key") or "")) or "",
