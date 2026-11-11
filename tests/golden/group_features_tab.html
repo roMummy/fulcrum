@@ -1,0 +1,390 @@
+<div class="gf-list">
+<form method="post" action="/channels/2/chatrooms/1/management" class="gf-card is-on" data-gf-card data-gf-key="mode" data-gf-open="1">
+<header class="gf-head">
+<div class="gf-head-copy" data-gf-toggle-title>
+<h3>运行模式</h3>
+<p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
+</div>
+<div class="gf-head-actions">
+<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true" aria-label="展开或收起设置" title="展开或收起设置">
+</button>
+</div>
+</header>
+<div class="gf-collapse" data-gf-collapse>
+<div class="gf-body">
+<div class="gf-mode-list">
+<label class="gf-mode is-selected">
+<input type="radio" name="management_status" value="enabled" data-autosave-url="/channels/2/chatrooms/1/management" data-autosave-key="management_status" data-autosave-form="{}" checked />
+<span class="gf-mode-text">
+<strong>正常运行</strong>
+<small>采集消息，并响应插件、群功能和 AI 对话</small>
+</span>
+</label>
+<label class="gf-mode">
+<input type="radio" name="management_status" value="disabled" data-autosave-url="/channels/2/chatrooms/1/management" data-autosave-key="management_status" data-autosave-form="{}" />
+<span class="gf-mode-text">
+<strong>只采集消息</strong>
+<small>继续接收并记录消息，但不触发任何插件、群功能和 AI 对话</small>
+</span>
+</label>
+<label class="gf-mode">
+<input type="radio" name="management_status" value="archived" data-autosave-url="/channels/2/chatrooms/1/management" data-autosave-key="management_status" data-autosave-form="{}" />
+<span class="gf-mode-text">
+<strong>完全关闭</strong>
+<small>不接收、不记录消息，也不触发任何功能</small>
+</span>
+</label>
+</div>
+</div>
+</div>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/ai_chat" class="gf-card is-on" data-gf-card data-gf-key="ai_chat" data-gf-save-url="/channels/2/chatrooms/1/features/ai_chat">
+<header class="gf-head">
+<div class="gf-head-copy" data-gf-toggle-title>
+<h3>AI 对话</h3>
+<p>群友 @ 机器人说的不是功能时,机器人按人格直接聊天并记住对方。未单独设置时跟随租户「AI 助手」里的聊天开关;需先启用 AI 总开关。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>已开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/ai_chat/toggle" data-autosave-json='{"field":"enabled"}' checked />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置">
+</button>
+</div>
+</header>
+<div class="gf-collapse" data-gf-collapse hidden>
+<div class="gf-body">
+<section class="gf-section">
+<h4>独立模型(可选,留空沿用租户统一设置)</h4>
+<div class="gf-inputs">
+<label class="gf-field gf-field-wide">
+<span class="gf-field-label">接口地址</span>
+<input type="text" name="cfg_api_base" value="示例值-api_base" />
+<small>例如 https://api.openai.com/v1</small>
+</label>
+<label class="gf-field gf-field-wide">
+<span class="gf-field-label">模型名称</span>
+<input type="text" name="cfg_model" value="示例值-model" />
+<small>例如 gpt-4o-mini</small>
+</label>
+<label class="gf-field gf-field-wide">
+<span class="gf-field-label">密钥</span>
+<input type="password" name="cfg_api_key" autocomplete="new-password" placeholder="已配置，留空则保持不变" />
+<small>只保存加密后的值,页面不会回显</small>
+</label>
+</div>
+</section>
+<section class="gf-section">
+<h4>人格(可选)</h4>
+<div class="gf-inputs">
+<label class="gf-field gf-field-wide">
+<span class="gf-field-label">人格设定</span>
+<textarea name="cfg_persona" rows="4" maxlength="2000">示例值-persona</textarea>
+<small>留空沿用租户统一人格;最多 2000 字</small>
+</label>
+</div>
+</section>
+<section class="gf-section">
+<h4>联网搜索</h4>
+<div class="gf-switch-list">
+<label class="gf-row">
+<span class="gf-row-label">联网搜索</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_web_search" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/ai_chat/toggle" data-autosave-json='{"field":"web_search"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+</section>
+<section class="gf-section">
+<h4>长期记忆</h4>
+<div class="gf-switch-list">
+<label class="gf-row">
+<span class="gf-row-label">记住聊过的内容(长期记忆)</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_memory_enabled" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/ai_chat/toggle" data-autosave-json='{"field":"memory_enabled"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<label class="gf-row" data-gf-depends="cfg_memory_enabled">
+<span class="gf-row-label">记住群里所有聊天(不只 @ 机器人的)</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_memory_all" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/ai_chat/toggle" data-autosave-json='{"field":"memory_all"}' checked />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+</section>
+</div>
+<footer class="gf-foot">
+<button class="btn" type="submit">保存</button>
+</footer>
+</div>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/inactive_rank" class="gf-card" data-gf-card data-gf-key="inactive_rank" data-gf-save-url="/channels/2/chatrooms/1/features/inactive_rank">
+<header class="gf-head">
+<div class="gf-head-copy" data-gf-toggle-title>
+<h3>潜水排行</h3>
+<p>群成员发「潜水排行」查看谁最久没发言;可带参数,如「潜水排行 30 5」(天数最大 365,名数最大 50)。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>未开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/inactive_rank/toggle" data-autosave-json='{"field":"enabled"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置">
+</button>
+</div>
+</header>
+<div class="gf-collapse" data-gf-collapse hidden>
+<div class="gf-body">
+<section class="gf-section">
+<h4>默认参数</h4>
+<div class="gf-inputs">
+<label class="gf-field">
+<span class="gf-field-label">默认统计天数</span>
+<input type="number" name="cfg_default_days" value="4" min="1" max="365" />
+<small>多少天没发言算潜水</small>
+</label>
+<label class="gf-field">
+<span class="gf-field-label">默认展示人数</span>
+<input type="number" name="cfg_default_limit" value="4" min="1" max="50" />
+<small>榜单最多列出几人</small>
+</label>
+</div>
+</section>
+</div>
+<footer class="gf-foot">
+<button class="btn" type="submit">保存</button>
+</footer>
+</div>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/media_download" class="gf-card is-on" data-gf-card data-gf-key="media_download">
+<header class="gf-head">
+<div class="gf-head-copy">
+<h3>自动下载附件</h3>
+<p>自动下载本群收到的图片、语音、视频。会占用手机资源,默认关闭。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>已开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/media_download/toggle" data-autosave-json='{"field":"enabled"}' checked />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+</header>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/member_change" class="gf-card" data-gf-card data-gf-key="member_change" data-gf-save-url="/channels/2/chatrooms/1/features/member_change">
+<header class="gf-head">
+<div class="gf-head-copy" data-gf-toggle-title>
+<h3>群成员变更提醒</h3>
+<p>成员加入、退出、改群昵称时在群里通知,并可对新成员发送欢迎卡片。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>未开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/member_change/toggle" data-autosave-json='{"field":"enabled"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置">
+</button>
+</div>
+</header>
+<div class="gf-collapse" data-gf-collapse hidden>
+<div class="gf-body">
+<section class="gf-section">
+<h4>通知方式</h4>
+<div class="gf-switch-list">
+<label class="gf-row">
+<span class="gf-row-label">新成员加入时通知</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_notify_join" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/member_change/toggle" data-autosave-json='{"field":"notify_join"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<label class="gf-row">
+<span class="gf-row-label">成员退出或被移出时通知</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_notify_leave" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/member_change/toggle" data-autosave-json='{"field":"notify_leave"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<label class="gf-row">
+<span class="gf-row-label">成员修改群昵称时通知</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_notify_rename" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/member_change/toggle" data-autosave-json='{"field":"notify_rename"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+</section>
+<section class="gf-section">
+<h4>欢迎卡片</h4>
+<div class="gf-switch-list">
+<label class="gf-row">
+<span class="gf-row-label">新成员加入时发送欢迎卡片</span>
+<span class="ui-switch ui-switch-small">
+<input type="checkbox" name="cfg_card_enabled" value="true" role="switch" data-autosave-url="/channels/2/chatrooms/1/features/member_change/toggle" data-autosave-json='{"field":"card_enabled"}' checked />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+<div class="gf-inputs">
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
+<span class="gf-field-label">卡片标题</span>
+<input type="text" name="cfg_card_title" value="示例值-card_title" />
+<small>可用变量:{nickname} 新成员昵称,{now} 当前时间</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
+<span class="gf-field-label">卡片描述</span>
+<input type="text" name="cfg_card_desc" value="示例值-card_desc" />
+<small>可用变量同上</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
+<span class="gf-field-label">点击后打开的页面</span>
+<input type="text" name="cfg_card_url" value="示例值-card_url" />
+<small>必须以 http:// 或 https:// 开头;群成员手机能打开才能点开</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
+<span class="gf-field-label">缩略图地址</span>
+<input type="text" name="cfg_card_thumb_url" value="示例值-card_thumb_url" />
+<small>可留空;以 http:// 或 https:// 开头的图片地址</small>
+</label>
+</div>
+</section>
+</div>
+<footer class="gf-foot">
+<button class="btn" type="submit">保存</button>
+</footer>
+</div>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/red_packet" class="gf-card is-on" data-gf-card data-gf-key="red_packet" data-gf-save-url="/channels/2/chatrooms/1/features/red_packet">
+<header class="gf-head">
+<div class="gf-head-copy" data-gf-toggle-title>
+<h3>自动抢红包</h3>
+<p>群里出现红包时,等待设定的延迟后自动领取。领取用的是机器人这个微信账号,领到的钱进入该账号的零钱。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>已开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/red_packet/toggle" data-autosave-json='{"field":"enabled"}' checked />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置">
+</button>
+</div>
+</header>
+<div class="gf-collapse" data-gf-collapse hidden>
+<div class="gf-body">
+<section class="gf-section">
+<h4>领取设置</h4>
+<div class="gf-inputs">
+<label class="gf-field">
+<span class="gf-field-label">领取延迟(毫秒)</span>
+<input type="number" name="cfg_delay_ms" value="3" min="0" max="60000" />
+<small>收到红包后等待这么久再领取;0 表示尽快。实际时刻还会加上系统调度和手机执行的时间(通常不到 1 秒)</small>
+</label>
+</div>
+</section>
+</div>
+<footer class="gf-foot">
+<button class="btn" type="submit">保存</button>
+</footer>
+</div>
+<details class="pay-ledger disclosure">
+<summary>
+<span class="pay-ledger-title">收款明细与统计</span>
+<span class="pay-ledger-sum">累计收到 0 笔 · ¥0.00</span>
+</summary>
+<div class="pay-ledger-body">
+<div class="pay-stats">
+<div class="pay-stat">
+<span class="pay-stat-label">今日</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+<div class="pay-stat">
+<span class="pay-stat-label">近 7 天</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+<div class="pay-stat">
+<span class="pay-stat-label">累计</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+</div>
+<p class="muted-text pay-note">还没有记录。开启后，系统自动处理的红包会显示在这里。</p>
+</div>
+</details>
+</form>
+<form method="post" action="/channels/2/chatrooms/1/features/transfer_receive" class="gf-card" data-gf-card data-gf-key="transfer_receive">
+<header class="gf-head">
+<div class="gf-head-copy">
+<h3>自动收款</h3>
+<p>本群有人转账给机器人账号时自动确认收款，钱进入这个微信的零钱。每笔只确认一次；超时未确认时不会自动重试，请到日志里核对。只处理群里的转账，私聊里的转账不会自动收。</p>
+</div>
+<div class="gf-head-actions">
+<label class="gf-master" title="在本群开启或关闭">
+<span class="gf-master-text" data-gf-state>未开启</span>
+<span class="ui-switch">
+<input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="/channels/2/chatrooms/1/features/transfer_receive/toggle" data-autosave-json='{"field":"enabled"}' />
+<span class="ui-switch-track">
+</span>
+</span>
+</label>
+</div>
+</header>
+<details class="pay-ledger disclosure">
+<summary>
+<span class="pay-ledger-title">收款明细与统计</span>
+<span class="pay-ledger-sum">累计收到 0 笔 · ¥0.00</span>
+</summary>
+<div class="pay-ledger-body">
+<div class="pay-stats">
+<div class="pay-stat">
+<span class="pay-stat-label">今日</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+<div class="pay-stat">
+<span class="pay-stat-label">近 7 天</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+<div class="pay-stat">
+<span class="pay-stat-label">累计</span>
+<strong>¥0.00</strong>
+<small>收到 0 笔</small>
+</div>
+</div>
+<p class="muted-text pay-note">还没有记录。开启后，系统自动处理的转账会显示在这里。</p>
+</div>
+</details>
+</form>
+</div>
