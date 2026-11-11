@@ -1,8 +1,12 @@
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.services.plugin_runtime.registry import PluginConfigSchema, get_plugin_schema
+
+
+_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 @dataclass(frozen=True)
@@ -120,6 +124,11 @@ def build_plugin_config_view(
                 "sensitive": item.sensitive,
                 "placeholder": item.placeholder,
                 "options": item.options,
+                "group": item.group,
+                "minimum": item.minimum,
+                "maximum": item.maximum,
+                "required": item.required,
+                "depends_on": item.depends_on,
                 "secret_configured": item.name in configured_secrets and configured_secrets.get(item.name) not in (None, ""),
             }
         )
@@ -184,7 +193,7 @@ def merge_schema_config(
             continue
 
         normalized = "" if raw_value is None else str(raw_value).strip()
-        parsed_value = _parse_field_value(item.field_type, normalized, item.default)
+        parsed_value = _parse_field_value(item.field_type, normalized, item.default, item.minimum, item.maximum)
         if parsed_value in (None, "", []):
             merged.pop(item.name, None)
         else:
@@ -220,14 +229,23 @@ def normalize_config_json(raw_config: str | None) -> str | None:
     return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
 
 
-def _parse_field_value(field_type: str, raw_value: str, default: Any) -> Any:
+def _parse_field_value(field_type: str, raw_value: str, default: Any, minimum: Any = None, maximum: Any = None) -> Any:
     if field_type == "number":
         if not raw_value:
             return default
         try:
-            return int(raw_value)
+            # 带小数点的按小数保存,否则按整数;超出声明的范围时钳制到边界。
+            value: int | float = float(raw_value) if any(mark in raw_value for mark in ".eE") else int(raw_value)
         except ValueError:
             return default
+        if minimum is not None and value < minimum:
+            value = minimum
+        if maximum is not None and value > maximum:
+            value = maximum
+        return value
+    if field_type == "time":
+        # HH:MM;格式不对时保留默认,不把乱写的内容存进配置
+        return raw_value if _TIME_PATTERN.match(raw_value or "") else default
     if field_type == "list":
         source = raw_value or ",".join(str(part) for part in (default or []))
         return [part.strip() for part in source.replace("，", ",").split(",") if part.strip()]

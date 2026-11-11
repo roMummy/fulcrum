@@ -6662,3 +6662,18 @@ html.has-lightbox {
   align-items: center;
   justify-content: center;
 }
+
+/* 插件配置表单(清单 v2 声明的字段):必填标记、字段说明 */
+.field-required {
+  margin-left: 4px;
+  color: var(--danger);
+  font-style: normal;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}

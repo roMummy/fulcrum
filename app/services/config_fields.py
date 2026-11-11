@@ -15,6 +15,14 @@ from typing import Any, Iterable, Mapping
 # 表单里配置项的字段名前缀,避免和 enabled 等控制字段重名。
 FORM_PREFIX = "cfg_"
 
+# 字段类型:
+#   text      单行文本            textarea  多行文本
+#   number    整数或小数,可限定范围  bool      开关
+#   select    下拉(需要 options)    tags      多个值(逗号分隔),保存为列表
+#   url       网址                  time      时间 HH:MM
+#   secret    密钥:加密保存,页面不回显,留空表示保持不变
+FIELD_KINDS = ("text", "textarea", "number", "bool", "select", "tags", "url", "time", "secret")
+
 
 @dataclass(frozen=True)
 class ConfigField:
@@ -22,17 +30,24 @@ class ConfigField:
 
     key: str
     label: str
-    # text / textarea / number / bool / secret(密钥:加密保存,页面不回显,留空表示保持不变)
+    # 取值见 FIELD_KINDS
     kind: str = "text"
     default: Any = ""
     hint: str = ""
     # number 类型的取值范围,超出会被钳制;其他类型忽略。
-    minimum: int | None = None
-    maximum: int | None = None
+    minimum: int | float | None = None
+    maximum: int | float | None = None
     # 页面上的小节标题;同一能力里 group 相同的配置项排在一起,留空归入未命名小节。
     group: str = ""
     # 依赖另一个 bool 配置项的 key:被依赖项关闭时,本项在页面上变淡(仍可编辑、仍会保存)。
     depends_on: str = ""
+    # 以下几项供插件清单声明使用,群功能不用:
+    # 英文标签(界面语言为英文时优先显示,缺省回退 label)、输入框占位提示、是否必填、
+    # 下拉选项 (值, 显示名),select 类型必须提供。
+    label_en: str = ""
+    placeholder: str = ""
+    required: bool = False
+    options: tuple[tuple[str, str], ...] = ()
 
 
 def build_sections(fields: Iterable[ConfigField], config: Mapping[str, Any], *, prefix: str = FORM_PREFIX) -> list[dict[str, Any]]:

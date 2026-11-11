@@ -1,42 +1,55 @@
+{# 插件配置表单:字段来自清单 v2 的 [[config.fields]] 声明(中文标签、说明、范围、分组、下拉选项);
+   没有声明的插件按默认值推断。保存由 plugin_schemas.merge_schema_config 处理,字段名统一是 schema__<key>。 #}
 {% if config_view.mode == 'schema' %}
+{% if config_view.description %}
 <div class="full-row">
-  <strong>结构化表单</strong>
   <small>{{ config_view.description }}</small>
 </div>
+{% endif %}
+{% set ns = namespace(group='') %}
 {% for field in config_view.fields %}
-<label class="{% if field.field_type == 'textarea' %}full-row{% endif %}">
-  <span>{{ field.label }}</span>
+{% if field.group != ns.group %}
+{% set ns.group = field.group %}
+{% if field.group %}<div class="full-row gf-section"><h4>{{ field.group }}</h4></div>{% endif %}
+{% endif %}
+{% if field.field_type == 'boolean' %}
+{# 开关:未勾选时由前面的隐藏域提交 false,勾选后同名字段在后,取最后一个。 #}
+<label class="gf-row switch-field full-row">
+  <span class="gf-row-label">{{ field.label }}{% if field.description %}<small class="field-hint">{{ field.description }}</small>{% endif %}</span>
+  <span class="ui-switch ui-switch-small"><input type="hidden" name="schema__{{ field.name }}" value="false" /><input type="checkbox" name="schema__{{ field.name }}" value="true" role="switch"{% if field.value %} checked{% endif %} /><span class="ui-switch-track"></span></span>
+</label>
+{% else %}
+<label class="{% if field.field_type in ('textarea', 'list') %}full-row{% endif %}">
+  <span>{{ field.label }}{% if field.required and not field.sensitive %}<em class="field-required" title="必填">*</em>{% endif %}</span>
   {% if field.field_type == 'select' %}
   <select name="schema__{{ field.name }}">
     {% for option in field.options %}
     <option value="{{ option.value }}" {% if field.value == option.value %}selected{% endif %}>{{ option.label }}</option>
     {% endfor %}
   </select>
-  {% elif field.field_type == 'boolean' %}
-  <select name="schema__{{ field.name }}">
-    <option value="true" {% if field.value %}selected{% endif %}>是</option>
-    <option value="false" {% if not field.value %}selected{% endif %}>否</option>
-  </select>
   {% elif field.field_type == 'textarea' %}
   <textarea name="schema__{{ field.name }}" rows="4" placeholder="{{ field.placeholder }}">{{ field.render_value }}</textarea>
   {% else %}
   <input
-    type="{% if field.field_type == 'password' %}password{% elif field.field_type == 'number' %}number{% else %}text{% endif %}"
+    type="{% if field.field_type == 'password' %}password{% elif field.field_type == 'number' %}number{% elif field.field_type == 'url' %}url{% elif field.field_type == 'time' %}time{% else %}text{% endif %}"
     name="schema__{{ field.name }}"
     value="{{ field.render_value }}"
     placeholder="{% if field.sensitive %}留空保持现有配置{% else %}{{ field.placeholder }}{% endif %}"
+    {% if field.field_type == 'number' %}step="any"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %}{% endif %}
+    {% if field.required and not field.sensitive %}required{% endif %}
     {% if field.sensitive %}autocomplete="new-password"{% endif %}
   />
   {% endif %}
   {% if field.sensitive %}
-  <small>当前状态：{% if field.secret_configured %}已配置{% else %}未配置{% endif %}</small>
+  <small>{% if field.description %}{{ field.description }}　{% endif %}当前状态：{% if field.secret_configured %}已配置{% else %}未配置{% endif %}</small>
   {% if field.secret_configured %}
   <span class="check-option"><input type="checkbox" name="schema_clear__{{ field.name }}" value="true" /> 清除已保存配置</span>
   {% endif %}
   {% else %}
-  <small>{{ field.description }}</small>
+  {% if field.description %}<small>{{ field.description }}</small>{% endif %}
   {% endif %}
 </label>
+{% endif %}
 {% endfor %}
 {% else %}
 <label class="full-row"><span>配置 JSON</span><textarea name="config_json" rows="4">{{ config_view.raw_config_json }}</textarea></label>

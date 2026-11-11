@@ -29,6 +29,13 @@ class PluginConfigField:
     sensitive: bool = False
     placeholder: str = ""
     options: tuple[PluginConfigOption, ...] = field(default_factory=tuple)
+    # 以下由清单 v2 的 [[config.fields]] 声明提供;没有声明的插件这些保持默认,页面按默认值推断。
+    group: str = ""
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    required: bool = False
+    depends_on: str = ""
+    label_en: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,7 +250,40 @@ def _derive_admin_surfaces(discovered: DiscoveredPlugin) -> tuple[str, ...]:
     return tuple(surfaces)
 
 
+# 清单里的字段类型 -> 配置表单的字段类型
+_KIND_TO_FIELD_TYPE = {"text": "text", "textarea": "textarea", "number": "number", "bool": "boolean", "select": "select", "tags": "list", "url": "url", "time": "time", "secret": "password"}
+
+
+def _schema_field_from_declaration(item: Any) -> PluginConfigField:
+    """清单里声明的字段 -> 配置表单字段:标签、说明、范围、分组、下拉选项都来自声明,不再靠猜。"""
+
+    return PluginConfigField(
+        name=item.key,
+        field_type=_KIND_TO_FIELD_TYPE[item.kind],
+        label=item.label,
+        description=item.hint,
+        default=item.default,
+        sensitive=item.kind == "secret",
+        placeholder=item.placeholder,
+        options=tuple(PluginConfigOption(value=value, label=label) for value, label in item.options),
+        group=item.group,
+        minimum=item.minimum,
+        maximum=item.maximum,
+        required=item.required,
+        depends_on=item.depends_on,
+        label_en=item.label_en,
+    )
+
+
 def _build_plugin_schema(discovered: DiscoveredPlugin) -> PluginConfigSchema:
+    if discovered.config_fields:
+        return PluginConfigSchema(
+            plugin_code=discovered.manifest.code,
+            schema_version="v2",
+            title=f"{discovered.manifest.display_name} 配置",
+            description=discovered.manifest.description or "",
+            fields=tuple(_schema_field_from_declaration(item) for item in discovered.config_fields),
+        )
     fields: list[PluginConfigField] = []
     merged_defaults = dict(discovered.runtime_config)
     if "commands" not in merged_defaults and discovered.matcher.commands:

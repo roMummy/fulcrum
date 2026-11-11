@@ -37,3 +37,69 @@ api_key = ""
 default_city = "北京"
 timeout_seconds = 15
 daily_push_time = "08:00"
+
+# 配置表单声明(清单 v2):页面上的中文标签、说明、范围、分组都来自这里。
+[[config.fields]]
+key = "api_base"
+label = "天气接口地址"
+kind = "url"
+default = ""
+placeholder = "https://api.example.com"
+hint = "天气数据接口的地址;需要和下面的密钥一起配置,任何一个没填时插件不会返回天气。"
+group = "接口"
+
+[[config.fields]]
+key = "api_key"
+label = "接口密钥"
+kind = "secret"
+hint = "加密保存,页面不会回显;留空表示保持不变。"
+group = "接口"
+
+[[config.fields]]
+key = "timeout_seconds"
+label = "请求超时(秒)"
+kind = "number"
+default = 15
+min = 5
+max = 60
+hint = "调用天气接口时最长等待多久。"
+group = "接口"
+
+[[config.fields]]
+key = "default_city"
+label = "默认城市"
+kind = "text"
+default = "北京"
+hint = "用户只发“天气”、没有说城市时查询的城市。"
+group = "查询"
+
+[[config.fields]]
+key = "daily_push_time"
+label = "每日订阅推送时间"
+kind = "time"
+default = "08:00"
+hint = "订阅了天气的用户,每天这个时间收到推送。"
+group = "查询"
+
+[[config.fields]]
+key = "commands"
+label = "触发命令"
+kind = "tags"
+default = ["天气", "订阅天气", "取消订阅"]
+hint = "多个用逗号分隔。"
+group = "触发方式"
+
+[[config.fields]]
+key = "keywords"
+label = "触发关键词"
+kind = "tags"
+default = ["天气"]
+hint = "消息里包含这些词时也会触发,多个用逗号分隔。"
+group = "触发方式"
+
+[[config.fields]]
+key = "require_mention"
+label = "群里必须 @ 机器人才响应"
+kind = "bool"
+default = false
+group = "触发方式"

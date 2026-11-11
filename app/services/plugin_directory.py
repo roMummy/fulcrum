@@ -23,6 +23,8 @@ from app.core.logging import get_logger
 from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
+from app.services.config_fields import ConfigField
+from app.services.plugin_manifest import ManifestParseError, parse_manifest, read_config_fields
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
@@ -119,6 +121,8 @@ class DiscoveredPlugin:
     ai_hint: "PluginAiHint" = field(default_factory=lambda: PluginAiHint())
     runtime_config: Mapping[str, Any] = field(default_factory=dict)
     secret_fields: tuple[str, ...] = ()
+    # 清单 v2 的 [[config.fields]] 声明;为空表示插件没有声明,配置页回退到按默认值推断。
+    config_fields: tuple[ConfigField, ...] = ()
     admin_config: Mapping[str, Any] = field(default_factory=dict)
     validation_errors: tuple[str, ...] = ()
     validation_warnings: tuple[str, ...] = ()
@@ -281,8 +285,12 @@ def discover_plugins(*, force: bool = False) -> tuple[DiscoveredPlugin, ...]:
             entrypoint_path = _resolve_entrypoint(plugin_dir)
             if not entrypoint_path:
                 continue
-            parsed = _parse_toml_subset(config_path.read_text(encoding="utf-8"))
-            discovered.append(_build_discovered_plugin(plugin_dir, config_path, entrypoint_path, parsed))
+            try:
+                parsed, parse_error = parse_manifest(config_path.read_text(encoding="utf-8")), ""
+            except ManifestParseError as exc:
+                # config.toml 不是合法的 TOML:这个插件标记为无效(页面上能看到原因),不影响其他插件的扫描。
+                parsed, parse_error = {}, f"config.toml 解析失败：{exc}"
+            discovered.append(_build_discovered_plugin(plugin_dir, config_path, entrypoint_path, parsed, parse_error=parse_error))
 
     result = tuple(discovered)
     _SCAN_CACHE[cache_key] = (signature, result)
@@ -2201,9 +2209,16 @@ def _build_discovered_plugin(
     config_path: Path,
     entrypoint_path: Path,
     parsed: dict[str, Any],
+    *,
+    parse_error: str = "",
 ) -> DiscoveredPlugin:
     errors, warnings = _validate_manifest(plugin_dir.name, parsed)
-    secret_fields = _extract_secret_fields(parsed)
+    if parse_error:
+        errors.insert(0, parse_error)
+    config_fields, field_errors = read_config_fields(parsed)
+    errors += field_errors
+    # 声明为 secret 的字段自动按密钥处理(加密保存、不进普通配置),不必在 [secrets] 里再写一遍。
+    secret_fields = tuple(dict.fromkeys((*_extract_secret_fields(parsed), *(item.key for item in config_fields if item.kind == "secret"))))
     runtime_config = _extract_runtime_config(parsed)
     # 即使旧目录里仍残留可用密钥，扫描阶段也必须把显式敏感字段从默认运行配置中删除。
     # 后续物理清理配置文件时不依赖这层防线，但当前提交开始就不能再执行共享凭证。
@@ -2216,6 +2231,7 @@ def _build_discovered_plugin(
         ai_hint=_build_ai_hint(parsed),
         runtime_config=runtime_config,
         secret_fields=secret_fields,
+        config_fields=config_fields,
         admin_config=_extract_admin_config(parsed),
         config_path=config_path,
         entrypoint_path=entrypoint_path,
@@ -2441,62 +2457,3 @@ def _build_scan_signature(base_dir: Path) -> tuple[str, ...]:
     return tuple(signature)
 
 
-def _parse_toml_subset(raw_text: str) -> dict[str, Any]:
-    parsed: dict[str, Any] = {}
-    current = parsed
-    for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section_name = line[1:-1].strip()
-            current = parsed.setdefault(section_name, {})
-            continue
-        if "=" not in line:
-            continue
-        key, raw_value = line.split("=", 1)
-        current[key.strip()] = _parse_toml_value(raw_value.strip())
-    return parsed
-
-
-def _parse_toml_value(raw_value: str) -> Any:
-    if raw_value.startswith("[") and raw_value.endswith("]"):
-        inner = raw_value[1:-1].strip()
-        if not inner:
-            return []
-        return [_parse_toml_value(item.strip()) for item in _split_toml_array(inner)]
-    if raw_value.startswith('"') and raw_value.endswith('"'):
-        return raw_value[1:-1]
-    if raw_value.startswith("'") and raw_value.endswith("'"):
-        return raw_value[1:-1]
-    lowered = raw_value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    try:
-        return int(raw_value)
-    except ValueError:
-        return raw_value
-
-
-def _split_toml_array(raw_text: str) -> list[str]:
-    items: list[str] = []
-    current: list[str] = []
-    quote: str | None = None
-    for char in raw_text:
-        if char in {'"', "'"}:
-            if quote is None:
-                quote = char
-            elif quote == char:
-                quote = None
-            current.append(char)
-            continue
-        if char == "," and quote is None:
-            items.append("".join(current).strip())
-            current = []
-            continue
-        current.append(char)
-    if current:
-        items.append("".join(current).strip())
-    return items

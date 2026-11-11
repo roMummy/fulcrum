@@ -22,3 +22,29 @@ require_mention = false
 
 [runtime]
 max_items = 30
+
+# 配置表单声明(清单 v2)
+[[config.fields]]
+key = "max_items"
+label = "菜单最多显示条数"
+kind = "number"
+default = 30
+min = 1
+max = 50
+hint = "超出的功能不会显示在菜单里。"
+group = "显示"
+
+[[config.fields]]
+key = "commands"
+label = "触发命令"
+kind = "tags"
+default = ["菜单", "功能菜单"]
+hint = "多个用逗号分隔。"
+group = "触发方式"
+
+[[config.fields]]
+key = "require_mention"
+label = "群里必须 @ 机器人才响应"
+kind = "bool"
+default = false
+group = "触发方式"
