@@ -12,7 +12,8 @@ from typing import Any
 
 from app.models.entities import Chatroom
 from app.services.security import encrypt_secret
-from app.services.group_features.registry import ConfigField, GroupFeature, get_feature
+from app.services.config_fields import ConfigField
+from app.services.group_features.registry import GroupFeature, get_feature
 
 EXTRA_KEY = "group_features"
 

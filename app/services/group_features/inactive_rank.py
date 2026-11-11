@@ -14,7 +14,8 @@ from sqlalchemy import select
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import ChatroomMember
 from app.services.group_features.dispatch import FeatureContext, register_handler
-from app.services.group_features.registry import ConfigField, GroupFeature, register
+from app.services.config_fields import ConfigField
+from app.services.group_features.registry import GroupFeature, register
 from app.services.plugin_runtime.replies import text_reply
 
 # 命令里天数和名数的上限,防止群命令触发无界查询或超长回复。

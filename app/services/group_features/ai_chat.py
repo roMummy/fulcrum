@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.models.entities import Chatroom
-from app.services.group_features.registry import ConfigField, GroupFeature, register
+from app.services.config_fields import ConfigField
+from app.services.group_features.registry import GroupFeature, register
 from app.services.group_features.store import get_state, has_saved_state
 from app.services.security import decrypt_secret
 

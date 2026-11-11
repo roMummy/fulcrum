@@ -16,7 +16,8 @@ from app.core.logging import get_logger
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Chatroom, ChatroomMember
 from app.services.group_features.dispatch import FeatureContext, register_handler
-from app.services.group_features.registry import ConfigField, GroupFeature, register
+from app.services.config_fields import ConfigField
+from app.services.group_features.registry import GroupFeature, register
 from app.services.plugin_runtime.replies import PluginReplyError, link_reply, text_reply
 
 logger = get_logger(__name__)

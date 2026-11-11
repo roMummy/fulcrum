@@ -9,24 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
-@dataclass(frozen=True)
-class ConfigField:
-    """一个配置项:key 即存入群配置的键名。"""
-
-    key: str
-    label: str
-    # text / textarea / number / bool / secret(密钥:加密保存,页面不回显,留空表示保持不变)
-    kind: str = "text"
-    default: Any = ""
-    hint: str = ""
-    # number 类型的取值范围,超出会被钳制;其他类型忽略。
-    minimum: int | None = None
-    maximum: int | None = None
-    # 页面上的小节标题;同一能力里 group 相同的配置项排在一起,留空归入未命名小节。
-    group: str = ""
-    # 依赖另一个 bool 配置项的 key:被依赖项关闭时,本项在页面上变淡(仍可编辑、仍会保存)。
-    depends_on: str = ""
+from app.services.config_fields import ConfigField
 
 
 @dataclass(frozen=True)

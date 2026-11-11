@@ -28,7 +28,8 @@ from app.core.tenant_db import tenant_session
 from app.models.entities import Channel
 from app.services import payment_ledger
 from app.services.group_features.dispatch import FeatureContext, register_handler
-from app.services.group_features.registry import ConfigField, GroupFeature, register
+from app.services.config_fields import ConfigField
+from app.services.group_features.registry import GroupFeature, register
 from app.services.wechat_webridge import service as webridge_service
 from app.services.wechat_webridge import wakeup
 

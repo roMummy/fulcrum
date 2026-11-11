@@ -41,6 +41,7 @@ def test_no_text_style_expand_hints_remain() -> None:
 
 
 def test_group_feature_toggle_is_an_icon_only_button() -> None:
-    template = (ROOT / "templates" / "chatroom_detail.html").read_text(encoding="utf-8")
+    # 展开按钮分在两处:运行模式卡片(chatroom_detail.html)和各群功能共用的卡片宏(_config_card.html)。
+    template = "".join((ROOT / "templates" / name).read_text(encoding="utf-8") for name in ("chatroom_detail.html", "_config_card.html"))
     buttons = re.findall(r'<button class="gf-toggle"[^>]*>(.*?)</button>', template, re.S)
     assert len(buttons) == 2 and all(label.strip() == "" for label in buttons)  # 没有"设置"之类的文字,图标由样式绘制

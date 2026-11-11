@@ -1,0 +1,78 @@
+{# 声明式配置卡片:群功能(以及之后的插件配置)共用的一张卡片。
+   标题 + 总开关为主,设置分小节铺开为次;设置区默认收起,点右侧的箭头图标展开,展开状态记在浏览器里(group-features.js)。
+   card 来自 config_fields.build_sections 的结果(key/name/description/enabled/sections/has_inputs);
+   action 是保存表单的提交地址,toggle_url 是开关点击即保存的地址,save_url 是有输入项时的保存地址。
+   调用方可以用 {% call %} 在卡片末尾追加内容(如收款明细)。 #}
+{% macro config_card(card, action, toggle_url, save_url) %}
+  <form method="post" action="{{ action }}" class="gf-card{% if card.enabled %} is-on{% endif %}" data-gf-card data-gf-key="{{ card.key }}"{% if card.has_inputs %} data-gf-save-url="{{ save_url }}"{% endif %}>
+    <header class="gf-head">
+      <div class="gf-head-copy"{% if card.sections %} data-gf-toggle-title{% endif %}>
+        <h3>{{ card.name }}</h3>
+        <p>{{ card.description }}</p>
+      </div>
+      <div class="gf-head-actions">
+        <label class="gf-master" title="在本群开启或关闭">
+          <span class="gf-master-text" data-gf-state>{{ '已开启' if card.enabled else '未开启' }}</span>
+          <span class="ui-switch">
+            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="{{ toggle_url }}" data-autosave-json='{"field":"enabled"}'{% if card.enabled %} checked{% endif %} />
+            <span class="ui-switch-track"></span>
+          </span>
+        </label>
+        {% if card.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>{% endif %}
+      </div>
+    </header>
+
+    {# 设置区:默认收起,点右侧的箭头图标展开;展开状态记在浏览器里。没有设置项的功能(只有开关)没有这一块。 #}
+    {% if card.sections %}
+    <div class="gf-collapse" data-gf-collapse hidden>
+    <div class="gf-body">
+      {% for section in card.sections %}
+      <section class="gf-section">
+        {% if section.title %}<h4>{{ section.title }}</h4>{% endif %}
+        {% if section.switches %}
+        <div class="gf-switch-list">
+          {% for field in section.switches %}
+          <label class="gf-row"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
+            <span class="gf-row-label">{{ field.label }}</span>
+            <span class="ui-switch ui-switch-small">
+              <input type="checkbox" name="{{ field.name }}" value="true" role="switch" data-autosave-url="{{ toggle_url }}" data-autosave-json='{"field":"{{ field.key }}"}'{% if field.value %} checked{% endif %} />
+              <span class="ui-switch-track"></span>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if section.inputs %}
+        <div class="gf-inputs">
+          {% for field in section.inputs %}
+          <label class="gf-field{% if field.kind != 'number' %} gf-field-wide{% endif %}"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
+            <span class="gf-field-label">{{ field.label }}</span>
+            {% if field.kind == 'number' %}
+            <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
+            {% elif field.kind == 'secret' %}
+            <input type="password" name="{{ field.name }}" autocomplete="new-password" placeholder="{{ '已配置，留空则保持不变' if field.configured else '未配置，沿用租户统一设置' }}" />
+            {% elif field.kind == 'textarea' %}
+            <textarea name="{{ field.name }}" rows="4" maxlength="2000">{{ field.value }}</textarea>
+            {% else %}
+            <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
+            {% endif %}
+            {% if field.hint %}<small>{{ field.hint }}</small>{% endif %}
+          </label>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </div>
+    {# 只有设置区里有文本/数字/密钥输入时才需要保存按钮;开关点一下就已保存。 #}
+    {% if card.has_inputs %}
+    <footer class="gf-foot">
+      <button class="btn" type="submit">保存</button>
+    </footer>
+    {% endif %}
+    </div>
+    {% endif %}
+    {# 自动抢红包、自动收款:本群收到并处理过的款项明细与统计(折叠,默认收起) #}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+  </form>
+{% endmacro %}
