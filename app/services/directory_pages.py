@@ -60,8 +60,11 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
     stmt = select(Chatroom).where(visible)
     if channel_id:
         stmt = stmt.where(Chatroom.channel_id == channel_id)
-    if status in MANAGEMENT_LABELS:
-        stmt = stmt.where(Chatroom.management_status == status)
+    if status == "left":
+        # bot 已退出(退群或被移出)的群:只看这一类。
+        stmt = stmt.where(Chatroom.status == "left")
+    elif status in MANAGEMENT_LABELS:
+        stmt = stmt.where(Chatroom.management_status == status, Chatroom.status != "left")
     else:
         status = ""
     if q:
@@ -70,7 +73,7 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
 
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     paging = _page(total, page)
-    rooms = db.scalars(stmt.order_by(Chatroom.is_active.desc(), Chatroom.name.asc(), Chatroom.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
+    rooms = db.scalars(stmt.order_by((Chatroom.status == "left").asc(), Chatroom.is_active.desc(), Chatroom.name.asc(), Chatroom.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
 
     channels = {int(item.id): item for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None))).all()}
     rows = [
@@ -83,14 +86,17 @@ def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int 
             "management_status": room.management_status or "discovered",
             "management_label": MANAGEMENT_LABELS.get(room.management_status or "discovered", "待启用"),
             "is_active": bool(room.is_active),
+            # bot 已不在这个群里:列表里显示"已退出",不再提供启用开关。
+            "is_left": room.status == "left",
             "last_seen_at": room.last_seen_at or room.last_synced_at,
         }
         for room in rooms
     ]
     summary = {
         "total": int(db.scalar(select(func.count(Chatroom.id)).where(visible)) or 0),
-        "enabled": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "enabled")) or 0),
-        "pending": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "discovered")) or 0),
+        "enabled": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "enabled", Chatroom.status != "left")) or 0),
+        "pending": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.management_status == "discovered", Chatroom.status != "left")) or 0),
+        "left": int(db.scalar(select(func.count(Chatroom.id)).where(visible, Chatroom.status == "left")) or 0),
     }
     return {"rows": rows, "paging": paging, "keyword": q, "channel_id": channel_id, "status": status, "summary": summary}
 

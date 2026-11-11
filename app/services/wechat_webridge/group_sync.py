@@ -8,15 +8,21 @@
 2. 收到"还没登记的群"的消息:群里有人说话说明 bot 已经在群里了;
 3. 入群相关事件和系统消息:`group_member_join`、"邀请你加入群聊"这类,尽快发现。
 
-`groups_all` 的结果回来后(见 service.accept_command_result)由 `after_groups_result` 为"新发现的群"和"还没有任何成员记录的群"
+`groups_all` 的结果回来后(见 service.accept_command_result)由 `after_groups_result` 先做"退群对账",再为"新发现的群"和"还没有任何成员记录的群"
 继续下发 `room_members`,每轮最多 MAX_MEMBER_SYNC_PER_ROUND 个,避免一次对手机下发太多;同一个群 MEMBER_RETRY_SECONDS 内不重复请求,
 手机不支持或失败时不会每轮都重试。
 
 同步状态保存在渠道运行信息 runtime_info_json["group_sync"] 里。
+
+退群/被移出:协议同样没有"本账号被移出群"的专门事件,所以用同一份 `groups_all` 全量快照对账:曾经同步过(status=synced)的群,
+连续 MISS_LIMIT 次完整快照里都没有,就认定 bot 已不在群里,标记 status=left、is_active=False(群功能和 AI 随之停掉,
+运行模式保持用户原来的选择)。如果之前刚收到"你被移出群聊/你已退出群聊/群聊已解散"这类系统消息,一次缺失就够。
+带关键词过滤、total 对不上、被截断的结果不是完整快照,不参与对账。群再次出现在快照里时自动恢复原来的启用状态。
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -48,6 +54,12 @@ MEMBER_ATTEMPT_LIMIT = 300
 # 系统消息里"本账号被拉进群/加入群"的常见说法。宽一点没关系:误判只会多一次被防抖限制的 groups_all。
 JOIN_TEXT = re.compile(r"邀请你|你被.{0,40}(邀请|拉).{0,8}(加入|进)|你已(经)?加入|你加入了|加入了?群聊|拉你(进|入)")
 JOIN_EVENTS = {"group_member_join"}
+# 系统消息里"本账号退群/被移出群/群解散"的常见说法。
+LEAVE_TEXT = re.compile(r"你被.{0,40}移出.{0,4}群聊|将你移出.{0,4}群聊|你已(经)?退出.{0,4}群聊|你退出了.{0,4}群聊|群聊已(被)?解散|你已被移出")
+# 连续这么多次完整的群列表快照里都没有这个群,才认定 bot 已不在群里(单次异常返回不会误伤)。
+MISS_LIMIT = 2
+# 看到退群/被移出的系统消息之后多久内,一次快照里缺失就足够认定。
+SUSPECT_WINDOW_SECONDS = 1800
 
 
 def _state(channel: Channel) -> dict[str, Any]:
@@ -105,7 +117,13 @@ def observe_inbound_event(db: Session, channel: Channel, normalized: dict[str, A
     message_type = service.text(message.get("message_type"))
     reason = ""
     is_group = service.text(conversation.chat_type) == "group"
-    if event_type in JOIN_EVENTS:
+    if message_type == "system" and is_group and LEAVE_TEXT.search(service.text(message.get("content"))):
+        # 先记下"疑似被移出",让下一次群列表快照里缺失这个群时一次就能认定;再请求一次同步确认。
+        suspects = {str(k): str(v) for k, v in service.as_object(_state(channel).get("suspect_left")).items()}
+        suspects[service.text(conversation.external_id)] = now_shanghai().isoformat()
+        _save_state(channel, {**_state(channel), "suspect_left": suspects})
+        reason = "leave_system_message"
+    elif event_type in JOIN_EVENTS:
         reason = "member_join_event"
     elif message_type == "system" and JOIN_TEXT.search(service.text(message.get("content"))):
         reason = "join_system_message"
@@ -124,10 +142,16 @@ def known_room_ids(db: Session, channel: Channel) -> set[str]:
     return set(db.scalars(select(Chatroom.external_id).where(Chatroom.channel_id == channel.id)).all())
 
 
-def after_groups_result(db: Session, channel: Channel, known_before: set[str]) -> list[str]:
-    """groups_all 结果已写入之后调用:为新发现的群和还没有成员记录的群下发 room_members。返回本轮下发的群 ID。"""
+def after_groups_result(db: Session, channel: Channel, known_before: set[str], seen_ids: set[str] | None = None) -> list[str]:
+    """groups_all 结果已写入之后调用:先做退群对账,再为新发现的群和还没有成员记录的群下发 room_members。
+
+    seen_ids 是这次完整快照里的全部群 ID;为 None 表示结果不是完整快照(带关键词、被截断等),不做退群对账。
+    返回本轮下发成员同步的群 ID。
+    """
 
     now = now_shanghai()
+    if seen_ids is not None:
+        reconcile_departures(db, channel, seen_ids, now)
     state = _state(channel)
     attempts = {str(key): str(value) for key, value in service.as_object(state.get("member_requested_at")).items()}
     rooms = db.scalars(select(Chatroom).where(Chatroom.channel_id == channel.id).order_by(Chatroom.id.asc())).all()
@@ -135,7 +159,7 @@ def after_groups_result(db: Session, channel: Channel, known_before: set[str]) -
     new_ids = [room.external_id for room in rooms if room.external_id not in known_before]
     # 新发现的群优先,其次是还没有任何成员记录的群(包括以前同步失败过的),已归档(完全关闭)的群不拉成员。
     targets: list[str] = list(new_ids)
-    targets += [room.external_id for room in rooms if room.id not in with_members and room.external_id not in targets and room.management_status != "archived"]
+    targets += [room.external_id for room in rooms if room.id not in with_members and room.external_id not in targets and room.management_status != "archived" and room.status != "left"]
     requested: list[str] = []
     for room_id in targets:
         if len(requested) >= MAX_MEMBER_SYNC_PER_ROUND:
@@ -164,3 +188,83 @@ def after_groups_result(db: Session, channel: Channel, known_before: set[str]) -
             },
         )
     return requested
+
+
+def complete_snapshot_ids(command: dict[str, Any], result: dict[str, Any]) -> set[str] | None:
+    """从 groups_all 的结果里取出"全部群 ID";结果不是完整快照时返回 None(不参与退群对账)。
+
+    带关键词过滤的结果只是一部分;total 和条数对不上、或带"被截断/还有更多"标记也不是完整快照。
+    """
+
+    params = service.as_object(command.get("params") or command.get("args"))
+    if service.text(params.get("keyword")):
+        return None
+    items = service._result_items(result, "groups", "items", "rooms")
+    total = result.get("total")
+    if isinstance(total, int) and not isinstance(total, bool) and total != len(items):
+        return None
+    if result.get("truncated") or result.get("has_more"):
+        return None
+    ids = {service._directory_id(item, "account_id", "room_id", "chatroom_id", "user_name", "wxid", "id") for item in items}
+    ids.discard("")
+    return ids
+
+
+def mark_left(room: Chatroom, now: Any, *, reason: str) -> None:
+    """bot 已不在这个群:status=left、is_active=False;运行模式不动,并记下退群前是否启用,重新加入时据此恢复。"""
+
+    try:
+        extra = json.loads(room.extra_json or "{}")
+    except (TypeError, ValueError):
+        extra = {}
+    if not isinstance(extra, dict):
+        extra = {}
+    extra["left"] = {"at": now.isoformat(), "was_active": bool(room.is_active), "reason": reason}
+    room.extra_json = json.dumps(extra, ensure_ascii=False, sort_keys=True)
+    room.status = "left"
+    room.is_active = False
+    logger.info("webridge group left", extra={"channel_id": room.channel_id, "group": room.name or room.external_id, "reason": reason})
+
+
+def restore_if_returned(room: Chatroom) -> bool:
+    """群重新出现在快照里:如果它之前被标记为已退出,恢复退群前的启用状态。返回是否发生了恢复。调用方随后会把 status 写回 synced。"""
+
+    if room.status != "left":
+        return False
+    try:
+        extra = json.loads(room.extra_json or "{}")
+    except (TypeError, ValueError):
+        extra = {}
+    left = service.as_object(extra.get("left")) if isinstance(extra, dict) else {}
+    room.is_active = bool(left.get("was_active"))
+    logger.info("webridge group rejoined", extra={"channel_id": room.channel_id, "group": room.name or room.external_id, "restored_active": room.is_active})
+    return True
+
+
+def reconcile_departures(db: Session, channel: Channel, seen_ids: set[str], now: Any) -> list[str]:
+    """用完整群快照对账:曾经同步过的群连续缺失 MISS_LIMIT 次(或刚收到被移出的系统消息后缺失 1 次)就标记为已退出。返回刚标记的群名。"""
+
+    state = _state(channel)
+    missing = {str(k): int(v) for k, v in service.as_object(state.get("missing")).items()}
+    suspects = {str(k): str(v) for k, v in service.as_object(state.get("suspect_left")).items()}
+    left_names: list[str] = []
+    for room in db.scalars(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.status == "synced")).all():
+        room_id = room.external_id
+        if room_id in seen_ids:
+            missing.pop(room_id, None)
+            suspects.pop(room_id, None)
+            continue
+        missing[room_id] = missing.get(room_id, 0) + 1
+        age = service._seconds_since(suspects.get(room_id))
+        suspected = age is not None and age <= SUSPECT_WINDOW_SECONDS
+        if missing[room_id] >= (1 if suspected else MISS_LIMIT):
+            mark_left(room, now, reason="left_message_then_missing" if suspected else "missing_from_group_list")
+            left_names.append(room.name or room_id)
+            missing.pop(room_id, None)
+            suspects.pop(room_id, None)
+    # 计数只保留还在"已同步"状态的群,过期的怀疑记录也清掉
+    synced = set(db.scalars(select(Chatroom.external_id).where(Chatroom.channel_id == channel.id, Chatroom.status == "synced")).all())
+    missing = {key: value for key, value in missing.items() if key in synced}
+    suspects = {key: value for key, value in suspects.items() if (service._seconds_since(value) or 0) <= SUSPECT_WINDOW_SECONDS * 2}
+    _save_state(channel, {**state, "missing": missing, "suspect_left": suspects})
+    return left_names

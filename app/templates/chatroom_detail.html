@@ -19,10 +19,15 @@
     <div>{{ identity({'name': detail.name, 'external_id': detail.chatroom_external_id, 'avatar_url': detail.avatar_url|default(''), 'initial': (detail.name or '?')[:1], 'show_id': false}, 'lg') }}</div>
     <div class="chip-row">
       <span class="chip chip-outline">{{ detail.member_record_count }} 名成员</span>
-      <span class="chip {% if detail.management_status == 'enabled' %}chip-success{% else %}chip-muted{% endif %}">{{ detail.management_status_label }}</span>
+      {# 已退出的群:运行模式只是用户原来的设置(重新加入后恢复),不是当前状态,用灰色并标明"原设置"。 #}
+      <span class="chip {% if detail.management_status == 'enabled' and chatroom.status != 'left' %}chip-success{% else %}chip-muted{% endif %}">{{ ('原设置：' if chatroom.status == 'left' else '') ~ detail.management_status_label }}</span>
       <span class="chip chip-outline">最近同步 {{ detail.last_synced_at|bj_time if detail.last_synced_at else '-' }}</span>
+      {% if chatroom.status == 'left' %}<span class="chip badge-error">已退出</span>{% endif %}
     </div>
   </div>
+  {% if chatroom.status == 'left' %}
+  <div class="notice-card"><strong>机器人已不在这个群里</strong><p>可能是退出了群聊或被移出。群功能和 AI 已暂停，发往这个群的消息会被拒绝；历史消息和成员记录都保留。重新加入后会自动恢复原来的设置。</p></div>
+  {% endif %}
 
   <nav class="tab-bar">
     <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">群功能</a>

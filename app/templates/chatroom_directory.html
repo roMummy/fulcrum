@@ -27,6 +27,7 @@
         <option value="discovered" {% if directory.status == 'discovered' %}selected{% endif %}>待启用</option>
         <option value="disabled" {% if directory.status == 'disabled' %}selected{% endif %}>只采集消息</option>
         <option value="archived" {% if directory.status == 'archived' %}selected{% endif %}>已关闭</option>
+        <option value="left" {% if directory.status == 'left' %}selected{% endif %}>已退出</option>
       </select>
     </label>
     <div class="compact-filter-actions">
@@ -49,12 +50,19 @@
         <td class="col-action">
           {# 一行控件(.row-controls):状态标签、开关、设置按钮垂直居中、高度统一;靠右对齐,标签隐藏时开关和按钮位置不变。 #}
           <div class="row-controls">
+          {% if item.is_left %}
+          {# bot 已不在这个群里(退群或被移出):功能已暂停,没有启用开关;重新加入后会自动恢复。 #}
+          <span class="chip badge-error" title="机器人已不在这个群里（退群或被移出），功能已暂停；重新加入后自动恢复">已退出</span>
+          {% else %}
           <span class="chip chip-muted" data-mode-chip{% if item.is_active %} hidden{% endif %}>{{ '已关闭' if item.management_status == 'archived' else '只采集' }}</span>
+          {% endif %}
+          {% if not item.is_left %}
           {# 启用开关:点击即保存(开 = 正常运行,关 = 只采集消息);三档运行模式进入群页面设置。 #}
           <span class="ui-switch" title="启用后机器人才会在这个群里工作">
             <input type="checkbox" role="switch" aria-label="启用 {{ item.name }}" data-autosave-url="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}/management" data-autosave-key="management_status" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if item.is_active %} checked{% endif %} />
             <span class="ui-switch-track"></span>
           </span>
+          {% endif %}
           <a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}">设置</a>
           </div>
         </td>

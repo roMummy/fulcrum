@@ -147,15 +147,30 @@ def test_join_events_and_invitation_system_messages_trigger_a_sync(env, woken, e
 
 # ---------- 群列表结果回来之后 ----------
 
-def _finish_groups_all(db, channel, items):
+def _finish_groups_all(db, channel, items, **result_extra):
     job, command = _commands(db, "groups_all")[-1]
     job.status = "running"
     db.commit()
+    result = {"ok": True, "total": len(items), "items": items, **result_extra}
     with patch.object(service, "_enqueue_account_status"), patch.object(service, "_enqueue_device_status"):
-        service.accept_command_result(
-            db, channel, {**IDENTITY, "request_id": command["request_id"], "ok": True, "result": {"ok": True, "total": len(items), "items": items}}
-        )
+        service.accept_command_result(db, channel, {**IDENTITY, "request_id": command["request_id"], "ok": True, "result": result})
     db.commit()
+
+
+def _snapshot(db, channel, items, **result_extra):
+    """模拟一次完整的群列表同步:下发 groups_all,手机回报 items。"""
+
+    runtime = json.loads(channel.runtime_info_json)
+    runtime.get("group_sync", {}).pop("requested_at", None)  # 清掉防抖,每次都能下发
+    channel.runtime_info_json = json.dumps(runtime)
+    group_sync.request_group_sync(db, channel, reason="periodic", min_gap_seconds=0)
+    db.commit()
+    _finish_groups_all(db, channel, items, **result_extra)
+
+
+def _row(db, external_id):
+    db.expire_all()
+    return db.scalar(select(Chatroom).where(Chatroom.external_id == external_id))
 
 
 def test_a_new_group_is_created_and_its_members_are_requested(env) -> None:
@@ -252,3 +267,120 @@ def test_ingesting_a_group_member_join_event_triggers_the_sync(env, woken) -> No
     ingest_inbound_event(db, channel, payload)
     db.commit()
     assert len(_commands(db, "groups_all")) == 1
+
+
+# ---------- 退群 / 被移出 ----------
+
+OTHER_ROOM = "10000000009@chatroom"
+
+
+def test_a_group_missing_from_two_consecutive_snapshots_is_marked_as_left(env) -> None:
+    db, channel = env
+    _add_room(db, channel, OLD_ROOM, members=2)
+    _add_room(db, channel, OTHER_ROOM, members=2)
+    _snapshot(db, channel, [{"account_id": OTHER_ROOM, "nick_name": "还在的群"}])
+    assert _row(db, OLD_ROOM).status == "synced"  # 只缺失一次:可能是手机偶发返回异常,先不认定
+    _snapshot(db, channel, [{"account_id": OTHER_ROOM, "nick_name": "还在的群"}])
+    left, kept = _row(db, OLD_ROOM), _row(db, OTHER_ROOM)
+    assert (left.status, left.is_active, left.management_status) == ("left", False, "enabled")  # 运行模式保持用户原来的选择
+    assert json.loads(left.extra_json)["left"]["was_active"] is True
+    assert (kept.status, kept.is_active) == ("synced", True)
+    assert len(_row(db, OLD_ROOM) and db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == left.id)).all()) == 2  # 成员记录保留
+
+
+def test_seeing_the_group_again_resets_the_miss_counter(env) -> None:
+    db, channel = env
+    _add_room(db, channel, OLD_ROOM)
+    other = [{"account_id": OTHER_ROOM, "nick_name": "别的群"}]
+    _snapshot(db, channel, other)
+    _snapshot(db, channel, other + [{"account_id": OLD_ROOM, "nick_name": "老群"}])  # 又出现了
+    _snapshot(db, channel, other)
+    assert _row(db, OLD_ROOM).status == "synced"  # 不是"连续"缺失
+
+
+def test_a_removed_message_makes_one_missing_snapshot_enough(env, woken) -> None:
+    db, channel = env
+    _add_room(db, channel, OLD_ROOM)
+    group_sync.observe_inbound_event(db, channel, _event(message_type="system", content='你被"小明"移出群聊'), _group(OLD_ROOM))
+    db.commit()
+    assert len(_commands(db, "groups_all")) == 1 and json.loads(channel.runtime_info_json)["group_sync"]["reason"] == "leave_system_message"
+    job, _ = _commands(db, "groups_all")[0]
+    _finish_groups_all(db, channel, [{"account_id": OTHER_ROOM, "nick_name": "别的群"}])
+    assert _row(db, OLD_ROOM).status == "left"
+
+
+@pytest.mark.parametrize("content", ["你已退出群聊", '"小明"将你移出了群聊', "该群聊已被解散", "你已被移出群聊"])
+def test_leave_system_messages_are_recognized(env, woken, content) -> None:
+    db, channel = env
+    _add_room(db, channel, OLD_ROOM)
+    group_sync.observe_inbound_event(db, channel, _event(message_type="system", content=content), _group(OLD_ROOM))
+    assert OLD_ROOM in json.loads(channel.runtime_info_json)["group_sync"]["suspect_left"]
+
+
+def test_partial_snapshots_never_mark_a_group_as_left(env) -> None:
+    db, channel = env
+    _add_room(db, channel, OLD_ROOM)
+    other = [{"account_id": OTHER_ROOM, "nick_name": "别的群"}]
+    for extra in ({"total": 99}, {"has_more": True}, {"truncated": True}):  # 条数对不上 / 还有更多 / 被截断
+        _snapshot(db, channel, other, **extra)
+        _snapshot(db, channel, other, **extra)
+    assert _row(db, OLD_ROOM).status == "synced"
+    assert group_sync.complete_snapshot_ids({"params": {"keyword": "测试"}}, {"items": other}) is None  # 带关键词过滤的只是一部分
+    assert group_sync.complete_snapshot_ids({"params": {}}, {"items": other}) == {OTHER_ROOM}
+
+
+def test_groups_that_were_never_synced_are_not_marked_as_left(env) -> None:
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM)
+    room.status = "pending_sync"  # 手动登记的群,手机列表里从来没出现过
+    db.commit()
+    other = [{"account_id": OTHER_ROOM, "nick_name": "别的群"}]
+    _snapshot(db, channel, other)
+    _snapshot(db, channel, other)
+    assert _row(db, OLD_ROOM).status == "pending_sync"
+
+
+@pytest.mark.parametrize("was_active, mode", [(True, "enabled"), (False, "disabled")])
+def test_a_group_that_comes_back_gets_its_previous_state_restored(env, was_active, mode) -> None:
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM, members=1, management_status=mode)
+    room.is_active = was_active
+    db.commit()
+    other = [{"account_id": OTHER_ROOM, "nick_name": "别的群"}]
+    _snapshot(db, channel, other)
+    _snapshot(db, channel, other)
+    assert _row(db, OLD_ROOM).status == "left"
+    _snapshot(db, channel, other + [{"account_id": OLD_ROOM, "nick_name": "老群", "member_count": 5}])  # 又被拉回来了
+    back = _row(db, OLD_ROOM)
+    assert (back.status, back.is_active, back.management_status, back.member_count) == ("synced", was_active, mode, 5)
+
+
+def test_left_groups_are_not_asked_for_members(env) -> None:
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM)  # 没有任何成员记录
+    room.status = "left"
+    db.commit()
+    group_sync.request_group_sync(db, channel, reason="periodic", min_gap_seconds=0)
+    db.commit()
+    _finish_groups_all(db, channel, [{"account_id": OTHER_ROOM, "nick_name": "别的群"}])
+    assert OLD_ROOM not in [command["params"]["room_id"] for _, command in _commands(db, "room_members")]
+
+
+def test_sending_to_a_group_the_bot_has_left_is_refused_with_a_clear_reason(env) -> None:
+    from app.models.entities import Conversation
+    from app.services.channel_adapters.wechat_webridge import WechatWeBridgeAdapter
+
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM)
+    conversation = Conversation(tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id=OLD_ROOM, chat_type="group")
+    db.add(conversation)
+    db.commit()
+    payload = {"message_type": "text", "content": "你好"}
+    service.enqueue_message_command(db, channel, conversation, payload)  # 还在群里:正常入队
+    room.status = "left"
+    db.commit()
+    with pytest.raises(ValueError, match="已不在这个群里"):
+        service.enqueue_message_command(db, channel, conversation, payload)
+    result = WechatWeBridgeAdapter().send_message(channel, conversation, payload)  # 经适配器:记为失败并带原因,不会下发命令
+    assert result["ok"] is False and "已不在这个群里" in str(result)
+    assert len([1 for _ in _commands(db, "send_message")]) == 1

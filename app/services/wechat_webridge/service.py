@@ -205,6 +205,10 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 # 同步群列表不能把手动停用的群重新打开。
                 room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now, is_active=True, management_status="enabled")
                 db.add(room)
+            # 之前被标记为已退出的群又出现在列表里:先恢复退群前的启用状态(下面会覆盖 extra_json,所以要先读)。
+            from app.services.wechat_webridge import group_sync
+
+            group_sync.restore_if_returned(room)
             room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
             room.remark = str(item.get("remark") or "")[:255] or None
             room.status = "synced"
@@ -368,6 +372,11 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
     receiver = text(payload.get("receiver_id") or payload.get("external_id") or conversation.external_id)
     if not receiver:
         raise ValueError("webridge_message_requires_receiver")
+    # bot 已不在这个群里(退群或被移出):不再向它下发发送命令,定时推送等不会反复失败。
+    if receiver.endswith("@chatroom") and db.scalar(
+        select(Chatroom.id).where(Chatroom.channel_id == channel.id, Chatroom.external_id == receiver, Chatroom.status == "left").limit(1)
+    ) is not None:
+        raise ValueError("bot 已不在这个群里（退群或被移出），无法发送")
     command_type = {
         "text": "send_message",
         "image": "send_image",
@@ -868,7 +877,7 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             known_before = group_sync.known_room_ids(db, channel) if command_type == "groups_all" else None
             counts = persist_directory_result(db, channel, command, result)
             if known_before is not None:
-                group_sync.after_groups_result(db, channel, known_before)
+                group_sync.after_groups_result(db, channel, known_before, group_sync.complete_snapshot_ids(command, result))
             if command_type == "device_status":
                 _save_device_status(db, channel, as_object(result.get("result")) or result)
             elif command_type == "account_status":
