@@ -305,7 +305,7 @@ def build_platform_analytics(
     bound_tenant_ids = set(account_totals)
 
     channel_rows = db.execute(
-        select(Channel.tenant_id, Channel.channel_type, Channel.is_enabled, Channel.status, Channel.login_state)
+        select(Channel.tenant_id, Channel.channel_type, Channel.is_enabled, Channel.status, Channel.login_state).where(Channel.deleted_at.is_(None))
     ).all()
     channel_totals: dict[int, int] = defaultdict(int)
     online_channel_totals: dict[int, int] = defaultdict(int)

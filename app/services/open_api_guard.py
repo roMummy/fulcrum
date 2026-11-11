@@ -63,6 +63,7 @@ def guard_open_api_request(
                 Channel.id == int(channel_id),
                 Channel.tenant_id == int(app.tenant_id),
                 Channel.is_enabled.is_(True),
+                Channel.deleted_at.is_(None),
             )
         )
         if channel is None:

@@ -71,7 +71,7 @@ def list_platform_protocol_services(db: Session) -> list[dict[str, object]]:
             )
         )
         channel_count = db.scalar(
-            select(func.count(Channel.id)).where(Channel.channel_type == definition.code)
+            select(func.count(Channel.id)).where(Channel.channel_type == definition.code, Channel.deleted_at.is_(None))
         ) or 0
         rows.append(
             {

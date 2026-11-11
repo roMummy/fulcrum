@@ -179,6 +179,7 @@ def _load_runtime_channel_ids(db: Session) -> list[int]:
             select(Channel.id)
             .where(
                 Channel.is_enabled.is_(True),
+                Channel.deleted_at.is_(None),
                 Channel.channel_type.in_(PLATFORM_POLLING_CHANNEL_TYPES),
             )
             .order_by(Channel.id.asc())

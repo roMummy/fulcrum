@@ -152,6 +152,7 @@ def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> Open
         select(Channel).where(
             Channel.id == int(data.default_channel_id or 0),
             Channel.tenant_id == _require_tenant_id(),
+            Channel.deleted_at.is_(None),
         )
     )
     if channel is None:
@@ -209,7 +210,7 @@ def _sync_authorized_channels(db: Session, *, app: OpenApiApp, primary_channel_i
 
     normalized_ids = {int(item) for item in channel_ids if int(item or 0) > 0}
     normalized_ids.add(int(primary_channel_id))
-    valid_channels = db.scalars(select(Channel).where(Channel.id.in_(normalized_ids))).all()
+    valid_channels = db.scalars(select(Channel).where(Channel.id.in_(normalized_ids), Channel.deleted_at.is_(None))).all()
     valid_ids = {int(channel.id) for channel in valid_channels}
     if valid_ids != normalized_ids:
         raise ValueError("授权渠道不存在")

@@ -56,7 +56,7 @@ def _channels(db):
 
     return db.scalars(
         select(Channel)
-        .where(Channel.is_enabled.is_(True), Channel.channel_type.in_(list_supported_channel_types()))
+        .where(Channel.is_enabled.is_(True), Channel.deleted_at.is_(None), Channel.channel_type.in_(list_supported_channel_types()))
         .order_by(Channel.id.asc())
     ).all()
 

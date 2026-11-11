@@ -73,7 +73,10 @@ def toggle_bot(db: Session, bot: Bot) -> Bot:
 
 
 def get_bot(db: Session, bot_id: int) -> Bot | None:
-    return db.get(Bot, bot_id)
+    """读取机器人;已逻辑删除的视为不存在,详情页和各类操作入口因此统一返回 404。"""
+
+    bot = db.get(Bot, bot_id)
+    return None if bot is not None and bot.deleted_at is not None else bot
 
 
 def add_channel(
@@ -295,11 +298,11 @@ def _apply_binding_secret_changes(
 
 
 def list_bots(db: Session):
-    return db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+    return db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
 
 
 def list_channels(db: Session):
-    return db.scalars(select(Channel).order_by(Channel.id.desc())).all()
+    return db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
 
 
 def list_plugins(db: Session):

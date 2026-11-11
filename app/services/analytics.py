@@ -229,7 +229,12 @@ def evaluate_operational_alerts(db: Session) -> dict[str, int]:
     abnormal_channels = db.scalars(
         select(Channel)
         .join(Bot, Channel.bot_id == Bot.id)
-        .where(Channel.is_enabled.is_(True), Channel.status.in_(("degraded", "offline", "failed")))
+        .where(
+            Channel.is_enabled.is_(True),
+            Channel.deleted_at.is_(None),
+            Bot.deleted_at.is_(None),
+            Channel.status.in_(("degraded", "offline", "failed")),
+        )
     ).all()
     for channel in abnormal_channels:
         rule_key = f"channel_abnormal:{channel.id}"
@@ -251,6 +256,7 @@ def evaluate_operational_alerts(db: Session) -> dict[str, int]:
         select(Channel).where(
             Channel.channel_type == "wechat_ipad",
             Channel.is_enabled.is_(True),
+            Channel.deleted_at.is_(None),
             Channel.login_state == "online",
             Channel.last_heartbeat_at.is_not(None),
             Channel.last_heartbeat_at < heartbeat_cutoff,
@@ -323,7 +329,7 @@ def evaluate_operational_alerts(db: Session) -> dict[str, int]:
 
     bot_cutoff = now - timedelta(hours=1)
     bot_history_cutoff = now - timedelta(days=7)
-    enabled_bots = db.scalars(select(Bot).where(Bot.is_enabled.is_(True))).all()
+    enabled_bots = db.scalars(select(Bot).where(Bot.is_enabled.is_(True), Bot.deleted_at.is_(None))).all()
     for bot in enabled_bots:
         recent_count = (
             db.scalar(

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.routing import Match
@@ -431,7 +431,7 @@ def detail_fallback(path: str) -> str:
 
 
 def filtered_bots_query(db: Session):
-    return db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+    return db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
 
 
 def build_bot_name_map(bots: list[Bot]) -> dict[int, str]:
@@ -686,7 +686,7 @@ def build_dashboard_trend_series(
                 Message.direction,
             )
             .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(Message.created_at >= start_bucket, Message.created_at <= now_bucket + timedelta(hours=1))
         )
         raw_message_rows = db.execute(raw_message_stmt).all()
@@ -775,9 +775,9 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
 
     bot_rows = db.execute(
         select(Bot.id, Bot.name, func.count(Message.id).label("message_count"))
-        .join(Conversation, Conversation.bot_id == Bot.id)
+        .join(Conversation, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
         .join(Message, Message.conversation_id == Conversation.id)
-        .where(Message.created_at >= since_24h, Message.direction == "in")
+        .where(Message.created_at >= since_24h, Message.direction == "in", Bot.deleted_at.is_(None))
         .group_by(Bot.id, Bot.name)
         .order_by(func.count(Message.id).desc(), Bot.id.asc())
     ).all()
@@ -789,7 +789,7 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
             func.count(Message.id).label("message_count"),
         )
         .join(Message, Message.conversation_id == Conversation.id)
-        .join(Bot, Conversation.bot_id == Bot.id)
+        .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
         .where(
             Conversation.chat_type == "group",
             Message.direction == "in",
@@ -808,7 +808,7 @@ def build_dashboard_rankings(db: Session) -> dict[str, list[dict[str, object]]]:
             func.count(Message.id).label("message_count"),
         )
         .join(Conversation, Message.conversation_id == Conversation.id)
-        .join(Bot, Conversation.bot_id == Bot.id)
+        .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
         .where(
             Message.direction == "in",
             Message.sender_id.is_not(None),
@@ -1376,19 +1376,20 @@ async def dashboard(request: Request):
         today_cutoff = now_shanghai().replace(hour=0, minute=0, second=0, microsecond=0)
         # 总览始终统计当前租户的完整数据集；机器人环境已经从产品和数据库中删除。
         stats = {
-            "bots": db.scalar(select(func.count(Bot.id))) or 0,
-            "channels": db.scalar(select(func.count(Channel.id))) or 0,
+            "bots": db.scalar(select(func.count(Bot.id)).where(Bot.deleted_at.is_(None))) or 0,
+            "channels": db.scalar(select(func.count(Channel.id)).where(Channel.deleted_at.is_(None))) or 0,
             "plugins": db.scalar(select(func.count(Plugin.id))) or 0,
             "messages": db.scalar(select(func.count(Message.id))) or 0,
             "errors": db.scalar(select(func.count(ErrorLog.id))) or 0,
             "conversations": db.scalar(select(func.count(Conversation.id))) or 0,
         }
         ops_snapshot = {
-            "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True))) or 0,
-            "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True))) or 0,
+            "enabled_bots": db.scalar(select(func.count(Bot.id)).where(Bot.is_enabled.is_(True), Bot.deleted_at.is_(None))) or 0,
+            "enabled_channels": db.scalar(select(func.count(Channel.id)).where(Channel.is_enabled.is_(True), Channel.deleted_at.is_(None))) or 0,
             "online_channels": db.scalar(
                 select(func.count(Channel.id)).where(
                     Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
+                    Channel.deleted_at.is_(None),
                     Channel.is_enabled.is_(True),
                     Channel.status == "online",
                 )
@@ -1397,6 +1398,7 @@ async def dashboard(request: Request):
             "abnormal_channels": db.scalar(
                 select(func.count(Channel.id)).where(
                     Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES),
+                    Channel.deleted_at.is_(None),
                     Channel.is_enabled.is_(True),
                     Channel.status.in_(("degraded", "offline", "failed")),
                 )
@@ -1414,13 +1416,13 @@ async def dashboard(request: Request):
         active_bot_stmt = (
             select(func.count(func.distinct(Conversation.bot_id)))
             .join(Message, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(Message.created_at >= recent_cutoff)
         )
         active_user_stmt = (
             select(func.count(func.distinct(Message.sender_id)))
             .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(
                 Message.direction == "in",
                 Message.sender_id.is_not(None),
@@ -1430,7 +1432,7 @@ async def dashboard(request: Request):
         active_group_stmt = (
             select(func.count(func.distinct(Conversation.external_id)))
             .join(Message, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(
                 Conversation.chat_type == "group",
                 Message.direction == "in",
@@ -1440,13 +1442,13 @@ async def dashboard(request: Request):
         inbound_today_stmt = (
             select(func.count(Message.id))
             .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(Message.direction == "in", Message.created_at >= today_cutoff)
         )
         outbound_24h_stmt = (
             select(func.count(Message.id))
             .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(Bot, Conversation.bot_id == Bot.id)
+            .join(Bot, and_(Conversation.bot_id == Bot.id, Bot.deleted_at.is_(None)))
             .where(Message.direction == "out", Message.created_at >= recent_cutoff)
         )
         plugin_trigger_stmt = (
@@ -1492,11 +1494,11 @@ async def dashboard(request: Request):
         trend_series = build_dashboard_trend_series(db, hours=24)
         rankings = build_dashboard_rankings(db)
         bot_rows = []
-        for bot in db.scalars(select(Bot).order_by(Bot.id.desc())).all():
+        for bot in db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all():
             bot_rows.append(
                 {
                     "bot": bot,
-                    "channels": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0,
+                    "channels": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id, Channel.deleted_at.is_(None))) or 0,
                     "plugins": db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0,
                     "conversations": db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot.id)) or 0,
                     "messages": db.scalar(
@@ -1526,7 +1528,7 @@ async def dashboard(request: Request):
 async def bots_page(request: Request):
     db = get_session()
     try:
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         # 列表需要稳定的计数键，模板不再触碰已删除的分组、模板、标签和环境关系。
         channels_by_bot: dict[int, list[Channel]] = {}
         for channel in db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.asc())).all():
@@ -1535,7 +1537,7 @@ async def bots_page(request: Request):
             {
                 "bot": bot,
                 "identity": bot_identity(bot.name, channels_by_bot.get(int(bot.id), [])),
-                "channel_count": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id)) or 0,
+                "channel_count": db.scalar(select(func.count(Channel.id)).where(Channel.bot_id == bot.id, Channel.deleted_at.is_(None))) or 0,
                 "binding_count": db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot.id)) or 0,
             }
             for bot in bots
@@ -1592,7 +1594,7 @@ async def batch_toggle_bots_action(request: Request, action: str = Form(...)):
         if not bot_ids:
             return RedirectResponse(url="/bots?notice=" + quote("请先选择至少一个机器人"), status_code=303)
 
-        bots = db.scalars(select(Bot).where(Bot.id.in_(bot_ids))).all()
+        bots = db.scalars(select(Bot).where(Bot.id.in_(bot_ids), Bot.deleted_at.is_(None))).all()
         enabled = action == "enable"
         for bot in bots:
             bot.is_enabled = enabled
@@ -1718,7 +1720,7 @@ async def channels_page(request: Request):
             .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES), Channel.deleted_at.is_(None))
             .order_by(Channel.id.desc())
         ).all()
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
         bindings = db.scalars(
             select(BotBinding)
@@ -2104,7 +2106,7 @@ async def channel_detail_page(request: Request, channel_id: int):
         channel = get_channel(db, channel_id)
         if not channel or channel.channel_type not in BUILTIN_CHANNEL_TYPES:
             raise HTTPException(status_code=404, detail="Channel not found")
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         provider_nodes = list_provider_nodes(db)
         bot_name_map = build_bot_name_map(bots)
         binding = db.scalar(select(BotBinding).where(BotBinding.channel_id == channel.id))
@@ -3992,8 +3994,8 @@ async def plugins_page(request: Request):
     try:
         sync_plugins_from_directory(db)
         plugins = db.scalars(select(Plugin).order_by(Plugin.id.desc())).all()
-        bindings = db.scalars(select(BotPlugin).order_by(BotPlugin.id.desc())).all()
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         plugin_runtime_map = {plugin.code: get_plugin_runtime_meta(plugin.code) for plugin in plugins}
         search_query = request.query_params.get("q", "").strip()
         plugin_type_filter = request.query_params.get("plugin_type", "").strip()
@@ -4070,8 +4072,8 @@ async def plugin_runtime_page(request: Request):
     try:
         sync_plugins_from_directory(db)
         plugins = db.scalars(select(Plugin).order_by(Plugin.id.desc())).all()
-        bindings = db.scalars(select(BotPlugin).order_by(BotPlugin.id.desc())).all()
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
         for binding in bindings:
             binding.runtime_status = compute_binding_runtime(binding)
@@ -4099,8 +4101,8 @@ async def plugin_detail_page(request: Request, plugin_id: int):
         plugin = db.get(Plugin, plugin_id)
         if not plugin:
             raise HTTPException(status_code=404, detail="Plugin not found")
-        bindings = db.scalars(select(BotPlugin).where(BotPlugin.plugin_id == plugin_id).order_by(BotPlugin.id.desc())).all()
-        bots = db.scalars(select(Bot).order_by(Bot.id.desc())).all()
+        bindings = db.scalars(select(BotPlugin).where(BotPlugin.plugin_id == plugin_id, BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
         for binding in bindings:
             binding.runtime_status = compute_binding_runtime(binding)
@@ -4197,7 +4199,7 @@ async def toggle_plugin_direct_action(
     try:
         require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         plugin = db.get(Plugin, plugin_id)
-        bot = db.get(Bot, bot_id)
+        bot = get_bot(db, bot_id)
         if not plugin or not bot:
             raise HTTPException(status_code=404, detail="Bot or plugin not found")
         binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
@@ -4654,7 +4656,11 @@ async def messages_page(
         if normalized_chat_type not in {"group", "direct"}:
             normalized_chat_type = ""
 
-        conversations_stmt = select(Conversation)
+        # 已删除的账号/机器人(逻辑删除)的会话不再出现在列表里,聊天数据本身保留。
+        conversations_stmt = select(Conversation).where(
+            Conversation.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))),
+            or_(Conversation.channel_id.is_(None), Conversation.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None)))),
+        )
         if bot_id:
             conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
         if channel_id:

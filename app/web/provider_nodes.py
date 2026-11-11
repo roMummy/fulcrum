@@ -105,7 +105,7 @@ def _node_detail_data(db, node_id: int) -> dict[str, object]:
     if node is None:
         raise HTTPException(status_code=404, detail="Provider node not found")
     channels = db.scalars(
-        select(Channel).where(Channel.provider_node_id == node.id).order_by(Channel.id.desc())
+        select(Channel).where(Channel.provider_node_id == node.id, Channel.deleted_at.is_(None)).order_by(Channel.id.desc())
     ).all()
     latest_heartbeat = db.scalar(
         select(ProviderHeartbeat)
@@ -132,7 +132,7 @@ async def provider_node_list_page(request: Request):
             int(node_id): int(count)
             for node_id, count in db.execute(
                 select(Channel.provider_node_id, func.count(Channel.id))
-                .where(Channel.provider_node_id.is_not(None))
+                .where(Channel.provider_node_id.is_not(None), Channel.deleted_at.is_(None))
                 .group_by(Channel.provider_node_id)
             ).all()
         }

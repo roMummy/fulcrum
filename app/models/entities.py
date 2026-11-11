@@ -17,6 +17,9 @@ class Bot(Base, TenantOwnedMixin, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="stopped")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 逻辑删除时间:删除账号时同步标记它的机器人。已删除的机器人从所有列表、统计和选择器中隐藏,
+    # 数据全部保留,误删后由管理员清空该字段即可恢复。
+    deleted_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     channels = relationship("Channel", back_populates="bot", cascade="all, delete-orphan")
     plugin_bindings = relationship("BotPlugin", back_populates="bot", cascade="all, delete-orphan")
