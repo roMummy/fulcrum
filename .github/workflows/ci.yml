@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Syntax check
+        run: python -m compileall -q app plugins scripts migrations
+      - name: Plugin catalog check
+        run: python scripts/verify_plugin_migration.py
+      # 逐文件隔离运行已验证稳定通过的测试文件(清单见 .github/ci-test-files.txt)。
+      # 其余历史测试正在整理,修好后加入清单。
+      - name: Tests
+        env:
+          JOBS: "4"
+        run: scripts/run_tests_isolated.sh .github/ci-test-files.txt

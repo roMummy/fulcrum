@@ -1,5 +1,7 @@
 # Fulcrum
 
+**简体中文** | [English](README.en.md)
+
 `Fulcrum` 是本项目的名称。部分历史部署标识（Docker 容器名、数据库名、数据卷名）沿用 `multi-bot-saas` / `multi_bot_saas`，不影响使用。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
@@ -10,7 +12,7 @@
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
 - 平台管理：套餐、租户、订阅、订单审核、受控解绑和平台审计
 - 渠道接入：统一管理企业微信、微信 iPad 协议、Windows 微信和 Telegram
-- 插件生态：36 个 A-BOT 业务插件完成 SaaS 原生迁移，支持租户自备第三方服务地址和密钥
+- 插件生态：34 个 A-BOT 业务插件完成 SaaS 原生迁移，支持租户自备第三方服务地址和密钥
 - 远端执行：企业微信执行端支持一次性激活码、设备凭证、心跳、长轮询、任务租约和多账号绑定
 - 业务数据：机器人、渠道、联系人、群聊、会话、消息、插件绑定和任务按租户强制隔离
 - 数据库生命周期：生产只接受 Alembic head，数据库未就绪时 `/readyz` 返回 503 且不启动 Worker
@@ -222,7 +224,7 @@ python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_
 
 ## 插件迁移交付
 
-当前目录包含 36 个从 A-BOT 业务迁移的插件，以及 `customer_operations`、`supplier_order_flow` 两个 SaaS 自有插件。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不导入 A-BOT 的数据库、Redis、Provider 或单机管理运行时。
+当前目录包含 34 个从 A-BOT 业务迁移的插件，以及 `customer_operations`、`supplier_order_flow` 两个 SaaS 自有插件。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不导入 A-BOT 的数据库、Redis、Provider 或单机管理运行时。
 
 租户承担的 LLM、Dify、解析服务、NewAPI、MaiBot 等第三方成本，均由租户在插件绑定中维护地址和凭证。敏感字段使用 `ABOT_PLUGIN_SECRET_KEY` 加密后按租户和绑定隔离，目录配置不提供共享密钥或环境回退。
 
@@ -231,6 +233,8 @@ python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_
 ```bash
 .venv/bin/python scripts/verify_plugin_migration.py
 ```
+
+只在内网使用、不随本仓库发布的插件，把目录名写进环境变量 `FULCRUM_PRIVATE_PLUGINS`（逗号分隔），校验脚本会忽略它们。
 
 详细范围、迁移边界和定向验证记录见 [插件迁移台账](docs/plugin-migration-ledger.md)。
 
@@ -455,14 +459,18 @@ curl -X POST "https://fulcrum.example.com/channels/3/outbound/upload-and-send" `
 
 ## 测试
 
-测试前必须从进程环境指定 `.run/test-runtime` 数据库，避免测试模块收集顺序让全局 Settings 误连开发库：
+部分测试会修改全局配置，放在同一个进程里会互相污染，请逐文件隔离运行（每个文件独立进程和独立测试数据库）：
 
 ```bash
-APP_ENV=test \
-DATA_DIR="$PWD/.run/test-runtime/full" \
-DATABASE_URL="sqlite:///$PWD/.run/test-runtime/full/test.db" \
-LOG_DIR="$PWD/.run/test-runtime/full/logs" \
-.venv/bin/python -m pytest -q
+scripts/run_tests_isolated.sh                              # 全部 tests/test_*.py
+scripts/run_tests_isolated.sh .github/ci-test-files.txt    # CI 使用的稳定清单
+```
+
+单个文件必须指定独立的测试数据库，避免误连开发库：
+
+```bash
+APP_ENV=test DATA_DIR="$PWD/.run/t" DATABASE_URL="sqlite:///$PWD/.run/t/test.db" LOG_DIR="$PWD/.run/t/logs" \
+.venv/bin/python -m pytest tests/test_xxx.py -q
 ```
 
 ## 开发说明
@@ -492,7 +500,7 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 
 - 生产环境关闭 `AUTH_SEED_DEMO_USERS`
 - HTTPS 部署保持 `AUTH_COOKIE_SECURE=true`；仅限受控内网 HTTP 验收时显式设为 `false`
-- 使用高强度且长期稳定的 `SECRET_KEY`，轮换前必须设计设备摘要迁移方案
+- 使用高强度且长期稳定的 `SECRET_KEY`（至少 32 位随机字符串；非开发环境使用示例值会拒绝启动），轮换前必须设计设备摘要迁移方案
 - 数据量大时切换到 MariaDB
 - 为 `logs/`、数据库和 `data/tenant_billing/` 做好持久化与一致性备份
 - 反向代理后再对外暴露服务
@@ -500,4 +508,10 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 
 ## License
 
-当前仓库未单独声明开源许可证。如需对外发布，请补充正式 License 文件。
+本项目以 [Apache License 2.0](LICENSE) 发布。第三方依赖遵循各自的许可证；
+可选依赖见 [requirements-optional.txt](requirements-optional.txt)（例如 `pysilk` 未声明许可证，使用前请自行确认）。
+
+微信/企业微信 Hook、iPad 协议等 provider 客户端依赖第三方组件，**不随本仓库发布**；使用这类非官方接口可能违反
+相关平台的服务条款，请自行评估风险并遵守适用的法律法规。
+
+安全问题请参阅 [SECURITY.md](SECURITY.md)，参与贡献请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。

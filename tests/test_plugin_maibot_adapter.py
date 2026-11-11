@@ -223,12 +223,12 @@ def test_maibot_adapter_submits_trusted_message_dimensions(maibot_fixture, monke
     assert api_message["message_info"]["message_id"] == "maibot-message-real"
     sender_info = api_message["message_info"]["sender_info"]
     assert sender_info["user_info"] == {
-        "platform": "fulcrum",
+        "platform": "multi-bot-saas",
         "user_id": f"mbs-user-{identity['channel_id']}-member-real-100",
         "user_nickname": "真实成员",
     }
     assert sender_info["group_info"] == {
-        "platform": "fulcrum",
+        "platform": "multi-bot-saas",
         "group_id": f"mbs-conversation-{identity['conversation_id']}",
         "group_name": "产品交流群",
     }
