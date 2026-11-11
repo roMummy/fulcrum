@@ -1,4 +1,4 @@
-"""平台后台的插件管理:查看全部插件、全平台停用/恢复、设置对哪些租户可见。
+"""平台后台的插件管理:查看全部插件、全平台停用/恢复、设置对哪些租户可见、上传安装/升级/回滚插件包。
 
 插件目录全平台共享,租户只能管理自己机器人上的绑定;这里是平台方的管控入口。
 所有修改都要求平台会话和 CSRF 令牌,并写入平台审计日志。
@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
@@ -14,12 +14,15 @@ from app.core.db import SessionLocal
 from app.core.time import format_shanghai_time
 from app.models.entities import Plugin
 from app.models.saas import SaasPlan, Tenant
+from app.services import plugin_packages
 from app.services.plugin_directory import sync_plugins_from_directory
 from app.services.plugin_governance import (
     VISIBILITY_LABELS,
     PluginGovernanceError,
     PluginUsage,
+    VISIBILITY_PLATFORM_ONLY,
     grants_of,
+    record_plugin_audit,
     set_platform_status,
     set_visibility,
     usage_summary,
@@ -88,6 +91,7 @@ async def platform_plugins_page(request: Request):
                     "usage": usage.get(int(plugin.id), PluginUsage()),
                     "plan_ids": set(plan_ids),
                     "tenant_ids": set(tenant_ids),
+                    "versions": plugin_packages.list_versions(plugin.code),
                 }
             )
         context = _plugins_context(request, rows=rows, plans=plans, tenants=tenants)
@@ -147,3 +151,65 @@ async def platform_plugin_visibility_action(
         db.commit()
         label = plugin.display_name
     return _redirect("/platform/plugins", f"{label} 的可见范围已更新")
+
+
+@router.post("/plugins/upload")
+async def platform_plugin_upload_action(
+    request: Request,
+    package: UploadFile = File(...),
+    csrf_token: str = Form(""),
+):
+    """上传插件包(zip):编码不存在则安装,已存在则升级,旧版本自动存档可回滚。
+
+    插件在服务进程内运行,所以只有平台会话能走这里;新安装的插件默认"仅平台可见",
+    平台确认没问题后再开放给租户。
+    """
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        data = await package.read(plugin_packages.MAX_PACKAGE_BYTES + 1)
+        existing_codes = set(db.scalars(select(Plugin.code)).all())
+        try:
+            result = plugin_packages.install_or_upgrade(data)
+        except plugin_packages.PluginPackageError as exc:
+            return _redirect("/platform/plugins", f"插件包未通过检查:{exc}", danger=True)
+        sync_plugins_from_directory(db, force=True)
+        plugin = _get_plugin(db, result.code)
+        if result.code not in existing_codes:
+            # 新装的插件先只对平台可见,确认后再开放
+            set_visibility(db, plugin, visibility=VISIBILITY_PLATFORM_ONLY, actor_user_id=principal.user_id)
+        record_plugin_audit(
+            db,
+            principal.user_id,
+            f"plugin.{result.action}",
+            plugin,
+            f"code={result.code};from={result.from_version or '-'};to={result.to_version}",
+        )
+        db.commit()
+    if result.action == "install":
+        return _redirect("/platform/plugins", f"{result.display_name} 已安装(默认仅平台可见,确认后再开放给租户)")
+    return _redirect("/platform/plugins", f"{result.display_name} 已升级:{result.from_version} → {result.to_version}")
+
+
+@router.post("/plugins/{code}/rollback")
+async def platform_plugin_rollback_action(
+    code: str,
+    request: Request,
+    version_file: str = Form(...),
+    csrf_token: str = Form(""),
+):
+    """回滚到某个存档版本;回滚前的当前版本同样会存档。"""
+
+    principal = _require_platform_principal(request)
+    with SessionLocal() as db:
+        require_platform_csrf(db, request, csrf_token)
+        plugin = _get_plugin(db, code)
+        try:
+            result = plugin_packages.rollback(code, version_file)
+        except plugin_packages.PluginPackageError as exc:
+            return _redirect("/platform/plugins", f"回滚失败:{exc}", danger=True)
+        sync_plugins_from_directory(db, force=True)
+        record_plugin_audit(db, principal.user_id, "plugin.rollback", plugin, f"code={code};from={result.from_version or '-'};to={result.to_version}")
+        db.commit()
+    return _redirect("/platform/plugins", f"{result.display_name} 已回滚:{result.from_version} → {result.to_version}")

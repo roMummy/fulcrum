@@ -8,6 +8,12 @@
       <p class="muted">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
     </div>
   </div>
+  {# 上传 zip:编码不存在就是安装,已存在就是升级;旧版本自动存档,可在下面回滚。插件会在服务里运行代码,只上传可信来源的包。 #}
+  <form method="post" action="/platform/plugins/upload" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="full-row"><span>安装或升级插件(zip,不超过 20MB)</span><input type="file" name="package" accept=".zip" required /></label>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">上传并生效</button></div>
+  </form>
   {% for row in rows %}
   {% set plugin = row.plugin %}
   <details class="editor-surface" id="plugin-{{ plugin.code }}">
@@ -54,6 +60,17 @@
       </fieldset>
       <div class="full-row form-actions-inline"><button class="btn" type="submit">保存可见范围</button></div>
     </form>
+    {% if row.versions %}
+    <form method="post" action="/platform/plugins/{{ plugin.code }}/rollback" class="form-grid" onsubmit="return confirm('回滚会把当前版本换成所选的历史版本,确定吗?')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>回滚到历史版本</span>
+        <select name="version_file">
+          {% for item in row.versions %}<option value="{{ item.filename }}">v{{ item.version }}(存档于 {{ item.stored_at[:4] }}-{{ item.stored_at[4:6] }}-{{ item.stored_at[6:8] }} {{ item.stored_at[8:10] }}:{{ item.stored_at[10:12] }})</option>{% endfor %}
+        </select>
+      </label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">回滚</button></div>
+    </form>
+    {% endif %}
   </details>
   {% else %}
   <div class="empty-state"><strong>暂无插件</strong></div>

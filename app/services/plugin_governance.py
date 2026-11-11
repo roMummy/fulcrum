@@ -148,7 +148,7 @@ def grants_of(db: Session, plugin_id: int) -> tuple[list[int], list[int]]:
     return sorted(plans), sorted(tenants)
 
 
-def _audit(db: Session, actor_user_id: int | None, action: str, plugin: Plugin, detail: str) -> None:
+def record_plugin_audit(db: Session, actor_user_id: int | None, action: str, plugin: Plugin, detail: str) -> None:
     db.add(PlatformAuditLog(actor_user_id=actor_user_id, action=action, target_type="plugin", target_id=int(plugin.id), detail=detail[:500]))
 
 
@@ -159,7 +159,7 @@ def set_platform_status(db: Session, plugin: Plugin, *, status: str, note: str =
         raise PluginGovernanceError("未知的插件状态")
     plugin.platform_status = status
     plugin.status_note = (note or "").strip()[:255] or None if status == STATUS_DISABLED else None
-    _audit(db, actor_user_id, "plugin.status", plugin, f"code={plugin.code};status={status}")
+    record_plugin_audit(db, actor_user_id, "plugin.status", plugin, f"code={plugin.code};status={status}")
 
 
 def set_visibility(
@@ -200,4 +200,4 @@ def set_visibility(
         db.add(PluginGrant(plugin_id=plugin.id, scope_type=scope_type, scope_id=scope_id))
     plugin.visibility = visibility
     detail = ";".join(f"{scope_type}={scope_id}" for scope_type, scope_id in sorted(wanted))
-    _audit(db, actor_user_id, "plugin.visibility", plugin, f"code={plugin.code};visibility={visibility}" + (f";{detail}" if detail else ""))
+    record_plugin_audit(db, actor_user_id, "plugin.visibility", plugin, f"code={plugin.code};visibility={visibility}" + (f";{detail}" if detail else ""))
