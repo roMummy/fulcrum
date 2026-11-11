@@ -165,6 +165,7 @@ def upload_client(env, monkeypatch):
     monkeypatch.setattr(api, "tenant_session", session)
     monkeypatch.setattr(api, "tenant_scope", scope)
     app = FastAPI()
+    app.dependency_overrides[api._require_device_token] = lambda: None
     app.include_router(api.router)
     outcome = moments_media.request(db, posts["a"], "mid-img")
     db.commit()
@@ -173,7 +174,7 @@ def upload_client(env, monkeypatch):
 
 
 def _upload(client, channel_id, media_id, token, body, content_type="application/octet-stream"):
-    return client.post(f"/api/wechat-webridge/{channel_id}/agent/moments_upload?media_id={media_id}", content=body, headers={moments_media.UPLOAD_HEADER: token, "Content-Type": content_type})
+    return client.post(f"/api/wechat-webridge/{channel_id}/test-connection/agent/moments_upload?media_id={media_id}", content=body, headers={moments_media.UPLOAD_HEADER: token, "Content-Type": content_type})
 
 
 def test_the_phone_posts_raw_bytes_and_the_file_is_saved_and_the_token_is_spent(upload_client, tmp_path) -> None:

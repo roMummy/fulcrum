@@ -58,6 +58,8 @@ def client(monkeypatch):
         lambda db, **kw: {"attachment_id": 95, "storage_path": "/x/95.mp4", "file_size": len(kw["content"]), "mime_type": kw["content_type"]},
     )
     app = FastAPI()
+    # 路由凭据由接入流程集成测试覆盖；本文件专门核对 multipart 身份和媒体处理。
+    app.dependency_overrides[api._require_device_token] = lambda: None
     app.include_router(api.router)
     test_client = TestClient(app)
     test_client.seen = seen
@@ -66,7 +68,7 @@ def client(monkeypatch):
 
 def test_identity_is_read_from_form_fields_and_response_has_asset_id(client) -> None:
     response = client.post(
-        "/api/wechat-webridge/2/agent/upload_media?attachment_id=95",
+        "/api/wechat-webridge/2/test-connection/agent/upload_media?attachment_id=95",
         data={"device_id": "dev-1", "session_id": "s-1", "account_id": "wxid_a", "media_type": "video"},
         files={"file": ("video.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
     )
@@ -77,8 +79,23 @@ def test_identity_is_read_from_form_fields_and_response_has_asset_id(client) -> 
 
 def test_wrong_identity_is_rejected(client) -> None:
     response = client.post(
-        "/api/wechat-webridge/2/agent/upload_media?attachment_id=95",
+        "/api/wechat-webridge/2/test-connection/agent/upload_media?attachment_id=95",
         data={"device_id": "other", "session_id": "s-1", "account_id": "wxid_a"},
         files={"file": ("a.mp4", b"abc", "video/mp4")},
     )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize("configured", ["", "/agent/upload_media", "https://legacy.example/api/wechat-webridge/2/agent/upload_media"])
+def test_generated_upload_address_takes_precedence_over_legacy_config(configured) -> None:
+    """旧账号生成专属地址后，媒体上传不能继续使用无 Token 的配置。"""
+
+    import json
+
+    from app.models.entities import Channel
+    from app.services.wechat_webridge.access import connection_url, initialize_connection
+    from app.services.wechat_webridge.service import build_upload_url
+
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="测试微桥", channel_type="wechat_webridge", adapter_config_json=json.dumps({"upload_url": configured}))
+    initialize_connection(channel, "https://bridge.example")
+    assert build_upload_url(channel, 95) == connection_url(channel) + "/agent/upload_media?attachment_id=95"

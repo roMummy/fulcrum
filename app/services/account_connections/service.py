@@ -62,7 +62,9 @@ def _require_owned_channel(db: Session, channel_id: int, *, for_update: bool = F
     """按可信租户读取连接草稿，禁止跨租户主键探测。"""
 
     tenant_id = require_tenant_id()
-    query = select(Channel).where(Channel.id == int(channel_id), Channel.tenant_id == tenant_id)
+    query = select(Channel).where(
+        Channel.id == int(channel_id), Channel.tenant_id == tenant_id, Channel.deleted_at.is_(None)
+    )
     if for_update:
         query = query.with_for_update()
     channel = db.scalar(query)
@@ -154,6 +156,10 @@ def begin_account_connection(
         ),
         status="draft",
     )
+    if channel.channel_type == "wechat_webridge":
+        from app.services.wechat_webridge.access import initialize_connection
+
+        initialize_connection(channel, resolved_api_base)
     _save_connection_state(
         channel,
         {
@@ -205,6 +211,7 @@ def finalize_account_connection(
     *,
     channel_id: int,
     display_name: str,
+    expected_account_id: str = "",
 ) -> FinalizedAccountConnection:
     """在一个事务中完成机器人、渠道和商业额度绑定的最终启用。"""
 
@@ -215,8 +222,21 @@ def finalize_account_connection(
     connection = runtime_info.get("account_connection")
     if not isinstance(connection, dict) or connection.get("state") != "verified":
         raise AccountConnectionError("connection_not_verified")
+    if channel.channel_type == "wechat_webridge":
+        # 确认的是用户刚看到的账号，禁止设备切换或旧页面确认另一账号。
+        identity = get_account_connector(channel.channel_type).verify(db, channel).identity
+        if (
+            identity is None
+            or not expected_account_id
+            or expected_account_id != identity.account_id
+            or connection.get("account_id") != identity.account_id
+            or connection.get("device_fingerprint_hash") != hash_device_fingerprint(identity.device_key)
+        ):
+            raise AccountConnectionError("connection_identity_changed")
     tenant_id = require_tenant_id()
-    bot = db.scalar(select(Bot).where(Bot.id == channel.bot_id, Bot.tenant_id == tenant_id).with_for_update())
+    bot = db.scalar(
+        select(Bot).where(Bot.id == channel.bot_id, Bot.tenant_id == tenant_id, Bot.deleted_at.is_(None)).with_for_update()
+    )
     if bot is None:
         raise AccountConnectionError("connection_bot_missing")
     normalized_name = _unique_bot_name(db, display_name or str(connection.get("display_name") or channel.name))

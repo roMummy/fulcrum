@@ -337,6 +337,11 @@ def register_device(db: Session, channel: Channel, payload: dict[str, Any]) -> d
     if not identity["device_id"] or not identity["session_id"] or not identity["account_id"]:
         raise ValueError("invalid_webridge_identity")
     runtime = _runtime(channel)
+    previous = as_object(runtime.get("webridge"))
+    if previous.get("account_id") and (
+        previous.get("account_id") != identity["account_id"] or previous.get("device_id") != identity["device_id"]
+    ):
+        raise ValueError("webridge_identity_mismatch")
     runtime["webridge"] = {
         **identity,
         "capabilities": [text(item) for item in payload.get("capabilities", []) if text(item)],
@@ -452,8 +457,12 @@ def build_upload_url(channel: Channel, attachment_id: int) -> str:
     except (TypeError, ValueError, json.JSONDecodeError):
         config = {}
     configured = str(config.get("upload_url") or "").strip() if isinstance(config, dict) else ""
-    base_url = str(channel.api_base or "").strip().rstrip("/")
-    if not configured:
+    from .access import connection_url
+
+    private_base = connection_url(channel)
+    base_url = private_base or str(channel.api_base or "").strip().rstrip("/")
+    # 已生成凭据的账号始终使用专属上传入口，旧适配配置不能把请求导回无 Token 地址。
+    if private_base or not configured:
         return f"{base_url}/agent/upload_media?attachment_id={int(attachment_id)}"
     # 兼容历史渠道配置:旧的相对地址统一补成微桥渠道绝对地址。
     return f"{base_url}{configured}" if configured.startswith("/") else configured
@@ -698,6 +707,9 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         data = parse_job_payload(job)
         if int(data.get("channel_id") or 0) != int(channel.id):
             continue
+        # 待确认账号只允许读取基础资料，业务命令需在用户确认后才下发。
+        if channel.is_enabled is False and text(as_object(data.get("command")).get("type")) not in {"account_status", "device_status"}:
+            continue
         job.status = "running"
         job.attempts = int(job.attempts or 0) + 1
         job.started_at = current
@@ -920,7 +932,7 @@ def _save_account_profile(db: Session, channel: Channel, data: dict[str, Any]) -
     previous_nickname = text(previous.get("nickname"))
     runtime["account_profile"] = {
         "nickname": nickname,
-        "avatar_url": text(data.get("avatar_url")),
+        "avatar_url": text(data.get("avatar_url") or data.get("head_img_url")),
         "account_id": account_id,
         "fetched_at": now_shanghai().isoformat(),
         "requested_at": previous.get("requested_at"),

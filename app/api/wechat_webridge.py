@@ -4,7 +4,7 @@ import asyncio
 import os
 import time
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
@@ -28,7 +28,8 @@ from app.services.wechat_webridge.service import (
 )
 from app.services.task_queue import parse_job_payload
 from app.services.wechat_webridge import wakeup
-from app.services.account_connections import finalize_account_connection, verify_account_connection
+from app.services.account_connections import verify_account_connection
+from app.services.wechat_webridge.access import verify_connection_token
 from app.services.account_connections.contracts import AccountConnectionError
 from app.models.entities import MessageAttachment, MomentsMedia
 from app.services import moments_media
@@ -84,6 +85,16 @@ async def _json(request: Request) -> dict:
     return body
 
 
+def _require_device_token(channel_id: int, connection_token: str) -> None:
+    """所有手机入口在读取请求正文前验证渠道专属 Token。"""
+
+    _channel_tenant(channel_id)
+    with platform_session(SessionLocal) as db:
+        channel = db.get(Channel, channel_id)
+        if not verify_connection_token(channel, connection_token):
+            raise HTTPException(status_code=403, detail="微桥连接地址无效，请重新复制接入地址")
+
+
 @router.get("/{channel_id}/capabilities")
 async def capabilities(channel_id: int, request: Request):
     """返回可直接用于控制台和集成方的微桥命令目录。"""
@@ -99,34 +110,20 @@ async def capabilities(channel_id: int, request: Request):
         return {"ok": True, "channel_id": channel_id, **command_catalog(channel)}
 
 
-@router.post("/{channel_id}/agent/register")
+@router.post("/{channel_id}/{connection_token}/agent/register", dependencies=[Depends(_require_device_token)])
 async def register(channel_id: int, request: Request):
     body = await _json(request)
     logger.info("webridge register received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
     tenant_id, _ = _channel_tenant(channel_id)
     with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
-        channel = db.get(Channel, int(channel_id))
+        channel = db.scalar(select(Channel).where(Channel.id == channel_id).with_for_update())
         try:
             result = register_device(db, channel, body)
-            # 微桥完成首次注册后已经提供了可信设备和微信账号身份，直接完成验证、额度绑定和启用，
-            # 用户不需要再回到后台手动点击“验证账号”“确认并启用”或“启用账号”。
+            if channel.is_enabled or (channel.entitlement_binding is not None and channel.entitlement_binding.status in {"active", "disabled"}):
+                return {**result, "connection_state": "active", "message": "微信账号已连接"}
+            # 首次注册只准备身份信息，额度绑定和启用必须由网页登录用户确认。
             verified = verify_account_connection(db, channel_id=int(channel.id))
-            if verified.state != "verified":
-                return {**result, "connection_state": verified.state, "message": verified.message}
-            finalized = finalize_account_connection(
-                db,
-                channel_id=int(channel.id),
-                display_name=verified.identity.display_name if verified.identity else "",
-            )
-            response = {
-                **result,
-                "connection_state": "active",
-                "message": "WeBridge 已自动完成身份验证、额度绑定并启用",
-                "bot_id": int(finalized.bot.id),
-                "binding_id": int(finalized.binding.id),
-            }
-            logger.info("webridge register completed", extra={"channel_id": channel_id, "connection_state": "active", "binding_id": response["binding_id"]})
-            return response
+            return {**result, "connection_state": verified.state, "message": "请在网页核对微信账号信息并确认接入"}
         except AccountConnectionError as exc:
             # 注册本身已经成功时，保留设备快照并返回可读状态，手机端仍可继续心跳和轮询。
             logger.exception("webridge register binding failed", extra={"channel_id": channel_id, "error_code": str(exc)})
@@ -136,7 +133,7 @@ async def register(channel_id: int, request: Request):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/{channel_id}/agent/state")
+@router.post("/{channel_id}/{connection_token}/agent/state", dependencies=[Depends(_require_device_token)])
 async def state(channel_id: int, request: Request):
     body = await _json(request)
     logger.info("webridge state received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
@@ -149,7 +146,7 @@ async def state(channel_id: int, request: Request):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{channel_id}/agent/event")
+@router.post("/{channel_id}/{connection_token}/agent/event", dependencies=[Depends(_require_device_token)])
 async def event(channel_id: int, request: Request):
     body = await _json(request)
     logger.info("webridge event received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
@@ -158,6 +155,10 @@ async def event(channel_id: int, request: Request):
         channel = db.get(Channel, int(channel_id))
         if not channel:
             raise HTTPException(status_code=404, detail="wechat_webridge_channel_not_found")
+        if not identity_matches(channel, body):
+            raise HTTPException(status_code=409, detail="webridge_identity_mismatch")
+        if not channel.is_enabled:
+            return {"ok": True, "ignored": True, "message": "等待网页确认接入"}
         try:
             # 事件 ID 先写回顶层，适配器和统一事件服务都能使用同一个去重键。
             body.setdefault("event_id", mark_event_seen(channel, body))
@@ -176,7 +177,7 @@ def _claim_once(channel_id: int, tenant_id: int, body: dict) -> list[dict]:
         return claim_commands(db, db.get(Channel, int(channel_id)), body)
 
 
-@router.post("/{channel_id}/agent/poll")
+@router.post("/{channel_id}/{connection_token}/agent/poll", dependencies=[Depends(_require_device_token)])
 async def poll(channel_id: int, request: Request):
     """长轮询：有命令立即返回，没有则最多挂起 POLL_HOLD_SECONDS 秒再返回空列表。
 
@@ -210,7 +211,7 @@ async def poll(channel_id: int, request: Request):
         wakeup.unregister(channel_id, loop, wake)
 
 
-@router.post("/{channel_id}/agent/command_result")
+@router.post("/{channel_id}/{connection_token}/agent/command_result", dependencies=[Depends(_require_device_token)])
 async def command_result(channel_id: int, request: Request):
     body = await _json(request)
     logger.info("webridge command result received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
@@ -223,7 +224,7 @@ async def command_result(channel_id: int, request: Request):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{channel_id}/agent/upload_media")
+@router.post("/{channel_id}/{connection_token}/agent/upload_media", dependencies=[Depends(_require_device_token)])
 async def upload_media(
     channel_id: int,
     attachment_id: int,
@@ -261,7 +262,7 @@ async def upload_media(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{channel_id}/agent/moments_upload")
+@router.post("/{channel_id}/{connection_token}/agent/moments_upload", dependencies=[Depends(_require_device_token)])
 async def moments_upload(channel_id: int, media_id: int, request: Request):
     """接收手机传回的朋友圈媒体(moments_media_download 的 upload 目标,请求体就是文件的原始字节)。
 

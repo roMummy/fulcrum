@@ -13,6 +13,7 @@
   <button class="btn btn-secondary" type="button" data-modal-open="edit-channel-modal">账号设置</button>
   {% endif %}
   {% if channel.channel_type == 'wechat_webridge' %}
+  {% if can_manage_channel %}<a class="btn btn-secondary" href="/channels/connect?channel_id={{ channel.id }}">{% if channel.is_enabled %}查看连接地址{% else %}继续接入{% endif %}</a>{% endif %}
   <a class="btn" href="/channels/{{ channel.id }}/wechat-webridge">微桥后台</a>
   <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
   {% endif %}
@@ -232,7 +233,7 @@
       <label><span>平台</span><input value="{{ channel_definition.label }}" autocomplete="off" disabled /></label>
       {# iPad 协议地址和登录网络均由平台与单次会话管理，账号设置只允许修改业务名称。 #}
       {% if channel.channel_type != 'wechat_ipad' %}
-        {% if channel_config_field_map.get('api_base') %}<label><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ channel.api_base or '' }}" /></label>{% endif %}
+        {% if channel_config_field_map.get('api_base') and channel.channel_type != 'wechat_webridge' %}<label><span>服务地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" value="{{ channel.api_base or '' }}" /></label>{% endif %}
         {% if channel_config_field_map.get('bot_token') %}<label><span>访问凭证</span><input name="bot_token" type="password" autocomplete="new-password" placeholder="留空保持当前凭证" /></label>{% endif %}
         {% if channel_config_field_map.get('dm_policy') %}<label><span>私聊策略</span><select name="dm_policy"><option value="allowlist" {% if channel.dm_policy == 'allowlist' %}selected{% endif %}>仅允许名单</option><option value="allow" {% if channel.dm_policy == 'allow' %}selected{% endif %}>允许全部</option><option value="deny" {% if channel.dm_policy == 'deny' %}selected{% endif %}>拒绝私聊</option></select></label>{% endif %}
         {% if channel_config_field_map.get('allow_from') %}<label class="full-row"><span>允许名单</span><textarea name="allow_from" rows="3">{{ channel.allow_from or '' }}</textarea></label>{% endif %}

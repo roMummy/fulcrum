@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -22,10 +23,11 @@ class ContextFormatter(logging.Formatter):
             for key, value in record.__dict__.items()
             if key not in _RESERVED_CONTEXT_KEYS and not key.startswith("_")
         }
-        if not context:
-            return base_message
-        context_text = " ".join(f"{key}={value}" for key, value in sorted(context.items()))
-        return f"{base_message} | {context_text}"
+        if context:
+            context_text = " ".join(f"{key}={value}" for key, value in sorted(context.items()))
+            base_message = f"{base_message} | {context_text}"
+        # 长轮询地址带渠道凭据，应用日志和异常堆栈均不能保存原始 Token。
+        return re.sub(r"(/api/wechat-webridge/\d+/)[A-Za-z0-9_-]{43}(?=[/\s?\"']|$)", r"\1[已隐藏]", base_message)
 
 
 class ColorConsoleFormatter(ContextFormatter):

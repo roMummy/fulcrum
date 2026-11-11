@@ -16,11 +16,13 @@ class WechatWeBridgeAccountConnector:
     def verify(self, db: Session, channel: Channel) -> AccountConnectionResult:
         snapshot = _runtime(channel).get("webridge")
         if not isinstance(snapshot, dict) or not snapshot.get("device_id") or not snapshot.get("account_id"):
-            return AccountConnectionResult.failed("webridge_not_registered", "请先在 WeBridge 插件中配置地址并完成一次注册")
+            return AccountConnectionResult.connecting("等待手机连接，请将长轮询地址复制到微桥插件", next_action="configure")
+        profile = _runtime(channel).get("account_profile")
+        profile = profile if isinstance(profile, dict) else {}
         identity = VerifiedAccountIdentity(
             adapter_type=self.channel_type,
             account_id=str(snapshot["account_id"]),
-            display_name=str(snapshot.get("account_id") or "WeBridge 微信账号"),
+            display_name=str(profile.get("nickname") or snapshot.get("account_id") or "WeBridge 微信账号"),
             device_key=f"webridge-device:{snapshot['device_id']}",
         )
         return AccountConnectionResult.verified(identity, message="WeBridge 设备已连接")

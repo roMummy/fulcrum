@@ -153,6 +153,46 @@ def test_unverified_draft_cannot_be_enabled(db: Session) -> None:
             finalize_account_connection(db, channel_id=draft.id, display_name="未验证账号")
 
 
+@pytest.mark.parametrize(
+    ("deleted_model", "error"),
+    [(Channel, "connection_not_found"), (Bot, "connection_bot_missing")],
+    ids=["deleted-channel", "deleted-bot"],
+)
+def test_deleted_draft_cannot_be_finalized(db: Session, monkeypatch, deleted_model, error) -> None:
+    """已验证草稿的渠道或机器人被软删除后，旧确认操作不能重新启用或占用额度。"""
+
+    tenant = _seed_paid_tenant(db)
+    monkeypatch.setattr(
+        "app.services.account_connections.service.get_account_connector",
+        lambda channel_type: _VerifiedConnector(),
+    )
+    with tenant_scope(tenant.id):
+        draft = begin_account_connection(
+            db,
+            channel_type="telegram",
+            display_name="待删除账号",
+            connection_values={"bot_token": "test-deleted-draft-token"},
+        )
+        verify_account_connection(db, channel_id=draft.id)
+        bot = db.get(Bot, draft.bot_id)
+        deleted = draft if deleted_model is Channel else bot
+        deleted.deleted_at = now_shanghai()
+        db.commit()
+
+        if deleted_model is Channel:
+            with pytest.raises(AccountConnectionError, match="connection_not_found"):
+                verify_account_connection(db, channel_id=draft.id)
+        with pytest.raises(AccountConnectionError, match=error):
+            finalize_account_connection(db, channel_id=draft.id, display_name="旧页面确认")
+
+        db.refresh(draft)
+        db.refresh(bot)
+        assert draft.is_enabled is False and bot.is_enabled is False
+        assert deleted.deleted_at is not None
+        assert get_bot_quota(db).used == 0
+        assert db.scalar(select(BotBinding).where(BotBinding.channel_id == draft.id)) is None
+
+
 def test_platform_managed_connection_requires_enabled_service_before_creating_draft(db: Session) -> None:
     """平台服务缺失或暂停时必须在建 Bot 前失败，不能产生孤立草稿。"""
 

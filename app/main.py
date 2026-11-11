@@ -175,6 +175,8 @@ from app.services.wechat_webridge.dashboard import build_webridge_dashboard, bui
 from app.services.identity_directory import IdentityDirectory
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
+from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, initialize_connection as initialize_webridge_connection
+from app.services.outbound_files import build_public_base_url
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -1806,6 +1808,7 @@ def _account_connection_error_message(code: str) -> str:
         "device_trial_already_claimed": "该设备已经领取过试用权益",
         "trial_device_already_claimed": "当前试用设备不能更换绑定账号",
         "connection_not_verified": "请先完成账号验证",
+        "connection_identity_changed": "微信账号信息已变化，请刷新页面后重新核对",
         "connection_already_active": "该账号已经完成接入",
         "connection_not_found": "连接记录不存在",
         "connection_type_not_supported": "暂不支持该接入方式",
@@ -1840,6 +1843,8 @@ async def channel_connect_page(request: Request):
                 channel = None
             if channel is None:
                 raise HTTPException(status_code=404, detail="Connection not found")
+            if channel.channel_type == "wechat_webridge" and not has_tenant_role(require_user(request), "tenant_admin"):
+                raise HTTPException(status_code=403, detail="Permission denied")
         requested_type = str(
             channel.channel_type if channel is not None else request.query_params.get("channel_type") or ""
         ).strip()
@@ -1855,7 +1860,16 @@ async def channel_connect_page(request: Request):
             channel is not None
             and (network_setup or request.query_params.get("relogin") == "1")
         )
-        if network_setup:
+        if channel is not None and channel.channel_type == "wechat_webridge":
+            if not webridge_connection_url(channel):
+                try:
+                    require_tenant_mutation_allowed(require_user(request))
+                except TenantPolicyError as exc:
+                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                initialize_webridge_connection(channel, build_public_base_url(request))
+                db.commit()
+            stage = "webridge"
+        elif network_setup:
             stage = "configure"
         elif channel is not None:
             stage = "confirm" if connection.get("state") == "verified" else "progress"
@@ -1871,7 +1885,7 @@ async def channel_connect_page(request: Request):
         except BotEntitlementError as exc:
             quota = None
             quota_error = _account_connection_error_message(str(exc))
-        return render(
+        response = render(
             request,
             "channel_connect.html",
             page_title="接入账号",
@@ -1879,6 +1893,8 @@ async def channel_connect_page(request: Request):
             requested_type=requested_type,
             channel=channel,
             connection=connection,
+            webridge_url=webridge_connection_url(channel) if channel and channel.channel_type == "wechat_webridge" else "",
+            webridge_account=webridge_account_info(channel) if channel and channel.channel_type == "wechat_webridge" else {},
             quota=quota,
             quota_error=quota_error,
             provider_nodes=list_provider_nodes(db),
@@ -1894,6 +1910,8 @@ async def channel_connect_page(request: Request):
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
         )
+        response.headers["Cache-Control"] = "no-store"
+        return response
     finally:
         db.close()
 
@@ -1932,7 +1950,7 @@ async def channel_connect_start_action(
                 channel_type=channel_type,
                 display_name=display_name,
                 connection_values={
-                    "api_base": api_base,
+                    "api_base": build_public_base_url(request) if channel_type == "wechat_webridge" else api_base,
                     "bot_token": bot_token,
                     "adapter_config_json": adapter_config_json,
                     "provider_node_id": provider_node_id,
@@ -1955,7 +1973,7 @@ async def channel_connect_start_action(
                         "connector_id": proxy_connector_id,
                     },
                 )
-            else:
+            elif channel.channel_type != "wechat_webridge":
                 verify_account_connection(db, channel_id=channel.id)
         except (AccountConnectionError, BotEntitlementError, LoginProxyPoolError, ValueError) as exc:
             message = quote(_account_connection_error_message(str(exc)))
@@ -2049,6 +2067,26 @@ async def create_wechat_ipad_login_session_action(
         db.close()
 
 
+@app.get("/channels/{channel_id}/connect/status")
+async def channel_connect_status(request: Request, channel_id: int):
+    """只向所属企业管理员返回接入进度，不暴露 Token 或设备会话。"""
+
+    principal = enforce_role(request, "ops")
+    if not has_tenant_role(principal, "tenant_admin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if channel is None or channel.channel_type != "wechat_webridge":
+            raise HTTPException(status_code=404, detail="Connection not found")
+        return JSONResponse(
+            {"connection": _channel_connection_state(channel), "account": webridge_account_info(channel)},
+            headers={"Cache-Control": "no-store"},
+        )
+    finally:
+        db.close()
+
+
 @app.post("/channels/{channel_id}/connect/verify")
 async def channel_connect_verify_action(
     request: Request,
@@ -2082,6 +2120,7 @@ async def channel_connect_finalize_action(
     request: Request,
     channel_id: int,
     display_name: str = Form(""),
+    expected_account_id: str = Form(""),
     csrf_token: str = Form(""),
 ):
     """确认显示名称并原子启用机器人、渠道和额度绑定。"""
@@ -2093,7 +2132,7 @@ async def channel_connect_finalize_action(
     try:
         require_tenant_csrf(db, request, csrf_token)
         try:
-            account = finalize_account_connection(db, channel_id=channel_id, display_name=display_name)
+            account = finalize_account_connection(db, channel_id=channel_id, display_name=display_name, expected_account_id=expected_account_id)
         except AccountConnectionError as exc:
             message = quote(_account_connection_error_message(str(exc)))
             return RedirectResponse(url=f"/channels/connect?channel_id={channel_id}&notice={message}&tone=danger", status_code=303)
@@ -2697,7 +2736,7 @@ async def edit_channel_action(
             )
         channel_definition = get_channel_type_definition(channel.channel_type)
         # 平台托管渠道的地址只能由平台后台同步。租户即使手工构造表单字段，保存时也必须保留服务端现值。
-        resolved_api_base = channel.api_base if channel_definition.platform_managed_endpoint else api_base
+        resolved_api_base = channel.api_base if channel_definition.platform_managed_endpoint or channel.channel_type == "wechat_webridge" else api_base
         # 普通租户页面不回显原始适配 JSON；没有提交的高级字段保留服务端现值，
         # 但 merge_channel_adapter_config 会明确删除 iPad 已废弃的长期代理节点。
         adapter_config_source = channel.adapter_config_json if adapter_config_json is None else adapter_config_json
@@ -2789,20 +2828,8 @@ async def toggle_channel_action(request: Request, channel_id: int, csrf_token: s
                 )
             )
             if binding is None:
-                # WeBridge 已经从手机注册快照取得可信身份时，启用动作自动补齐验证和额度绑定，
-                # 避免用户被迫理解后台的中间状态；尚未注册时才返回下一步操作提示。
                 if channel.channel_type == "wechat_webridge":
-                    try:
-                        result = verify_account_connection(db, channel_id=channel.id)
-                        if result.state == "verified":
-                            finalize_account_connection(
-                                db,
-                                channel_id=channel.id,
-                                display_name=result.identity.display_name if result.identity else channel.name,
-                            )
-                            return RedirectResponse(url=f"/channels/{channel_id}?notice={quote('微桥已自动完成身份验证和额度绑定')}", status_code=303)
-                    except AccountConnectionError:
-                        pass
+                    return RedirectResponse(url=f"/channels/connect?channel_id={channel_id}", status_code=303)
                 return RedirectResponse(
                     url=f"/channels/{channel_id}?notice={quote('请先把系统生成的地址粘贴到手机微桥插件，完成首次注册')}&tone=danger",
                     status_code=303,
@@ -4791,6 +4818,9 @@ async def inbound_webhook(channel_id: int, request: Request):
         channel = get_channel(auth_db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
+        if channel.channel_type == "wechat_webridge":
+            # 微桥必须走带 Token 和设备身份校验的专用入口，不能绕过账号确认。
+            raise HTTPException(status_code=403, detail="请使用微桥专属长轮询地址")
 
         secret = decrypt_secret(channel.bot_token_encrypted)
         if channel.channel_type == "telegram":

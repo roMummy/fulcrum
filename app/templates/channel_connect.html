@@ -6,7 +6,7 @@
 </div>
 {% endblock %}
 {% block content %}
-{% set step_number = 1 if stage in ['choose', 'wechat_method'] else (3 if stage == 'confirm' else 2) %}
+{% set step_number = 1 if stage in ['choose', 'wechat_method'] else (3 if stage == 'confirm' or (stage == 'webridge' and connection.state in ['verified', 'active']) else 2) %}
 <nav class="connection-steps" aria-label="账号接入进度">
   <div class="connection-step{% if step_number >= 1 %} is-active{% endif %}"><span>1</span><strong>选择平台</strong></div>
   <div class="connection-step{% if step_number >= 2 %} is-active{% endif %}"><span>2</span><strong>连接账号</strong></div>
@@ -120,17 +120,52 @@
     {% elif requested_type == 'wechat_ipad' %}
     {% include '_wechat_ipad_login_network.html' %}
     {% elif requested_type == 'wechat_webridge' %}
-    <label class="full-row"><span>WeBridge 服务端地址</span><input name="api_base" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com/api/wechat-webridge/CHANNEL_ID" required /></label>
-    <label class="full-row"><span>适配配置 JSON（可选）</span><textarea name="adapter_config_json" rows="4" placeholder='{"upload_url":"https://example.com/api/wechat-webridge/CHANNEL_ID/agent/upload_media"}'></textarea></label>
-    <p class="muted-text full-row">保存后，请把同一个地址配置到微桥插件；完成一次 register 后，系统会自动验证微信账号身份。</p>
+    <p class="muted-text full-row">下一步自动生成专属长轮询地址，复制到手机微桥插件后，在这里核对微信账号并确认接入。</p>
     {% endif %}
     <div class="full-row form-actions-inline">
-      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% else %}验证账号{% endif %}</button>
+      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type == 'wechat_webridge' %}生成长轮询地址{% else %}验证账号{% endif %}</button>
       <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}">上一步</a>
       {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes">连接新客户端</a>{% endif %}
     </div>
   </form>
 </section>
+{% elif stage == 'webridge' and channel %}
+<section class="work-surface connection-surface" data-webridge-connect data-status-url="/channels/{{ channel.id }}/connect/status">
+  <div class="section-head">
+    <div><h2>连接微桥 WeBridge</h2><p>复制地址 → 手机连接 → 核对并确认</p></div>
+    <span class="chip{% if connection.state == 'active' %} chip-success{% else %} chip-muted{% endif %}" data-connection-state>{{ connection.label }}</span>
+  </div>
+  <label for="webridge-connection-url"><strong>专属长轮询地址</strong></label>
+  <div class="webridge-connection-address top-gap">
+    <textarea id="webridge-connection-url" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="webridge-address-help">{{ webridge_url }}</textarea>
+    <button class="btn btn-secondary" type="button" data-copy-address>复制地址</button>
+  </div>
+  <p id="webridge-copy-status" role="status" aria-live="polite"></p>
+  <p class="muted-text" id="webridge-address-help">在手机微桥设置中选择「长轮询」，将完整地址粘贴到「服务端地址」，并打开总开关。手机需要能访问本服务。地址内含专属 Token，请只用于这个账号。</p>
+  <p class="notice-card top-gap" data-connection-waiting{% if webridge_account.account_id %} hidden{% endif %} role="status">等待手机连接，连接后会自动显示微信账号信息。</p>
+  <div class="top-gap" data-connection-account{% if not webridge_account.account_id %} hidden{% endif %}>
+    <div class="webridge-account-heading">
+      <span class="identity-avatar" data-account-avatar{% if not webridge_account.avatar_url %} hidden{% endif %}><img{% if webridge_account.avatar_url %} src="{{ webridge_account.avatar_url }}"{% endif %} alt="微信头像" referrerpolicy="no-referrer" /></span>
+      <h3>请核对连接的微信账号</h3>
+    </div>
+    <dl class="connection-confirm-list">
+      <div><dt>微信昵称</dt><dd data-account-nickname>{{ webridge_account.nickname or '正在读取，暂未取得昵称' }}</dd></div>
+      <div><dt>微信账号 ID</dt><dd data-account-id>{{ webridge_account.account_id }}</dd></div>
+      <div><dt>插件版本</dt><dd data-account-version>{{ webridge_account.runtime_version or '暂未上报' }}</dd></div>
+      <div><dt>确认后占用</dt><dd>1 个机器人额度</dd></div>
+    </dl>
+    <form method="post" action="/channels/{{ channel.id }}/connect/finalize" class="form-actions-inline top-gap" data-connection-confirm{% if connection.state != 'verified' %} hidden{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="expected_account_id" value="{{ webridge_account.account_id }}" />
+      <input type="hidden" name="display_name" value="{{ channel.name }}" />
+      <button class="btn" type="submit">确认信息并接入</button>
+    </form>
+    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}>进入账号管理</a>
+  </div>
+  <p class="muted-text" data-connection-error role="status" aria-live="polite"></p>
+  <a class="btn btn-ghost top-gap" href="/channels">稍后继续</a>
+</section>
+<script src="/static/js/webridge-connect.js" defer></script>
 {% elif stage == 'progress' and channel %}
 <section class="work-surface connection-surface"{% if channel.channel_type == 'wechat_ipad' %} id="connection-ipad-flow"{% endif %}>
   <div class="section-head">

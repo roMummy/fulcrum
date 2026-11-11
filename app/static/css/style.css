@@ -1907,6 +1907,26 @@ code {
   object-fit: cover;
 }
 
+.webridge-connection-address {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.webridge-connection-address textarea {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
+  font-family: monospace;
+  resize: vertical;
+}
+.webridge-connection-address button { flex-shrink: 0; }
+.webridge-account-heading { display: flex; align-items: center; gap: 12px; }
+[data-webridge-connect] [hidden] { display: none !important; }
+@media (max-width: 600px) {
+  .webridge-connection-address { flex-direction: column; align-items: stretch; }
+}
+
 .connection-confirm-list {
   margin: 0;
   border-top: 1px solid var(--border);
@@ -1960,6 +1980,7 @@ code {
 .form-grid input,
 .form-grid select,
 .form-grid textarea,
+.webridge-connection-address textarea,
 .inline-form input,
 .inline-form select,
 .confirm-match-input input,
@@ -2016,6 +2037,7 @@ code {
 .form-grid input:hover,
 .form-grid select:hover,
 .form-grid textarea:hover,
+.webridge-connection-address textarea:hover,
 .inline-form input:hover,
 .inline-form select:hover {
   border-color: var(--border-strong);
@@ -2024,6 +2046,7 @@ code {
 .form-grid input:focus-visible,
 .form-grid select:focus-visible,
 .form-grid textarea:focus-visible,
+.webridge-connection-address textarea:focus-visible,
 .inline-form input:focus-visible,
 .inline-form select:focus-visible,
 .confirm-match-input input:focus-visible,

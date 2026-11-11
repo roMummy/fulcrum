@@ -124,7 +124,9 @@ def request(db: Session, post: MomentsPost, mid: str) -> dict[str, Any]:
         db.flush()
     token = secrets.token_urlsafe(32)
     row.status, row.last_error, row.token_hash, row.requested_at = "pending", None, token_hash(token), now_shanghai()
-    base_url = str(channel.api_base or "").strip().rstrip("/")
+    from app.services.wechat_webridge.access import connection_url
+
+    base_url = connection_url(channel) or str(channel.api_base or "").strip().rstrip("/")
     job = service.enqueue_command(
         db, channel, command_name=COMMAND, priority=100, request_id=f"momedia_{row.id}_{secrets.token_hex(6)}",
         args={

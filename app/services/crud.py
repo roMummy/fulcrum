@@ -120,7 +120,9 @@ def update_channel(db: Session, channel: Channel, data: ChannelUpdate) -> Channe
         raise ValueError("channel_type_immutable")
     channel.bot_id = data.bot_id
     channel.name = data.name.strip()
-    channel.api_base = (data.api_base or "").strip() or None
+    if channel.channel_type != "wechat_webridge":
+        # 微桥地址由接入流程生成，通用编辑不能改写地址或重复追加 Token。
+        channel.api_base = (data.api_base or "").strip() or None
     if token:
         channel.bot_token_encrypted = encrypt_secret(token)
         channel.bot_token_masked = mask_secret(token)
