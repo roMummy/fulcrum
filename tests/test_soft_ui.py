@@ -132,7 +132,7 @@ def test_marketing_and_auth_pages_use_soft_surfaces_and_preserve_accessibility_c
     assert "yaoshu-console.webp" not in marketing_home
     assert "marketing-product-visual" not in marketing_home
     assert marketing_home.count("<h1>") == 1
-    assert "<h1>曜枢 AI</h1>" in marketing_home
+    assert "<h1>曜枢</h1>" in marketing_home
     assert "marketing-hero-content" not in marketing_home
     assert 'role="alert"' in marketing_base
     assert '<meta name="theme-color" content="#f5f6fa" />' in marketing_base

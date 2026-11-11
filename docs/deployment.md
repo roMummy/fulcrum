@@ -1,4 +1,4 @@
-# 曜枢 AI（multi-bot-saas）部署指南
+# 曜枢（multi-bot-saas）部署指南
 
 ## 当前正式部署目标
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-曜枢 AI 对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `multi-bot-saas`。支持两种部署模式：
+曜枢对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `multi-bot-saas`。支持两种部署模式：
 
 - Local process deployment with Python virtualenv
 - Container deployment with Docker Compose
@@ -42,7 +42,7 @@ AUTH_SEED_DEMO_USERS=false
 AUTH_COOKIE_SECURE=true
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
-BILLING_PAYMENT_TITLE=曜枢 AI 人工付款
+BILLING_PAYMENT_TITLE=曜枢人工付款
 BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 BILLING_PAYMENT_PROOF_MAX_BYTES=5242880
 # 第三方支付自动回调使用；未配置时 /api/payment/webhook 会返回 503。

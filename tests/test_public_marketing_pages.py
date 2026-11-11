@@ -102,12 +102,12 @@ def marketing_client(tmp_path, monkeypatch):
 
 
 def test_home_uses_yaoshu_brand_generic_positioning_and_interactive_soft_hero(marketing_client: TestClient) -> None:
-    """首页必须突出曜枢 AI，并用无截图 Soft UI 场景承载全渠道产品定位。"""
+    """首页必须突出曜枢，并用无截图 Soft UI 场景承载全渠道产品定位。"""
 
     response = marketing_client.get("/")
 
     assert response.status_code == 200
-    assert '<h1>曜枢 AI</h1>' in response.text
+    assert '<h1>曜枢</h1>' in response.text
     assert "一个后台，统一运营所有智能机器人" in response.text
     assert "支持微信、企业微信、Telegram 等渠道" in response.text
     assert "免费试用 7 天" in response.text

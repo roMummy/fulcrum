@@ -1,4 +1,4 @@
-"""曜枢 AI 公开营销、企业注册和企业统一登录路由。"""
+"""曜枢公开营销、企业注册和企业统一登录路由。"""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _context(request: Request, *, page_title: str, **extra) -> dict[str, object]
         "page_title": page_title,
         "current_user": getattr(request.state, "current_user", None),
         "format_yuan": _format_yuan,
-        "brand_name": "曜枢 AI",
+        "brand_name": "曜枢",
     }
     context.update(extra)
     return context
@@ -97,14 +97,14 @@ def _render_enterprise_login(
 
 @router.get("/", response_class=HTMLResponse)
 async def marketing_home_page(request: Request):
-    """展示曜枢 AI 公开首页，并按当前租户会话切换主行动入口。"""
+    """展示曜枢公开首页，并按当前租户会话切换主行动入口。"""
 
     with SessionLocal() as db:
         plans = _public_plans(db)[:3]
     return templates.TemplateResponse(
         request,
         "marketing_home.html",
-        _context(request, page_title="曜枢 AI", plans=plans),
+        _context(request, page_title="曜枢", plans=plans),
     )
 
 

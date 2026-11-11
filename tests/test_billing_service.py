@@ -198,14 +198,14 @@ def test_approve_order_is_idempotent_and_fulfils_one_subscription(db: Session) -
 def test_manual_payment_gateway_reads_configured_instructions(monkeypatch) -> None:
     """人工付款网关只返回配置化说明，不发起外部网络请求。"""
 
-    monkeypatch.setattr(settings, "billing_payment_title", "曜枢 AI 收款")
+    monkeypatch.setattr(settings, "billing_payment_title", "曜枢收款")
     monkeypatch.setattr(settings, "billing_payment_instructions", "付款后上传凭证")
     monkeypatch.setattr(settings, "billing_payment_qr_image", "/static/images/payment.png")
     monkeypatch.setattr(settings, "billing_payment_bank_details", "测试银行账户")
 
     instructions = ManualPaymentGateway().get_instructions()
 
-    assert instructions.title == "曜枢 AI 收款"
+    assert instructions.title == "曜枢收款"
     assert instructions.instructions == "付款后上传凭证"
     assert instructions.qr_image == "/static/images/payment.png"
     assert instructions.bank_details == "测试银行账户"

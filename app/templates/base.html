@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f5f6fa" />
   {# 页面脚本(fetch)提交时放进 X-CSRF-Token 请求头的令牌 #}
   <meta name="csrf-token" content="{{ csrf_token|default('', true) }}" />
-  <title>{{ page_title }} - 曜枢 AI</title>
+  <title>{{ page_title }} - 曜枢</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
@@ -23,7 +23,7 @@
         {# 认证页只显示当前入口所属后台，避免企业用户误把平台员工入口当成租户登录。 #}
         <img class="brand-mark" src="/static/brand-mark.svg" alt="" />
         <div>
-          <strong>曜枢 AI</strong>
+          <strong>曜枢</strong>
           <p>{% if is_platform_area %}平台管理后台{% else %}全渠道智能机器人运营平台{% endif %}</p>
         </div>
       </div>
@@ -39,7 +39,7 @@
         <a href="{{ backend_home_href }}" class="brand">
           <img class="brand-mark" src="/static/brand-mark.svg" alt="" />
           <span class="brand-copy">
-            <strong>曜枢 AI</strong>
+            <strong>曜枢</strong>
             <small>{% if is_platform_area %}平台管理后台{% else %}企业工作台{% endif %}</small>
           </span>
         </a>

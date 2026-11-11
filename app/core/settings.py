@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     local_proxy_relay_host: str = "127.0.0.1"
     local_proxy_relay_port: int = 9165
     # 首版计费只展示人工付款说明；二维码路径和银行信息均由部署环境配置，不写死到模板。
-    billing_payment_title: str = "曜枢 AI 人工付款"
+    billing_payment_title: str = "曜枢人工付款"
     billing_payment_instructions: str = "请完成转账后填写交易流水号并上传付款凭证。"
     billing_payment_qr_image: str = ""
     billing_payment_bank_details: str = ""

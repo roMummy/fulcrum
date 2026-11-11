@@ -1,10 +1,10 @@
-# 曜枢 AI
+# 曜枢
 
-`曜枢 AI` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `multi-bot-saas`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
+`曜枢` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `multi-bot-saas`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
 
-- 公开站点：曜枢 AI 营销首页、套餐页、企业自助注册和 7 天试用
+- 公开站点：曜枢营销首页、套餐页、企业自助注册和 7 天试用
 - 商业闭环：人工付款订单、私有付款凭证、平台审核和订阅自动履约
 - 通用额度：按 `bot_limit` 管理机器人数量，以 `adapter_type` 和 `bot_account_id` 标识外部账号
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
@@ -99,7 +99,7 @@ http://127.0.0.1:8280
 
 | 路径 | 用途 |
 | --- | --- |
-| `/` | 曜枢 AI 营销首页 |
+| `/` | 曜枢营销首页 |
 | `/pricing` | 公开套餐价格 |
 | `/register` | 企业自助注册与 7 天试用 |
 | `/login` | 企业所有者与员工统一使用手机号登录 |
@@ -181,7 +181,7 @@ ABOT_PLUGIN_SECRET_KEY=
 AUTH_SEED_DEMO_USERS=false
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
-BILLING_PAYMENT_TITLE=曜枢 AI 人工付款
+BILLING_PAYMENT_TITLE=曜枢人工付款
 BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 ```
 
