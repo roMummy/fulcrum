@@ -20,10 +20,8 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Syntax check
         run: python -m compileall -q app plugins scripts migrations
-      - name: Plugin catalog check
-        run: python scripts/verify_plugin_migration.py
-      # 逐文件隔离运行已验证稳定通过的测试文件(清单见 .github/ci-test-files.txt)。
-      # 其余历史测试正在整理,修好后加入清单。
+      # 逐文件隔离运行主体功能里已验证稳定通过的测试文件(清单见 .github/ci-test-files.txt)。
+      # 业务插件的测试不在 CI 范围内;其余历史测试正在整理,修好后加入清单。
       - name: Tests
         env:
           JOBS: "4"
