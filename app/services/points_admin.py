@@ -34,11 +34,6 @@ SOURCE_LABELS = {
     "lucky_pot_entry": "大奖池入场",
     "lucky_pot_refund": "大奖池退款",
     "daily_ranking": "活跃榜奖励",
-    "fanhao_search": "番号查询",
-    "video": "视频",
-    "video_man": "猛男视频",
-    "beautyleg": "美腿图片",
-    "xiuren_image": "秀人图片",
     "cultivation_exchange": "修仙兑换",
     ADMIN_SOURCE: "人工调整",
 }

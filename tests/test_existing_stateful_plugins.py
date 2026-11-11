@@ -2008,7 +2008,7 @@ def test_points_context_entry_unifies_earn_and_spend_into_one_account(game_task_
 
         service = PointsService(db)
         service.earn(ctx(identity["conversation_id"]), 50, source="checkin", description="签到")
-        spent = service.spend(ctx(identity["conversation_id"]), 20, source="fanhao_search", description="番号查询")
+        spent = service.spend(ctx(identity["conversation_id"]), 20, source="demo_plugin", description="番号查询")
         assert spent.ok is True
         assert service.balance(ctx(identity["conversation_id"])) == 30
         # 同一用户在另一个群没有积分,账户按群隔离。

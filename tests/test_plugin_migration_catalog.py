@@ -1,8 +1,13 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+# 私有插件目录(只在内网部署里使用,不随公开仓库发布)不参与目录校验;必须在导入校验脚本之前设置。
+os.environ.setdefault("FULCRUM_PRIVATE_PLUGINS", "beautyleg,video,video_man,fanhao_search,xiuren_image,sehuatang_push")
+
 from scripts.verify_plugin_migration import (
+    PRIVATE_PLUGIN_CODES,
     SAAS_OWN_PLUGIN_CODES as VERIFIED_SAAS_OWN_PLUGIN_CODES,
     TARGET_PLUGIN_CODES as VERIFIED_TARGET_PLUGIN_CODES,
 )
@@ -55,17 +60,6 @@ NEW_PLUGIN_CODES = {
     "xiuxian",
 }
 
-# 本次成人插件按四批逐步落地；目录台账允许它们进入最终 A-BOT 迁移集合，
-# 但每个批次仍需通过自己的功能测试后才能宣布完成。
-ADULT_PLUGIN_CODES = {
-    "beautyleg",
-    "fanhao_search",
-    "sehuatang_push",
-    "video",
-    "video_man",
-    "xiuren_image",
-}
-
 SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow"}
 
 # 这些能力已经明确排除或上移为平台原生能力。测试直接禁止同名目录出现，防止
@@ -84,7 +78,7 @@ def _directory_plugin_codes() -> set[str]:
     return {
         path.name
         for path in PLUGINS_ROOT.iterdir()
-        if path.is_dir() and (path / "config.toml").is_file() and (path / "plugin.py").is_file()
+        if path.is_dir() and path.name not in PRIVATE_PLUGIN_CODES and (path / "config.toml").is_file() and (path / "plugin.py").is_file()
     }
 
 
@@ -92,7 +86,7 @@ def test_plugin_directories_stay_inside_confirmed_migration_scope() -> None:
     """目录插件只能来自已确认范围，不允许迁移过程顺手加入其他旧插件。"""
 
     actual = _directory_plugin_codes()
-    allowed = EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | ADULT_PLUGIN_CODES | SAAS_OWN_PLUGIN_CODES
+    allowed = EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | SAAS_OWN_PLUGIN_CODES
 
     assert EXISTING_PLUGIN_CODES <= actual
     assert actual <= allowed
@@ -112,7 +106,7 @@ def test_existing_plugin_directories_have_single_saas_entrypoint() -> None:
 def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> None:
     """交付校验器必须识别完整目标集合，并在四批迁移完成后返回成功。"""
 
-    assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES | ADULT_PLUGIN_CODES
+    assert VERIFIED_TARGET_PLUGIN_CODES == EXISTING_PLUGIN_CODES | NEW_PLUGIN_CODES
     assert VERIFIED_SAAS_OWN_PLUGIN_CODES == SAAS_OWN_PLUGIN_CODES
 
     result = subprocess.run(
@@ -123,10 +117,9 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
         check=False,
     )
 
-    # 六个成人插件已经全部进入 SaaS 原生目录，校验器应返回成功，避免后续
-    # 为了兼容迁移中间状态而保留第二套目录统计逻辑。
+    # 校验器应对公开仓库里的完整目录返回成功;私有插件目录(FULCRUM_PRIVATE_PLUGINS)不参与统计。
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "目录插件总数: 42" in result.stdout
-    assert "A-BOT 目标插件数: 40" in result.stdout
+    assert "目录插件总数: 36" in result.stdout
+    assert "A-BOT 目标插件数: 34" in result.stdout
     assert "SaaS 自有插件数: 2" in result.stdout
     assert "错误数量: 0" in result.stdout

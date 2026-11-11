@@ -45,3 +45,11 @@ session-env/
 .last-cleanup
 plugins/store/
 plugins/plugin-directory-cache-v2.json
+
+# 私有插件包:只在内网部署中使用,不进入公开仓库(目录保留在本地和部署主机上)。
+plugins/beautyleg/
+plugins/video/
+plugins/video_man/
+plugins/fanhao_search/
+plugins/xiuren_image/
+plugins/sehuatang_push/

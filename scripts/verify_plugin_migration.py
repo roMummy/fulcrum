@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,9 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 通过显式依赖
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_ROOT = PROJECT_ROOT / "plugins"
+# 私有插件目录(逗号分隔的目录名):只在内网部署里使用、不随公开仓库发布的插件。
+# 这些目录存在时不计入目录总数,也不触发"未纳入确认范围"错误。
+PRIVATE_PLUGIN_CODES = {item.strip() for item in os.environ.get("FULCRUM_PRIVATE_PLUGINS", "").split(",") if item.strip()}
 
 # 42 个目标代码来自已经确认的 A-BOT 迁移台账。交付校验固定使用完整集合，
 # 不允许因为某个插件暂时未配置第三方凭证就把目录从正式交付范围中排除。
@@ -28,7 +32,6 @@ TARGET_PLUGIN_CODES = {
     "douyu",
     "duanju_search",
     "epic_free",
-    "fanhao_search",
     "fun_command_play",
     "game_task",
     "github_opengraph",
@@ -49,13 +52,8 @@ TARGET_PLUGIN_CODES = {
     "newapi_coupon",
     "point_trade",
     "robot_menu",
-    "sehuatang_push",
     "value_rank",
     "weather",
-    "beautyleg",
-    "video",
-    "video_man",
-    "xiuren_image",
     "xiuxian",
 }
 
@@ -200,7 +198,7 @@ def verify_plugin_migration() -> tuple[tuple[str, ...], tuple[str, ...]]:
     actual_codes = {
         path.name
         for path in PLUGINS_ROOT.iterdir()
-        if path.is_dir() and (path / "config.toml").is_file() and (path / "plugin.py").is_file()
+        if path.is_dir() and path.name not in PRIVATE_PLUGIN_CODES and (path / "config.toml").is_file() and (path / "plugin.py").is_file()
     } if PLUGINS_ROOT.is_dir() else set()
 
     missing = expected_codes - actual_codes
