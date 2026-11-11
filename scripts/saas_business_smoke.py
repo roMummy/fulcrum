@@ -354,7 +354,7 @@ def run_business_smoke() -> dict[str, Any]:
     log_handler = logging.StreamHandler(captured_log)
     logging.getLogger().addHandler(log_handler)
 
-    with TemporaryDirectory(prefix="multi-bot-saas-smoke-") as temp_dir:
+    with TemporaryDirectory(prefix="fulcrum-smoke-") as temp_dir:
         database_path = Path(temp_dir) / "business-smoke.db"
         engine = create_engine(f"sqlite:///{database_path}")
         factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

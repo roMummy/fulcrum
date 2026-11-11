@@ -128,7 +128,7 @@ def list_authorized_channel_ids(db: Session, app_id: int) -> list[int]:
 def upsert_open_api_app(db: Session, app_id: int, data: OpenApiAppInput) -> OpenApiApp:
     """创建或更新开放接口应用。
 
-    app_key 是业务系统调用 MBA 的稳定身份；更新时如果 app_secret 为空，
+    app_key 是业务系统调用 Fulcrum 的稳定身份；更新时如果 app_secret 为空，
     会保留旧密钥，避免运维只改 webhook_url 时导致客户系统密钥失效。
     """
 

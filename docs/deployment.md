@@ -1,4 +1,4 @@
-# 曜枢（multi-bot-saas）部署指南
+# Fulcrum（fulcrum）部署指南
 
 ## 当前正式部署目标
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-曜枢对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `multi-bot-saas`。支持两种部署模式：
+Fulcrum 对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `fulcrum`。支持两种部署模式：
 
 - Local process deployment with Python virtualenv
 - Container deployment with Docker Compose
@@ -42,7 +42,7 @@ AUTH_SEED_DEMO_USERS=false
 AUTH_COOKIE_SECURE=true
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
-BILLING_PAYMENT_TITLE=曜枢人工付款
+BILLING_PAYMENT_TITLE=Fulcrum 人工付款
 BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 BILLING_PAYMENT_PROOF_MAX_BYTES=5242880
 # 第三方支付自动回调使用；未配置时 /api/payment/webhook 会返回 503。
@@ -295,5 +295,5 @@ On startup the application will:
 - 插件目录、独立主密钥、数据库迁移和敏感明文清理成功前不得停止旧进程。
 - 平台可修改公开套餐价格和额度，订单创建后使用金额和额度快照，不受后续套餐修改影响。
 - 一个手机号首版只拥有一个企业；试用机器人绑定不可由租户自行更换，付费绑定释放也必须由平台管理员带原因执行。
-- 旧系统数据导入见 [legacy-import.md](/data/multi-bot-saas/docs/legacy-import.md)，必须先 dry-run，再备份目标库并正式导入。
+- 旧系统数据导入见 [legacy-import.md](../docs/legacy-import.md)，必须先 dry-run，再备份目标库并正式导入。
 - 下载分享码是 128 位随机值，服务端同时校验固定格式、租户目录、渠道目录和解析后的真实路径，不能用可预测 ID 替代。

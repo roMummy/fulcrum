@@ -13,7 +13,7 @@ def matches_event(context: Any) -> dict[str, Any]:
     """轻量识别收发单相关企微群消息。
 
     这个插件已经不处理供应商、批次、Excel 解析和发货导入；这些业务都在独立
-    supplier-order-admin 系统里完成。这里保留 matcher 的目的，是让 MBA 仍能在插件列表
+    supplier-order-admin 系统里完成。这里保留 matcher 的目的，是让 Fulcrum 仍能在插件列表
     里展示“供应商订单收发”，并允许运营按群关闭该入口，避免误触发或误提示。
     """
     if _conversation_disabled(context):
@@ -40,7 +40,7 @@ def matches_event(context: Any) -> dict[str, Any]:
 def handle_event(context: Any) -> dict[str, Any]:
     """执行桥接插件。
 
-    普通回传候选只记录“已识别”结果，不自动回复群消息；入站事件会由 MBA 的 Open
+    普通回传候选只记录“已识别”结果，不自动回复群消息；入站事件会由 Fulcrum 的 Open
     Webhook 推给 supplier-order-admin，避免本插件和独立系统重复通知供应商群。
     只有“供应商帮助”命令会返回一条说明，方便现场排查配置边界。
     """
@@ -88,7 +88,7 @@ def execute_action(request: Any) -> dict[str, Any]:
 def _conversation_disabled(context: Any) -> bool:
     """支持在插件绑定配置里按群 external_id 兜底停用。
 
-    MBA 已有群详情页的“群内强制停用”能力，会在插件进入 matches_event 前生效；
+    Fulcrum 已有群详情页的“群内强制停用”能力，会在插件进入 matches_event 前生效；
     这里再支持 `disabled_conversation_external_ids`，用于群还没有进入群管理表、
     或运营希望直接按企微会话 ID 精确排除的场景。
     """
@@ -163,7 +163,7 @@ def _help_text(context: Any) -> str:
         return text
     if admin_url:
         return f"收发单功能已迁移到独立系统，请到后台处理：{admin_url}"
-    return "收发单功能已迁移到独立 supplier-order-admin 系统；MBA 只负责消息网关、Open API 和 Webhook。"
+    return "收发单功能已迁移到独立 supplier-order-admin 系统；Fulcrum 只负责消息网关、Open API 和 Webhook。"
 
 
 def _completed(message: str, *, reply: bool) -> dict[str, Any]:

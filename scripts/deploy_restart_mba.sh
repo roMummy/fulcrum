@@ -108,7 +108,7 @@ echo "$new_pid" > "$PID_FILE"
 sleep 4
 
 if ! kill -0 "$new_pid" 2>/dev/null; then
-  echo "multi-bot-saas failed to stay alive"
+  echo "fulcrum failed to stay alive"
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
   exit 1
 fi

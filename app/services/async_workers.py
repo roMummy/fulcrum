@@ -57,7 +57,7 @@ def start_background_workers() -> None:
         return
     _recover_running_jobs_for_all_tenants()
     _stop_event.clear()
-    _worker_thread = threading.Thread(target=_worker_loop, name="multi-bot-admin-worker", daemon=True)
+    _worker_thread = threading.Thread(target=_worker_loop, name="fulcrum-worker", daemon=True)
     _worker_thread.start()
     logger.info("background worker started")
 

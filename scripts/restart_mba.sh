@@ -47,12 +47,12 @@ echo "$new_pid" > "$PID_FILE"
 sleep 3
 
 if ! kill -0 "$new_pid" 2>/dev/null; then
-  echo "multi-bot-saas failed to stay alive"
+  echo "fulcrum failed to stay alive"
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
   exit 1
 fi
 
-echo "multi-bot-saas restarted"
+echo "fulcrum restarted"
 echo "pid=$new_pid"
 ss -ltnp | grep -E ":${PORT}\b" || true
 curl -fsS "http://127.0.0.1:${PORT}/healthz" || true

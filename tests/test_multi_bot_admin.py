@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 
 TEMP_ROOT = Path(__file__).resolve().parents[1] / ".run" / "test-runtime"
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
-TEST_DIR = tempfile.mkdtemp(prefix="multi-bot-admin-", dir=TEMP_ROOT)
+TEST_DIR = tempfile.mkdtemp(prefix="fulcrum-", dir=TEMP_ROOT)
 os.environ["DATA_DIR"] = TEST_DIR
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DIR}/test.db"
 os.environ["AUTH_SEED_DEMO_USERS"] = "true"
@@ -298,7 +298,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
                 setattr(settings, name, value)
 
     def build_temp_session(self):
-        temp_dir = tempfile.mkdtemp(prefix="multi-bot-admin-auth-")
+        temp_dir = tempfile.mkdtemp(prefix="fulcrum-auth-")
         engine = create_engine(f"sqlite:///{temp_dir}/auth.db", connect_args={"check_same_thread": False})
         Base.metadata.create_all(bind=engine)
         return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
@@ -564,7 +564,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
                         "result": {
                             "id": 123456,
                             "is_bot": True,
-                            "first_name": "MBA",
+                            "first_name": "Fulcrum",
                             "username": "liu_mba_bot",
                             "can_join_groups": True,
                             "supports_inline_queries": False,
@@ -919,7 +919,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
             self.assertTrue(hasattr(loaded.instance, "execute_action"), plugin_code)
 
     def test_directory_plugin_scanner_collects_manifest_validation_errors(self):
-        with tempfile.TemporaryDirectory(prefix="multi-bot-admin-plugins-", dir=TEMP_ROOT) as plugin_root:
+        with tempfile.TemporaryDirectory(prefix="fulcrum-plugins-", dir=TEMP_ROOT) as plugin_root:
             plugin_root_path = Path(plugin_root)
             missing_plugin_dir = plugin_root_path / "missing_plugin"
             missing_plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -976,7 +976,7 @@ commands = 123
         self.assertTrue(any("当前按目录名 bad_manifest 作为扫描镜像编码" in item for item in bad_manifest.validation_warnings))
 
     def test_sync_plugins_from_directory_keeps_invalid_manifest_as_observable_mirror(self):
-        with tempfile.TemporaryDirectory(prefix="multi-bot-admin-plugins-", dir=TEMP_ROOT) as plugin_root:
+        with tempfile.TemporaryDirectory(prefix="fulcrum-plugins-", dir=TEMP_ROOT) as plugin_root:
             plugin_root_path = Path(plugin_root)
             broken_dir = plugin_root_path / "broken_plugin"
             broken_dir.mkdir(parents=True, exist_ok=True)
@@ -1579,7 +1579,7 @@ consume_policy = "continue"
 
     def test_app_main_module_imports_cleanly(self):
         module = import_module("app.main")
-        self.assertEqual(module.app.title, "Multi Bot SaaS")
+        self.assertEqual(module.app.title, "Fulcrum")
         self.assertTrue(any(getattr(route, "path", None) == "/healthz" for route in module.app.routes))
 
     def test_plugin_runtime_package_imports_cleanly(self):
@@ -1642,7 +1642,7 @@ consume_policy = "continue"
 
     def test_plugin_pages_show_manifest_validation_state(self):
         self.login("ops", "ops123")
-        with tempfile.TemporaryDirectory(prefix="multi-bot-admin-plugins-", dir=TEMP_ROOT) as plugin_root:
+        with tempfile.TemporaryDirectory(prefix="fulcrum-plugins-", dir=TEMP_ROOT) as plugin_root:
             plugin_root_path = Path(plugin_root)
             broken_dir = plugin_root_path / "broken_plugin"
             broken_dir.mkdir(parents=True, exist_ok=True)

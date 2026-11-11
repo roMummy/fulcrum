@@ -20,9 +20,9 @@ from app.main import app, healthz
 def test_application_uses_saas_branding() -> None:
     """应用元数据和健康检查必须对外使用新的 SaaS 服务标识。"""
 
-    assert Settings(_env_file=None).app_name == "Multi Bot SaaS"
-    assert app.title == "Multi Bot SaaS"
-    assert asyncio.run(healthz()) == {"ok": True, "service": "multi-bot-saas"}
+    assert Settings(_env_file=None).app_name == "Fulcrum"
+    assert app.title == "Fulcrum"
+    assert asyncio.run(healthz()) == {"ok": True, "service": "fulcrum"}
 
 
 def test_compose_uses_isolated_saas_runtime() -> None:

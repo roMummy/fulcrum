@@ -17,7 +17,7 @@ from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttp
 
 
 SCHEDULE_ACTION_KEY = "baidu_news_daily_push"
-DEFAULT_USER_AGENT = "multi-bot-saas/1.0"
+DEFAULT_USER_AGENT = "fulcrum/1.0"
 CHINESE_WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 

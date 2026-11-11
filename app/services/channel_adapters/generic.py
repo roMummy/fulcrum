@@ -177,7 +177,7 @@ class GenericHttpAdapter(BaseChannelAdapter):
     def _build_headers(self, channel: Channel, payload: dict[str, Any], adapter_config: dict[str, Any]) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "multi-bot-admin/1.0",
+            "User-Agent": "fulcrum/1.0",
         }
         token = decrypt_secret(channel.bot_token_encrypted)
         authorization = str(adapter_config.get("authorization") or payload.get("authorization") or "").strip()

@@ -8,7 +8,7 @@ tmp_probe_skip="$(mktemp)"
 trap 'rm -f "$tmp_probe_ok" "$tmp_probe_skip"' EXIT
 
 cat > "$tmp_probe_ok" <<'EOF'
-session_name=oc-codex-openclaw-control-ui-multi-bot-admin
+session_name=oc-codex-openclaw-control-ui-fulcrum
 session_exists=1
 session_status=dead
 session_state_note=stale_running_missing_session_pid
@@ -30,7 +30,7 @@ printf '%s\n' "$ok_output" | grep -F "recovery_recreate_cmd=" >/dev/null
 printf '%s\n' "$ok_output" | grep -F "recovery_dispatch_cmd=scripts/mba_codex_dispatch.sh docs/cron-job-message.txt" >/dev/null
 
 cat > "$tmp_probe_skip" <<'EOF'
-session_name=oc-codex-openclaw-control-ui-multi-bot-admin
+session_name=oc-codex-openclaw-control-ui-fulcrum
 session_exists=1
 session_status=dead
 session_state_note=stale_running_missing_session_pid

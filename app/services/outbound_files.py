@@ -67,7 +67,7 @@ def resolve_tenant_share_file(
 
 def build_public_base_url(request: Request) -> str:
     # 文件链接会被 Windows provider 独立下载，不能依赖管理员浏览器当前访问地址；
-    # 生产/局域网部署应配置 PUBLIC_BASE_URL，让 provider 始终拿到自己可访问的 MBA 地址。
+    # 生产/局域网部署应配置 PUBLIC_BASE_URL，让 provider 始终拿到自己可访问的 Fulcrum 地址。
     configured_base_url = str(settings.public_base_url or "").strip().rstrip("/")
     if configured_base_url:
         return configured_base_url

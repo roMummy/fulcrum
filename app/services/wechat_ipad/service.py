@@ -2427,7 +2427,7 @@ def _resolve_login_profile_key(value: Any) -> str:
 
 
 def _default_device_name_for_profile(profile_key: str) -> str:
-    return "multi-bot-admin iPad"
+    return "fulcrum iPad"
 
 
 def _resolve_login_profiles(adapter_config: dict[str, Any]) -> dict[str, dict[str, str]]:

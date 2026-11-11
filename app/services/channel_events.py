@@ -482,7 +482,7 @@ def _resolve_wechat_winauto_attachment_direction(
 ) -> str:
     """解析企微附件方向。
 
-    Provider 会把自己发出的文件也通过 Hook 回显给 MBA，这类事件的附件不是供应商回传文件；
+    Provider 会把自己发出的文件也通过 Hook 回显给 Fulcrum，这类事件的附件不是供应商回传文件；
     附件方向必须跟随消息/明细里的 out 标记，否则后台会把出站回显展示成入站下载失败。
     """
 

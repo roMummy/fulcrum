@@ -3,7 +3,7 @@ code = "customer_operations"
 display_name = "客户运营"
 plugin_type = "observer"
 version = "0.1.0"
-author = "multi-bot-admin"
+author = "Fulcrum"
 description = "统一接收业务系统客户触达请求，校验企微渠道联系人状态并进入出站队列。"
 default_enabled = false
 

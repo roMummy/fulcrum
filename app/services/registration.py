@@ -1,4 +1,4 @@
-"""曜枢企业自助注册和试用开通事务。"""
+"""Fulcrum 企业自助注册和试用开通事务。"""
 
 from __future__ import annotations
 

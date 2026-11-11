@@ -1338,7 +1338,7 @@ async def auth_middleware(request: Request, call_next):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "service": "multi-bot-saas"}
+    return {"ok": True, "service": "fulcrum"}
 
 
 @app.get("/readyz")

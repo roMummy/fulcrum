@@ -13,7 +13,7 @@ from tunnel import LocalProxyConnectorClient
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Multi Bot SaaS Windows 本地代理扫码连接器")
+    parser = argparse.ArgumentParser(description="Fulcrum Windows 本地代理扫码连接器")
     parser.add_argument("--server", required=True, help="SaaS 地址，例如 https://saas.example.com")
     parser.add_argument("--activation-code", default="", help="首次绑定使用的一次性激活码")
     parser.add_argument("--socks-host", default="127.0.0.1")

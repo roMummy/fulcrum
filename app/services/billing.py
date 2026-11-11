@@ -1,4 +1,4 @@
-"""曜枢套餐订单、人工付款和订阅履约服务。"""
+"""Fulcrum 套餐订单、人工付款和订阅履约服务。"""
 
 from __future__ import annotations
 

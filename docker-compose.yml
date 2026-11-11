@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
     ports:
-      # SaaS 服务使用独立端口，允许原 multi-bot-admin 在同一台服务器继续运行。
+      # 服务使用独立端口 8280,避免与同机其他服务冲突。
       - "8280:8280"
     env_file:
       # 验证时可用 MBS_ENV_FILE 指向样例文件，生产默认读取未提交的 .env.docker。

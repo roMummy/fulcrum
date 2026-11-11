@@ -246,7 +246,7 @@ async def account_onboarding_page(request: Request):
         subscription = get_current_subscription(db, tenant_id=principal.tenant_id)
         context = _tenant_context(
             request,
-            page_title="开始使用曜枢",
+            page_title="开始使用 Fulcrum",
             notice=request.query_params.get("notice", ""),
             notice_tone=request.query_params.get("tone", ""),
             subscription=subscription,

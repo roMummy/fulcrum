@@ -1,6 +1,6 @@
 # Tool API For OSM
 
-这组接口给第三方业务系统使用，例如 OSM。`Multi Bot Admin` 只作为微信工具层，不承接业务逻辑。
+这组接口给第三方业务系统使用，例如 OSM。`Fulcrum` 只作为微信工具层，不承接业务逻辑。
 
 ## 鉴权
 
@@ -177,6 +177,6 @@ curl "http://192.168.2.142:8180/api/tool/channels/3/messages?external_id=group:�
 
 ## 说明
 
-- `Multi Bot Admin` 不理解 OSM 订单语义
-- `Multi Bot Admin` 只负责文件发送、消息记录和查询
+- `Fulcrum` 不理解 OSM 订单语义
+- `Fulcrum` 只负责文件发送、消息记录和查询
 - 业务状态、重试、对账、单号解析都建议由 OSM 自己维护

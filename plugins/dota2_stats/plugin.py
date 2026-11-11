@@ -947,7 +947,7 @@ def _request_json(
     response = PluginHttpClient().request(
         "GET",
         url,
-        headers={"Accept": "application/json", "User-Agent": "multi-bot-saas/dota2-stats"},
+        headers={"Accept": "application/json", "User-Agent": "fulcrum/dota2-stats"},
         connect_timeout_seconds=min(5, config.request_timeout_seconds),
         total_timeout_seconds=config.request_timeout_seconds,
         max_response_bytes=4 * 1024 * 1024,

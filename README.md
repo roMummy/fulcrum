@@ -1,10 +1,10 @@
-# 曜枢
+# Fulcrum
 
-`曜枢` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `multi-bot-saas`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
+`Fulcrum` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `fulcrum`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
 
-- 公开站点：曜枢营销首页、套餐页、企业自助注册和 7 天试用
+- 公开站点：Fulcrum 营销首页、套餐页、企业自助注册和 7 天试用
 - 商业闭环：人工付款订单、私有付款凭证、平台审核和订阅自动履约
 - 通用额度：按 `bot_limit` 管理机器人数量，以 `adapter_type` 和 `bot_account_id` 标识外部账号
 - 租户管理：企业主手机号登录、员工独立登录、角色权限、会话和 CSRF 防护
@@ -28,7 +28,7 @@
 ## 目录结构
 
 ```text
-multi-bot-saas/
+fulcrum/
 ├── app/                  # 应用主代码
 │   ├── core/             # 配置、日志、数据库
 │   ├── models/           # SQLAlchemy 模型
@@ -99,7 +99,7 @@ http://127.0.0.1:8280
 
 | 路径 | 用途 |
 | --- | --- |
-| `/` | 曜枢营销首页 |
+| `/` | Fulcrum 营销首页 |
 | `/pricing` | 公开套餐价格 |
 | `/register` | 企业自助注册与 7 天试用 |
 | `/login` | 企业所有者与员工统一使用手机号登录 |
@@ -181,7 +181,7 @@ ABOT_PLUGIN_SECRET_KEY=
 AUTH_SEED_DEMO_USERS=false
 AUTH_BOOTSTRAP_ADMIN_USERNAME=admin
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
-BILLING_PAYMENT_TITLE=曜枢人工付款
+BILLING_PAYMENT_TITLE=Fulcrum 人工付款
 BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付款凭证。
 ```
 
@@ -212,7 +212,7 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 | `BILLING_PAYMENT_BANK_DETAILS` | 可选银行转账说明 |
 | `BILLING_PAYMENT_PROOF_MAX_BYTES` | 单个付款凭证最大字节数，默认 5 MiB |
 
-示例见 [`.env.example`](/data/multi-bot-saas/.env.example)。
+示例见 [`.env.example`](.env.example)。
 
 生成独立插件主密钥：
 
@@ -232,7 +232,7 @@ python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_
 .venv/bin/python scripts/verify_plugin_migration.py
 ```
 
-详细范围、迁移边界和定向验证记录见 [插件迁移台账](/data/multi-bot-saas/docs/plugin-migration-ledger.md)。
+详细范围、迁移边界和定向验证记录见 [插件迁移台账](docs/plugin-migration-ledger.md)。
 
 ## 套餐、试用与付款
 
@@ -284,9 +284,9 @@ DATABASE_POOL_TIMEOUT_SECONDS=30
 
 项目已提供：
 
-- [Dockerfile](/data/multi-bot-saas/Dockerfile)
-- [docker-compose.yml](/data/multi-bot-saas/docker-compose.yml)
-- [`.env.docker.example`](/data/multi-bot-saas/.env.docker.example)
+- [Dockerfile](Dockerfile)
+- [docker-compose.yml](docker-compose.yml)
+- [`.env.docker.example`](.env.docker.example)
 
 ### 使用 Docker Compose
 
@@ -357,7 +357,7 @@ A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录�
 
 ### 跨机器发送图片和文件
 
-如果 `Multi Bot SaaS` 和 Windows provider 不在同一台机器，推荐使用“主服务中转文件”的方式：
+如果 `Fulcrum` 和 Windows provider 不在同一台机器，推荐使用“主服务中转文件”的方式：
 
 1. 把文件上传到主服务 `POST /channels/{channel_id}/outbound/upload`
 2. 主服务返回一个公开下载地址 `download_url`
@@ -428,9 +428,9 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 
 如果你希望让 OSM 之类的第三方系统直接接入，而不依赖后台登录 Cookie，可以使用工具 API：
 
-- [Tool API For OSM](/data/multi-bot-saas/docs/tool_api_for_osm.md)
+- [Tool API For OSM](docs/tool_api_for_osm.md)
 - 登录企业工作台后，也可以从“开发文档”进入桥接接口中心，查看推荐的按开放应用签名的 `/api/open/*` 协议：
-  [桥接接口开发文档](/data/multi-bot-saas/docs/bridge-api.md)
+  [桥接接口开发文档](docs/bridge-api.md)
 
 这组 API 使用 `X-API-Key` 鉴权，典型用途：
 
@@ -479,14 +479,14 @@ LOG_DIR="$PWD/.run/test-runtime/full/logs" \
 
 ## 常见文件
 
-- [main.py](/data/multi-bot-saas/app/main.py): FastAPI 入口
-- [db.py](/data/multi-bot-saas/app/core/db.py): 数据库引擎与会话
-- [settings.py](/data/multi-bot-saas/app/core/settings.py): 配置入口
-- [entities.py](/data/multi-bot-saas/app/models/entities.py): 数据模型
-- [plugin_directory.py](/data/multi-bot-saas/app/services/plugin_directory.py): 目录插件扫描与调度
-- [async_workers.py](/data/multi-bot-saas/app/services/async_workers.py): 后台任务与轮询
-- [channel_catalog.py](/data/multi-bot-saas/app/services/channel_catalog.py): 正式渠道、能力和表单字段目录
-- [channel_runtime.py](/data/multi-bot-saas/app/services/channel_runtime.py): 租户隔离渠道任务协调器
+- [main.py](app/main.py): FastAPI 入口
+- [db.py](app/core/db.py): 数据库引擎与会话
+- [settings.py](app/core/settings.py): 配置入口
+- [entities.py](app/models/entities.py): 数据模型
+- [plugin_directory.py](app/services/plugin_directory.py): 目录插件扫描与调度
+- [async_workers.py](app/services/async_workers.py): 后台任务与轮询
+- [channel_catalog.py](app/services/channel_catalog.py): 正式渠道、能力和表单字段目录
+- [channel_runtime.py](app/services/channel_runtime.py): 租户隔离渠道任务协调器
 
 ## 生产建议
 

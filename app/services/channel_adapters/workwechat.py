@@ -101,7 +101,7 @@ class WorkWechatAdapter(WechatWinAutoAdapter):
         """补齐 provider 标准消息里的文件展示内容。
 
         云端客户端有时只把文件名放在 details.file_name/download_path 中，message.content 为空。
-        MBA 入站留存依赖 content 非空；这里补成 `[file] 文件名`，保证入站文件消息能写入 Message 表。
+        Fulcrum 入站留存依赖 content 非空；这里补成 `[file] 文件名`，保证入站文件消息能写入 Message 表。
         """
 
         message = normalized.get("message") if isinstance(normalized.get("message"), dict) else {}

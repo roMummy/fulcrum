@@ -35,7 +35,7 @@ expect_status() {
 echo "[1/8] checking liveness"
 health_status="$(request_status GET /healthz "${SMOKE_TMP_DIR}/health.json")"
 expect_status "${health_status}" "200" "healthz"
-grep -q '"service":"multi-bot-saas"' "${SMOKE_TMP_DIR}/health.json"
+grep -q '"service":"fulcrum"' "${SMOKE_TMP_DIR}/health.json"
 
 echo "[2/8] checking readiness"
 ready_status="$(request_status GET /readyz "${SMOKE_TMP_DIR}/ready.json")"
@@ -45,7 +45,7 @@ grep -q '"ready":true' "${SMOKE_TMP_DIR}/ready.json"
 echo "[3/8] checking public commercial entries"
 home_status="$(request_status GET / "${SMOKE_TMP_DIR}/home.html")"
 expect_status "${home_status}" "200" "marketing home"
-grep -q '曜枢' "${SMOKE_TMP_DIR}/home.html"
+grep -q 'Fulcrum' "${SMOKE_TMP_DIR}/home.html"
 grep -q '一个后台，统一运营所有智能机器人' "${SMOKE_TMP_DIR}/home.html"
 
 pricing_status="$(request_status GET /pricing "${SMOKE_TMP_DIR}/pricing.html")"

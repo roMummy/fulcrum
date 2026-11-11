@@ -334,7 +334,7 @@ class CustomerOperationRequest(Base, TenantOwnedMixin, TimestampMixin):
 class OpenApiApp(Base, TenantOwnedMixin, TimestampMixin):
     """开放接口接入应用。
 
-    MBA 作为消息网关时，外部业务系统通过 app_key/app_secret 调用发送接口。
+    Fulcrum 作为消息网关时，外部业务系统通过 app_key/app_secret 调用发送接口。
     app_secret 使用可解密密文保存，便于服务端校验 HMAC 签名；同时保存哈希用于后台展示和审计。
     """
 

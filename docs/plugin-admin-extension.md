@@ -1,6 +1,6 @@
 # 插件后台扩展入口设计
 
-> 2026-06-09 更新：`supplier_order_flow` 已经迁出 MBA，由独立 `supplier-order-admin` 系统承载。MBA 当前只保留插件目录发现、消息网关、Open API 和 Webhook 能力，不再在本项目内维护 `app/services/supplier_order_flow`、`app/templates/supplier_order_flow` 或 `/plugin-admin/supplier_order_flow` 这类收发单业务实现。
+> 2026-06-09 更新：`supplier_order_flow` 已经迁出 Fulcrum，由独立 `supplier-order-admin` 系统承载。Fulcrum 当前只保留插件目录发现、消息网关、Open API 和 Webhook 能力，不再在本项目内维护 `app/services/supplier_order_flow`、`app/templates/supplier_order_flow` 或 `/plugin-admin/supplier_order_flow` 这类收发单业务实现。
 
 ## 背景
 
@@ -22,7 +22,7 @@
 2. 让复杂插件声明自己的后台导航、页面标题和能力说明。
 3. 为插件业务页面提供统一权限、统一布局和统一返回路径。
 4. 支持后续多个复杂插件复用同一套后台入口机制。
-5. 保持插件业务逻辑和 Multi Bot Admin 核心插件调度能力边界清晰。
+5. 保持插件业务逻辑和 Fulcrum 核心插件调度能力边界清晰。
 
 ## 非目标
 

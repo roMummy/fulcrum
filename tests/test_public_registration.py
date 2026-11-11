@@ -54,7 +54,7 @@ def test_register_trial_tenant_creates_owner_and_subscription_atomically(db: Ses
         db,
         mobile="+86 138-0013-8000",
         password="Owner-secret-123",
-        enterprise_name="曜枢演示企业",
+        enterprise_name="Fulcrum 演示企业",
         contact_name="刘先生",
     )
 
@@ -64,7 +64,7 @@ def test_register_trial_tenant_creates_owner_and_subscription_atomically(db: Ses
     audit = db.scalar(select(PlatformAuditLog).where(PlatformAuditLog.target_tenant_id == tenant.id))
 
     assert tenant.code.startswith("org-")
-    assert "曜枢" not in tenant.code
+    assert "Fulcrum" not in tenant.code
     assert tenant.contact_phone == "13800138000"
     assert owner.mobile == "13800138000"
     assert owner.is_owner is True

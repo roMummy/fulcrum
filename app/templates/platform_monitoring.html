@@ -1,6 +1,6 @@
 {% extends 'platform_base.html' %}
 {% block hero_actions %}
-<form method="post" action="/platform/operations/restart-app" data-confirm-mode="confirm" data-confirm-title="重启曜枢服务" data-confirm-message="服务会短暂中断，确认继续吗？">
+<form method="post" action="/platform/operations/restart-app" data-confirm-mode="confirm" data-confirm-title="重启 Fulcrum 服务" data-confirm-message="服务会短暂中断，确认继续吗？">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <button class="btn" type="submit">重启服务</button>
 </form>

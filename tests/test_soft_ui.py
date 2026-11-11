@@ -132,7 +132,7 @@ def test_marketing_and_auth_pages_use_soft_surfaces_and_preserve_accessibility_c
     assert "yaoshu-console.webp" not in marketing_home
     assert "marketing-product-visual" not in marketing_home
     assert marketing_home.count("<h1>") == 1
-    assert "<h1>曜枢</h1>" in marketing_home
+    assert "<h1>Fulcrum</h1>" in marketing_home
     assert "marketing-hero-content" not in marketing_home
     assert 'role="alert"' in marketing_base
     assert '<meta name="theme-color" content="#f5f6fa" />' in marketing_base
@@ -196,46 +196,37 @@ def test_marketing_hero_interaction_respects_motion_and_keyboard_boundaries() ->
         assert required_script in script
 
 
-def test_soft_brand_mark_and_rounded_favicon_share_one_geometry() -> None:
-    """站内标志与圆角 favicon 必须共享内部几何，并彻底删除旧渐变机器人。
+def test_brand_mark_and_favicon_use_the_star_hub_design() -> None:
+    """品牌标志按"曜(星芒)+枢(轴心与节点)"设计:完整版带外圈、辐条和四个渠道节点,favicon 是小尺寸简化版。
 
-    SVG 使用 XML 解析而不是字符串猜测结构。站内版本使用圆角靛紫底，浏览器图标只
-    改变外层圆角；白色 Y 路径和浅靛枢点必须完全相同，避免形成两套品牌标志。
+    SVG 用 XML 解析而不是字符串猜测结构。两者都是 64x64 圆角底、都有白色四角星芒;
+    favicon 去掉辐条和节点只保留外圈,保证 16px 仍清晰;旧的 Y 形标志不能再出现。
     """
 
-    assert BRAND_MARK_PATH.exists()
+    assert BRAND_MARK_PATH.exists() and FAVICON_PATH.exists()
+    namespace = {"svg": "http://www.w3.org/2000/svg"}
     brand_root = ET.parse(BRAND_MARK_PATH).getroot()
     favicon_root = ET.parse(FAVICON_PATH).getroot()
-    namespace = {"svg": "http://www.w3.org/2000/svg"}
+    old_y_path = "M14 14h11l7 11 7-11h11L37 33v17H27V33L14 14Z"
 
-    assert not brand_root.findall(".//svg:linearGradient", namespace)
-    assert not favicon_root.findall(".//svg:linearGradient", namespace)
+    for root in (brand_root, favicon_root):
+        assert root.attrib.get("viewBox") == "0 0 64 64"
+        background = root.find("svg:rect", namespace)
+        assert background is not None and background.attrib.get("rx") == "16"
+        stars = [path for path in root.findall("svg:path", namespace) if path.attrib.get("fill") == "#ffffff"]
+        assert len(stars) == 1  # 白色四角星芒
+        assert all(path.attrib.get("d") != old_y_path for path in root.findall("svg:path", namespace))
 
-    brand_background = brand_root.find("svg:rect", namespace)
-    favicon_background = favicon_root.find("svg:rect", namespace)
-    assert brand_background is not None
-    assert favicon_background is not None
-    assert brand_background.attrib.get("rx") == "16"
-    assert favicon_background.attrib.get("rx") == "14"
-    assert brand_background.attrib.get("fill") == favicon_background.attrib.get("fill") == "#6366f1"
+    # 完整版:外圈 + 4 条辐条 + 4 个渠道节点 + 中心点
+    brand_circles = brand_root.findall("svg:circle", namespace)
+    assert len(brand_circles) == 6
+    assert len([c for c in brand_circles if c.attrib.get("r") == "3.4"]) == 4
+    assert any(path.attrib.get("stroke") for path in brand_root.findall("svg:path", namespace))  # 辐条
+    # 简化版:只有外圈,没有辐条和节点
+    favicon_circles = favicon_root.findall("svg:circle", namespace)
+    assert len(favicon_circles) == 1 and favicon_circles[0].attrib.get("fill") == "none"
+    assert not any(path.attrib.get("stroke") for path in favicon_root.findall("svg:path", namespace))
 
-    brand_path = brand_root.find("svg:path", namespace)
-    favicon_path = favicon_root.find("svg:path", namespace)
-    assert brand_path is not None
-    assert favicon_path is not None
-    assert brand_path.attrib == favicon_path.attrib
-
-    brand_pivot = brand_root.findall("svg:rect", namespace)[1]
-    favicon_pivot = favicon_root.findall("svg:rect", namespace)[1]
-    assert brand_pivot.attrib == favicon_pivot.attrib
-    assert brand_pivot.attrib.get("fill") == "#c7d2fe"
-
-    base_template = _read_project_file(TEMPLATE_ROOT / "base.html")
-    marketing_base = _read_project_file(TEMPLATE_ROOT / "marketing_base.html")
-    assert base_template.count('/static/brand-mark.svg') == 2
-    assert marketing_base.count('/static/brand-mark.svg') == 1
-    assert '<span class="brand-mark">曜</span>' not in base_template
-    assert '<span class="marketing-brand-mark" aria-hidden="true">曜</span>' not in marketing_base
 
 
 def test_dashboards_use_compact_data_grids_and_single_layer_surfaces() -> None:

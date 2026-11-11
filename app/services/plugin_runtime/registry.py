@@ -215,7 +215,7 @@ def _derive_admin_extension(discovered: DiscoveredPlugin) -> dict[str, Any]:
     """规范化插件后台入口声明。
 
     这里刻意只暴露“入口元数据”，不允许目录插件动态注册后端路由。
-    已拆出的业务系统，例如供应商收发单，只能通过 MBA Open API/Webhook 对接，避免把重业务页面重新塞回 MBA。
+    已拆出的业务系统，例如供应商收发单，只能通过 Fulcrum Open API/Webhook 对接，避免把重业务页面重新塞回 Fulcrum。
     """
     raw = dict(getattr(discovered, "admin_config", {}) or {})
     if not bool(raw.get("enabled", False)):

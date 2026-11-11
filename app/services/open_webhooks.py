@@ -58,7 +58,7 @@ def build_message_event_envelope(
 ) -> dict[str, Any]:
     """构建对外事件信封。
 
-    外部业务系统只接收统一结构，不直接暴露企业微信 Hook 或 MBA 内部表字段；
+    外部业务系统只接收统一结构，不直接暴露企业微信 Hook 或 Fulcrum 内部表字段；
     这样收发单系统、客服系统等业务都可以复用同一套事件协议。
     """
 
@@ -120,7 +120,7 @@ def dispatch_open_message_event(
     """把消息事件异步投递给绑定了当前渠道的开放应用。
 
     入站消息路径不能同步等待业务系统 webhook，否则客户业务系统慢、异常或误处理时，
-    MBA 的入站请求和消息落库提交都会被拖住。这里仅完成收发单过滤并创建投递任务，
+    Fulcrum 的入站请求和消息落库提交都会被拖住。这里仅完成收发单过滤并创建投递任务，
     真正 HTTP 调用交给后台 worker。
     """
 
@@ -238,7 +238,7 @@ def dispatch_open_send_result_event(
     只有由 Open API 创建的任务才带 `open_api` 元数据；普通后台或插件发送任务会直接跳过。
     request_id 会原样回传给业务系统，用来更新新收发单系统里的批次发送状态。
     发送完成回调不能同步等待业务系统 webhook，否则供应商消息已经发出时，业务系统 401/超时
-    会反向拖失败 provider 的 complete 请求，造成 MBA 任务状态和真实发送状态不一致。
+    会反向拖失败 provider 的 complete 请求，造成 Fulcrum 任务状态和真实发送状态不一致。
     """
 
     payload = parse_job_payload(job)
@@ -336,7 +336,7 @@ def _build_send_result_delivery_snapshot(
     """生成开放发送结果里的投递状态快照。
 
     业务批次只应把 `message.failed` 当作明确失败；`message.sent` 里如果出现
-    `accepted_unconfirmed`，表示 provider/Hook 已接收但 MBA 没拿到自发回显，需要进入
+    `accepted_unconfirmed`，表示 provider/Hook 已接收但 Fulcrum 没拿到自发回显，需要进入
     批次错误摘要提醒同事关注，不能触发自动补推。
     """
 

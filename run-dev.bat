@@ -16,7 +16,7 @@ if not exist ".run\launch_uvicorn.py" (
   exit /b 1
 )
 
-rem SaaS 主服务使用独立 8280，避免与原 multi-bot-admin 的 8180 冲突。
+rem SaaS 主服务使用独立 8280，避免与原 fulcrum 的 8180 冲突。
 rem 启动前先按端口释放旧的开发服务进程，避免上一次 Ctrl+C 或窗口关闭后 uvicorn 子进程仍占用端口。
 rem 默认只处理主服务端口，防止误杀正在单独调试的 workwechat provider；如需一起清理可设置：
 rem   set RUN_DEV_EXTRA_PORTS=8181 8989
@@ -31,7 +31,7 @@ if "%RUN_DEV_DRY_RUN%"=="1" (
   exit /b 0
 )
 
-echo [INFO] Starting multi-bot-saas on http://127.0.0.1:%MAIN_PORT%
+echo [INFO] Starting fulcrum on http://127.0.0.1:%MAIN_PORT%
 echo [INFO] Press Ctrl+C to stop
 echo.
 

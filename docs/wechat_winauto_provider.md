@@ -6,7 +6,7 @@
 
 `wxauto` 依赖 Windows 桌面微信客户端，不适合直接嵌入当前主服务。推荐采用“双进程”结构：
 
-1. `multi-bot-admin` 继续作为中心服务，负责消息入库、插件分发、审计与管理。
+1. `Fulcrum` 继续作为中心服务，负责消息入库、插件分发、审计与管理。
 2. 一台常驻登录微信的 Windows 机器运行 `wxauto provider`。
 3. 主服务通过 `wechat_winauto` 适配器调用 provider 的 HTTP API。
 4. provider 监听到新消息后，主动回调主服务 `/webhooks/{channel_id}/inbound`。
@@ -15,7 +15,7 @@
 
 ```text
 +-------------------------+          HTTP           +---------------------------+
-| multi-bot-admin         |  <------------------>   | Windows wxauto provider   |
+| Fulcrum         |  <------------------>   | Windows wxauto provider   |
 |                         |                         |                           |
 | - channel adapter       |                         | - wxauto                  |
 | - inbound normalize     |                         | - WeChat desktop client   |

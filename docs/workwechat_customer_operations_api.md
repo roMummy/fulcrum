@@ -50,9 +50,9 @@ Token 配置在渠道的 `adapter_config_json` 中：
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `request_id` | string | 是 | 业务侧唯一请求号。同一个 `channel_id + request_id` 只会入队一次。 |
-| `channel_id` | number | 是 | MBA 中的企微渠道 ID。 |
+| `channel_id` | number | 是 | Fulcrum 中的企微渠道 ID。 |
 | `target` | object | 是 | 目标联系人标识。 |
-| `target.contact_external_id` | string | 否 | MBA 联系人外部 ID。 |
+| `target.contact_external_id` | string | 否 | Fulcrum 联系人外部 ID。 |
 | `target.external_userid` | string | 否 | 企微外部联系人 ID。 |
 | `target.userid` | string | 否 | 企微用户 ID。 |
 | `scene` | string | 否 | 业务场景，例如 `order_followup`。 |
@@ -60,7 +60,7 @@ Token 配置在渠道的 `adapter_config_json` 中：
 | `content` | object/string | 是 | 推送内容。字符串会按文本消息处理。 |
 | `biz_payload` | object | 否 | 业务透传信息，只记录，不参与发送判断。 |
 
-`target` 至少提供一个有效标识。MBA 会在当前渠道联系人表中查找联系人；如果联系人不存在、已删除、或缺少直聊 `conversation_id`，请求会被拒绝。
+`target` 至少提供一个有效标识。Fulcrum 会在当前渠道联系人表中查找联系人；如果联系人不存在、已删除、或缺少直聊 `conversation_id`，请求会被拒绝。
 
 ## 内容类型
 
@@ -150,7 +150,7 @@ Token 配置在渠道的 `adapter_config_json` 中：
 }
 ```
 
-`status=queued` 表示请求已进入 MBA 出站队列，不代表企微已经发送成功。后台 worker 发送后会回填运营请求状态为 `sent` 或 `failed`。
+`status=queued` 表示请求已进入 Fulcrum 出站队列，不代表企微已经发送成功。后台 worker 发送后会回填运营请求状态为 `sent` 或 `failed`。
 
 ## 幂等返回
 
@@ -206,7 +206,7 @@ Token 配置在渠道的 `adapter_config_json` 中：
 - 维护活动、订单、用户状态、黑名单、频控等业务规则；
 - 组装文案、链接、小程序参数和媒资参数。
 
-MBA 负责：
+Fulcrum 负责：
 
 - 企微渠道和联系人状态校验；
 - 请求幂等；

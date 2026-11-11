@@ -103,7 +103,7 @@ All notable changes to this project should be documented in this file.
 - 企业后台与平台后台统一降低顶栏、导航激活态、页头和二级导航的视觉重量
 - 企业总览、平台总览、账号接入、员工管理和套餐管理改为开放页面布局，减少连续白色卡片和纵向网格线
 - 指标、表格、记录列表、状态徽标和表单统一使用更疏的间距与更低透明度边界
-- 营销首页强化曜枢 AI 品牌标题、真实产品背景、区块留白和价格方案层级
+- 营销首页强化 Fulcrum AI 品牌标题、真实产品背景、区块留白和价格方案层级
 - 移动端保持 `15px` 正文和稳定触控尺寸，表格只在自身容器滚动，公开导航隐藏滚动条
 
 ### Validation
@@ -201,7 +201,7 @@ All notable changes to this project should be documented in this file.
 - `.env.docker.example` for container deployment
 - MariaDB connection support through `DATABASE_URL`
 - database pool configuration for non-SQLite backends
-- standalone deployment guide at [`docs/deployment.md`](/d:/learn/multi-bot-admin/docs/deployment.md)
+- standalone deployment guide at [`docs/deployment.md`](/d:/learn/Fulcrum/docs/deployment.md)
 
 ### Changed
 

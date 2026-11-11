@@ -32,7 +32,7 @@ async def open_send_file_api(request: Request):
     """开放接口：发送文件。
 
     业务系统只需要提供 request_id、目标会话和文件信息；
-    MBA 负责落地任务，并按渠道模式交给本地 Provider 或云端 worker 执行。
+    Fulcrum 负责落地任务，并按渠道模式交给本地 Provider 或云端 worker 执行。
     """
 
     raw_body = await request.body()
@@ -60,7 +60,7 @@ async def open_send_message_api(request: Request):
     """开放接口：发送普通消息。
 
     文件类消息走 `/api/open/files`；这里承载文本、图片 URL、链接和小程序等轻量消息，
-    便于外部业务系统把 MBA 当作统一消息网关调用。
+    便于外部业务系统把 Fulcrum 当作统一消息网关调用。
     """
 
     raw_body = await request.body()
@@ -110,7 +110,7 @@ async def open_job_status_api(request_id: str, request: Request):
 async def open_conversations_api(request: Request, chat_type: str = "", q: str = "", limit: int = 200):
     """开放接口：列出当前应用默认渠道下的会话候选项。
 
-    业务系统做群绑定时不应该再靠人工从 MBA 后台复制多个 ID；
+    业务系统做群绑定时不应该再靠人工从 Fulcrum 后台复制多个 ID；
     这里把 Conversation 和 Chatroom 快照合并输出，收发单系统可以直接选择。
     """
 
@@ -134,7 +134,7 @@ async def open_conversations_api(request: Request, chat_type: str = "", q: str =
 async def open_chatrooms_api(request: Request, q: str = "", limit: int = 500):
     """开放接口：列出当前应用授权渠道下的群。
 
-    业务系统只需要理解“企微号/渠道 + 群”，不需要理解 MBA 内部 Conversation；
+    业务系统只需要理解“企微号/渠道 + 群”，不需要理解 Fulcrum 内部 Conversation；
     发送时仍使用群 external_id 作为 conversation_external_id。
     """
 
@@ -204,7 +204,7 @@ def enqueue_open_message_request(db: Session, *, app: OpenApiApp, payload: dict[
 
 
 def list_open_conversation_options(db: Session, *, app: OpenApiApp, chat_type: str = "", q: str = "", limit: int = 200) -> list[dict[str, Any]]:
-    """列出开放应用可绑定的 MBA 会话。
+    """列出开放应用可绑定的 Fulcrum 会话。
 
     返回应用授权渠道范围内的数据；Conversation 是消息会话主表，
     Chatroom 是群登记表，两边按 external_id 合并。
@@ -248,7 +248,7 @@ def list_open_chatroom_options(db: Session, *, app: OpenApiApp, q: str = "", lim
     """列出开放应用已授权渠道下的群。
 
     这是业务系统优先使用的接口：业务上只暴露“企微号/渠道 + 群”，
-    不要求外部系统理解 MBA 内部 Conversation。
+    不要求外部系统理解 Fulcrum 内部 Conversation。
     """
 
     keyword = str(q or "").strip().lower()
@@ -572,7 +572,7 @@ def _ensure_conversation(db: Session, *, channel: Channel, external_id: str, tit
 
 
 def _ensure_open_conversation_from_payload(db: Session, *, channel: Channel, payload: dict[str, Any]) -> Conversation:
-    """根据开放接口请求确认 MBA 会话记录。"""
+    """根据开放接口请求确认 Fulcrum 会话记录。"""
 
     conversation_external_id = str(payload.get("conversation_external_id") or payload.get("external_id") or "").strip()
     if not conversation_external_id:

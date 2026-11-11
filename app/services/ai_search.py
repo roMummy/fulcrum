@@ -120,7 +120,7 @@ def _call(query: str) -> str:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             # 必须带自己的 User-Agent:Python 默认的 "Python-urllib" 会被 Exa 前面的防护直接拒绝(403)。
-            "User-Agent": "multi-bot-saas/1.0",
+            "User-Agent": "fulcrum/1.0",
         },
     )
     try:
