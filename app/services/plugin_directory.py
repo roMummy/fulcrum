@@ -23,6 +23,8 @@ from app.core.logging import get_logger
 from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
+from app.core.time import now_shanghai
+from app.services.plugin_governance import blocked_plugin_codes
 from app.services.config_fields import ConfigField
 from app.services.plugin_manifest import ManifestParseError, parse_manifest, read_config_fields
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
@@ -389,10 +391,13 @@ def sync_plugins_from_directory(db: Session, *, force: bool = False) -> list[Plu
         row.author = item.manifest.author
         row.description = _build_synced_plugin_description(item)
         row.default_enabled = item.manifest.default_enabled if item.is_valid else False
+        row.missing_at = None  # 目录里又出现了:清除"缺失"标记
         rows.append(row)
-    stale_rows = db.scalars(select(Plugin).where(~Plugin.code.in_(discovered_codes))).all() if discovered_codes else db.scalars(select(Plugin)).all()
-    for stale in stale_rows:
-        db.delete(stale)
+    # 目录里暂时找不到的插件只做标记,绝不删除记录:删除会级联清掉所有租户的绑定、配置、
+    # 加密密钥和状态数据(目录被误清空或部署漏拷贝时尤其危险)。恢复目录后标记自动清除。
+    now = now_shanghai()
+    for stale in db.scalars(select(Plugin).where(Plugin.missing_at.is_(None), ~Plugin.code.in_(discovered_codes))).all():
+        stale.missing_at = now
     db.commit()
     return rows
 
@@ -421,6 +426,8 @@ def build_static_dispatch_plan(
     discovered_map = {item.manifest.code: item for item in discover_plugins()}
     group_chatroom = _load_group_chatroom(db, channel=channel, context=context)
     group_scope_map = _load_group_scope_map(db, channel=channel, context=context)
+    # 平台停用或对本租户不可见的插件:绑定保留,但不参与调度
+    platform_blocked = blocked_plugin_codes(db, int(channel.tenant_id))
 
     for binding in bindings:
         plugin = binding.plugin
@@ -432,6 +439,10 @@ def build_static_dispatch_plan(
         if binding.status != "enabled":
             skipped.append((plugin_code, "binding_disabled"))
             logger.debug("static plan skipped plugin", extra={"plugin_code": plugin_code, "reason": "binding_disabled"})
+            continue
+        if plugin_code in platform_blocked:
+            skipped.append((plugin_code, "platform_blocked"))
+            logger.debug("static plan skipped plugin", extra={"plugin_code": plugin_code, "reason": "platform_blocked"})
             continue
 
         discovered = discovered_map.get(plugin_code)

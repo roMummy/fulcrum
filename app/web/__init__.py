@@ -9,6 +9,7 @@ from app.web.platform_auth import router as platform_auth_router
 from app.web.platform_admin import router as platform_admin_router
 from app.web.platform_billing import router as platform_billing_router
 from app.web.platform_operations import router as platform_operations_router
+from app.web.platform_plugins import router as platform_plugins_router
 from app.web.public_site import router as public_site_router
 from app.web.billing import router as billing_router
 from app.web.developer_docs import router as developer_docs_router
@@ -22,6 +23,7 @@ __all__ = [
     "platform_auth_router",
     "platform_billing_router",
     "platform_operations_router",
+    "platform_plugins_router",
     "billing_router",
     "developer_docs_router",
     "provider_nodes_router",

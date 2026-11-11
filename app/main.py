@@ -90,6 +90,7 @@ from app.services.ops import (
 from app.services.group_features.registry import get_feature as get_group_feature
 from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form, toggle_flag as toggle_group_feature_flag
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
+from app.services.plugin_governance import blocked_plugin_codes, tenant_visible_plugins
 from app.services.plugin_schemas import (
     build_plugin_config_view,
     deep_merge_config,
@@ -194,7 +195,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import billing_router, developer_docs_router, open_api_apps_router, platform_admin_router, platform_auth_router, platform_billing_router, platform_operations_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
+from app.web import billing_router, developer_docs_router, open_api_apps_router, platform_admin_router, platform_auth_router, platform_billing_router, platform_operations_router, platform_plugins_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -239,6 +240,7 @@ app.include_router(billing_router)
 app.include_router(platform_admin_router)
 app.include_router(platform_billing_router)
 app.include_router(platform_operations_router)
+app.include_router(platform_plugins_router)
 app.include_router(tenant_admin_router)
 app.include_router(open_api_apps_router)
 app.include_router(provider_nodes_router)
@@ -3993,8 +3995,13 @@ async def plugins_page(request: Request):
     db = get_session()
     try:
         sync_plugins_from_directory(db)
-        plugins = db.scalars(select(Plugin).order_by(Plugin.id.desc())).all()
-        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        plugins = tenant_visible_plugins(db, _current_tenant_id())
+        visible_plugin_ids = {plugin.id for plugin in plugins}
+        bindings = [
+            item
+            for item in db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+            if item.plugin_id in visible_plugin_ids
+        ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         plugin_runtime_map = {plugin.code: get_plugin_runtime_meta(plugin.code) for plugin in plugins}
         search_query = request.query_params.get("q", "").strip()
@@ -4071,8 +4078,13 @@ async def plugin_runtime_page(request: Request):
     db = get_session()
     try:
         sync_plugins_from_directory(db)
-        plugins = db.scalars(select(Plugin).order_by(Plugin.id.desc())).all()
-        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        plugins = tenant_visible_plugins(db, _current_tenant_id())
+        visible_plugin_ids = {plugin.id for plugin in plugins}
+        bindings = [
+            item
+            for item in db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+            if item.plugin_id in visible_plugin_ids
+        ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
         for binding in bindings:
@@ -4098,9 +4110,7 @@ async def plugin_detail_page(request: Request, plugin_id: int):
     db = get_session()
     try:
         sync_plugins_from_directory(db)
-        plugin = db.get(Plugin, plugin_id)
-        if not plugin:
-            raise HTTPException(status_code=404, detail="Plugin not found")
+        plugin = _get_tenant_usable_plugin(db, plugin_id)
         bindings = db.scalars(select(BotPlugin).where(BotPlugin.plugin_id == plugin_id, BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
@@ -4122,6 +4132,28 @@ async def plugin_detail_page(request: Request, plugin_id: int):
         )
     finally:
         db.close()
+
+
+def _current_tenant_id() -> int:
+    """当前请求所属租户(租户页面里的插件可见性都按它判断)。"""
+
+    return int(require_tenant_id())
+
+
+def _get_tenant_usable_plugin(db, plugin_id: int) -> Plugin:
+    """取一个当前租户可以使用的插件;不存在、目录里已缺失、被平台停用或对本租户不可见都按 404 处理。"""
+
+    plugin = db.get(Plugin, plugin_id)
+    if not plugin or plugin.missing_at is not None or plugin.code in blocked_plugin_codes(db, _current_tenant_id()):
+        raise HTTPException(status_code=404, detail="Plugin not found")
+    return plugin
+
+
+def _ensure_binding_plugin_usable(db, binding) -> None:
+    """启用或手动执行绑定前确认插件没有被平台停用:绑定数据保留,但此时不能让它跑起来。"""
+
+    if binding.plugin is not None and binding.plugin.code in blocked_plugin_codes(db, _current_tenant_id()):
+        raise HTTPException(status_code=403, detail="该插件已被平台停用或对当前租户不可用")
 
 
 def _safe_plugin_next(value: str, default: str) -> str:
@@ -4146,9 +4178,7 @@ async def bind_plugin_action(
     db = get_session()
     try:
         require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
-        plugin = db.get(Plugin, plugin_id)
-        if not plugin:
-            raise HTTPException(status_code=404, detail="Plugin not found")
+        plugin = _get_tenant_usable_plugin(db, plugin_id)
         form = await request.form()
         merged_config = merge_schema_config(
             plugin.code,
@@ -4184,6 +4214,8 @@ async def toggle_plugin_binding_action(request: Request, binding_id: int, enable
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
+        if enabled:
+            _ensure_binding_plugin_usable(db, binding)
         if (binding.status == "enabled") != enabled:
             toggle_binding(db, binding)
             record_audit(db, "plugin.toggle", "bot_plugin", binding.id, f"status={binding.status}")
@@ -4213,6 +4245,8 @@ async def toggle_plugin_direct_action(
         bot = get_bot(db, bot_id)
         if not plugin or not bot:
             raise HTTPException(status_code=404, detail="Bot or plugin not found")
+        if enabled and plugin.code in blocked_plugin_codes(db, _current_tenant_id()):
+            raise HTTPException(status_code=403, detail="该插件已被平台停用或对当前租户不可用")
         binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
         if binding:
             if (binding.status == "enabled") != enabled:
@@ -4312,6 +4346,7 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
+        _ensure_binding_plugin_usable(db, binding)
         payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         context = _build_manual_plugin_execution_context(db, binding, payload)
         result = execute_binding_message_action(

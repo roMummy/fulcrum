@@ -8,6 +8,7 @@ _PLATFORM_PRIMARY_NAVIGATION = (
     ("tenants", "租户管理", "/platform/tenants"),
     ("plans", "套餐管理", "/platform/plans"),
     ("billing", "订单审核", "/platform/billing/orders"),
+    ("plugins", "插件管理", "/platform/plugins"),
     ("users", "平台员工", "/platform/users"),
     ("operations", "系统运维", "/platform/operations"),
 )

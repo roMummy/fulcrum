@@ -1,0 +1,62 @@
+{% extends 'platform_base.html' %}
+{% block content %}
+{# 平台插件管理:一行一个插件,展开后设置全平台状态与可见范围。插件目录全平台共享,租户只能绑定和配置自己的机器人。 #}
+<section class="page-section">
+  <div class="section-head">
+    <div>
+      <h2>插件管理</h2>
+      <p class="muted">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
+    </div>
+  </div>
+  {% for row in rows %}
+  {% set plugin = row.plugin %}
+  <details class="editor-surface" id="plugin-{{ plugin.code }}">
+    <summary>
+      <strong>{{ plugin.display_name }}</strong>
+      <code>{{ plugin.code }}</code>
+      <span class="muted">v{{ plugin.version }}</span>
+      <span class="chip {% if plugin.platform_status == 'active' %}chip-success{% else %}chip-danger{% endif %}">{{ '正常' if plugin.platform_status == 'active' else '已停用' }}</span>
+      <span class="chip chip-muted">{{ visibility_labels.get(plugin.visibility, '未知') }}</span>
+      {% if plugin.missing_at %}<span class="chip chip-danger">目录中缺失</span>{% endif %}
+      <span class="muted">{{ row.usage.tenants }} 个租户 · {{ row.usage.enabled }}/{{ row.usage.bindings }} 个绑定启用</span>
+    </summary>
+    {% if plugin.missing_at %}<p class="muted">自 {{ format_time(plugin.missing_at) }} 起在插件目录中找不到。记录和租户数据都已保留,目录恢复后自动清除标记。</p>{% endif %}
+    {% if plugin.status_note %}<p class="muted">停用原因:{{ plugin.status_note }}</p>{% endif %}
+    <form method="post" action="/platform/plugins/{{ plugin.code }}/status" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>全平台状态</span>
+        <select name="status">
+          <option value="active"{% if plugin.platform_status == 'active' %} selected{% endif %}>正常</option>
+          <option value="disabled"{% if plugin.platform_status != 'active' %} selected{% endif %}>停用</option>
+        </select>
+      </label>
+      <label class="full-row"><span>停用原因(仅平台可见)</span><input name="note" maxlength="255" value="{{ plugin.status_note or '' }}" /></label>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存状态</button></div>
+    </form>
+    <form method="post" action="/platform/plugins/{{ plugin.code }}/visibility" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label><span>对哪些租户可见</span>
+        <select name="visibility">
+          {% for key, label in visibility_labels.items() %}
+          <option value="{{ key }}"{% if plugin.visibility == key %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <fieldset class="full-row"><legend>指定套餐(选"指定套餐"时生效)</legend>
+        {% for plan in plans %}
+        <label><input type="checkbox" name="plan_ids" value="{{ plan.id }}"{% if plan.id in row.plan_ids %} checked{% endif %} /> {{ plan.name }}</label>
+        {% endfor %}
+      </fieldset>
+      <fieldset class="full-row"><legend>指定租户(选"指定租户"时生效)</legend>
+        {% for tenant in tenants %}
+        <label><input type="checkbox" name="tenant_ids" value="{{ tenant.id }}"{% if tenant.id in row.tenant_ids %} checked{% endif %} /> {{ tenant.name }}</label>
+        {% endfor %}
+      </fieldset>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存可见范围</button></div>
+    </form>
+  </details>
+  {% else %}
+  <div class="empty-state"><strong>暂无插件</strong></div>
+  {% endfor %}
+</section>
+{% endblock %}

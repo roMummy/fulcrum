@@ -85,8 +85,37 @@ class Plugin(Base, TimestampMixin):
     author: Mapped[str | None] = mapped_column(String(100), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 平台对这个插件的管控(平台后台「插件管理」维护):
+    #   platform_status  active 正常 / disabled 对全平台停用(已绑定的机器人不再执行,绑定和配置数据保留);
+    #   visibility       all 所有租户可见 / plans 只有指定套餐 / tenants 只有指定租户 / platform_only 仅平台可见,
+    #                    plans 和 tenants 的名单在 plugin_grants 里;
+    #   missing_at       上次扫描时插件目录里找不到它的时间。目录里找不到只是标记,不再删除记录
+    #                    (删除会级联删掉所有租户的绑定、加密配置和状态)。
+    platform_status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default="active", index=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="all", server_default="all")
+    status_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    missing_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     bot_bindings = relationship("BotPlugin", back_populates="plugin", cascade="all, delete-orphan")
+    grants = relationship("PluginGrant", back_populates="plugin", cascade="all, delete-orphan")
+
+
+class PluginGrant(Base, TimestampMixin):
+    """插件可见范围名单:visibility 为 plans / tenants 时,哪些套餐或租户可以看到并使用这个插件。
+
+    和 Plugin 一样是平台全局数据,不属于任何租户。
+    """
+
+    __tablename__ = "plugin_grants"
+    __table_args__ = (UniqueConstraint("plugin_id", "scope_type", "scope_id", name="uq_plugin_grants_scope"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plugin_id: Mapped[int] = mapped_column(ForeignKey("plugins.id", ondelete="CASCADE"), index=True)
+    # plan 套餐 / tenant 租户
+    scope_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    plugin = relationship("Plugin", back_populates="grants")
 
 
 class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):

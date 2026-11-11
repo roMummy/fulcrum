@@ -106,3 +106,4 @@ tests/test_wechat_ipad_874_contract.py
 tests/test_wechat_ipad_login_proxy_flow.py
 tests/test_wechat_ipad_qrcode_runtime.py
 tests/test_workwechat_cloud_poll.py
+tests/test_plugin_governance.py

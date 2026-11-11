@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import BotPlugin, Conversation, Plugin, TaskJob, WeatherSubscription
+from app.services.plugin_governance import blocked_plugin_codes
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 from app.services.plugin_runtime.service import execute_binding_scheduled_action
 from app.services.task_queue import PLUGIN_SCHEDULED_ACTION_JOB, enqueue_job
@@ -157,11 +158,18 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
         .order_by(BotPlugin.id.asc())
     ).all()
     created_jobs: list[TaskJob] = []
+    blocked_by_tenant: dict[int, frozenset[str]] = {}
     for binding in bindings:
         if binding.bot is None or not binding.bot.is_enabled:
             continue
         config = _parse_json_object(binding.config_json)
         plugin_code = str(binding.plugin.code if binding.plugin else "").strip()
+        # 平台停用或对该租户不可见的插件不再产生定时任务(绑定与配置保留)
+        tenant_id = int(binding.tenant_id)
+        if tenant_id not in blocked_by_tenant:
+            blocked_by_tenant[tenant_id] = blocked_plugin_codes(db, tenant_id)
+        if plugin_code in blocked_by_tenant[tenant_id]:
+            continue
         if plugin_code == "weather":
             # 天气计划按机器人绑定执行。没有有效订阅时不创建空任务，避免大量已启用但
             # 尚未使用的租户绑定每天占用任务队列。
@@ -212,6 +220,9 @@ def process_plugin_scheduled_action_job(
         raise PluginSchedulerError("插件绑定不存在或不属于任务租户")
     if binding.status != "enabled" or binding.bot is None or not binding.bot.is_enabled:
         raise PluginSchedulerError("插件绑定或机器人未启用")
+    # 任务排队之后平台才停用插件的情况:执行前再拦一次
+    if binding.plugin is not None and binding.plugin.code in blocked_plugin_codes(db, int(binding.tenant_id)):
+        raise PluginSchedulerError("插件已被平台停用或对该租户不可用")
 
     action_key = normalize_action_key(str(payload.get("action_key") or ""))
     expected_related_type = f"{SCHEDULED_RELATED_PREFIX}{action_key}"
