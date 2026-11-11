@@ -2,6 +2,11 @@
 
 [简体中文](README.md) | **English**
 
+[![Stars](https://img.shields.io/github/stars/liu-x-x-lab/fulcrum?style=flat&logo=github)](https://github.com/liu-x-x-lab/fulcrum/stargazers)
+[![License](https://img.shields.io/github/license/liu-x-x-lab/fulcrum)](LICENSE)
+[![CI](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml/badge.svg)](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml)
+[![Contributors](https://img.shields.io/github/contributors/liu-x-x-lab/fulcrum)](https://github.com/liu-x-x-lab/fulcrum/graphs/contributors)
+
 Fulcrum is a multi-tenant SaaS for operating chat bots across channels from a single back office:
 WeChat, WeCom (WeChat Work), Telegram and more. It handles tenants, teams, plans and quotas, a plugin runtime,
 group management, a message center and an Open API/Webhook gateway for your own business systems.
@@ -50,6 +55,26 @@ behind a TLS reverse proxy.
 Client-side providers for WeChat/WeCom (hook, iPad protocol, desktop automation) are separate programs that depend on
 third-party components and are **not distributed in this repository**. Using unofficial protocols may violate the
 terms of the platforms involved; evaluate the risk and comply with applicable laws.
+
+## Community
+
+Scan the QR code (WeCom) to join the community group — questions, ideas and collaboration are welcome:
+
+<img src="docs/images/community-qr.png" alt="Community QR code" width="220" />
+
+You can also ask questions or report problems in [Issues](https://github.com/liu-x-x-lab/fulcrum/issues).
+
+## Star history
+
+[![Star History Chart](https://api.star-history.com/svg?repos=liu-x-x-lab/fulcrum&type=Date)](https://star-history.com/#liu-x-x-lab/fulcrum&Date)
+
+## Contributors
+
+Thanks to everyone who has contributed to Fulcrum! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get involved.
+
+<a href="https://github.com/liu-x-x-lab/fulcrum/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=liu-x-x-lab/fulcrum" alt="Contributors" />
+</a>
 
 ## Contributing & license
 

@@ -2,6 +2,11 @@
 
 **简体中文** | [English](README.en.md)
 
+[![Stars](https://img.shields.io/github/stars/liu-x-x-lab/fulcrum?style=flat&logo=github)](https://github.com/liu-x-x-lab/fulcrum/stargazers)
+[![License](https://img.shields.io/github/license/liu-x-x-lab/fulcrum)](LICENSE)
+[![CI](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml/badge.svg)](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml)
+[![Contributors](https://img.shields.io/github/contributors/liu-x-x-lab/fulcrum)](https://github.com/liu-x-x-lab/fulcrum/graphs/contributors)
+
 `Fulcrum` 是本项目的名称。部分历史部署标识（Docker 容器名、数据库名、数据卷名）沿用 `multi-bot-saas` / `multi_bot_saas`，不影响使用。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
@@ -505,6 +510,26 @@ APP_ENV=test DATA_DIR="$PWD/.run/t" DATABASE_URL="sqlite:///$PWD/.run/t/test.db"
 - 为 `logs/`、数据库和 `data/tenant_billing/` 做好持久化与一致性备份
 - 反向代理后再对外暴露服务
 - 对 Telegram 等外部渠道单独准备稳定网络出口或代理
+
+## 社区与交流
+
+扫码添加企业微信，加入交流群（使用问题、功能建议、合作交流都欢迎）：
+
+<img src="docs/images/community-qr.png" alt="交流群二维码" width="220" />
+
+也可以直接在 [Issues](https://github.com/liu-x-x-lab/fulcrum/issues) 里提问或反馈。
+
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=liu-x-x-lab/fulcrum&type=Date)](https://star-history.com/#liu-x-x-lab/fulcrum&Date)
+
+## 贡献者
+
+感谢所有为 Fulcrum 做出贡献的人！参与方式见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+<a href="https://github.com/liu-x-x-lab/fulcrum/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=liu-x-x-lab/fulcrum" alt="Contributors" />
+</a>
 
 ## License
 
