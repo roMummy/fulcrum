@@ -621,6 +621,10 @@ def _enqueue_ai_intent(
         if details.get("ai_rewritten"):
             # 正文已经是 AI 改写出的命令，再不命中就直接放弃，不再二次分析。
             return False
+        if details.get("from_self"):
+            # 本账号自己发的消息(含机器人回复回流)不是用户在向 AI 提问,不进 AI;
+            # 否则私聊里 AI 会对着自己的回复继续回复。普通插件命令不受影响,仍可用本账号手动触发。
+            return False
         if context.message_type != "text" or not ai_dispatch.should_trigger(
             context.chat_type, context.mentioned_self, context.message_text
         ):

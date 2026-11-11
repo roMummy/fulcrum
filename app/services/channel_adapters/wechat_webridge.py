@@ -115,6 +115,9 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         if message_type == "pat":
             # 拍一拍:把谁拍了谁整理成统一结构,触发规则只读 details.pat,不关心微桥的字段命名
             details["pat"] = _build_pat_info(body)
+        if _is_from_self(channel, str(body.get("sender_id") or body.get("from") or "")):
+            # 本账号自己发出的消息(手机上亲自发的、机器人回复后回流的都算):标记出来,AI 不把它当用户输入
+            details["from_self"] = True
         member_change = _build_member_change(event_name, body)
         if member_change:
             # 结构化成员事件:插件直接读 details.member_change,消息内容写成中文,后台和日志可读。
@@ -142,6 +145,22 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
 
 
 _MEMBER_EVENT_TYPES = {"group_member_join": "join", "group_member_leave": "left", "group_member_nickname_change": "rename"}
+
+
+def _is_from_self(channel: Channel | None, sender_id: str) -> bool:
+    """事件发送者是否就是这个渠道登录的微信账号本身(以手机注册时登记的账号 ID 为准)。
+
+    微桥会把本账号发出的消息也当入站事件推回来;不识别的话,机器人自己的回复会被当成
+    用户消息再喂给 AI,AI 对着自己的话继续回复,形成自问自答的循环。
+    """
+
+    if channel is None or not sender_id.strip():
+        return False
+    from app.services.wechat_webridge.service import _runtime
+
+    bridge = _runtime(channel).get("webridge")
+    own = str(bridge.get("account_id") or "").strip() if isinstance(bridge, dict) else ""
+    return bool(own) and sender_id.strip() == own
 
 
 def _first_text(body: dict[str, Any], keys: tuple[str, ...]) -> str:
