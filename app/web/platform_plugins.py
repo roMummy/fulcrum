@@ -1,4 +1,4 @@
-"""平台后台的插件管理:查看全部插件、全平台停用/恢复、设置对哪些租户可见、上传安装/升级/回滚插件包。
+"""平台后台的插件管理:卡片式浏览全部插件、全平台启停(点击即保存)、弹窗设置可见范围、上传安装/升级/回滚插件包。
 
 插件目录全平台共享,租户只能管理自己机器人上的绑定;这里是平台方的管控入口。
 所有修改都要求平台会话和 CSRF 令牌,并写入平台审计日志。
@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
@@ -20,6 +20,8 @@ from app.services.plugin_governance import (
     VISIBILITY_LABELS,
     PluginGovernanceError,
     PluginUsage,
+    STATUS_ACTIVE,
+    STATUS_DISABLED,
     VISIBILITY_PLATFORM_ONLY,
     grants_of,
     record_plugin_audit,
@@ -91,34 +93,45 @@ async def platform_plugins_page(request: Request):
                     "usage": usage.get(int(plugin.id), PluginUsage()),
                     "plan_ids": set(plan_ids),
                     "tenant_ids": set(tenant_ids),
-                    "versions": plugin_packages.list_versions(plugin.code),
+                    "versions": [
+                        {
+                            "file": item.filename,
+                            "version": item.version,
+                            "stored_at": f"{item.stored_at[:4]}-{item.stored_at[4:6]}-{item.stored_at[6:8]} {item.stored_at[8:10]}:{item.stored_at[10:12]}",
+                        }
+                        for item in plugin_packages.list_versions(plugin.code)
+                    ],
                 }
             )
         context = _plugins_context(request, rows=rows, plans=plans, tenants=tenants)
         return templates.TemplateResponse(request, "platform_plugins.html", context)
 
 
+def _json_error(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse({"ok": False, "notice": message}, status_code=status_code)
+
+
 @router.post("/plugins/{code}/status")
-async def platform_plugin_status_action(
-    code: str,
-    request: Request,
-    status: str = Form(...),
-    note: str = Form(""),
-    csrf_token: str = Form(""),
-):
-    """全平台停用或恢复一个插件。"""
+async def platform_plugin_status_action(code: str, request: Request):
+    """全平台启用/停用一个插件:列表里的开关点击即保存,提交目标状态 {"value": true|false}(幂等),返回 JSON。"""
 
     principal = _require_platform_principal(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        return _json_error("请求格式不正确")
+    value = (body or {}).get("value")
+    if not isinstance(value, bool):
+        return _json_error("请求格式不正确")
     with SessionLocal() as db:
-        require_platform_csrf(db, request, csrf_token)
+        require_platform_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         plugin = _get_plugin(db, code)
-        try:
-            set_platform_status(db, plugin, status=status, note=note, actor_user_id=principal.user_id)
-        except PluginGovernanceError as exc:
-            return _redirect("/platform/plugins", str(exc), danger=True)
-        db.commit()
+        status = STATUS_ACTIVE if value else STATUS_DISABLED
+        if plugin.platform_status != status:
+            set_platform_status(db, plugin, status=status, actor_user_id=principal.user_id)
+            db.commit()
         label = plugin.display_name
-    return _redirect("/platform/plugins", f"{label} 已{'恢复' if status == 'active' else '在全平台停用'}")
+    return JSONResponse({"ok": True, "notice": f"{label} 已{'启用' if value else '在全平台停用'}", "status": status})
 
 
 @router.post("/plugins/{code}/visibility")
@@ -128,13 +141,12 @@ async def platform_plugin_visibility_action(
     visibility: str = Form(...),
     plan_ids: list[int] = Form(default_factory=list),
     tenant_ids: list[int] = Form(default_factory=list),
-    csrf_token: str = Form(""),
 ):
-    """设置插件对哪些租户可见(所有 / 指定套餐 / 指定租户 / 仅平台)。"""
+    """设置插件对哪些租户可见(所有 / 指定套餐 / 指定租户 / 仅平台);可见范围弹窗用 fetch 提交,返回 JSON。"""
 
     principal = _require_platform_principal(request)
     with SessionLocal() as db:
-        require_platform_csrf(db, request, csrf_token)
+        require_platform_csrf(db, request, request.headers.get("X-CSRF-Token", ""))
         plugin = _get_plugin(db, code)
         try:
             set_visibility(
@@ -147,10 +159,19 @@ async def platform_plugin_visibility_action(
             )
         except PluginGovernanceError as exc:
             db.rollback()
-            return _redirect("/platform/plugins", str(exc), danger=True)
+            return _json_error(str(exc))
         db.commit()
         label = plugin.display_name
-    return _redirect("/platform/plugins", f"{label} 的可见范围已更新")
+    return JSONResponse(
+        {
+            "ok": True,
+            "notice": f"{label} 的可见范围已更新",
+            "visibility": visibility,
+            "visibility_label": VISIBILITY_LABELS[visibility],
+            "plan_ids": sorted(set(plan_ids)) if visibility == "plans" else [],
+            "tenant_ids": sorted(set(tenant_ids)) if visibility == "tenants" else [],
+        }
+    )
 
 
 @router.post("/plugins/upload")

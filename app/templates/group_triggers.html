@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{# 群级触发回复:规则列表。每条规则读起来是一句话:「当有人拍机器人时 → 回复:文字、图片」。 #}
+{# 群级触发回复:规则列表,卡片网格。每条规则读起来是一句话:「当有人拍机器人时 → 回复:文字、图片」。 #}
 {% block page_intro %}设置「什么时候」自动回复「什么」,不需要写代码。{% endblock %}
 {% block hero_actions %}
 <a class="btn btn-secondary" href="{{ group_url }}?tab=features">返回群功能</a>
@@ -9,35 +9,42 @@
 {% if not feature_on %}
 <section class="notice-card">本群还没有打开「触发回复」功能,规则暂时不会生效。请到<a href="{{ group_url }}?tab=features">群功能</a>里打开它。</section>
 {% endif %}
-<section class="page-section">
+{% if rules %}
+<section class="tr-grid">
   {% for rule in rules %}
-  <article class="tr-rule{% if not rule.enabled %} is-off{% endif %}">
-    <div class="tr-rule-main">
-      <h3>{{ rule.name }}</h3>
-      <p><strong>当</strong> {{ rule.trigger }} <strong>→ 回复</strong> {{ rule.actions|join('、') }}</p>
-      <p class="muted">{{ rule.mode }}{% if rule.cooldown %} · 冷却 {{ rule.cooldown }} 秒{% endif %}</p>
-    </div>
-    {% if can_edit %}
-    <div class="tr-rule-actions">
-      <label class="ui-switch" title="启用或停用这条规则">
-        <input type="checkbox" role="switch" data-autosave-url="{{ triggers_url }}/{{ rule.id }}/toggle"{% if rule.enabled %} checked{% endif %} />
+  <article class="tr-card{% if not rule.enabled %} is-off{% endif %}">
+    <header class="tr-card-head">
+      <h3 title="{{ rule.name }}">{{ rule.name }}</h3>
+      {% if can_edit %}
+      <label class="ui-switch ui-switch-small" title="启用或停用这条规则">
+        <input type="checkbox" role="switch" aria-label="启用规则" data-autosave-url="{{ triggers_url }}/{{ rule.id }}/toggle"{% if rule.enabled %} checked{% endif %} />
         <span class="ui-switch-track"></span>
       </label>
-      <a class="btn btn-secondary" href="{{ triggers_url }}/{{ rule.id }}">编辑</a>
-      <form method="post" action="{{ triggers_url }}/{{ rule.id }}/delete" onsubmit="return confirm('确定删除规则「{{ rule.name|e }}」吗?已上传的素材也会一并删除。')">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn btn-secondary" type="submit">删除</button>
-      </form>
+      {% endif %}
+    </header>
+    <p class="tr-card-line"><strong>当</strong> {{ rule.trigger }}</p>
+    <p class="tr-card-line"><strong>回复</strong> {{ rule.actions|join('、') }}</p>
+    <div class="tr-card-chips">
+      {% if rule.mode %}<span class="chip chip-muted">{{ rule.mode }}</span>{% endif %}
+      {% if rule.cooldown %}<span class="chip chip-muted">冷却 {{ rule.cooldown }} 秒</span>{% endif %}
     </div>
+    {% if can_edit %}
+    <footer class="tr-card-foot">
+      <a class="btn btn-secondary btn-small" href="{{ triggers_url }}/{{ rule.id }}">编辑</a>
+      <form method="post" action="{{ triggers_url }}/{{ rule.id }}/delete" data-confirm-mode="confirm" data-confirm-tone="danger" data-confirm-title="删除规则「{{ rule.name }}」?" data-confirm-message="规则和它上传的图片、语音、视频素材都会一并删除,无法恢复。" data-confirm-confirm-text="删除">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="pp-link tr-danger" type="submit">删除</button>
+      </form>
+    </footer>
     {% endif %}
   </article>
-  {% else %}
-  <div class="empty-state">
-    <strong>还没有触发规则</strong>
-    <p>比如:有人拍一拍机器人时,回一句话或者发一张图;群里有人说「早安」时,回一条语音。</p>
-    {% if can_edit %}<a class="btn" href="{{ triggers_url }}/new">新建第一条规则</a>{% endif %}
-  </div>
   {% endfor %}
 </section>
+{% else %}
+<div class="empty-state">
+  <strong>还没有触发规则</strong>
+  <p>比如:有人拍一拍机器人时,回一句话或者发一张图;有人入群时,发一条欢迎语;群里有人说「早安」时,回一条语音。</p>
+  {% if can_edit %}<a class="btn" href="{{ triggers_url }}/new">新建第一条规则</a>{% endif %}
+</div>
+{% endif %}
 {% endblock %}
-{% block scripts %}{% endblock %}

@@ -1,45 +1,56 @@
 {% extends 'base.html' %}
-{# 触发规则的新建/编辑表单。字段全部由 trigger_rules.catalog 注册信息生成,新增触发或回复类型不用改本模板。 #}
+{# 触发规则的新建/编辑表单。字段全部由 trigger_rules.catalog 注册信息生成,新增触发或回复类型不用改本模板。
+   控件一律用产品自己的部件:选择块/分段选择/开关/文件选择器,不使用浏览器原生的单选、复选和文件框。 #}
 {% set accept_map = {'image': '.jpg,.jpeg,.png,.gif,.webp', 'audio': '.mp3,.wav,.amr,.silk,.m4a', 'video': '.mp4'} %}
 
-{# 一条回复的填写区:先选类型,再显示该类型的字段。非当前类型的字段隐藏并禁用,不会随表单提交。 #}
+{# 一项填写内容:文字/网址输入框、多行文字或文件选择。name 已带好前缀;shown 为 false 时整组禁用,不随表单提交。 #}
+{% macro field(f, fname, value, shown) %}
+  <div class="tr-field">
+    <span class="tr-label">{{ f.label }}{% if f.required %}<em>必填</em>{% endif %}</span>
+    {% if f.kind == 'textarea' %}
+    <textarea class="tr-input" name="{{ fname }}" rows="3" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %}>{{ value }}</textarea>
+    {% elif f.kind == 'file' %}
+    <div class="tr-file" data-tr-file>
+      {% if value %}<input type="hidden" name="{{ fname }}__keep" value="{{ value }}"{% if not shown %} disabled{% endif %} />{% endif %}
+      <input type="hidden" name="{{ fname }}__remove" value="" data-tr-remove{% if not shown %} disabled{% endif %} />
+      <label class="ui-file">
+        <input class="ui-file-input" type="file" name="{{ fname }}" accept="{{ accept_map.get(f.media_kind, '') }}"{% if not shown %} disabled{% endif %} />
+        <span class="ui-file-name" data-ui-file-name data-empty="点击选择文件">{% if value %}已上传,重新选择可替换{% else %}点击选择文件{% endif %}</span>
+        <span class="ui-file-btn">选择文件</span>
+      </label>
+      {% if value and not f.required %}<button class="pp-link" type="button" data-tr-file-clear>去掉这个文件</button>{% endif %}
+    </div>
+    {% elif f.kind == 'select' and f.options|length <= 4 %}
+    <div class="pp-seg" role="radiogroup">
+      {% for key, label in f.options %}<label class="pp-seg-item"><input type="radio" name="{{ fname }}" value="{{ key }}"{% if key == value %} checked{% endif %}{% if not shown %} disabled{% endif %} /><span>{{ label }}</span></label>{% endfor %}
+    </div>
+    {% else %}
+    <input class="tr-input" type="{{ 'url' if f.kind == 'url' else 'text' }}" name="{{ fname }}" value="{{ value }}" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %} />
+    {% endif %}
+    {% if f.hint %}<small class="tr-hint">{{ f.hint }}</small>{% endif %}
+  </div>
+{% endmacro %}
+
+{# 一条回复:先选类型(分段选择),再显示该类型的字段。非当前类型的字段隐藏并禁用。 #}
 {% macro action_block(idx, action_data) %}
   {% set current = action_data.get('type') or actions[0].key %}
-  <fieldset class="tr-action-block" data-tr-action-block>
+  <div class="tr-action" data-tr-action-block>
     <input type="hidden" name="action_idx" value="{{ idx }}" />
     <div class="tr-action-head">
-      <label><span>回复类型</span>
-        <select name="a{{ idx }}__type" data-tr-action-type>
-          {% for a in actions %}<option value="{{ a.key }}"{% if a.key == current %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
-        </select>
-      </label>
-      <button class="btn btn-secondary" type="button" data-tr-remove-action>删除这条回复</button>
+      <div class="pp-seg" role="radiogroup" aria-label="回复类型" data-tr-action-type>
+        {% for a in actions %}<label class="pp-seg-item"><input type="radio" name="a{{ idx }}__type" value="{{ a.key }}"{% if a.key == current %} checked{% endif %} /><span>{{ a.label }}</span></label>{% endfor %}
+      </div>
+      <button class="pp-link" type="button" data-tr-remove-action>删除这条</button>
     </div>
     {% for a in actions %}
     {% set shown = (a.key == current) %}
     <div class="tr-fields" data-tr-action-fields="{{ a.key }}"{% if not shown %} hidden{% endif %}>
       {% for f in a.fields %}
-      {% set fname = 'a' ~ idx ~ '__' ~ a.key ~ '__' ~ f.name %}
-      {% set value = action_data.get(f.name, f.default) if shown else f.default %}
-      <label class="tr-field">
-        <span>{{ f.label }}{% if f.required %} <em>*</em>{% endif %}</span>
-        {% if f.kind == 'textarea' %}
-        <textarea name="{{ fname }}" rows="3" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %}>{{ value }}</textarea>
-        {% elif f.kind == 'file' %}
-        {% if value %}
-        <small class="tr-file-kept">已上传:当前文件会继续使用;重新选择文件可替换。{% if not f.required %} <label><input type="checkbox" name="{{ fname }}__remove" value="1"{% if not shown %} disabled{% endif %} /> 去掉这个文件</label>{% endif %}</small>
-        <input type="hidden" name="{{ fname }}__keep" value="{{ value }}"{% if not shown %} disabled{% endif %} />
-        {% endif %}
-        <input type="file" name="{{ fname }}" accept="{{ accept_map.get(f.media_kind, '') }}"{% if not shown %} disabled{% endif %} />
-        {% else %}
-        <input type="{{ 'url' if f.kind == 'url' else 'text' }}" name="{{ fname }}" value="{{ value }}" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %} />
-        {% endif %}
-        {% if f.hint %}<small>{{ f.hint }}</small>{% endif %}
-      </label>
+      {{ field(f, 'a' ~ idx ~ '__' ~ a.key ~ '__' ~ f.name, action_data.get(f.name, f.default) if shown else f.default, shown) }}
       {% endfor %}
     </div>
     {% endfor %}
-  </fieldset>
+  </div>
 {% endmacro %}
 
 {% block hero_actions %}<a class="btn btn-secondary" href="{{ triggers_url }}">返回规则列表</a>{% endblock %}
@@ -48,67 +59,75 @@
 <form method="post" enctype="multipart/form-data" action="{{ triggers_url }}{% if rule_id %}/{{ rule_id }}{% endif %}" class="tr-form" data-tr-form>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
-  <section class="editor-surface">
-    <div class="section-head"><div><h2>① 给规则起个名字</h2></div></div>
-    <label class="tr-field"><span>规则名称 <em>*</em></span><input type="text" name="name" value="{{ draft.name }}" maxlength="100" placeholder="例如:拍一拍回复" required /></label>
+  <section class="tr-step">
+    <h2><span class="tr-num">1</span>规则名称</h2>
+    <div class="tr-field">
+      <input class="tr-input" type="text" name="name" value="{{ draft.name }}" maxlength="100" placeholder="给这条规则起个名字,例如:拍一拍回复" required />
+    </div>
   </section>
 
-  <section class="editor-surface">
-    <div class="section-head"><div><h2>② 什么时候回复</h2></div></div>
-    <label class="tr-field"><span>触发条件</span>
-      <select name="trigger_type" data-tr-trigger-select>
-        {% for t in triggers %}<option value="{{ t.key }}"{% if t.key == draft.trigger_type %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
-      </select>
-    </label>
-    {% for t in triggers %}
-    {% set shown = (t.key == draft.trigger_type) %}
-    <div class="tr-fields" data-tr-trigger="{{ t.key }}"{% if not shown %} hidden{% endif %}>
-      <p class="muted">{{ t.description }}</p>
-      {% for f in t.fields %}
-      {% set value = draft.trigger_params.get(f.name, f.default) if shown else f.default %}
-      <label class="tr-field"><span>{{ f.label }}{% if f.required %} <em>*</em>{% endif %}</span>
-        {% if f.kind == 'select' %}
-        <select name="t__{{ t.key }}__{{ f.name }}"{% if not shown %} disabled{% endif %}>
-          {% for key, label in f.options %}<option value="{{ key }}"{% if key == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-        {% else %}
-        <input type="text" name="t__{{ t.key }}__{{ f.name }}" value="{{ value }}" maxlength="1000"{% if not shown %} disabled{% endif %} />
-        {% endif %}
-        {% if f.hint %}<small>{{ f.hint }}</small>{% endif %}
+  <section class="tr-step">
+    <h2><span class="tr-num">2</span>什么时候回复</h2>
+    <div class="tr-choice-grid" role="radiogroup" aria-label="触发条件" data-tr-trigger-select>
+      {% for t in triggers %}
+      <label class="tr-choice">
+        <input type="radio" name="trigger_type" value="{{ t.key }}"{% if t.key == draft.trigger_type %} checked{% endif %} />
+        <span class="tr-choice-body"><strong>{{ t.label }}</strong><small>{{ t.description }}</small></span>
       </label>
       {% endfor %}
     </div>
+    {% for t in triggers %}
+    {% set shown = (t.key == draft.trigger_type) %}
+    {% if t.fields %}
+    <div class="tr-fields" data-tr-trigger="{{ t.key }}"{% if not shown %} hidden{% endif %}>
+      {% for f in t.fields %}
+      {{ field(f, 't__' ~ t.key ~ '__' ~ f.name, draft.trigger_params.get(f.name, f.default) if shown else f.default, shown) }}
+      {% endfor %}
+    </div>
+    {% else %}
+    <div data-tr-trigger="{{ t.key }}" hidden></div>
+    {% endif %}
     {% endfor %}
   </section>
 
-  <section class="editor-surface">
-    <div class="section-head"><div><h2>③ 回复什么</h2></div></div>
+  <section class="tr-step">
+    <h2><span class="tr-num">3</span>回复什么</h2>
     {# 变量:每种触发自己声明能提供什么;点一下标签,插入到上次点过的文字框里 #}
     {% for t in triggers %}
     <div class="tr-vars" data-tr-vars="{{ t.key }}"{% if t.key != draft.trigger_type %} hidden{% endif %}>
-      <span class="muted">文字和卡片里可以插入变量(先点一下要填的输入框,再点变量),发送时自动换成真实内容:</span>
+      <p class="tr-hint">文字和卡片里可以插入变量:先点一下要填的输入框,再点下面的变量,发送时自动换成真实内容。</p>
       <div class="tr-var-list">
-        {% for v in trigger_vars[t.key] %}<button class="tr-var" type="button" data-tr-insert="{{ '{' ~ v.name ~ '}' }}" title="例如:{{ v.example }}"><b>{{ v.label }}</b><code>{{ '{' ~ v.name ~ '}' }}</code></button>{% endfor %}
+        {% for v in trigger_vars[t.key] %}<button class="tr-var" type="button" data-tr-insert="{{ '{' ~ v.name ~ '}' }}" title="例如:{{ v.example }}">{{ v.label }}</button>{% endfor %}
       </div>
     </div>
     {% endfor %}
-    <div data-tr-actions>
+    <div class="tr-actions" data-tr-actions>
       {% for item in draft.actions %}{{ action_block(loop.index0, item) }}{% endfor %}
     </div>
-    <button class="btn btn-secondary" type="button" data-tr-add-action>+ 再加一条回复</button>
+    <button class="btn btn-secondary btn-small" type="button" data-tr-add-action>+ 再加一条回复</button>
   </section>
 
-  <section class="editor-surface">
-    <div class="section-head"><div><h2>④ 其他设置</h2></div></div>
-    <label class="tr-field"><span>有多条回复时</span>
-      <select name="pick_mode">{% for key, label in pick_modes %}<option value="{{ key }}"{% if key == draft.pick_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-      <small>选「每次随机发一条」,就可以做出「拍一拍随机回一句」的效果。</small>
+  <section class="tr-step">
+    <h2><span class="tr-num">4</span>其他设置</h2>
+    <div class="tr-field">
+      <span class="tr-label">有多条回复时</span>
+      <div class="pp-seg" role="radiogroup">
+        {% for key, label in pick_modes %}<label class="pp-seg-item"><input type="radio" name="pick_mode" value="{{ key }}"{% if key == draft.pick_mode %} checked{% endif %} /><span>{{ label }}</span></label>{% endfor %}
+      </div>
+      <small class="tr-hint">选「每次随机发一条」,就能做出「拍一拍随机回一句」的效果。</small>
+    </div>
+    <div class="tr-field tr-field-short">
+      <span class="tr-label">冷却时间(秒)</span>
+      <input class="tr-input" type="number" name="cooldown_seconds" value="{{ draft.cooldown_seconds }}" min="0" max="86400" />
+      <small class="tr-hint">触发一次后,这段时间内不再重复回复,防止刷屏。0 表示不限制。</small>
+    </div>
+    <label class="tr-switch-row">
+      <span>保存后立即启用</span>
+      <span class="ui-switch ui-switch-small"><input type="checkbox" name="is_enabled" value="1" role="switch"{% if draft.is_enabled %} checked{% endif %} /><span class="ui-switch-track"></span></span>
     </label>
-    <label class="tr-field"><span>冷却时间(秒)</span><input type="number" name="cooldown_seconds" value="{{ draft.cooldown_seconds }}" min="0" max="86400" /><small>触发一次后,这段时间内不再重复回复,防止刷屏。0 表示不限制。</small></label>
-    <label class="tr-field tr-check"><input type="checkbox" name="is_enabled" value="1"{% if draft.is_enabled %} checked{% endif %} /> <span>保存后立即启用</span></label>
   </section>
 
-  <div class="form-actions-inline">
+  <div class="tr-form-actions">
     <button class="btn" type="submit">保存规则</button>
     <a class="btn btn-secondary" href="{{ triggers_url }}">取消</a>
   </div>

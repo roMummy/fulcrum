@@ -6731,22 +6731,795 @@ html.has-lightbox {
   gap: 8px;
 }
 
-/* ---- 触发回复:规则列表与编辑页 ---- */
-.tr-rule { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--line, #e5e7eb); border-radius: 12px; margin-bottom: 12px; background: #fff; }
-.tr-rule.is-off { opacity: .6; }
-.tr-rule-main h3 { margin: 0 0 4px; font-size: 16px; }
-.tr-rule-main p { margin: 2px 0; }
-.tr-rule-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.tr-rule-actions form { margin: 0; }
-.tr-form .editor-surface { margin-bottom: 16px; }
-.tr-field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
-.tr-field em { color: #dc2626; font-style: normal; }
-.tr-field small { color: var(--muted, #6b7280); }
-.tr-check { flex-direction: row; align-items: center; }
-.tr-action-block { border: 1px dashed var(--line, #d1d5db); border-radius: 12px; padding: 12px 14px; margin: 0 0 12px; }
-.tr-action-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
-.tr-var-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 14px; }
-.tr-var { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line, #d1d5db); background: #f9fafb; border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
-.tr-var:hover { background: #eef2ff; border-color: #a5b4fc; }
-.tr-var code { color: #6b7280; }
-@media (max-width: 640px) { .tr-rule { flex-direction: column; align-items: stretch; } .tr-rule-actions { justify-content: space-between; } }
+/* ============================================================
+   通用小部件:分段选择(.pp-seg)、搜索框(.pp-search)、勾选列表(.pp-pick-*)
+   原生的单选框/复选框一律隐藏,外观由相邻元素绘制,保持 Soft UI:不用硬框线,靠底色和柔影分层。
+   ============================================================ */
+.pp-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.pp-seg-wide {
+  display: flex;
+}
+
+.pp-seg-wide .pp-seg-item {
+  flex: 1 1 0;
+  text-align: center;
+}
+
+.pp-seg-item {
+  position: relative;
+  cursor: pointer;
+}
+
+.pp-seg-item input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.pp-seg-item span {
+  display: block;
+  padding: 7px 14px;
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  transition: color 200ms ease-in-out, background-color 200ms ease-in-out, box-shadow 200ms ease-in-out;
+}
+
+.pp-seg-item:hover span {
+  color: var(--text-soft);
+}
+
+.pp-seg-item input:checked + span {
+  color: var(--primary-strong);
+  font-weight: 600;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.pp-seg-item input:focus-visible + span {
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.pp-search {
+  position: relative;
+  display: block;
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+
+.pp-search input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 14px 8px 40px;
+  color: var(--text);
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 13px center / 18px;
+  border: 0;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.pp-search input:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.pp-search-inline {
+  max-width: none;
+}
+
+.pp-search-inline input {
+  background-color: var(--surface-muted);
+  box-shadow: none;
+}
+
+.pp-hint {
+  margin: 10px 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pp-link {
+  padding: 4px 2px;
+  color: var(--primary-strong);
+  font-size: 13px;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.pp-link:hover {
+  text-decoration: underline;
+}
+
+.pp-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  padding: 4px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+}
+
+.pp-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 150ms ease-in-out;
+}
+
+.pp-pick-row:hover {
+  background: var(--surface);
+}
+
+.pp-pick-row input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  margin: 0;
+  opacity: 0;
+}
+
+.pp-check {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: var(--surface);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  transition: background-color 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+.pp-pick-row input:checked + .pp-check {
+  background: var(--primary);
+  box-shadow: none;
+}
+
+.pp-pick-row input:checked + .pp-check::after {
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  content: "";
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.pp-pick-row input:focus-visible + .pp-check {
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.pp-pick-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-pick-row small {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.chip-danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* ============================================================
+   平台插件管理:卡片网格 + 共用弹窗
+   ============================================================ */
+.pp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.pp-note {
+  margin: 0 0 16px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 200ms ease-in-out, background-color 200ms ease-in-out;
+}
+
+.pp-card:hover {
+  box-shadow: var(--shadow-soft);
+}
+
+.pp-card.is-off {
+  background: var(--surface-soft);
+}
+
+.pp-card.is-off .pp-card-title h3 {
+  color: var(--muted);
+}
+
+.pp-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pp-card-title {
+  min-width: 0;
+}
+
+.pp-card-title h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-card-sub {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-card-sub code {
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  white-space: inherit;
+  word-break: normal;
+  overflow-wrap: normal;
+  background: none;
+}
+
+/* 卡片上可点击的小标签:看起来是一个状态,点开是设置 */
+.pp-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 25px;
+  padding: 3px 8px 3px 10px;
+  color: var(--primary-strong);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  background: var(--primary-soft);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+.pp-chip-btn::after {
+  width: 10px;
+  height: 10px;
+  content: "";
+  background: currentColor;
+  opacity: 0.6;
+  -webkit-mask: var(--icon-chevron) center / contain no-repeat;
+  mask: var(--icon-chevron) center / contain no-repeat;
+}
+
+.pp-chip-btn:hover {
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.pp-chip-btn:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.pp-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pp-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.pp-picker {
+  margin-top: 14px;
+}
+
+.pp-picker-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.pp-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.pp-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pp-dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pp-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pp-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+}
+
+.pp-version small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+/* ============================================================
+   统一文件选择器(.ui-file):替代浏览器原生的文件框。整块可点,左边显示文件名,右边是按钮。
+   ============================================================ */
+.ui-file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 6px 6px 14px;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+.ui-file:hover {
+  background: var(--primary-soft);
+}
+
+.ui-file:focus-within {
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.ui-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.ui-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-file.has-file .ui-file-name {
+  color: var(--text);
+}
+
+.ui-file-btn {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  color: var(--primary-strong);
+  font-size: 13px;
+  font-weight: 560;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+
+.tr-file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.tr-file .ui-file {
+  align-self: stretch;
+}
+
+.tr-file.is-removed .ui-file {
+  opacity: 0.55;
+}
+
+/* ============================================================
+   群触发回复:规则卡片网格与编辑页
+   输入框是浅灰底的扁平风格(无框线),聚焦时出现柔光圈。
+   ============================================================ */
+.tr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.tr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 18px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.tr-card.is-off {
+  background: var(--surface-soft);
+}
+
+.tr-card.is-off .tr-card-head h3,
+.tr-card.is-off .tr-card-line {
+  color: var(--muted);
+}
+
+.tr-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tr-card-head h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tr-card-line {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tr-card-line strong {
+  margin-right: 6px;
+  color: var(--primary-strong);
+  font-weight: 600;
+}
+
+.tr-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tr-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.tr-card-foot form {
+  margin: 0;
+}
+
+.tr-danger {
+  color: var(--danger);
+}
+
+.tr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 820px;
+}
+
+.tr-step {
+  padding: 20px 22px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.tr-step h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 620;
+}
+
+.tr-num {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--primary-strong);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--primary-soft);
+  border-radius: 50%;
+}
+
+.tr-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.tr-field:first-child {
+  margin-top: 0;
+}
+
+.tr-field > .tr-input,
+.tr-field > textarea {
+  align-self: stretch;
+}
+
+.tr-step > .tr-fields {
+  margin-top: 16px;
+}
+
+.tr-action .tr-fields {
+  margin-top: 4px;
+}
+
+.tr-field-short .tr-input {
+  width: 160px;
+}
+
+.tr-label {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tr-label em {
+  margin-left: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.tr-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tr-input {
+  min-height: 42px;
+  padding: 9px 14px;
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 0;
+  border-radius: var(--radius-md);
+  transition: background-color 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+textarea.tr-input {
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.tr-input:hover {
+  background: var(--secondary);
+}
+
+.tr-input:focus-visible {
+  background: var(--surface);
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.tr-input::placeholder {
+  color: #94a3b8;
+}
+
+.tr-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.tr-choice {
+  position: relative;
+  cursor: pointer;
+}
+
+.tr-choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tr-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 12px 14px;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  transition: background-color 150ms ease-in-out, box-shadow 150ms ease-in-out;
+}
+
+.tr-choice-body strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tr-choice-body small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tr-choice:hover .tr-choice-body {
+  background: var(--secondary);
+}
+
+.tr-choice input:checked + .tr-choice-body {
+  background: var(--primary-soft);
+}
+
+.tr-choice input:checked + .tr-choice-body strong {
+  color: var(--primary-strong);
+}
+
+.tr-choice input:focus-visible + .tr-choice-body {
+  box-shadow: 0 0 0 4px var(--focus);
+}
+
+.tr-vars {
+  margin-bottom: 12px;
+}
+
+.tr-var-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tr-var {
+  padding: 4px 12px;
+  color: var(--primary-strong);
+  font: inherit;
+  font-size: 13px;
+  background: var(--primary-soft);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: box-shadow 150ms ease-in-out;
+}
+
+.tr-var:hover {
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.tr-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tr-action {
+  padding: 14px 16px 16px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+}
+
+.tr-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tr-action .pp-seg {
+  background: var(--surface-muted);
+}
+
+.tr-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 12px 16px;
+  color: var(--text);
+  font-size: 14px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.tr-form-actions {
+  display: flex;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+@media (max-width: 640px) {
+  .tr-step {
+    padding: 16px;
+  }
+
+  .tr-action-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

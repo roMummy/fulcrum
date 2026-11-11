@@ -364,6 +364,9 @@ def test_the_management_pages_walk_through_create_edit_toggle_delete(pages) -> N
     # 变量按触发分别展示成可点击的标签,带中文说明;允许用变量的输入框有标记
     assert 'data-tr-insert="{sender_name}"' in form and "拍的人" in form and 'data-tr-insert="{member_count}"' in form and "入群后的群人数" in form
     assert "data-tr-var-target" in form
+    # 控件是产品自己的部件:触发条件是选择块,回复类型是分段选择,启用是开关,文件用自绘选择器;没有原生下拉和裸复选框
+    assert 'class="tr-choice-grid"' in form and 'data-tr-action-type' in form and 'class="ui-switch ui-switch-small"' in form
+    assert "<select" not in form and form.count('role="switch"') == 1 and 'name="is_enabled"' in form  # 没有原生下拉;勾选类的只有"保存后立即启用"这个开关
     assert "有人拍一拍" in form and "回复什么" in form and 'name="a0__type"' in form and 'id="tr-action-template"' in form
 
     created = client.post(base, data=_form(csrf_token=csrf), files={"a0__image__file": ("p.png", _png(), "image/png")})

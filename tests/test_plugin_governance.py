@@ -212,26 +212,36 @@ def test_platform_page_requires_platform_auth_csrf_and_writes_audit(tmp_path, mo
         client.cookies.set(PLATFORM_CSRF_COOKIE, session.raw_csrf_token)
 
         page = client.get("/platform/plugins")
-        assert page.status_code == 200 and "天气" in page.text and "/platform/plugins/weather/status" in page.text
+        assert page.status_code == 200 and "天气" in page.text and 'data-autosave-url="/platform/plugins/weather/status"' in page.text
         primary = page.text.split('<nav class="app-primary-nav"', 1)[1].split("</nav>", 1)[0]
         assert 'href="/platform/plugins" class="nav-link active"' in primary
+        # 页面是卡片网格:不再有原生勾选框/文件框,租户与套餐在弹窗里按名称搜索勾选
+        assert 'class="pp-grid"' in page.text and 'data-pp-card' in page.text and "丙租户" in page.text
+        assert 'type="file"' in page.text and "hidden" in page.text.split('type="file"', 1)[1][:60]  # 上传用自绘按钮触发隐藏的文件框
+        assert "data-pp-search" in page.text and "限定可见" in page.text
 
-        forged = client.post("/platform/plugins/weather/status", data={"csrf_token": "forged", "status": "disabled"})
-        assert forged.status_code == 403
+        header = lambda token: {"X-CSRF-Token": token, "X-Requested-With": "fetch"}
+        # 启停:点击即保存,提交目标状态(幂等),返回 JSON;令牌不对什么也不改
+        assert client.post("/platform/plugins/weather/status", json={"value": False}, headers=header("forged")).status_code == 403
         with factory() as db:
-            assert db.scalar(select(Plugin.platform_status).where(Plugin.code == "weather")) == "active"  # 伪造令牌什么也没改
+            assert db.scalar(select(Plugin.platform_status).where(Plugin.code == "weather")) == "active"
+        assert client.post("/platform/plugins/weather/status", json={"value": "no"}, headers=header(session.raw_csrf_token)).status_code == 400
+        ok = client.post("/platform/plugins/weather/status", json={"value": False}, headers=header(session.raw_csrf_token))
+        assert ok.status_code == 200 and ok.json()["ok"] is True and ok.json()["status"] == "disabled" and "停用" in ok.json()["notice"]
+        again = client.post("/platform/plugins/weather/status", json={"value": False}, headers=header(session.raw_csrf_token))
+        assert again.status_code == 200  # 重复提交同一目标状态不报错,也不再重复写审计
 
-        ok = client.post("/platform/plugins/weather/status", data={"csrf_token": session.raw_csrf_token, "status": "disabled", "note": "接口异常"})
-        assert ok.status_code == 303
-        bad = client.post("/platform/plugins/weather/visibility", data={"csrf_token": session.raw_csrf_token, "visibility": "tenants"})
-        assert bad.status_code == 303 and "tone=danger" in bad.headers["location"]  # 没选租户:被拒绝并提示
-        good = client.post("/platform/plugins/weather/visibility", data={"csrf_token": session.raw_csrf_token, "visibility": "tenants", "tenant_ids": str(tenant_id)})
-        assert good.status_code == 303 and "tone=danger" not in good.headers["location"]
-        assert client.post("/platform/plugins/ghost/status", data={"csrf_token": session.raw_csrf_token, "status": "active"}).status_code == 404
+        # 可见范围:弹窗用 fetch 提交,返回 JSON;没选租户被拒绝并给出中文提示
+        bad = client.post("/platform/plugins/weather/visibility", data={"visibility": "tenants"}, headers=header(session.raw_csrf_token))
+        assert bad.status_code == 400 and bad.json() == {"ok": False, "notice": "请至少选择一个租户"}
+        assert client.post("/platform/plugins/weather/visibility", data={"visibility": "tenants", "tenant_ids": str(tenant_id)}, headers=header("forged")).status_code == 403
+        good = client.post("/platform/plugins/weather/visibility", data={"visibility": "tenants", "tenant_ids": str(tenant_id)}, headers=header(session.raw_csrf_token))
+        assert good.status_code == 200 and good.json()["visibility_label"] == "指定租户" and good.json()["tenant_ids"] == [tenant_id]
+        assert client.post("/platform/plugins/ghost/status", json={"value": True}, headers=header(session.raw_csrf_token)).status_code == 404
 
         with factory() as db:
             weather = db.scalar(select(Plugin).where(Plugin.code == "weather"))
-            assert (weather.platform_status, weather.status_note, weather.visibility) == ("disabled", "接口异常", "tenants")
+            assert (weather.platform_status, weather.visibility) == ("disabled", "tenants")
             assert db.scalars(select(PluginGrant.scope_id).where(PluginGrant.plugin_id == weather.id)).all() == [tenant_id]
             actions = db.scalars(select(PlatformAuditLog.action).order_by(PlatformAuditLog.id)).all()
-            assert actions == ["plugin.status", "plugin.visibility"]  # 失败的设置不留审计
+            assert actions == ["plugin.status", "plugin.visibility"]  # 重复提交和失败的设置都不留审计

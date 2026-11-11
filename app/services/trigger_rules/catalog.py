@@ -266,7 +266,7 @@ PAT_TRIGGER = register_trigger(
         match=_match_pat,
         fields=(
             RuleField(
-                "scope", "什么时候回复", kind="select", default="me",
+                "scope", "拍到谁时回复", kind="select", default="me",
                 options=(("me", "有人拍机器人自己时"), ("any", "群里任何人被拍时")),
                 hint="一般选第一个;选第二个机器人会回应群里所有拍一拍。",
             ),

@@ -1,79 +1,130 @@
 {% extends 'platform_base.html' %}
+{# 平台插件管理:卡片网格(一行多个),搜索与筛选;启停是点击即保存的开关;
+   可见范围(可搜索租户)和历史版本各用一个共用弹窗,打开时按所点的插件填充。 #}
+{% block hero_actions %}
+<form id="pp-upload" method="post" action="/platform/plugins/upload" enctype="multipart/form-data" data-pp-upload>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <input type="file" name="package" accept=".zip" hidden data-pp-file />
+  <button class="btn" type="button" data-pp-pick>安装或升级插件</button>
+</form>
+{% endblock %}
+
 {% block content %}
-{# 平台插件管理:一行一个插件,展开后设置全平台状态与可见范围。插件目录全平台共享,租户只能绑定和配置自己的机器人。 #}
-<section class="page-section">
-  <div class="section-head">
-    <div>
-      <h2>插件管理</h2>
-      <p class="muted">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
-    </div>
+{% set stopped_count = rows|selectattr('plugin.platform_status', 'ne', 'active')|list|length %}
+{% set limited_count = rows|selectattr('plugin.visibility', 'ne', 'all')|list|length %}
+<section class="pp-toolbar">
+  <label class="pp-search"><input type="search" placeholder="搜索插件名称或编码" autocomplete="off" data-pp-search /></label>
+  <div class="pp-seg" role="radiogroup" aria-label="筛选" data-pp-filter>
+    <label class="pp-seg-item"><input type="radio" name="pp-filter" value="all" checked /><span>全部 {{ rows|length }}</span></label>
+    <label class="pp-seg-item"><input type="radio" name="pp-filter" value="used" /><span>有租户在用</span></label>
+    <label class="pp-seg-item"><input type="radio" name="pp-filter" value="stopped" /><span>已停用 {{ stopped_count }}</span></label>
+    <label class="pp-seg-item"><input type="radio" name="pp-filter" value="limited" /><span>限定可见 {{ limited_count }}</span></label>
   </div>
-  {# 上传 zip:编码不存在就是安装,已存在就是升级;旧版本自动存档,可在下面回滚。插件会在服务里运行代码,只上传可信来源的包。 #}
-  <form method="post" action="/platform/plugins/upload" enctype="multipart/form-data" class="form-grid">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label class="full-row"><span>安装或升级插件(zip,不超过 20MB)</span><input type="file" name="package" accept=".zip" required /></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">上传并生效</button></div>
-  </form>
+</section>
+<p class="pp-note">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
+
+<section class="pp-grid" data-pp-grid>
   {% for row in rows %}
   {% set plugin = row.plugin %}
-  <details class="editor-surface" id="plugin-{{ plugin.code }}">
-    <summary>
-      <strong>{{ plugin.display_name }}</strong>
-      <code>{{ plugin.code }}</code>
-      <span class="muted">v{{ plugin.version }}</span>
-      <span class="chip {% if plugin.platform_status == 'active' %}chip-success{% else %}chip-danger{% endif %}">{{ '正常' if plugin.platform_status == 'active' else '已停用' }}</span>
-      <span class="chip chip-muted">{{ visibility_labels.get(plugin.visibility, '未知') }}</span>
-      {% if plugin.missing_at %}<span class="chip chip-danger">目录中缺失</span>{% endif %}
-      <span class="muted">{{ row.usage.tenants }} 个租户 · {{ row.usage.enabled }}/{{ row.usage.bindings }} 个绑定启用</span>
-    </summary>
-    {% if plugin.missing_at %}<p class="muted">自 {{ format_time(plugin.missing_at) }} 起在插件目录中找不到。记录和租户数据都已保留,目录恢复后自动清除标记。</p>{% endif %}
-    {% if plugin.status_note %}<p class="muted">停用原因:{{ plugin.status_note }}</p>{% endif %}
-    <form method="post" action="/platform/plugins/{{ plugin.code }}/status" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>全平台状态</span>
-        <select name="status">
-          <option value="active"{% if plugin.platform_status == 'active' %} selected{% endif %}>正常</option>
-          <option value="disabled"{% if plugin.platform_status != 'active' %} selected{% endif %}>停用</option>
-        </select>
+  {% set stopped = plugin.platform_status != 'active' %}
+  <article class="pp-card{% if stopped %} is-off{% endif %}" data-pp-card
+    data-code="{{ plugin.code }}" data-name="{{ plugin.display_name }}"
+    data-search="{{ (plugin.display_name ~ ' ' ~ plugin.code)|lower }}"
+    data-stopped="{{ '1' if stopped else '0' }}" data-used="{{ '1' if row.usage.bindings else '0' }}"
+    data-visibility="{{ plugin.visibility }}" data-plan-ids="{{ row.plan_ids|sort|join(',') }}" data-tenant-ids="{{ row.tenant_ids|sort|join(',') }}"
+    data-versions='{{ row.versions|tojson }}'>
+    <header class="pp-card-head">
+      <div class="pp-card-title">
+        <h3 title="{{ plugin.display_name }}">{{ plugin.display_name }}</h3>
+        <p class="pp-card-sub"><code>{{ plugin.code }}</code> · v{{ plugin.version }}</p>
+      </div>
+      <label class="ui-switch ui-switch-small" title="全平台启用或停用">
+        <input type="checkbox" role="switch" aria-label="全平台启用" data-pp-switch data-autosave-url="/platform/plugins/{{ plugin.code }}/status"{% if not stopped %} checked{% endif %} />
+        <span class="ui-switch-track"></span>
       </label>
-      <label class="full-row"><span>停用原因(仅平台可见)</span><input name="note" maxlength="255" value="{{ plugin.status_note or '' }}" /></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存状态</button></div>
-    </form>
-    <form method="post" action="/platform/plugins/{{ plugin.code }}/visibility" class="form-grid">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>对哪些租户可见</span>
-        <select name="visibility">
-          {% for key, label in visibility_labels.items() %}
-          <option value="{{ key }}"{% if plugin.visibility == key %} selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <fieldset class="full-row"><legend>指定套餐(选"指定套餐"时生效)</legend>
-        {% for plan in plans %}
-        <label><input type="checkbox" name="plan_ids" value="{{ plan.id }}"{% if plan.id in row.plan_ids %} checked{% endif %} /> {{ plan.name }}</label>
-        {% endfor %}
-      </fieldset>
-      <fieldset class="full-row"><legend>指定租户(选"指定租户"时生效)</legend>
-        {% for tenant in tenants %}
-        <label><input type="checkbox" name="tenant_ids" value="{{ tenant.id }}"{% if tenant.id in row.tenant_ids %} checked{% endif %} /> {{ tenant.name }}</label>
-        {% endfor %}
-      </fieldset>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存可见范围</button></div>
-    </form>
-    {% if row.versions %}
-    <form method="post" action="/platform/plugins/{{ plugin.code }}/rollback" class="form-grid" onsubmit="return confirm('回滚会把当前版本换成所选的历史版本,确定吗?')">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label><span>回滚到历史版本</span>
-        <select name="version_file">
-          {% for item in row.versions %}<option value="{{ item.filename }}">v{{ item.version }}(存档于 {{ item.stored_at[:4] }}-{{ item.stored_at[4:6] }}-{{ item.stored_at[6:8] }} {{ item.stored_at[8:10] }}:{{ item.stored_at[10:12] }})</option>{% endfor %}
-        </select>
-      </label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">回滚</button></div>
-    </form>
-    {% endif %}
-  </details>
+    </header>
+    <div class="pp-card-chips">
+      <button class="pp-chip-btn" type="button" data-pp-open-visibility title="设置哪些租户能用这个插件"><span data-pp-vis-chip>{{ visibility_labels.get(plugin.visibility, '未知') }}</span></button>
+      {% if row.usage.bindings %}<span class="chip chip-muted" title="{{ row.usage.enabled }}/{{ row.usage.bindings }} 个绑定启用">{{ row.usage.tenants }} 个租户在用</span>{% endif %}
+      {% if row.versions %}<button class="pp-chip-btn" type="button" data-pp-open-versions title="回滚到旧版本">历史版本 {{ row.versions|length }}</button>{% endif %}
+      <span class="chip chip-danger" data-pp-off-chip{% if not stopped %} hidden{% endif %}>已停用</span>
+      {% if plugin.missing_at %}<span class="chip chip-danger" title="自 {{ format_time(plugin.missing_at) }} 起在插件目录里找不到,记录和租户数据都保留">目录缺失</span>{% endif %}
+    </div>
+  </article>
   {% else %}
   <div class="empty-state"><strong>暂无插件</strong></div>
   {% endfor %}
 </section>
+<div class="empty-state" data-pp-empty hidden><strong>没有符合条件的插件</strong></div>
+
+{# ---- 可见范围弹窗:选范围;指定套餐/租户时在下面搜索并勾选 ---- #}
+<dialog class="app-modal pp-dialog" id="pp-visibility-dialog" aria-labelledby="pp-visibility-title">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2 id="pp-visibility-title">可见范围</h2><p class="muted-text" data-pp-dialog-plugin></p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <div class="pp-seg pp-seg-wide" role="radiogroup" aria-label="可见范围" data-pp-visibility-seg>
+      {% for key, label in visibility_labels.items() %}
+      <label class="pp-seg-item"><input type="radio" name="pp-visibility" value="{{ key }}" /><span>{{ label }}</span></label>
+      {% endfor %}
+    </div>
+    <p class="pp-hint" data-pp-visibility-hint></p>
+
+    <div class="pp-picker" data-pp-picker="plans" hidden>
+      <div class="pp-picker-bar">
+        <label class="pp-search pp-search-inline"><input type="search" placeholder="搜索套餐" autocomplete="off" data-pp-picker-search /></label>
+        <button class="pp-link" type="button" data-pp-picker-all>全选</button>
+        <button class="pp-link" type="button" data-pp-picker-none>清空</button>
+      </div>
+      <div class="pp-pick-list">
+        {% for plan in plans %}
+        <label class="pp-pick-row" data-text="{{ (plan.name ~ ' ' ~ plan.code)|lower }}">
+          <input type="checkbox" value="{{ plan.id }}" /><span class="pp-check" aria-hidden="true"></span>
+          <span class="pp-pick-name">{{ plan.name }}</span><small>{{ plan.code }}</small>
+        </label>
+        {% else %}<p class="pp-hint">还没有套餐</p>{% endfor %}
+      </div>
+    </div>
+
+    <div class="pp-picker" data-pp-picker="tenants" hidden>
+      <div class="pp-picker-bar">
+        <label class="pp-search pp-search-inline"><input type="search" placeholder="搜索租户名称或编码" autocomplete="off" data-pp-picker-search /></label>
+        <button class="pp-link" type="button" data-pp-picker-all>全选当前结果</button>
+        <button class="pp-link" type="button" data-pp-picker-none>清空</button>
+      </div>
+      <div class="pp-pick-list">
+        {% for tenant in tenants %}
+        <label class="pp-pick-row" data-text="{{ (tenant.name ~ ' ' ~ tenant.code)|lower }}">
+          <input type="checkbox" value="{{ tenant.id }}" /><span class="pp-check" aria-hidden="true"></span>
+          <span class="pp-pick-name">{{ tenant.name }}</span><small>{{ tenant.code }}</small>
+        </label>
+        {% else %}<p class="pp-hint">还没有租户</p>{% endfor %}
+      </div>
+      <p class="pp-hint" data-pp-picker-empty hidden>没有匹配的结果</p>
+    </div>
+
+    <div class="pp-dialog-foot">
+      <span class="pp-count" data-pp-count></span>
+      <div class="pp-dialog-actions">
+        <button class="btn btn-secondary" type="button" data-modal-close>取消</button>
+        <button class="btn" type="button" data-pp-visibility-save>保存</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+{# ---- 历史版本弹窗:升级或回滚前自动存档,可回到其中任意一个 ---- #}
+<dialog class="app-modal pp-dialog" id="pp-versions-dialog" aria-labelledby="pp-versions-title">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div><h2 id="pp-versions-title">历史版本</h2><p class="muted-text" data-pp-dialog-plugin></p></div>
+      <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <p class="pp-hint">升级或回滚前,当时运行的版本会自动存档(最多保留最近 10 个)。回滚前的当前版本同样会存档,所以回滚也可以再撤销。</p>
+    <div class="pp-version-list" data-pp-version-list></div>
+  </div>
+</dialog>
 {% endblock %}
+
+{% block scripts %}<script src="/static/js/platform-plugins.js" defer></script>{% endblock %}

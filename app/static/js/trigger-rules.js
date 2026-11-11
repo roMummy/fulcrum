@@ -10,16 +10,20 @@
     group.querySelectorAll("input, select, textarea").forEach(function (el) { el.disabled = !visible; });
   }
 
+  function checkedValue(container) {
+    var input = container && container.querySelector("input:checked");
+    return input ? input.value : "";
+  }
+
   function syncTrigger(form) {
-    var select = form.querySelector("[data-tr-trigger-select]");
-    if (!select) return;
-    form.querySelectorAll("[data-tr-trigger]").forEach(function (group) { setGroup(group, group.dataset.trTrigger === select.value); });
-    form.querySelectorAll("[data-tr-vars]").forEach(function (note) { note.hidden = note.dataset.trVars !== select.value; });
+    var value = checkedValue(form.querySelector("[data-tr-trigger-select]"));
+    form.querySelectorAll("[data-tr-trigger]").forEach(function (group) { setGroup(group, group.dataset.trTrigger === value); });
+    form.querySelectorAll("[data-tr-vars]").forEach(function (note) { note.hidden = note.dataset.trVars !== value; });
   }
 
   function syncAction(block) {
-    var select = block.querySelector("[data-tr-action-type]");
-    block.querySelectorAll("[data-tr-action-fields]").forEach(function (group) { setGroup(group, group.dataset.trActionFields === select.value); });
+    var value = checkedValue(block.querySelector("[data-tr-action-type]"));
+    block.querySelectorAll("[data-tr-action-fields]").forEach(function (group) { setGroup(group, group.dataset.trActionFields === value); });
   }
 
   function blocks(form) { return form.querySelectorAll("[data-tr-action-block]"); }
@@ -40,8 +44,20 @@
   document.addEventListener("change", function (event) {
     var form = event.target.closest("[data-tr-form]");
     if (!form) return;
-    if (event.target.matches("[data-tr-trigger-select]")) syncTrigger(form);
-    if (event.target.matches("[data-tr-action-type]")) syncAction(event.target.closest("[data-tr-action-block]"));
+    if (event.target.closest("[data-tr-trigger-select]")) syncTrigger(form);
+    if (event.target.closest("[data-tr-action-type]")) syncAction(event.target.closest("[data-tr-action-block]"));
+    // 文件选择器:选好文件后把文件名显示出来
+    if (event.target.type === "file") {
+      var label = event.target.closest(".ui-file");
+      var nameEl = label && label.querySelector("[data-ui-file-name]");
+      if (nameEl) {
+        var file = event.target.files && event.target.files[0];
+        nameEl.textContent = file ? file.name : nameEl.dataset.empty;
+        label.classList.toggle("has-file", !!file);
+        var remove = event.target.closest("[data-tr-file]").querySelector("[data-tr-remove]");
+        if (file && remove) remove.value = "";
+      }
+    }
   });
 
   // 变量标签:点一下插入到最近聚焦过的、允许用变量的输入框里的光标处
@@ -86,6 +102,18 @@
       form.querySelector("[data-tr-actions]").appendChild(block);
       syncAction(block);
       refreshButtons(form);
+    }
+    var clear = event.target.closest("[data-tr-file-clear]");
+    if (clear) {
+      // 去掉已上传的文件:标记删除,保存时才真正生效;再点一次撤销
+      var wrap = clear.closest("[data-tr-file]");
+      var remove = wrap.querySelector("[data-tr-remove]");
+      var nameEl = wrap.querySelector("[data-ui-file-name]");
+      var removing = remove.value !== "1";
+      remove.value = removing ? "1" : "";
+      wrap.classList.toggle("is-removed", removing);
+      clear.textContent = removing ? "撤销去掉" : "去掉这个文件";
+      nameEl.textContent = removing ? "保存后将去掉这个文件" : "已上传,重新选择可替换";
     }
     if (event.target.matches("[data-tr-remove-action]")) {
       if (blocks(form).length <= 1) return;

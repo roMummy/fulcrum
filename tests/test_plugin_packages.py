@@ -212,7 +212,7 @@ def test_platform_upload_and_rollback_routes(plugins_dir, tmp_path_factory, monk
         (stored,) = plugin_packages.list_versions("demo")
 
         page = client.get("/platform/plugins")
-        assert "回滚到历史版本" in page.text and stored.filename in page.text
+        assert "历史版本 1" in page.text and stored.filename in page.text  # 卡片上有历史版本入口,版本数据随卡片带给共用弹窗
 
         assert client.post("/platform/plugins/demo/rollback", data={"csrf_token": "forged", "version_file": stored.filename}).status_code == 403
         assert "v2" in _marker(plugins_dir)
