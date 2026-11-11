@@ -1,5 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#6366f1"/>
-  <path d="M14 14h11l7 11 7-11h11L37 33v17H27V33L14 14Z" fill="#ffffff"/>
-  <rect x="28" y="27" width="8" height="8" rx="2" fill="#c7d2fe"/>
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7c83f5"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <!-- 枢：外圈为轴，四条辐条把四个节点（渠道/机器人）连到中心 -->
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#ffffff" stroke-opacity="0.45" stroke-width="2"/>
+  <path d="M32 32 47.6 47.6M32 32 16.4 47.6M32 32 47.6 16.4M32 32 16.4 16.4" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="47.6" cy="16.4" r="3.4" fill="#ffffff"/>
+  <circle cx="47.6" cy="47.6" r="3.4" fill="#ffffff"/>
+  <circle cx="16.4" cy="47.6" r="3.4" fill="#ffffff"/>
+  <circle cx="16.4" cy="16.4" r="3.4" fill="#ffffff"/>
+  <!-- 曜：中心四角星芒，发光的轴心 -->
+  <path d="M32 15C33.4 25.2 38.8 30.6 49 32 38.8 33.4 33.4 38.8 32 49 30.6 38.8 25.2 33.4 15 32 25.2 30.6 30.6 25.2 32 15Z" fill="#ffffff"/>
+  <circle cx="32" cy="32" r="3" fill="#6366f1"/>
 </svg>
