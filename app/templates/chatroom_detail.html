@@ -67,7 +67,7 @@
     </div>
   </form>
   {% for item in features %}
-  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% endcall %}
+  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% if item.key == 'trigger_reply' %}<div class="gf-body"><a class="btn btn-secondary" href="{{ base_url }}/triggers">管理触发规则</a></div>{% endif %}{% endcall %}
   {% endfor %}
   </div>
 

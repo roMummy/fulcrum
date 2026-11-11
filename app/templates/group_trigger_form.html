@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+{# 触发规则的新建/编辑表单。字段全部由 trigger_rules.catalog 注册信息生成,新增触发或回复类型不用改本模板。 #}
+{% set accept_map = {'image': '.jpg,.jpeg,.png,.gif,.webp', 'audio': '.mp3,.wav,.amr,.silk,.m4a', 'video': '.mp4'} %}
+
+{# 一条回复的填写区:先选类型,再显示该类型的字段。非当前类型的字段隐藏并禁用,不会随表单提交。 #}
+{% macro action_block(idx, action_data) %}
+  {% set current = action_data.get('type') or actions[0].key %}
+  <fieldset class="tr-action-block" data-tr-action-block>
+    <input type="hidden" name="action_idx" value="{{ idx }}" />
+    <div class="tr-action-head">
+      <label><span>回复类型</span>
+        <select name="a{{ idx }}__type" data-tr-action-type>
+          {% for a in actions %}<option value="{{ a.key }}"{% if a.key == current %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn btn-secondary" type="button" data-tr-remove-action>删除这条回复</button>
+    </div>
+    {% for a in actions %}
+    {% set shown = (a.key == current) %}
+    <div class="tr-fields" data-tr-action-fields="{{ a.key }}"{% if not shown %} hidden{% endif %}>
+      {% for f in a.fields %}
+      {% set fname = 'a' ~ idx ~ '__' ~ a.key ~ '__' ~ f.name %}
+      {% set value = action_data.get(f.name, f.default) if shown else f.default %}
+      <label class="tr-field">
+        <span>{{ f.label }}{% if f.required %} <em>*</em>{% endif %}</span>
+        {% if f.kind == 'textarea' %}
+        <textarea name="{{ fname }}" rows="3" maxlength="1000"{% if not shown %} disabled{% endif %}>{{ value }}</textarea>
+        {% elif f.kind == 'file' %}
+        {% if value %}
+        <small class="tr-file-kept">已上传:当前文件会继续使用;重新选择文件可替换。{% if not f.required %} <label><input type="checkbox" name="{{ fname }}__remove" value="1"{% if not shown %} disabled{% endif %} /> 去掉这个文件</label>{% endif %}</small>
+        <input type="hidden" name="{{ fname }}__keep" value="{{ value }}"{% if not shown %} disabled{% endif %} />
+        {% endif %}
+        <input type="file" name="{{ fname }}" accept="{{ accept_map.get(f.media_kind, '') }}"{% if not shown %} disabled{% endif %} />
+        {% else %}
+        <input type="{{ 'url' if f.kind == 'url' else 'text' }}" name="{{ fname }}" value="{{ value }}" maxlength="1000"{% if not shown %} disabled{% endif %} />
+        {% endif %}
+        {% if f.hint %}<small>{{ f.hint }}</small>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </fieldset>
+{% endmacro %}
+
+{% block hero_actions %}<a class="btn btn-secondary" href="{{ triggers_url }}">返回规则列表</a>{% endblock %}
+{% block content %}
+{% if form_error %}<section class="notice-card notice-card-danger">{{ form_error }}</section>{% endif %}
+<form method="post" enctype="multipart/form-data" action="{{ triggers_url }}{% if rule_id %}/{{ rule_id }}{% endif %}" class="tr-form" data-tr-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <section class="editor-surface">
+    <div class="section-head"><div><h2>① 给规则起个名字</h2></div></div>
+    <label class="tr-field"><span>规则名称 <em>*</em></span><input type="text" name="name" value="{{ draft.name }}" maxlength="100" placeholder="例如:拍一拍回复" required /></label>
+  </section>
+
+  <section class="editor-surface">
+    <div class="section-head"><div><h2>② 什么时候回复</h2></div></div>
+    <label class="tr-field"><span>触发条件</span>
+      <select name="trigger_type" data-tr-trigger-select>
+        {% for t in triggers %}<option value="{{ t.key }}"{% if t.key == draft.trigger_type %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
+      </select>
+    </label>
+    {% for t in triggers %}
+    {% set shown = (t.key == draft.trigger_type) %}
+    <div class="tr-fields" data-tr-trigger="{{ t.key }}"{% if not shown %} hidden{% endif %}>
+      <p class="muted">{{ t.description }}</p>
+      {% for f in t.fields %}
+      {% set value = draft.trigger_params.get(f.name, f.default) if shown else f.default %}
+      <label class="tr-field"><span>{{ f.label }}{% if f.required %} <em>*</em>{% endif %}</span>
+        {% if f.kind == 'select' %}
+        <select name="t__{{ t.key }}__{{ f.name }}"{% if not shown %} disabled{% endif %}>
+          {% for key, label in f.options %}<option value="{{ key }}"{% if key == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% else %}
+        <input type="text" name="t__{{ t.key }}__{{ f.name }}" value="{{ value }}" maxlength="1000"{% if not shown %} disabled{% endif %} />
+        {% endif %}
+        {% if f.hint %}<small>{{ f.hint }}</small>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="editor-surface">
+    <div class="section-head"><div><h2>③ 回复什么</h2></div></div>
+    {% for t in triggers %}
+    <p class="muted tr-vars" data-tr-vars="{{ t.key }}"{% if t.key != draft.trigger_type %} hidden{% endif %}>文字和卡片标题里可以使用变量,发送时自动替换:{% for name, label in t.variables %}<code>{{ '{' ~ name ~ '}' }}</code> {{ label }}{% if not loop.last %};{% endif %}{% endfor %}</p>
+    {% endfor %}
+    <div data-tr-actions>
+      {% for item in draft.actions %}{{ action_block(loop.index0, item) }}{% endfor %}
+    </div>
+    <button class="btn btn-secondary" type="button" data-tr-add-action>+ 再加一条回复</button>
+  </section>
+
+  <section class="editor-surface">
+    <div class="section-head"><div><h2>④ 其他设置</h2></div></div>
+    <label class="tr-field"><span>有多条回复时</span>
+      <select name="pick_mode">{% for key, label in pick_modes %}<option value="{{ key }}"{% if key == draft.pick_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+      <small>选「每次随机发一条」,就可以做出「拍一拍随机回一句」的效果。</small>
+    </label>
+    <label class="tr-field"><span>冷却时间(秒)</span><input type="number" name="cooldown_seconds" value="{{ draft.cooldown_seconds }}" min="0" max="86400" /><small>触发一次后,这段时间内不再重复回复,防止刷屏。0 表示不限制。</small></label>
+    <label class="tr-field tr-check"><input type="checkbox" name="is_enabled" value="1"{% if draft.is_enabled %} checked{% endif %} /> <span>保存后立即启用</span></label>
+  </section>
+
+  <div class="form-actions-inline">
+    <button class="btn" type="submit">保存规则</button>
+    <a class="btn btn-secondary" href="{{ triggers_url }}">取消</a>
+  </div>
+</form>
+
+{# 新增一条回复时克隆的模板;__IDX__ 会被换成新的序号 #}
+<template id="tr-action-template">{{ action_block('__IDX__', {}) }}</template>
+{% endblock %}
+{% block scripts %}<script src="/static/js/trigger-rules.js" defer></script>{% endblock %}

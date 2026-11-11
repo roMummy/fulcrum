@@ -111,3 +111,32 @@ class FunCommandRule(Base, TenantOwnedMixin, TimestampMixin):
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
 
     bot_plugin = relationship("BotPlugin")
+
+
+class GroupTriggerRule(Base, TenantOwnedMixin, TimestampMixin):
+    """群级「触发 → 回复」规则:某个群里发生某类事件(拍一拍、关键词…)时,按动作列表自动回复。
+
+    触发类型与动作类型都由代码里的注册表定义(app/services/trigger_rules),这里只存用户的选择:
+    trigger_json 是触发参数,actions_json 是有序的动作列表,新增触发或动作种类不需要改表。
+    """
+
+    __tablename__ = "group_trigger_rules"
+    __table_args__ = (
+        CheckConstraint("pick_mode IN ('all', 'random')", name="ck_group_trigger_rules_pick_mode"),
+        CheckConstraint("cooldown_seconds >= 0 AND cooldown_seconds <= 86400", name="ck_group_trigger_rules_cooldown"),
+        Index("ix_group_trigger_rules_group_enabled", "tenant_id", "chatroom_id", "is_enabled", "priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chatroom_id: Mapped[int] = mapped_column(ForeignKey("chatrooms.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    actions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # all:动作按顺序全部发送;random:每次随机发其中一条(「拍一拍随机回一句」这类场景)
+    pick_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="all")
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    # 上次触发时间:冷却按「这条规则在这个群里」计算,不是每个人单独计算
+    last_triggered_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)

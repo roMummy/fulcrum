@@ -195,7 +195,7 @@ from app.services.workwechat_contacts import (
     sync_workwechat_contacts,
     upsert_workwechat_contact,
 )
-from app.web import billing_router, developer_docs_router, open_api_apps_router, platform_admin_router, platform_auth_router, platform_billing_router, platform_operations_router, platform_plugins_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
+from app.web import billing_router, developer_docs_router, group_triggers_router, open_api_apps_router, platform_admin_router, platform_auth_router, platform_billing_router, platform_operations_router, platform_plugins_router, provider_nodes_router, public_site_router, tenant_admin_router, tenant_auth_router
 from app.web.auth_common import (
     PLATFORM_LOGIN_PATH,
     PLATFORM_SESSION_COOKIE,
@@ -234,6 +234,7 @@ app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
 app.include_router(public_site_router)
 app.include_router(developer_docs_router)
+app.include_router(group_triggers_router)
 app.include_router(tenant_auth_router)
 app.include_router(platform_auth_router)
 app.include_router(billing_router)

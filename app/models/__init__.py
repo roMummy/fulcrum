@@ -6,7 +6,7 @@ from app.models.cultivation import (
     CultivationPlayer,
     CultivationTransaction,
 )
-from app.models.plugin_business import CouponAccountBinding, FunCommandRule
+from app.models.plugin_business import CouponAccountBinding, FunCommandRule, GroupTriggerRule
 from app.models.saas import (
     BillingOrder,
     BotBinding,
