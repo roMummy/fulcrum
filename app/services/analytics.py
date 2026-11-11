@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.text_column import dump_json_for_text_column
-from app.core.time import hour_bucket_shanghai, now_shanghai
+from app.core.time import ensure_shanghai_datetime, hour_bucket_shanghai, now_shanghai
 from app.models.entities import (
     AlertRecord,
     Bot,
@@ -271,7 +271,15 @@ def evaluate_operational_alerts(db: Session) -> dict[str, int]:
             details={"last_heartbeat_at": str(channel.last_heartbeat_at or "")},
         )
 
-    failed_jobs = db.scalar(select(func.count(TaskJob.id)).where(TaskJob.status == "failed")) or 0
+    # 只统计"新出现"的失败任务:最近 24 小时内,并且在这条告警上一次被标记处理(或自动恢复)之后产生的。
+    # 失败任务的历史记录不会消失,如果按总数告警,标记已处理后下一轮评估立刻又会重新报警。
+    failed_since = now - timedelta(hours=24)
+    last_handled_at = db.scalar(
+        select(func.max(AlertRecord.resolved_at)).where(AlertRecord.rule_key == "task_queue_failed", AlertRecord.status == "resolved")
+    )
+    if last_handled_at is not None and ensure_shanghai_datetime(last_handled_at) > ensure_shanghai_datetime(failed_since):
+        failed_since = ensure_shanghai_datetime(last_handled_at)
+    failed_jobs = db.scalar(select(func.count(TaskJob.id)).where(TaskJob.status == "failed", TaskJob.updated_at > failed_since)) or 0
     if failed_jobs > 0:
         active_rule_keys.add("task_queue_failed")
         upsert_alert(
@@ -279,7 +287,7 @@ def evaluate_operational_alerts(db: Session) -> dict[str, int]:
             rule_key="task_queue_failed",
             source="ops",
             title="任务队列存在失败任务",
-            message=f"当前共有 {failed_jobs} 个失败任务，请检查任务队列与渠道发送链路。",
+            message=f"最近有 {failed_jobs} 个新的失败任务，请检查任务队列与渠道发送链路；标记已处理后，只有再出现新的失败才会重新告警。",
             level="warning",
             related_type="task_job",
             related_id=None,
