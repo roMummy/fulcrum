@@ -14,3 +14,15 @@ logs
 data
 tmp
 memory
+# 本地备份(含数据库导出)、工具会话和内部文档不进入镜像构建上下文。
+backups
+.rcodex
+projects
+sessions
+shell-snapshots
+session-env
+AGENTS.md
+TODO.md
+docs/plans
+docs/superpowers
+docs/reports

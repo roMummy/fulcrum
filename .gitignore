@@ -27,3 +27,21 @@ data/inbound_files/
 
 # 本机部署凭据（201 服务器与 Git 账号），禁止进入版本库。
 .env.deploy
+
+# 内部协作与过程文件:只保留在本地/内部仓库,不进入公开仓库。
+AGENTS.md
+TODO.md
+docs/plans/
+docs/superpowers/
+docs/reports/
+
+# 本地工具、会话和运行产物(备份目录里是数据库导出,绝不能提交)。
+backups/
+.rcodex/
+projects/
+sessions/
+shell-snapshots/
+session-env/
+.last-cleanup
+plugins/store/
+plugins/plugin-directory-cache-v2.json
