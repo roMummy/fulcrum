@@ -44,7 +44,37 @@
     if (event.target.matches("[data-tr-action-type]")) syncAction(event.target.closest("[data-tr-action-block]"));
   });
 
+  // 变量标签:点一下插入到最近聚焦过的、允许用变量的输入框里的光标处
+  var lastTarget = null;
+  document.addEventListener("focusin", function (event) {
+    if (event.target.matches && event.target.matches("[data-tr-var-target]")) lastTarget = event.target;
+  });
+
+  function insertVariable(button) {
+    var target = lastTarget;
+    if (!target || target.disabled || !document.contains(target)) {
+      if (window.appToast) window.appToast("请先点一下要填写的输入框,再点变量", "danger");
+      return;
+    }
+    var token = button.dataset.trInsert;
+    var start = target.selectionStart == null ? target.value.length : target.selectionStart;
+    var end = target.selectionEnd == null ? start : target.selectionEnd;
+    target.value = target.value.slice(0, start) + token + target.value.slice(end);
+    target.focus();
+    target.setSelectionRange(start + token.length, start + token.length);
+  }
+
+  document.addEventListener("mousedown", function (event) {
+    // 点变量标签时不要让输入框失去焦点,否则光标位置会丢
+    if (event.target.closest && event.target.closest("[data-tr-insert]")) event.preventDefault();
+  });
+
   document.addEventListener("click", function (event) {
+    var insert = event.target.closest && event.target.closest("[data-tr-insert]");
+    if (insert) {
+      insertVariable(insert);
+      return;
+    }
     var form = event.target.closest("[data-tr-form]");
     if (!form) return;
     if (event.target.matches("[data-tr-add-action]")) {

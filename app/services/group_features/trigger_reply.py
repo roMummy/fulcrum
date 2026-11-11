@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.group_features.dispatch import FeatureContext, register_handler
+from app.services.group_features.member_change import parse_member_change
 from app.services.group_features.registry import GroupFeature, register
 from app.services.trigger_rules.catalog import EventView, trigger_event_types
 from app.services.trigger_rules.engine import execute_rules
@@ -18,7 +19,7 @@ FEATURE = register(
     GroupFeature(
         key="trigger_reply",
         name="触发回复",
-        description="群里发生拍一拍、说了某句话时,自动回复文字、图片、语音、视频或卡片。",
+        description="群里发生拍一拍、有人入群退群、说了某句话时,自动回复文字、图片、语音、视频或卡片。",
         event_types=trigger_event_types(),
     )
 )
@@ -35,6 +36,8 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
         sender_name=str(message.get("sender_name") or ""),
         group_name=str(ctx.chatroom.name or ctx.conversation.title or ""),
         details=ctx.details,
+        # 入群/退群/改群昵称:复用成员变更提醒已有的解析(结构化事件和系统消息文字都认)
+        member_change=parse_member_change(ctx.normalized_event),
     )
     return execute_rules(ctx.db, tenant_id=int(ctx.channel.tenant_id), chatroom_id=int(ctx.chatroom.id), view=view)
 

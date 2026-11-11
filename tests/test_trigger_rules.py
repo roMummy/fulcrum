@@ -27,7 +27,7 @@ from app.services.group_features import dispatch as dispatch_module
 from app.services.group_features.dispatch import dispatch_group_features
 from app.services.group_features.store import save_state
 from app.services.trigger_rules import engine, media
-from app.services.trigger_rules.catalog import EventView, get_trigger, parse_pat, trigger_event_types
+from app.services.trigger_rules.catalog import COMMON_VARIABLES, EventView, all_triggers, get_trigger, parse_pat, trigger_event_types, unknown_placeholders, variables_of
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 
@@ -90,7 +90,7 @@ def test_keyword_trigger_modes() -> None:
     assert keyword.match({"text": "早安", "mode": "exact"}, text("早安")) is not None
     assert keyword.match({"text": "查", "mode": "prefix"}, text("查 北京"))["args"] == "北京"
     assert keyword.match({"text": "", "mode": "contains"}, text("x")) is None
-    assert set(trigger_event_types()) == {"pat", "text"}
+    assert {"pat", "text", "group_member_join"} <= set(trigger_event_types())
 
 
 # ---------- 素材安全 ----------
@@ -232,6 +232,69 @@ def test_editing_and_deleting_a_rule_cleans_up_unused_files(env) -> None:
     assert not (media.media_root(1) / new).exists()
 
 
+# ---------- 变量:每种触发自己声明 ----------
+
+def test_every_trigger_declares_its_variables_and_matches_only_return_declared_ones() -> None:
+    declared = {item.key: {v.name for v in variables_of(item)} for item in all_triggers()}
+    assert {"sender_name", "patted_name", "group", "time"} == declared["pat"]
+    assert {"member_name", "member_names", "member_count", "group", "time"} == declared["member_join"]
+    assert {"new_name", "member_name"} <= declared["member_rename"] and "old_name" not in declared["member_rename"]
+    assert {item.name for item in COMMON_VARIABLES} == {"group", "time"}
+    for item in all_triggers():
+        assert all(v.label and v.example for v in item.variables), item.key  # 每个变量都有中文说明和示例
+
+
+def test_unknown_placeholders_are_found_per_trigger() -> None:
+    pat, join = get_trigger("pat"), get_trigger("member_join")
+    assert unknown_placeholders("{sender_name} 拍了 {patted_name},在 {group}", pat) == []
+    assert unknown_placeholders("欢迎 {member_name} 和 {sender_name} {sender_name} {oops}", join) == ["sender_name", "oops"]
+    assert unknown_placeholders("普通文字 {} { x } {1abc}", pat) == []  # 不像变量的花括号不管
+
+
+def test_using_a_variable_the_trigger_does_not_provide_is_rejected_with_the_available_list() -> None:
+    with pytest.raises(engine.RuleError, match=r"\{member_name\} 在「有人拍一拍」下不能用.*\{sender_name\}"):
+        engine.validate_draft(_draft(actions=[{"type": "text", "content": "欢迎 {member_name}"}]), tenant_id=1)
+    with pytest.raises(engine.RuleError, match="卡片标题"):
+        engine.validate_draft(_draft(actions=[{"type": "card", "title": "{nope}", "url": "https://e.com"}]), tenant_id=1)
+    engine.validate_draft(_draft(trigger_type="member_join", trigger_params={}, actions=[{"type": "text", "content": "欢迎 {member_name}"}]), tenant_id=1)
+
+
+def _member_event(change_type: str, *, names=("小明",), message_type="group_member_join", **extra) -> dict:
+    change = {"change_type": change_type, "members": [{"external_id": f"wxid_{i}", "display_name": name} for i, name in enumerate(names)], "after_count": 58, **extra}
+    return {
+        "conversation": {"chat_type": "group", "external_id": "g@chatroom"},
+        "message": {"message_type": message_type, "content": "x", "sender_id": ""},
+        "details": {"member_change": change},
+    }
+
+
+def test_member_triggers_provide_their_own_variables(env, sent) -> None:
+    save_state(env.room, "trigger_reply", enabled=True)
+    engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="欢迎", trigger_type="member_join", trigger_params={}, actions=[{"type": "text", "content": "欢迎 {member_names} 加入{group},现在 {member_count} 人"}]))
+    engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="告别", trigger_type="member_leave", trigger_params={}, actions=[{"type": "text", "content": "{member_name} 走了"}]))
+    engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="改名", trigger_type="member_rename", trigger_params={}, actions=[{"type": "text", "content": "{member_name} 改名叫 {new_name}"}]))
+
+    def fire(event):
+        sent.clear()
+        executed = dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
+        return executed, (sent[-1]["replies"][0]["content"] if sent else None)
+
+    assert fire(_member_event("join", names=("小明", "小红"))) == (["trigger_reply"], "欢迎 小明、小红 加入测试群,现在 58 人")
+    assert fire(_member_event("left", message_type="group_member_leave")) == (["trigger_reply"], "小明 走了")
+    assert fire(_member_event("removed", message_type="group_member_leave"))[1] == "小明 走了"  # 被移出也算退群
+    assert fire(_member_event("rename", message_type="group_member_nickname_change", new_room_nick_name="明明")) == (["trigger_reply"], "小明 改名叫 明明")
+    # 入群事件不会触发"退群"规则,普通文字不会触发任何成员规则
+    plain = {"conversation": {"chat_type": "group", "external_id": "g@chatroom"}, "message": {"message_type": "text", "content": "你好", "sender_id": "x"}}
+    assert fire(plain) == ([], None)
+
+
+def test_a_declared_variable_the_event_could_not_provide_becomes_empty_not_a_raw_placeholder(env) -> None:
+    engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="欢迎", trigger_type="member_join", trigger_params={}, actions=[{"type": "text", "content": "现在{member_count}人"}]))
+    info = {"change_type": "join", "members": [{"external_id": "w", "display_name": "小明"}]}  # 微桥没给群人数
+    view = EventView(message_type="group_member_join", text="", sender_id="", sender_name="", group_name="群", member_change=info)
+    assert _run(env, view) == [{"type": "text", "content": "现在人"}]
+
+
 # ---------- 接入群功能分发 ----------
 
 @pytest.fixture()
@@ -298,6 +361,9 @@ def test_the_management_pages_walk_through_create_edit_toggle_delete(pages) -> N
     csrf = _login(client, "admin")
     assert "还没有触发规则" in client.get(base).text and "本群还没有打开" in client.get(base).text
     form = client.get(base + "/new").text
+    # 变量按触发分别展示成可点击的标签,带中文说明;允许用变量的输入框有标记
+    assert 'data-tr-insert="{sender_name}"' in form and "拍的人" in form and 'data-tr-insert="{member_count}"' in form and "入群后的群人数" in form
+    assert "data-tr-var-target" in form
     assert "有人拍一拍" in form and "回复什么" in form and 'name="a0__type"' in form and 'id="tr-action-template"' in form
 
     created = client.post(base, data=_form(csrf_token=csrf), files={"a0__image__file": ("p.png", _png(), "image/png")})

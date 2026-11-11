@@ -22,7 +22,7 @@ from app.services.group_features import store as group_feature_store
 from app.services.ops import record_audit
 from app.services.saas_auth import has_tenant_role
 from app.services.trigger_rules import engine, media
-from app.services.trigger_rules.catalog import all_actions, all_triggers, get_action, get_trigger
+from app.services.trigger_rules.catalog import all_actions, all_triggers, get_action, get_trigger, variables_of
 from app.web.auth_common import TENANT_CSRF_COOKIE, TENANT_LOGOUT_PATH, TENANT_PASSWORD_PATH, require_tenant_csrf
 from app.web.tenant_navigation import build_tenant_navigation
 
@@ -198,6 +198,7 @@ def _form_response(request: Request, channel: Channel, chatroom: Chatroom, *, ru
         request, channel, chatroom,
         title="新建触发规则" if rule_id is None else "编辑触发规则",
         rule_id=rule_id, draft=draft, form_error=error, triggers=all_triggers(), actions=all_actions(), pick_modes=engine.PICK_MODES,
+        trigger_vars={item.key: variables_of(item) for item in all_triggers()},
     )
     return templates.TemplateResponse(request, "group_trigger_form.html", context, status_code=422 if error else 200)
 

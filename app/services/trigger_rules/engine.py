@@ -20,10 +20,10 @@ from app.services.trigger_rules.catalog import (
     BuildContext,
     EventView,
     RuleField,
-    all_actions,
-    all_triggers,
     get_action,
     get_trigger,
+    unknown_placeholders,
+    variables_of,
 )
 
 logger = get_logger(__name__)
@@ -99,6 +99,11 @@ def validate_draft(draft: RuleDraft, *, tenant_id: int) -> RuleDraft:
         item = {"type": action.key}
         for field_def in action.fields:
             item[field_def.name] = _check_field(field_def, raw.get(field_def.name), tenant_id=tenant_id, owner=owner)
+            if field_def.variables:
+                unknown = unknown_placeholders(item[field_def.name], trigger)
+                if unknown:
+                    usable = "、".join("{" + v.name + "}" for v in variables_of(trigger))
+                    raise RuleError(f"{owner}:「{field_def.label}」里的 {{{unknown[0]}}} 在「{trigger.label}」下不能用,可用的变量有 {usable}")
         actions.append(item)
     if draft.pick_mode not in {key for key, _ in PICK_MODES}:
         raise RuleError("请选择回复方式")
@@ -234,9 +239,15 @@ def execute_rules(
         cooldown = int(rule.cooldown_seconds or 0)
         if cooldown and rule.last_triggered_at is not None and now - ensure_shanghai_datetime(rule.last_triggered_at) < timedelta(seconds=cooldown):
             return []
+        # 声明了但这次事件没取到的变量按空字符串处理,不会把 {xxx} 原样发到群里
         context = BuildContext(
             tenant_id=tenant_id,
-            variables={**variables, "group": view.group_name, "time": now.strftime("%Y-%m-%d %H:%M")},
+            variables={
+                **{item.name: "" for item in trigger.variables},
+                **variables,
+                "group": view.group_name,
+                "time": now.strftime("%Y-%m-%d %H:%M"),
+            },
         )
         actions = rule_actions(rule)
         if rule.pick_mode == "random" and actions:
@@ -255,9 +266,3 @@ def execute_rules(
             db.flush()
         return replies
     return None
-
-
-def catalog_for_form() -> dict[str, Any]:
-    """页面渲染表单用的触发/动作目录。"""
-
-    return {"triggers": all_triggers(), "actions": all_actions(), "pick_modes": PICK_MODES}

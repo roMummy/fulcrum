@@ -24,7 +24,7 @@
       <label class="tr-field">
         <span>{{ f.label }}{% if f.required %} <em>*</em>{% endif %}</span>
         {% if f.kind == 'textarea' %}
-        <textarea name="{{ fname }}" rows="3" maxlength="1000"{% if not shown %} disabled{% endif %}>{{ value }}</textarea>
+        <textarea name="{{ fname }}" rows="3" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %}>{{ value }}</textarea>
         {% elif f.kind == 'file' %}
         {% if value %}
         <small class="tr-file-kept">已上传:当前文件会继续使用;重新选择文件可替换。{% if not f.required %} <label><input type="checkbox" name="{{ fname }}__remove" value="1"{% if not shown %} disabled{% endif %} /> 去掉这个文件</label>{% endif %}</small>
@@ -32,7 +32,7 @@
         {% endif %}
         <input type="file" name="{{ fname }}" accept="{{ accept_map.get(f.media_kind, '') }}"{% if not shown %} disabled{% endif %} />
         {% else %}
-        <input type="{{ 'url' if f.kind == 'url' else 'text' }}" name="{{ fname }}" value="{{ value }}" maxlength="1000"{% if not shown %} disabled{% endif %} />
+        <input type="{{ 'url' if f.kind == 'url' else 'text' }}" name="{{ fname }}" value="{{ value }}" maxlength="1000"{% if f.variables %} data-tr-var-target{% endif %}{% if not shown %} disabled{% endif %} />
         {% endif %}
         {% if f.hint %}<small>{{ f.hint }}</small>{% endif %}
       </label>
@@ -83,8 +83,14 @@
 
   <section class="editor-surface">
     <div class="section-head"><div><h2>③ 回复什么</h2></div></div>
+    {# 变量:每种触发自己声明能提供什么;点一下标签,插入到上次点过的文字框里 #}
     {% for t in triggers %}
-    <p class="muted tr-vars" data-tr-vars="{{ t.key }}"{% if t.key != draft.trigger_type %} hidden{% endif %}>文字和卡片标题里可以使用变量,发送时自动替换:{% for name, label in t.variables %}<code>{{ '{' ~ name ~ '}' }}</code> {{ label }}{% if not loop.last %};{% endif %}{% endfor %}</p>
+    <div class="tr-vars" data-tr-vars="{{ t.key }}"{% if t.key != draft.trigger_type %} hidden{% endif %}>
+      <span class="muted">文字和卡片里可以插入变量(先点一下要填的输入框,再点变量),发送时自动换成真实内容:</span>
+      <div class="tr-var-list">
+        {% for v in trigger_vars[t.key] %}<button class="tr-var" type="button" data-tr-insert="{{ '{' ~ v.name ~ '}' }}" title="例如:{{ v.example }}"><b>{{ v.label }}</b><code>{{ '{' ~ v.name ~ '}' }}</code></button>{% endfor %}
+      </div>
+    </div>
     {% endfor %}
     <div data-tr-actions>
       {% for item in draft.actions %}{{ action_block(loop.index0, item) }}{% endfor %}

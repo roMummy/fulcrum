@@ -5,7 +5,10 @@
 所以新增一种触发(比如"有人入群")或一种结果(比如"拍回去")只需要在本文件加一个注册项,
 页面、存储和分发都不用改。
 
-模板变量:回复文字、卡片标题等可以写 {sender_name} 这样的占位符,执行时替换;不认识的占位符原样保留。
+模板变量:回复文字、卡片标题等可以写 {sender_name} 这样的占位符,执行时替换。
+每种触发**自己声明**能提供哪些变量(名称、说明、示例),业务不同变量就不同:拍一拍有「拍的人/被拍的人」,
+入群有「新成员群昵称/群人数」。页面按声明展示可点选的变量,保存规则时用到声明之外的变量会被拒绝,
+所以不会出现发出去一条带着没替换的 {xxx} 的消息。
 """
 
 from __future__ import annotations
@@ -23,6 +26,22 @@ MAX_TEXT_LENGTH = 1000
 
 
 @dataclass(frozen=True)
+class RuleVariable:
+    """触发提供的一个模板变量。example 用于页面上的示意。"""
+
+    name: str
+    label: str
+    example: str = ""
+
+
+# 所有触发都提供的变量,不需要各自声明
+COMMON_VARIABLES = (
+    RuleVariable("group", "群名称", "测试群"),
+    RuleVariable("time", "当前时间", "2026-11-11 18:00"),
+)
+
+
+@dataclass(frozen=True)
 class RuleField:
     """触发或动作的一个可填项。kind: text / textarea / url / select / file。"""
 
@@ -35,6 +54,8 @@ class RuleField:
     options: tuple[tuple[str, str], ...] = ()
     # kind="file" 时的素材类别:image / audio / video
     media_kind: str = ""
+    # 文字类字段是否允许使用模板变量(页面据此提供"点一下插入变量")
+    variables: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,6 +68,8 @@ class EventView:
     sender_name: str
     group_name: str
     details: Mapping[str, Any] = field(default_factory=dict)
+    # 群成员变动(入群/退群/改群昵称)事件解析结果,由群功能入口提供;不是成员事件时为 None
+    member_change: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +81,8 @@ class TriggerType:
     fields: tuple[RuleField, ...]
     # 命中返回模板变量字典,不命中返回 None
     match: Callable[[Mapping[str, Any], EventView], dict[str, str] | None]
-    # 页面上提示用户这个触发下能写哪些 {变量}
-    variables: tuple[tuple[str, str], ...] = ()
+    # 本触发提供的模板变量;match 返回的字典应覆盖这些名称(缺的按空字符串处理)
+    variables: tuple[RuleVariable, ...] = ()
     # 一句话描述这条规则(列表里展示),参数是已校验过的触发参数
     summarize: Callable[[Mapping[str, Any]], str] = lambda params: ""
 
@@ -132,6 +155,26 @@ def render_text(template: str, variables: Mapping[str, str]) -> str:
     for key, value in variables.items():
         rendered = rendered.replace("{" + key + "}", str(value or ""))
     return rendered
+
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def variables_of(trigger: TriggerType) -> tuple[RuleVariable, ...]:
+    """某个触发下能用的全部变量:自己声明的 + 通用的。"""
+
+    return trigger.variables + COMMON_VARIABLES
+
+
+def unknown_placeholders(text: str, trigger: TriggerType) -> list[str]:
+    """文字里用到、但该触发不提供的 {变量},按出现顺序去重返回。"""
+
+    allowed = {item.name for item in variables_of(trigger)}
+    found: list[str] = []
+    for name in _PLACEHOLDER_PATTERN.findall(str(text or "")):
+        if name not in allowed and name not in found:
+            found.append(name)
+    return found
 
 
 # ---------------------------------------------------------------- 触发:拍一拍
@@ -228,7 +271,7 @@ PAT_TRIGGER = register_trigger(
                 hint="一般选第一个;选第二个机器人会回应群里所有拍一拍。",
             ),
         ),
-        variables=(("sender_name", "拍的人"), ("patted_name", "被拍的人"), ("group", "群名称"), ("time", "当前时间")),
+        variables=(RuleVariable("sender_name", "拍的人", "小红"), RuleVariable("patted_name", "被拍的人", "我")),
         summarize=lambda params: "有人拍机器人时" if str(params.get("scope") or "me") != "any" else "群里有人被拍时",
     )
 )
@@ -269,8 +312,93 @@ KEYWORD_TRIGGER = register_trigger(
             RuleField("text", "关键词", required=True, hint="例如:签到、早安。"),
             RuleField("mode", "怎么算命中", kind="select", default="contains", options=_KEYWORD_MODES),
         ),
-        variables=(("sender_name", "发消息的人"), ("content", "消息原文"), ("args", "「以它开头」时后面跟的内容"), ("group", "群名称"), ("time", "当前时间")),
+        variables=(
+            RuleVariable("sender_name", "发消息的人", "小明"),
+            RuleVariable("content", "消息原文", "早安大家"),
+            RuleVariable("args", "「以它开头」时后面跟的内容", "北京"),
+        ),
         summarize=lambda params: f"{dict(_KEYWORD_MODES).get(str(params.get('mode') or 'contains'), '消息里包含')}「{params.get('text', '')}」",
+    )
+)
+
+
+# ---------------------------------------------------------------- 触发:群成员变动(入群 / 退群 / 改群昵称)
+
+def _names(members: Any) -> list[str]:
+    return [str(item.get("display_name") or item.get("external_id") or "").strip() for item in (members or []) if isinstance(item, Mapping)]
+
+
+def _member_vars(info: Mapping[str, Any]) -> dict[str, str]:
+    names = [name for name in _names(info.get("members")) if name]
+    count = info.get("after_count")
+    return {
+        "member_name": names[0] if names else "",
+        "member_names": "、".join(names[:10]),
+        "member_count": str(count) if isinstance(count, int) else "",
+    }
+
+
+def _match_member(change_types: frozenset[str]) -> Callable[[Mapping[str, Any], EventView], dict[str, str] | None]:
+    def match(params: Mapping[str, Any], view: EventView) -> dict[str, str] | None:
+        info = view.member_change
+        if not info or str(info.get("change_type") or "") not in change_types:
+            return None
+        result = _member_vars(info)
+        # 微桥的改昵称事件只带新昵称,不带旧昵称,所以不对外提供"原昵称"变量
+        result["new_name"] = str(info.get("new_name") or "")
+        return result
+
+    return match
+
+
+# 入群/退群可能来自结构化的微桥事件,也可能是系统消息文字,所以需要同时接收这些消息类型
+_MEMBER_EVENT_TYPES = ("group_member_join", "group_member_leave", "group_member_nickname_change", "event", "system", "text")
+
+JOIN_TRIGGER = register_trigger(
+    TriggerType(
+        key="member_join",
+        label="有新成员入群",
+        description="有人加入群聊时自动回复,例如欢迎语。",
+        event_types=_MEMBER_EVENT_TYPES,
+        match=_match_member(frozenset({"join"})),
+        fields=(),
+        variables=(
+            RuleVariable("member_name", "新成员的群昵称", "小明"),
+            RuleVariable("member_names", "所有新成员(一次进多人时用顿号连接)", "小明、小红"),
+            RuleVariable("member_count", "入群后的群人数", "58"),
+        ),
+        summarize=lambda params: "有新成员入群时",
+    )
+)
+LEAVE_TRIGGER = register_trigger(
+    TriggerType(
+        key="member_leave",
+        label="有成员退群",
+        description="有人退出或被移出群聊时自动回复。",
+        event_types=_MEMBER_EVENT_TYPES,
+        match=_match_member(frozenset({"left", "removed"})),
+        fields=(),
+        variables=(
+            RuleVariable("member_name", "退群成员的群昵称", "小明"),
+            RuleVariable("member_names", "所有退群成员", "小明、小红"),
+            RuleVariable("member_count", "退群后的群人数", "56"),
+        ),
+        summarize=lambda params: "有成员退群时",
+    )
+)
+RENAME_TRIGGER = register_trigger(
+    TriggerType(
+        key="member_rename",
+        label="有成员改群昵称",
+        description="有人修改了自己的群昵称时自动回复。",
+        event_types=_MEMBER_EVENT_TYPES,
+        match=_match_member(frozenset({"rename"})),
+        fields=(),
+        variables=(
+            RuleVariable("member_name", "改名的成员", "小明"),
+            RuleVariable("new_name", "新的群昵称", "明明"),
+        ),
+        summarize=lambda params: "有成员改群昵称时",
     )
 )
 
@@ -323,7 +451,7 @@ def _short(value: Any, limit: int = 24) -> str:
 TEXT_ACTION = register_action(
     ActionType(
         key="text", label="文字", description="回复一段文字。",
-        fields=(RuleField("content", "回复内容", kind="textarea", required=True, hint="可以用 {sender_name} 这样的变量,发送时会替换成真实内容。"),),
+        fields=(RuleField("content", "回复内容", kind="textarea", required=True, variables=True, hint="可以点下面的变量插入,发送时会替换成真实内容。"),),
         build=_build_text,
         summarize=lambda params: f"文字「{_short(params.get('content'))}」",
     )
@@ -359,9 +487,9 @@ CARD_ACTION = register_action(
     ActionType(
         key="card", label="卡片", description="回复一张可点击的链接卡片。",
         fields=(
-            RuleField("title", "卡片标题", required=True, hint="可以用变量,例如 {sender_name}。"),
-            RuleField("description", "卡片描述"),
-            RuleField("url", "点击后打开的网址", kind="url", required=True, hint="以 http:// 或 https:// 开头。"),
+            RuleField("title", "卡片标题", required=True, variables=True, hint="可以插入变量。"),
+            RuleField("description", "卡片描述", variables=True),
+            RuleField("url", "点击后打开的网址", kind="url", required=True, variables=True, hint="以 http:// 或 https:// 开头。"),
             RuleField("thumb_url", "缩略图网址", kind="url", hint="可不填;以 http:// 或 https:// 开头的图片地址。"),
         ),
         build=_build_card,
