@@ -339,7 +339,7 @@ def format_uptime(value):
 
 
 def get_cron_probe_snapshot() -> dict[str, str]:
-    probe_script = APP_ROOT / "scripts" / "mba_cron_probe.sh"
+    probe_script = APP_ROOT / "scripts" / "fulcrum_cron_probe.sh"
     if not probe_script.exists():
         return {"recommended_state": "unknown", "probe_error": "missing_script"}
     try:

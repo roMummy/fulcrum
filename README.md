@@ -123,8 +123,8 @@ http://127.0.0.1:8280
 Linux / macOS 可使用：
 
 ```bash
-chmod +x scripts/deploy_restart_mba.sh
-./scripts/deploy_restart_mba.sh
+chmod +x scripts/deploy_restart.sh
+./scripts/deploy_restart.sh
 ```
 
 脚本会自动执行：
@@ -144,7 +144,7 @@ chmod +x scripts/deploy_restart_mba.sh
 ```bash
 MBS_GIT_BRANCH=main \
 MBS_PORT=8280 \
-./scripts/deploy_restart_mba.sh
+./scripts/deploy_restart.sh
 ```
 
 脚本只做 Git 快进、数据库差异迁移和应用进程替换，不执行数据库备份或要求备份门禁。数据库迁移和敏感字段清理成功前不会停止旧进程。

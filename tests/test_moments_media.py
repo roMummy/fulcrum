@@ -55,7 +55,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(moments_media.settings, "data_dir", str(tmp_path))
     db = _session()
     channel = _seed(db)
-    channel.api_base = "http://mba.test/api/wechat-webridge/1"
+    channel.api_base = "http://fulcrum.test/api/wechat-webridge/1"
     posts = {}
     for key, media, post_type in (("a", [IMAGE, VIDEO], 2), ("b", [dict(IMAGE, mid="other")], 2), ("c", [dict(IMAGE, mid="third")], 2), ("text", [dict(IMAGE, mid="odd", type=3)], 1)):
         post = MomentsPost(tenant_id=1, channel_id=channel.id, sns_id=f"146000000000000{key}"[:20], author_wxid="wxid_f", create_time=now_shanghai(), post_type=post_type, media_json=json.dumps(media))
@@ -87,7 +87,7 @@ def test_a_click_asks_the_phone_with_an_upload_target_and_a_one_time_token(env) 
     # 参数按文档:sns_id、media_id,以及 upload 对象(地址、POST 原始字节、资源 ID、令牌头)
     assert (params["sns_id"], params["media_id"]) == (posts["a"].sns_id, "mid-img")
     upload = params["upload"]
-    assert upload["url"] == f"http://mba.test/api/wechat-webridge/1/agent/moments_upload?media_id={row.id}" and upload["method"] == "POST" and upload["resource_id"] == str(row.id)
+    assert upload["url"] == f"http://fulcrum.test/api/wechat-webridge/1/agent/moments_upload?media_id={row.id}" and upload["method"] == "POST" and upload["resource_id"] == str(row.id)
     token = upload["headers"][moments_media.UPLOAD_HEADER]
     assert len(token) >= 32 and row.token_hash == moments_media.token_hash(token) and token not in (row.token_hash or "")  # 库里只有摘要
     # 获取中:再点不会重复下发
@@ -222,7 +222,7 @@ def page_env(provider_page_context, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(moments_media.settings, "data_dir", str(tmp_path))
     client, ids = provider_page_context
     with ids["factory"]() as db:
-        channel = Channel(tenant_id=ids["alpha"], bot_id=ids["bot"], name="微桥账号", channel_type="wechat_webridge", is_enabled=True, api_base="http://mba.test/api/wechat-webridge/1")
+        channel = Channel(tenant_id=ids["alpha"], bot_id=ids["bot"], name="微桥账号", channel_type="wechat_webridge", is_enabled=True, api_base="http://fulcrum.test/api/wechat-webridge/1")
         db.add(channel)
         db.flush()
         post = MomentsPost(tenant_id=ids["alpha"], channel_id=channel.id, sns_id="1459000000000000001", author_wxid="wxid_f", create_time=now_shanghai(), content="虚构动态", post_type=2, media_json=json.dumps([IMAGE]))

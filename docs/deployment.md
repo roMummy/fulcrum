@@ -234,7 +234,7 @@ Recommended production layout:
 ```bash
 cd <部署目录>
 git pull --ff-only origin main
-MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
+MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart.sh
 ```
 
 脚本会依次安装依赖、执行插件完整性探针、运行 `alembic upgrade head`、清理历史插件明文配置、重启 8280 端口的应用进程，并检查本机 `/healthz` 和 `/readyz`。迁移或密钥探针失败时旧进程不会被停止。
@@ -290,7 +290,7 @@ On startup the application will:
 
 ## Notes
 
-- `scripts/deploy_restart_mba.sh` 只做差异更新，不执行备份，也不设置备份门禁。
+- `scripts/deploy_restart.sh` 只做差异更新，不执行备份，也不设置备份门禁。
 - 插件目录、独立主密钥、数据库迁移和敏感明文清理成功前不得停止旧进程。
 - 平台可修改公开套餐价格和额度，订单创建后使用金额和额度快照，不受后续套餐修改影响。
 - 一个手机号首版只拥有一个企业；试用机器人绑定不可由租户自行更换，付费绑定释放也必须由平台管理员带原因执行。

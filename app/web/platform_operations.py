@@ -459,7 +459,7 @@ async def platform_restart_app_action(
     with SessionLocal() as db:
         require_platform_csrf(db, request, csrf_token)
 
-    script_path = APP_ROOT / "scripts" / "deploy_restart_mba.sh"
+    script_path = APP_ROOT / "scripts" / "deploy_restart.sh"
     if not script_path.exists():
         return _redirect("/platform/operations", "重启脚本不存在", danger=True)
     run_dir = APP_ROOT / ".run"

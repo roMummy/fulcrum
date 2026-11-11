@@ -124,7 +124,7 @@ def test_attachment_state_decides_whether_a_media_card_is_ready() -> None:
 def conversation_page(provider_page_context, tmp_path):  # noqa: F811
     client, ids = provider_page_context
     with ids["factory"]() as db:
-        channel = Channel(tenant_id=ids["alpha"], bot_id=ids["bot"], name="微桥账号", channel_type="wechat_webridge", is_enabled=True, api_base="http://mba.test/api/wechat-webridge/1")
+        channel = Channel(tenant_id=ids["alpha"], bot_id=ids["bot"], name="微桥账号", channel_type="wechat_webridge", is_enabled=True, api_base="http://fulcrum.test/api/wechat-webridge/1")
         db.add(channel)
         db.flush()
         conversation = Conversation(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=channel.id, channel_type="wechat_webridge", external_id="g@chatroom", chat_type="group", title="测试群")
@@ -206,7 +206,7 @@ def media_env(tmp_path, monkeypatch):
     monkeypatch.setattr(inbound_media, "_build_attachment_path", lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}")
     db = _session()
     channel = _seed(db)
-    channel.api_base = "http://mba.test/api/wechat-webridge/1"
+    channel.api_base = "http://fulcrum.test/api/wechat-webridge/1"
     conversation = Conversation(id=3, tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id="g@chatroom", chat_type="group")
     message = Message(tenant_id=1, conversation_id=3, direction="in", sender_id="wxid_a", content=IMAGE, message_type="image", external_message_id="3451183832849212577", status="received")
     db.add_all([conversation, message])
@@ -234,7 +234,7 @@ def test_first_click_asks_the_phone_to_upload_and_repeated_clicks_do_not_ask_aga
     # 用微信消息编号和附件上传地址下发给手机(与入站自动下载同一套命令)
     assert command["params"] == {
         "message_id": "3451183832849212577", "media_type": "image",
-        "upload_url": f"http://mba.test/api/wechat-webridge/1/agent/upload_media?attachment_id={attachment.id}", "attachment_id": attachment.id,
+        "upload_url": f"http://fulcrum.test/api/wechat-webridge/1/agent/upload_media?attachment_id={attachment.id}", "attachment_id": attachment.id,
     }
     assert message_media.request(db, message)["state"] == "loading" and len(_uploads(db)) == 1  # 获取中:不重复下发
 
@@ -287,10 +287,10 @@ def test_unsupported_channels_and_messages_without_a_wechat_id_fail_with_a_reaso
 
 
 def test_upload_url_prefers_the_channel_setting_and_makes_relative_ones_absolute() -> None:
-    channel = Channel(id=2, name="x", channel_type="wechat_webridge", api_base="http://mba.test/api/wechat-webridge/2/")
-    assert service.build_upload_url(channel, 9) == "http://mba.test/api/wechat-webridge/2/agent/upload_media?attachment_id=9"
+    channel = Channel(id=2, name="x", channel_type="wechat_webridge", api_base="http://fulcrum.test/api/wechat-webridge/2/")
+    assert service.build_upload_url(channel, 9) == "http://fulcrum.test/api/wechat-webridge/2/agent/upload_media?attachment_id=9"
     channel.adapter_config_json = json.dumps({"upload_url": "/agent/upload_media?attachment_id=5"})
-    assert service.build_upload_url(channel, 9) == "http://mba.test/api/wechat-webridge/2/agent/upload_media?attachment_id=5"
+    assert service.build_upload_url(channel, 9) == "http://fulcrum.test/api/wechat-webridge/2/agent/upload_media?attachment_id=5"
     channel.adapter_config_json = json.dumps({"upload_url": "https://cdn.example.com/up"})
     assert service.build_upload_url(channel, 9) == "https://cdn.example.com/up"
 

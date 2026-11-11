@@ -36,7 +36,7 @@
       <label class="check-option"><input type="checkbox" name="authorized_channel_ids" value="{{ channel.id }}" /><span>#{{ channel.id }} · {{ channel.name }} · {{ channel.channel_type }}</span></label>
       {% else %}<p class="muted-text">请先完成账号接入。</p>{% endfor %}
     </fieldset>
-    <label class="full-row"><span>Webhook 地址（可留空）</span><input type="url" name="webhook_url" maxlength="500" placeholder="https://your.example.com/hooks/mba" /></label>
+    <label class="full-row"><span>Webhook 地址（可留空）</span><input type="url" name="webhook_url" maxlength="500" placeholder="https://your.example.com/hooks/fulcrum" /></label>
     <label class="full-row"><span>Webhook 密钥（可留空）</span><input type="password" name="webhook_secret" maxlength="255" autocomplete="new-password" placeholder="只保存在服务端，不会回显" /></label>
     <div class="full-row form-actions-inline"><button class="btn" type="submit"{% if not channels %} disabled{% endif %}>创建开放应用</button></div>
   </form>

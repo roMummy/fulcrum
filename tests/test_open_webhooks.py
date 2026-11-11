@@ -222,7 +222,7 @@ class OpenWebhookTestCase(unittest.TestCase):
                 "details": {
                     "file_name": "回传.xls",
                     "download_path": str(return_file),
-                    "download_url": "http://mba.test/inbound-files/1/share/return.xls",
+                    "download_url": "http://fulcrum.test/inbound-files/1/share/return.xls",
                     "file_size": 123,
                 },
             }
@@ -236,7 +236,7 @@ class OpenWebhookTestCase(unittest.TestCase):
         bodies = [parse_job_payload(job)["envelope"] for job in jobs]
         self.assertEqual([body["event_type"] for body in bodies], ["message.received", "file.received"])
         self.assertEqual(bodies[1]["attachments"][0]["file_name"], "回传.xls")
-        self.assertEqual(bodies[1]["attachments"][0]["download_url"], "http://mba.test/inbound-files/1/share/return.xls")
+        self.assertEqual(bodies[1]["attachments"][0]["download_url"], "http://fulcrum.test/inbound-files/1/share/return.xls")
 
     def test_open_webhook_delivery_job_posts_enqueued_envelope(self):
         tenant_context, db_context = self._tenant_db()
@@ -318,7 +318,7 @@ class OpenWebhookTestCase(unittest.TestCase):
                 "details": {
                     "file_name": "supplier-video.mp4",
                     "download_path": str(video_file),
-                    "download_url": "http://mba.test/inbound-files/1/share/supplier-video.mp4",
+                    "download_url": "http://fulcrum.test/inbound-files/1/share/supplier-video.mp4",
                     "file_size": video_file.stat().st_size,
                 },
             }

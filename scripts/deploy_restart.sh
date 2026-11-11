@@ -24,19 +24,19 @@ fi
 
 # `.run/` 保存部署运行文件，`.rcodex/` 保存本机研发工具状态；二者都不属于
 # 应用发布差异，不能让它们阻断已经提交完成的正式部署。
-dirty_status="$(git status --porcelain -- . ':(exclude)scripts/deploy_restart_mba.sh' ':(exclude).run' ':(exclude).rcodex' || true)"
+dirty_status="$(git status --porcelain -- . ':(exclude)scripts/deploy_restart.sh' ':(exclude).run' ':(exclude).rcodex' || true)"
 if [ -n "${dirty_status}" ] && [ "${ALLOW_DIRTY}" != "1" ]; then
   echo "working tree is not clean; please commit or stash local changes before deploy restart"
-  echo "ignored paths: scripts/deploy_restart_mba.sh, .run/, .rcodex/"
+  echo "ignored paths: scripts/deploy_restart.sh, .run/, .rcodex/"
   printf '%s\n' "${dirty_status}"
   echo "set MBS_ALLOW_DIRTY=1 to bypass this check temporarily"
   exit 1
 fi
 
-script_status="$(git status --porcelain -- scripts/deploy_restart_mba.sh || true)"
+script_status="$(git status --porcelain -- scripts/deploy_restart.sh || true)"
 if [ -n "${script_status}" ]; then
-  echo "[preflight] restoring local changes in scripts/deploy_restart_mba.sh before pull"
-  git restore --source=HEAD --staged --worktree scripts/deploy_restart_mba.sh
+  echo "[preflight] restoring local changes in scripts/deploy_restart.sh before pull"
+  git restore --source=HEAD --staged --worktree scripts/deploy_restart.sh
 fi
 
 echo "[1/10] fetching latest code from origin/${APP_BRANCH}"

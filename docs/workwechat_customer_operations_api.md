@@ -9,7 +9,7 @@
 示例：
 
 ```bash
-curl -X POST "http://MBA_HOST/api/workwechat/customer-operations" \
+curl -X POST "http://FULCRUM_HOST/api/workwechat/customer-operations" \
   -H "Content-Type: application/json" \
   -H "X-Customer-Operation-Token: YOUR_TOKEN" \
   -d '{

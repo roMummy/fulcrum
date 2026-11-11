@@ -40,7 +40,8 @@ Fulcrum 的 `plugins/supplier_order_flow` 现在只作为轻量桥接插件存�
 `supplier-order-admin/.env` 推荐配置：
 
 ```env
-MBA_BASE_URL=http://<mba-host>:8180
+# 注意:下面的 MBA_* 是收发单系统 supplier-order-admin 侧沿用的历史变量名,指向 Fulcrum 服务
+MBA_BASE_URL=http://<fulcrum-host>:8180
 MBA_APP_KEY=supplier-order
 MBA_APP_SECRET=<平台方单独交付的app_secret>
 MBA_WEBHOOK_SECRET=<平台方单独交付的Webhook Secret>
@@ -170,7 +171,7 @@ X-MBA-Signature: HMAC_SHA256(webhook_secret, timestamp + "\n" + raw_body)
     {
       "file_name": "supplier-return.xls",
       "storage_path": "/srv/fulcrum/data/inbound_files/...",
-      "download_url": "http://mba.example.com/inbound-files/..."
+      "download_url": "http://fulcrum.example.com/inbound-files/..."
     }
   ]
 }

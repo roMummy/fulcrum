@@ -136,7 +136,7 @@ def test_installer_creates_admin_only_after_migrations(tmp_path: Path) -> None:
 def test_deploy_script_migrates_before_stopping_old_process() -> None:
     """部署脚本先完成完整性、密钥、迁移和清理，再替换旧进程。"""
 
-    script = (PROJECT_ROOT / "scripts" / "deploy_restart_mba.sh").read_text(encoding="utf-8")
+    script = (PROJECT_ROOT / "scripts" / "deploy_restart.sh").read_text(encoding="utf-8")
     catalog_index = script.index("scripts/verify_plugin_migration.py")
     cleanup_import_index = script.index("from app.services.plugin_secret_cleanup")
     secret_key_index = script.index("encrypt_plugin_secret_config")

@@ -565,7 +565,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
                             "id": 123456,
                             "is_bot": True,
                             "first_name": "Fulcrum",
-                            "username": "liu_mba_bot",
+                            "username": "demo_bot",
                             "can_join_groups": True,
                             "supports_inline_queries": False,
                         },

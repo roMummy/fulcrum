@@ -25,14 +25,14 @@ class OutboundFilesTests(unittest.TestCase):
         request = _fake_request(
             headers={
                 "X-Forwarded-Proto": "https",
-                "X-Forwarded-Host": "mba.example.com",
+                "X-Forwarded-Host": "fulcrum.example.com",
                 "host": "127.0.0.1:8180",
             }
         )
         with patch("app.services.outbound_files.settings.public_base_url", ""):
             result = build_public_base_url(request)
 
-        self.assertEqual(result, "https://mba.example.com")
+        self.assertEqual(result, "https://fulcrum.example.com")
 
 
 if __name__ == "__main__":

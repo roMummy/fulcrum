@@ -321,7 +321,7 @@ def load_directory_plugin(plugin_code: str | None, *, force: bool = False) -> Lo
     if not force and cache_key in _MODULE_CACHE and _MODULE_CACHE[cache_key][0] == mtime:
         return _MODULE_CACHE[cache_key][1]
 
-    module_name = f"mba_plugin_{discovered.manifest.code}_{mtime}"
+    module_name = f"fulcrum_plugin_{discovered.manifest.code}_{mtime}"
     spec = importlib.util.spec_from_file_location(module_name, discovered.entrypoint_path)
     if spec is None or spec.loader is None:
         return None

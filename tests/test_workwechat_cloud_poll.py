@@ -613,8 +613,8 @@ class WorkWechatCloudPollTests(unittest.TestCase):
             {
                 "adapter_result": {
                     "ok": True,
-                    "download_path": "/home/mba-stack/fulcrum/data/inbound_files/2/share/回单.xlsx",
-                    "download_url": "http://mba.test/inbound-files/2/share/return.xlsx",
+                    "download_path": "/srv/fulcrum/data/inbound_files/2/share/回单.xlsx",
+                    "download_url": "http://fulcrum.test/inbound-files/2/share/return.xlsx",
                     "file_size": 4926,
                     "mime_type": "application/octet-stream",
                 }
@@ -625,7 +625,7 @@ class WorkWechatCloudPollTests(unittest.TestCase):
         self.assertEqual(result["action"], "download_inbound_media")
         self.db.refresh(attachment)
         self.assertEqual(attachment.status, "downloaded")
-        self.assertEqual(attachment.storage_path, "/home/mba-stack/fulcrum/data/inbound_files/2/share/回单.xlsx")
+        self.assertEqual(attachment.storage_path, "/srv/fulcrum/data/inbound_files/2/share/回单.xlsx")
         self.assertIsNone(attachment.last_error)
         webhook_job = self.db.query(TaskJob).filter_by(job_type=OPEN_WEBHOOK_DELIVERY_JOB).one()
         envelope = parse_job_payload(webhook_job)["envelope"]
