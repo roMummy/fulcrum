@@ -145,7 +145,7 @@
       </h3>
       {% if item.plugin_description %}<p class="muted-text" style="margin:2px 0 0;">{{ item.plugin_description }}</p>{% endif %}
     </div>
-    <div class="plugin-row-actions">
+    <div class="plugin-row-actions row-controls">
       {# 开关:点击即保存(启用/停用);“恢复默认”回到继承 bot 级状态。 #}
       <span class="ui-switch" title="在本群启用或停用这个插件">
         <input type="checkbox" role="switch" aria-label="在本群启用 {{ item.plugin_name }}" data-autosave-url="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-autosave-key="mode" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if item.group_scope_enabled %} checked{% endif %} />

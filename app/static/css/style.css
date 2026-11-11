@@ -6623,3 +6623,42 @@ html.has-lightbox {
     padding: 56px 12px;
   }
 }
+
+/* 一行控件(.row-controls):状态标签、开关、按钮并排时垂直居中、高度统一。
+   标签和小按钮统一 32px 高,开关(24px)居中;靠右对齐,中间的标签隐藏时右侧的开关和按钮位置不变。
+   用在表格操作列和卡片行右侧,避免默认的基线对齐造成高低不一。 */
+.row-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.row-controls > form {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.row-controls .chip,
+.row-controls .btn-small {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.row-controls .chip {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.row-controls .btn-small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

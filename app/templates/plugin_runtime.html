@@ -95,7 +95,7 @@
           {% endif %}
         </td>
         <td class="col-action">
-          <div class="actions">
+          <div class="actions row-controls">
             <span class="ui-switch" title="启用或停用这个绑定">
               <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin.display_name }}" data-autosave-url="/plugins/{{ item.id }}/toggle" data-autosave-key="enabled" data-autosave-form="{}" data-binding-status{% if item.status == 'enabled' %} checked{% endif %} />
               <span class="ui-switch-track"></span>
