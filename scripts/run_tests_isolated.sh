@@ -14,6 +14,8 @@ cd "$(dirname "$0")/.."
 JOBS="${JOBS:-4}"
 TIMEOUT="${TIMEOUT:-300}"
 PYTHON="${PYTHON:-python}"
+# 应用以服务器系统时区作为业务时间(生产要求 Asia/Shanghai),部分测试依赖它。
+export TZ="${TZ:-Asia/Shanghai}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

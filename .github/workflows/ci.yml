@@ -9,6 +9,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # 应用以服务器系统时区作为业务时间,生产要求 Asia/Shanghai(见 docker-compose.yml),测试同样依赖它
+      TZ: Asia/Shanghai
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -27,6 +27,8 @@ APP_ENV=test DATA_DIR="$PWD/.run/t" DATABASE_URL="sqlite:///$PWD/.run/t/test.db"
 python -m pytest tests/test_xxx.py -q
 ```
 
+应用以服务器系统时区作为业务时间（生产要求 `Asia/Shanghai`），部分测试依赖它；脚本和 CI 已设置 `TZ=Asia/Shanghai`，单个文件运行时请自行设置。
+
 CI 只运行 `.github/ci-test-files.txt` 里已验证稳定通过的文件；少数历史测试文件仍有失败，正在整理，修好后会加入清单。
 提交前至少运行与你改动直接相关的测试。 / Run at least the tests directly related to your change.
 
