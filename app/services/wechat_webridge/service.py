@@ -610,6 +610,10 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     record_device_sample(db, channel)
     _enqueue_device_status(db, channel)
     _enqueue_account_status(db, channel)
+    # bot 被拉进新群后自动同步群资料和成员:定期对账(其余触发见 group_sync)。
+    from app.services.wechat_webridge import group_sync
+
+    group_sync.reconcile_if_due(db, channel)
 
 
 def _enqueue_device_status(db: Session, channel: Channel) -> None:
@@ -857,8 +861,14 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             return _complete_moments_command(db, channel, job, data, payload, result)
         if bool(payload.get("ok")) or bool(result.get("ok")):
             command = as_object(data.get("command"))
-            counts = persist_directory_result(db, channel, command, result)
             command_type = text(command.get("type") or command.get("command_name"))
+            from app.services.wechat_webridge import group_sync
+
+            # 群列表同步:先记下已有的群,结果写入后对"新发现的群"继续下发成员同步。
+            known_before = group_sync.known_room_ids(db, channel) if command_type == "groups_all" else None
+            counts = persist_directory_result(db, channel, command, result)
+            if known_before is not None:
+                group_sync.after_groups_result(db, channel, known_before)
             if command_type == "device_status":
                 _save_device_status(db, channel, as_object(result.get("result")) or result)
             elif command_type == "account_status":

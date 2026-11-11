@@ -92,6 +92,7 @@ tests/test_tenant_security_matrix.py
 tests/test_tenant_web_isolation.py
 tests/test_webridge_account_profile.py
 tests/test_webridge_group_health.py
+tests/test_webridge_group_sync.py
 tests/test_webridge_lag.py
 tests/test_webridge_media_default_off.py
 tests/test_webridge_media_upload.py

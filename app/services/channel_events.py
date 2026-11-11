@@ -222,6 +222,11 @@ def ingest_normalized_event(
             normalized,
             conversation=conversation,
         )
+    elif channel.channel_type == "wechat_webridge":
+        # 微桥的群记录只由 groups_all 同步创建:未登记的群有人说话、入群事件、"邀请你加入群聊"都触发一次(去重防抖的)群同步。
+        from app.services.wechat_webridge.group_sync import observe_inbound_event
+
+        observe_inbound_event(db, channel, normalized, conversation)
     elif channel.channel_type == "workwechat":
         from app.services.workwechat_chatrooms import sync_workwechat_chatroom_from_message
         from app.services.workwechat_contacts import apply_workwechat_contact_event
