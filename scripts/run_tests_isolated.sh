@@ -26,11 +26,13 @@ fi
 run_one() {
   f="$1"; name="$(basename "$f" .py)"; dir="$WORK/$name"
   mkdir -p "$dir/logs"
-  if APP_ENV=test DATA_DIR="$dir" DATABASE_URL="sqlite:///$dir/test.db" LOG_DIR="$dir/logs" \
+  # 应用启动时会在固定端口(默认 9165)起本地代理中继,并行的测试进程会撞端口:按文件名为每个文件分配不同端口。
+  port=$((20000 + $(printf '%s' "$name" | cksum | cut -d' ' -f1) % 20000))
+  if LOCAL_PROXY_RELAY_PORT="$port" APP_ENV=test DATA_DIR="$dir" DATABASE_URL="sqlite:///$dir/test.db" LOG_DIR="$dir/logs" \
       timeout "$TIMEOUT" "$PYTHON" -m pytest "$f" -q -p no:cacheprovider --tb=short > "$dir/out.txt" 2>&1; then
     echo "PASS  $f"
   else
-    echo "FAIL  $f"; tail -n 40 "$dir/out.txt" | sed 's/^/    | /'
+    echo "FAIL  $f"; tail -n 60 "$dir/out.txt" | sed 's/^/    | /'
     return 1
   fi
 }
