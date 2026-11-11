@@ -243,6 +243,8 @@ python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_
 
 详细范围、迁移边界和定向验证记录见 [插件迁移台账](docs/plugin-migration-ledger.md)。
 
+想自己开发插件，请阅读 [插件开发规范](docs/plugin-development.md)：清单 `config.toml`、配置字段声明（自动生成配置页）、入口函数、安全规则和测试方法。
+
 ## 套餐、试用与付款
 
 迁移默认创建以下公开套餐，真实页面和订单金额始终读取数据库，平台管理员可以调整：

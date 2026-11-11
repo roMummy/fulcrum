@@ -43,6 +43,11 @@ uvicorn app.main:app --host 127.0.0.1 --port 8280
 Then open <http://127.0.0.1:8280>. For production use Docker Compose (see [docs/deployment.md](docs/deployment.md))
 behind a TLS reverse proxy.
 
+## Plugin development
+
+Plugins are directory packages (`config.toml` manifest + `plugin.py`). Config fields declared in the manifest generate the
+admin form automatically. See the [plugin development guide](docs/plugin-development.md) (Chinese).
+
 ## Security
 
 - `SECRET_KEY` must be a random string of at least 32 characters. Outside development

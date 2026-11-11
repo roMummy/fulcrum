@@ -87,7 +87,7 @@ class PluginCapability:
 class PluginAiHint:
     """插件声明给 AI 调度的说明；没有 [ai] 段或 routable=false 的插件不参与 AI 调度。
 
-    自带 TOML 子集解析器不支持数组表，所以这里只接受扁平键和字符串数组。
+    [ai] 段只接受扁平键和字符串数组。
     """
 
     routable: bool = False
