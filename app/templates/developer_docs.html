@@ -7,6 +7,10 @@
     {{ document_toc|safe }}
   </nav>
   <article class="developer-docs-content markdown-body">
+    {# 插件开发规范页:提供标准示例插件下载,可直接上传安装,也可以复制后改成自己的插件。 #}
+    {% if template_download %}
+    <p><a class="btn" href="{{ template_download }}" download>下载标准示例插件(hello_plugin.zip)</a></p>
+    {% endif %}
     {{ document_html|safe }}
   </article>
 </section>

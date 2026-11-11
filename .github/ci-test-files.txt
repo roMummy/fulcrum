@@ -108,3 +108,4 @@ tests/test_wechat_ipad_qrcode_runtime.py
 tests/test_workwechat_cloud_poll.py
 tests/test_plugin_governance.py
 tests/test_plugin_packages.py
+tests/test_plugin_template.py

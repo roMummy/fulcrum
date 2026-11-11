@@ -1,0 +1,94 @@
+[plugin]
+# code 必须与目录名一致:小写字母开头,只含小写字母、数字、下划线
+code = "hello_plugin"
+display_name = "你好示例"
+plugin_type = "command"
+# 每次发布新版本都要改版本号,后台升级时会显示"旧版本 → 新版本"
+version = "1.0.0"
+author = "your-name"
+description = "标准示例插件:收到命令后按配置打招呼。复制本目录改名即可开始你自己的插件。"
+default_enabled = false
+
+[capability]
+# 适用的渠道、会话和消息类型;不在范围内的消息不会触发本插件
+channel_types = ["wechat_ipad", "wechat_winauto", "wechat_webridge", "telegram", "workwechat", "simulator"]
+chat_types = ["direct", "group"]
+message_types = ["text"]
+priority = 100            # 数字越小越先执行
+consume_policy = "continue"   # continue:执行后还让后面的插件处理;stop:执行成功后到此为止
+timeout_ms = 5000
+
+[matcher]
+# 以下三项是默认值,每个机器人绑定可以在配置里覆盖(见下面同名的字段声明)
+commands = ["你好", "hello"]
+keywords = []
+require_mention = false
+
+[runtime]
+# 默认配置,运行时作为 request.config 的基础。不要在这里写密钥或真实地址
+greeting = "你好"
+times = 1
+loud = false
+style = "friendly"
+signature = ["Fulcrum"]
+
+# ---- 配置表单声明:插件页会据此自动生成中文表单 ----
+# 字段类型 kind:text / textarea / number / bool / select / tags / url / time / secret
+
+[[config.fields]]
+key = "greeting"
+label = "问候语"
+kind = "text"
+default = "你好"
+hint = "回复里第一句话。"
+group = "内容"
+
+[[config.fields]]
+key = "style"
+label = "语气"
+kind = "select"
+default = "friendly"
+options = [{ value = "friendly", label = "友好" }, { value = "formal", label = "正式" }]
+group = "内容"
+
+[[config.fields]]
+key = "signature"
+label = "落款"
+kind = "tags"
+default = ["Fulcrum"]
+hint = "多个用逗号分隔,回复末尾会依次带上。"
+group = "内容"
+
+[[config.fields]]
+key = "times"
+label = "重复次数"
+kind = "number"
+default = 1
+min = 1
+max = 5
+hint = "问候语重复几遍,保存时超出范围会被自动修正。"
+group = "行为"
+
+[[config.fields]]
+key = "loud"
+label = "大声模式"
+kind = "bool"
+default = false
+hint = "开启后问候语后面加感叹号。"
+group = "行为"
+
+# 触发方式:与上面 [matcher] 的默认值保持一致
+[[config.fields]]
+key = "commands"
+label = "触发命令"
+kind = "tags"
+default = ["你好", "hello"]
+hint = "多个用逗号分隔。"
+group = "触发方式"
+
+[[config.fields]]
+key = "require_mention"
+label = "群里必须 @ 机器人才响应"
+kind = "bool"
+default = false
+group = "触发方式"
