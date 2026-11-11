@@ -207,7 +207,7 @@ def test_search_is_not_offered_while_the_service_is_paused(exa, monkeypatch) -> 
 
 def test_prefetch_triggers_only_on_clear_realtime_questions_and_strips_the_mention() -> None:
     # 微信 @ 后面跟的是特殊空格 U+2005;关键词里不能带上 @称呼
-    assert ai_chat.prefetch_query(_chat(text="@水牛@rCodex 今天长沙天气如何？")) == "今天长沙天气如何？"
+    assert ai_chat.prefetch_query(_chat(text="@演示账号@rCodex 今天长沙天气如何？")) == "今天长沙天气如何？"
     assert ai_chat.prefetch_query(_chat(text="iPhone 17 现在多少钱")) == "iPhone 17 现在多少钱"
     assert ai_chat.prefetch_query(_chat(text="你好呀，在干嘛")) == ""  # 闲聊不预搜索
     assert ai_chat.prefetch_query(_chat(text="今天天气", web_search=False)) == ""  # 群里关了联网搜索

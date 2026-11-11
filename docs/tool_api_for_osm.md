@@ -39,7 +39,7 @@ TOOL_API_KEY=change-this-tool-api-key
 示例：
 
 ```bash
-curl -X POST "http://192.168.2.142:8180/api/tool/channels/3/upload-and-send" \
+curl -X POST "https://fulcrum.example.com/api/tool/channels/3/upload-and-send" \
   -H "X-API-Key: your-tool-api-key" \
   -F "external_id=group:测试群" \
   -F "conversation_title=测试群" \
@@ -61,14 +61,14 @@ curl -X POST "http://192.168.2.142:8180/api/tool/channels/3/upload-and-send" \
   "message_type": "file",
   "file_name": "report.xlsx",
   "file_size": 10240,
-  "download_url": "http://192.168.2.142:8180/outbound-files/3/abc123/report.xlsx",
+  "download_url": "https://fulcrum.example.com/outbound-files/3/abc123/report.xlsx",
   "payload": {
     "external_id": "group:测试群",
     "message_type": "file",
     "file_name": "report.xlsx",
     "chat_type": "group",
     "title": "测试群",
-    "file_url": "http://192.168.2.142:8180/outbound-files/3/abc123/report.xlsx"
+    "file_url": "https://fulcrum.example.com/outbound-files/3/abc123/report.xlsx"
   }
 }
 ```
@@ -80,7 +80,7 @@ curl -X POST "http://192.168.2.142:8180/api/tool/channels/3/upload-and-send" \
 示例：
 
 ```bash
-curl "http://192.168.2.142:8180/api/tool/jobs/123" \
+curl "https://fulcrum.example.com/api/tool/jobs/123" \
   -H "X-API-Key: your-tool-api-key"
 ```
 
@@ -125,7 +125,7 @@ curl "http://192.168.2.142:8180/api/tool/jobs/123" \
 示例：
 
 ```bash
-curl "http://192.168.2.142:8180/api/tool/channels/3/messages?external_id=group:测试群&after_id=1000&limit=100" \
+curl "https://fulcrum.example.com/api/tool/channels/3/messages?external_id=group:测试群&after_id=1000&limit=100" \
   -H "X-API-Key: your-tool-api-key"
 ```
 

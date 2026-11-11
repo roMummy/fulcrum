@@ -64,7 +64,7 @@ def bank_prefix(tenant_id: int) -> str:
 
 
 def bank_id(*, tenant_id: int, channel_id: int, chat_type: str, group_external_id: str = "") -> str:
-    """记忆库名,尽量可读:群聊用"租户前缀 + 群 ID"(如 t1-45317011307@chatroom);
+    """记忆库名,尽量可读:群聊用"租户前缀 + 群 ID"(如 t1-10000000001@chatroom);
     私聊同一个渠道共用一个库(库内按发言人标签区分)。群 ID 里不适合做库名的字符换成下划线。"""
 
     if chat_type == "group" and group_external_id:

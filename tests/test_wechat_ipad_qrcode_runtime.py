@@ -52,7 +52,7 @@ def _seed_ipad_channel(db: Session) -> tuple[Tenant, Channel]:
         bot_id=bot.id,
         name="iPad 874 二维码测试",
         channel_type="wechat_ipad",
-        api_base="http://192.168.2.240:9064",
+        api_base="http://192.168.1.240:9064",
         adapter_config_json="{}",
         runtime_info_json="{}",
         status="draft",

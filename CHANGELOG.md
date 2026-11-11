@@ -201,7 +201,7 @@ All notable changes to this project should be documented in this file.
 - `.env.docker.example` for container deployment
 - MariaDB connection support through `DATABASE_URL`
 - database pool configuration for non-SQLite backends
-- standalone deployment guide at [`docs/deployment.md`](/d:/learn/Fulcrum/docs/deployment.md)
+- standalone deployment guide at [`docs/deployment.md`](docs/deployment.md)
 
 ### Changed
 

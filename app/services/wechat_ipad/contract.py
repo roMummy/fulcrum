@@ -86,7 +86,7 @@ class Ipad874Contract:
 
 # 固定源提交用于审计本次 Swagger 映射；后续升级必须显式更新契约和对应测试。
 IPAD_874_CONTRACT = Ipad874Contract(
-    source_repository="https://git.liulabinfo.org/liuwei/ipad-874",
+    source_repository="ipad-874（私有仓库，未公开）",
     source_revision="d9d3def46f8b5793e4272ba713fcce24c7df6267",
     default_api_base="http://127.0.0.1:9064",
     endpoints=Ipad874Endpoints(),

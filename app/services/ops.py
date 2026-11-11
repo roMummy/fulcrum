@@ -129,8 +129,8 @@ def build_outbound_stub(channel: Channel, conversation: Conversation, content: s
         "swagger_alignment": {
             "status": "pending-170-abot-swagger",
             "reference_files": [
-                "/home/liuwei/abot/wechat_ipad/server/swagger/swagger.yml",
-                "/home/liuwei/abot/wechat_ipad/server/swagger/swagger.json",
+                "wechat_ipad/server/swagger/swagger.yml",
+                "wechat_ipad/server/swagger/swagger.json",
             ],
             "notes": [
                 "当前仅提供统一出站接口骨架与 channel 适配占位。",

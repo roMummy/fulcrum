@@ -499,7 +499,7 @@ def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
     source = (PROJECT_ROOT / "plugins/music/plugin.py").read_text(encoding="utf-8")
     assert "urlrequest" not in source
     assert "MUSIC_XML" not in source
-    assert "192.168.2.240" not in source
+    assert "192.168.1.240" not in source
 
 
 def test_music_rejects_missing_service_and_invalid_play_url() -> None:

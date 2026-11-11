@@ -26,17 +26,17 @@ from tests.test_ai_dispatch import _seed
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 HEAD = '<?xml version="1.0"?>'
-QUOTE = f'leowong90: {HEAD}<msg><appmsg><title>[掩面]山没有绿色底色</title><type>57</type><refermsg><type>{{t}}</type><displayname>一</displayname><content>{{c}}</content></refermsg></appmsg></msg>'
+QUOTE = f'demo_user_a: {HEAD}<msg><appmsg><title>[掩面]山没有绿色底色</title><type>57</type><refermsg><type>{{t}}</type><displayname>一</displayname><content>{{c}}</content></refermsg></appmsg></msg>'
 LINK = f'wxid_x: {HEAD}<msg><appmsg><title>在 Apple TV 上玩马力欧</title><des>在 Mac 编译 Apple TV 上的游戏</des><type>5</type><url><![CDATA[https://example.com/a?b=1&c=2]]></url><sourcedisplayname>少数派</sourcedisplayname></appmsg></msg>'
 MINI = 'wxid_x: <msg><appmsg><title>迷你主机 MEPro</title><des>京东购物</des><type>33</type></appmsg></msg>'
-MERGED = 'Jyunere: <msg><appmsg><title>群聊的聊天记录</title><des>甲: [图片] 乙: 好的</des><type>19</type></appmsg></msg>'
+MERGED = 'demo_user_b: <msg><appmsg><title>群聊的聊天记录</title><des>甲: [图片] 乙: 好的</des><type>19</type></appmsg></msg>'
 FILE = 'wxid_x: <msg><appmsg><title>报价单.pdf</title><type>6</type><appattach><totallen>1617467</totallen><fileext>pdf</fileext></appattach></appmsg></msg>'
-IMAGE = f'Jyunere: {HEAD}<msg><img aeskey="x" length="1234567" cdnthumbwidth="100" /></msg>'
+IMAGE = f'demo_user_b: {HEAD}<msg><img aeskey="x" length="1234567" cdnthumbwidth="100" /></msg>'
 VIDEO = f'wxid_x: {HEAD}<msg><videomsg aeskey="x" length="16662778" playlength="13" /></msg>'
 VOICE = 'wxid_x: <msg><voicemsg voicelength="11438" length="20098" /></msg>'
 EMOJI = 'wxid_x: <msg><emoji md5="d3a2" len="1195005" type="2" /></msg>'
-RED = 'Jyunere: <msg><appmsg><des><![CDATA[我给你发了一个红包，赶紧去拆!]]></des><url><![CDATA[https://wxapp.tenpay.com/mmpayhb/wxhb_personalreceive?x=1]]></url><type>2001</type></appmsg></msg>'
-SYSTEM = '<img src="SystemMessages_HongbaoIcon.png"/> 你领取了水牛的<_wc_custom_link_ color="#FD9931" href="weixin://x">红包</_wc_custom_link_>'
+RED = 'demo_user_b: <msg><appmsg><des><![CDATA[我给你发了一个红包，赶紧去拆!]]></des><url><![CDATA[https://wxapp.tenpay.com/mmpayhb/wxhb_personalreceive?x=1]]></url><type>2001</type></appmsg></msg>'
+SYSTEM = '<img src="SystemMessages_HongbaoIcon.png"/> 你领取了小明的<_wc_custom_link_ color="#FD9931" href="weixin://x">红包</_wc_custom_link_>'
 
 
 # ---------- 解析 ----------
@@ -85,7 +85,7 @@ def test_text_is_untouched_system_messages_lose_their_tags_and_garbage_never_bre
     assert mv.describe("你好：今天 <很冷>吗", "text") == {"kind": "text", "text": "你好：今天 <很冷>吗".strip()} or mv.describe("你好：今天 吗", "text")["kind"] == "text"
     assert mv.describe("普通文字: 带冒号", "text") == {"kind": "text", "text": "普通文字: 带冒号"}  # 文字里的冒号不是发送人前缀
     system = mv.describe(SYSTEM, "system")
-    assert system["kind"] == "system" and system["text"] == "你领取了水牛的 红包"
+    assert system["kind"] == "system" and system["text"] == "你领取了小明的 红包"
     for broken in ("x: <msg><appmsg><title>没闭合", "x: <<<>>>", "", None):
         assert mv.describe(broken, "app")["kind"] in {"text", "unknown", "system"}
     huge = "x: <msg>" + "<a/>" * 30_000 + "</msg>"
@@ -163,7 +163,7 @@ def test_each_kind_renders_as_its_own_card(conversation_page) -> None:
     link = _row(html, rows["link"])
     assert 'href="https://example.com/a?b=1&amp;c=2"' in link and 'rel="noopener noreferrer"' in link and 'target="_blank"' in link and "少数派" in link
     assert "小程序" in _row(html, rows["mini"]) and "聊天记录" in _row(html, rows["merged"]) and "甲: [图片] 乙: 好的" in _row(html, rows["merged"])
-    assert "你领取了水牛的 红包" in _row(html, rows["system"])
+    assert "你领取了小明的 红包" in _row(html, rows["system"])
     odd = _row(html, rows["odd"])
     assert "暂不支持显示的消息" in odd and '<details class="disclosure msg-raw">' in odd and "&lt;weird/&gt;" in odd  # 暂不支持的消息:有"原始内容"折叠,用统一的展开图标
     # 看不出结构的 XML 文字不再被拼成 "tag: value · …" 这样的乱码

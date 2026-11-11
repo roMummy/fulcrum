@@ -603,7 +603,7 @@ def test_guess_song_uses_tenant_music_service_and_state_store(group_plugin_fixtu
     assert discovered.secret_fields == ("api_key",)
     assert discovered.runtime_config["api_base"] == ""
     assert "game_sessions" not in discovered.runtime_config
-    assert "192.168.2.240" not in str(discovered.runtime_config)
+    assert "192.168.1.240" not in str(discovered.runtime_config)
 
     loaded = load_directory_plugin("guess_song", force=True)
     assert loaded is not None and loaded.instance is not None
@@ -704,7 +704,7 @@ def test_guess_song_uses_tenant_music_service_and_state_store(group_plugin_fixtu
     assert untrusted.output["provider_status"] == "trusted_context_required"
 
     source = (PROJECT_ROOT / "plugins/guess_song/plugin.py").read_text(encoding="utf-8")
-    assert "192.168.2.240" not in source
+    assert "192.168.1.240" not in source
     assert "urlrequest" not in source
     assert "urlopen" not in source
     assert "game_sessions" not in source

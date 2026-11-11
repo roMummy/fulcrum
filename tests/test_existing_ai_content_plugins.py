@@ -81,7 +81,7 @@ def test_message_summary_uses_group_date_commands_and_clean_runtime_config() -> 
     assert "urlrequest" not in source
     assert "workflow_input_key" not in source
     assert "workflow_session_key" not in source
-    assert "192.168.2.240" not in source
+    assert "192.168.1.240" not in source
 
 
 def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> None:
@@ -438,7 +438,7 @@ def test_global_news_matches_latest_commands_and_uses_clean_tenant_config() -> N
     assert "UnifiedLLMClient" not in source
     assert "WechatAPIClient" not in source
     assert "threading.Thread" not in source
-    assert "192.168.2.240" not in source
+    assert "192.168.1.240" not in source
 
 
 def test_global_news_parses_rss_and_atom_with_structured_xml() -> None:

@@ -173,6 +173,9 @@ def _get_baidu_news(config: DailyNewsConfig, *, current: datetime) -> str:
 
 
 def _get_60s_image_base64(config: DailyNewsConfig) -> str | None:
+    # 60s 读懂世界接口需要使用者自行部署并配置地址;未配置时不生成图片,只发送文字。
+    if not config.news60s_api_url:
+        return None
     client = PluginHttpClient()
     response = client.request(
         "GET",
@@ -264,7 +267,7 @@ def _load_config(raw: Any) -> DailyNewsConfig:
             data.get("baidu_api_url")
             or "https://top.baidu.com/api/board?platform=wise&tab=realtime"
         ).strip(),
-        news60s_api_url=str(data.get("news60s_api_url") or "http://192.168.2.32:4399/v2/60s").strip(),
+        news60s_api_url=str(data.get("news60s_api_url") or "").strip(),
         default_timeout=max(5, min(_coerce_int(data.get("default_timeout"), 15), 60)),
         baidu_limit=max(5, min(_coerce_int(data.get("baidu_limit"), 30), 50)),
         push_time=str(data.get("push_time") or "08:30").strip() or "08:30",

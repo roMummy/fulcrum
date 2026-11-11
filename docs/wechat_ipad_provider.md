@@ -6,7 +6,7 @@
 
 协议依据：
 
-- 源仓库：`https://git.liulabinfo.org/liuwei/ipad-874`
+- 源仓库：`ipad-874（私有仓库，未公开）`
 - 当前锁定提交：`d9d3def46f8b5793e4272ba713fcce24c7df6267`
 - 默认服务端口：`9064`
 - 代理类型：仅 SOCKS
@@ -41,7 +41,7 @@
 局域网示例：
 
 ```text
-http://192.168.2.240:9064
+https://fulcrum.example.com
 ```
 
 本项目不会生成 874 Token。当前契约没有 Token 鉴权字段，不应在租户配置或渠道 `adapter_config` 中自行增加无效凭证。

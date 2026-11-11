@@ -1,14 +1,13 @@
-# Fulcrum（fulcrum）部署指南
+# Fulcrum 部署指南
 
-## 当前正式部署目标
+## 发布流程
 
-当前正式服务统一部署在 `192.168.2.201` 的 `/data/multi-bot-saas`，SSH 账号为 `liuwei`。后续发布不得默认使用旧的 `192.168.2.142`；旧主机上的历史文档和旧服务说明不属于当前发布目标。
-
-推荐发布顺序：本地完成提交并推送 `main`，SSH 登录 `192.168.2.201`，在目标目录执行 `git pull --ff-only`，完成迁移、依赖检查、应用重启和健康探针验证。不得把密码、支付密钥或其他环境文件提交到 Git。
+推荐发布顺序：在目标主机的部署目录执行 `git pull --ff-only`，完成数据库迁移、依赖检查、应用重启和健康探针验证。
+发布前先备份数据库；回滚应用前先判断迁移是否向后兼容。
 
 ## Overview
 
-Fulcrum 对外提供营销、注册、试用、人工付款和通用机器人额度，内部部署标识继续使用 `fulcrum`。支持两种部署模式：
+Fulcrum 对外提供营销、注册、试用、人工付款和通用机器人额度，部分历史部署标识（Docker 容器名、数据库名、数据卷名）沿用 `multi-bot-saas` / `multi_bot_saas`。支持两种部署模式：
 
 - Local process deployment with Python virtualenv
 - Container deployment with Docker Compose
@@ -228,12 +227,12 @@ Recommended production layout:
 - TLS terminated at proxy layer
 - persistent storage mounted for `logs/` and database volume
 
-## 192.168.2.201 发布命令
+## 发布命令
 
-非容器部署使用仓库脚本，目标主机执行：
+非容器部署使用仓库脚本，在目标主机的部署目录执行：
 
 ```bash
-cd /data/multi-bot-saas
+cd <部署目录>
 git pull --ff-only origin main
 MBS_GIT_BRANCH=main MBS_PORT=8280 ./scripts/deploy_restart_mba.sh
 ```
@@ -252,12 +251,12 @@ curl -fsS http://127.0.0.1:8280/healthz
 curl -fsS http://127.0.0.1:8280/readyz
 ```
 
-MariaDB 容器不需要因为本轮应用代码更新而重启。若 201 的 Git HTTP 凭据不可用，应从已有认证工作区生成增量 Git bundle 传到目标主机，再在目标目录快进到 `main`；不得把新凭据写入仓库、命令行记录或日志。
+MariaDB 容器不需要因为本轮应用代码更新而重启。若目标主机无法访问 Git 服务，应从已有认证工作区生成增量 Git bundle 传到目标主机，再在目标目录快进到 `main`；不得把新凭据写入仓库、命令行记录或日志。
 
 发布完成后至少验证：
 
-- `http://192.168.2.201:8280/healthz` 返回成功；
-- `http://192.168.2.201:8280/readyz` 返回成功；
+- `http://127.0.0.1:8280/healthz` 返回成功；
+- `http://127.0.0.1:8280/readyz` 返回成功；
 - 未登录访问 `/developer/docs` 重定向 `/login`；
 - 登录后文档页面包含 `/api/open/accounts`、`/api/open/messages/sync`、额度和 Webhook 章节；
 - `/api/payment/webhook` 在未配置密钥时不误报成功，配置密钥后能按签名校验回调。

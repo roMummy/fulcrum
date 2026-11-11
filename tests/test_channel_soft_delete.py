@@ -35,7 +35,7 @@ def env():
             db.add(bot)
             db.flush()
             channel = Channel(
-                tenant_id=1, bot_id=bot.id, name="水牛", channel_type="wechat_webridge", status="offline", is_enabled=False,
+                tenant_id=1, bot_id=bot.id, name="小明", channel_type="wechat_webridge", status="offline", is_enabled=False,
                 bot_token_encrypted="cipher", bot_token_masked="****",
             )
             db.add(channel)

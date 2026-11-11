@@ -107,10 +107,10 @@ def test_everything_is_a_noop_when_not_configured(monkeypatch) -> None:
 
 
 def test_bank_ids_are_readable_and_use_the_group_id() -> None:
-    group = ai_memory.bank_id(tenant_id=1, channel_id=2, chat_type="group", group_external_id="45317011307@chatroom")
+    group = ai_memory.bank_id(tenant_id=1, channel_id=2, chat_type="group", group_external_id="10000000001@chatroom")
     other = ai_memory.bank_id(tenant_id=1, channel_id=2, chat_type="group", group_external_id="49740991276@chatroom")
     direct = ai_memory.bank_id(tenant_id=1, channel_id=2, chat_type="direct")
-    assert group == "t1-45317011307@chatroom" and group != other
+    assert group == "t1-10000000001@chatroom" and group != other
     assert direct == "t1-ch2-direct"
     # 租户前缀隔离;群 ID 里不适合做库名的字符换成下划线
     assert ai_memory.bank_id(tenant_id=2, channel_id=2, chat_type="group", group_external_id="R:群 1").startswith("t2-R___")
@@ -118,7 +118,7 @@ def test_bank_ids_are_readable_and_use_the_group_id() -> None:
 
 def test_speaker_label_is_our_users_id_unchanged_so_memories_can_be_reconciled() -> None:
     # 不假设 ID 的形式:wxid_xxx、自定义微信号、企业微信 ID(带冒号)都原样保留,事后能到成员表对账
-    for member_id in ("wxid_a3f9c1b2", "liuwei123", "R:10086", "gh_abcdef"):
+    for member_id in ("wxid_a3f9c1b2", "member_x1", "R:10086", "gh_abcdef"):
         assert ai_memory.speaker_label(member_id) == member_id
     # 只去掉会破坏"ID: 内容"行格式的空白、控制字符和括号
     assert ai_memory.speaker_label("  wx id\n「x」[y] ") == "wxidxy"
@@ -130,8 +130,8 @@ def test_safe_name_blocks_forged_speaker_lines_and_overlong_names() -> None:
 
 
 def test_render_labels_turns_wxids_into_forms_of_address() -> None:
-    text = "wxid_a搬到了上海;wxid_b养了一只猫;wxid_zzz也在群里;liuwei123喜欢跑步;wxid_ab是另一个人"
-    out = ai_memory.render_labels(text, "wxid_a", {"wxid_b": "小红", "liuwei123": "老刘", "wxid_ab": "阿布"})
+    text = "wxid_a搬到了上海;wxid_b养了一只猫;wxid_zzz也在群里;member_x1喜欢跑步;wxid_ab是另一个人"
+    out = ai_memory.render_labels(text, "wxid_a", {"wxid_b": "小红", "member_x1": "老刘", "wxid_ab": "阿布"})
     # 对方自己 -> 对方;已知成员 -> 当前昵称;未知 wxid -> 另一位群友;自定义微信号(不以 wxid_ 开头)也能换;一个 ID 是另一个前缀时不串
     assert out == "对方搬到了上海;「小红」养了一只猫;另一位群友也在群里;「老刘」喜欢跑步;「阿布」是另一个人"
     # 企业微信这类带冒号的 ID 也能换
@@ -141,16 +141,16 @@ def test_render_labels_turns_wxids_into_forms_of_address() -> None:
 # ---------- 库的显示名与抽取规则 ----------
 
 def test_ensure_bank_sets_readable_name_and_extraction_rules_once(hindsight) -> None:
-    ai_memory.ensure_bank("t1-45317011307@chatroom", "4K-养生交流群")
-    ai_memory.ensure_bank("t1-45317011307@chatroom", "4K-养生交流群")  # 同一进程里只做一次
+    ai_memory.ensure_bank("t1-10000000001@chatroom", "示例群")
+    ai_memory.ensure_bank("t1-10000000001@chatroom", "示例群")  # 同一进程里只做一次
     puts = [r for r in hindsight.requests if r[0] == "PUT"]
     assert len(puts) == 1
     _, path, body = puts[0]
-    assert path == "/v1/default/banks/t1-45317011307@chatroom" and body["name"] == "4K-养生交流群"
+    assert path == "/v1/default/banks/t1-10000000001@chatroom" and body["name"] == "示例群"
     # 库级规则明确:wxid 只是标识、昵称不是事实
     assert "昵称" in body["retain_mission"] and "不是事实" in body["retain_mission"] and "用户 ID" in body["retain_mission"]
     # 群改名后再设置一次
-    ai_memory.ensure_bank("t1-45317011307@chatroom", "养生群(新名)")
+    ai_memory.ensure_bank("t1-10000000001@chatroom", "示例群(新名)")
     assert len([r for r in hindsight.requests if r[0] == "PUT"]) == 2
 
 

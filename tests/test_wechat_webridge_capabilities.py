@@ -153,12 +153,12 @@ def test_persist_directory_result_reads_group_id_and_nick_name() -> None:
         db,
         channel,
         {"type": "groups_all"},
-        {"items": [{"account_id": "45317011307@chatroom", "nick_name": "4K-养生交流群", "avatar_url": "https://example.test/a.png"}]},
+        {"items": [{"account_id": "10000000001@chatroom", "nick_name": "示例群", "avatar_url": "https://example.test/a.png"}]},
     )
     assert counts["groups"] == 1
     room = db.added[0]
-    assert room.external_id == "45317011307@chatroom"
-    assert room.name == "4K-养生交流群"
+    assert room.external_id == "10000000001@chatroom"
+    assert room.name == "示例群"
 
     db = _FakeDirectoryDB()
     service.persist_directory_result(

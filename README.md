@@ -1,6 +1,6 @@
 # Fulcrum
 
-`Fulcrum` 是本项目的对外品牌，内部仓库、Python 包、数据库和部署标识继续使用 `fulcrum`。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
+`Fulcrum` 是本项目的名称。部分历史部署标识（Docker 容器名、数据库名、数据卷名）沿用 `multi-bot-saas` / `multi_bot_saas`，不影响使用。产品面向企业提供全渠道智能机器人运营、租户隔离、团队协作、套餐计费和通用机器人额度；渠道执行通过抽象接口接入，不把商业模型绑定到具体 Provider。
 
 ## 功能特性
 
@@ -373,11 +373,11 @@ A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录�
 ```json
 {
   "ok": true,
-  "download_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf",
+  "download_url": "https://fulcrum.example.com/outbound-files/3/abc123/report.pdf",
   "payload": {
     "message_type": "file",
     "file_name": "report.pdf",
-    "file_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf"
+    "file_url": "https://fulcrum.example.com/outbound-files/3/abc123/report.pdf"
   }
 }
 ```
@@ -389,7 +389,7 @@ A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录�
   "external_id": "group:测试群",
   "message_type": "file",
   "file_name": "report.pdf",
-  "file_url": "http://192.168.2.142:8280/outbound-files/3/abc123/report.pdf"
+  "file_url": "https://fulcrum.example.com/outbound-files/3/abc123/report.pdf"
 }
 ```
 
@@ -408,7 +408,7 @@ A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录�
 Excel 发群示例：
 
 ```powershell
-curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
+curl -X POST "https://fulcrum.example.com/channels/3/outbound/upload-and-send" `
   -H "Cookie: 你的后台登录cookie" `
   -F "external_id=group:测试群" `
   -F "conversation_title=测试群" `

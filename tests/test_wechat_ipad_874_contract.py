@@ -25,7 +25,7 @@ def _build_channel() -> Channel:
 def test_ipad_874_contract_locks_verified_source_and_default_address() -> None:
     """协议版本必须指向本次核对过的源提交，避免无记录地漂移到未知实现。"""
 
-    assert IPAD_874_CONTRACT.source_repository == "https://git.liulabinfo.org/liuwei/ipad-874"
+    assert IPAD_874_CONTRACT.source_repository == "ipad-874（私有仓库，未公开）"
     assert IPAD_874_CONTRACT.source_revision == "d9d3def46f8b5793e4272ba713fcce24c7df6267"
     assert IPAD_874_CONTRACT.default_api_base == "http://127.0.0.1:9064"
 

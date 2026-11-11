@@ -65,7 +65,7 @@
 
 ```bash
 APP_ENV=test DATABASE_URL=sqlite:// \
-LOG_DIR=/data/multi-bot-saas/.run/soft-ui-logs \
+LOG_DIR="$PWD/.run/soft-ui-logs" \
 .venv/bin/python -m pytest -q \
   tests/test_soft_ui.py tests/test_public_marketing_pages.py \
   tests/test_public_site_auth.py tests/test_saas_login.py \

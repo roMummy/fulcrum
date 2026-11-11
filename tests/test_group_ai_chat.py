@@ -224,7 +224,7 @@ def test_speaker_names_come_from_recent_messages_and_the_member_table() -> None:
         Message(conversation_id=2, direction="in", sender_id="wxid_a", sender_name="新昵称", content="y", message_type="text"),
         Message(conversation_id=2, direction="in", sender_id="wxid_b", sender_name="wxid_b", content="z", message_type="text"),  # 昵称就是 ID:不收
         Message(conversation_id=2, direction="out", sender_id=None, sender_name=None, content="bot", message_type="text"),
-        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="liuwei123", nickname="老刘", display_name="", status="active"),
+        ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="member_x1", nickname="老刘", display_name="", status="active"),
         ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="R:10086", nickname="企微用户", display_name="群里的名字", status="active"),
         ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_a", nickname="成员表里的旧名", display_name="", status="active"),
         ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_c", nickname="wxid_c", display_name="", status="active"),
@@ -232,5 +232,5 @@ def test_speaker_names_come_from_recent_messages_and_the_member_table() -> None:
     db.commit()
     names = dict(ai_chat.collect_speaker_names(db, conversation_id=2, chatroom_id=room.id))
     # 最近发言里的最新昵称优先于成员表;成员表补全没发过言的;昵称是 ID 的不收
-    assert names == {"wxid_a": "新昵称", "liuwei123": "老刘", "R:10086": "群里的名字"}
+    assert names == {"wxid_a": "新昵称", "member_x1": "老刘", "R:10086": "群里的名字"}
     assert ai_chat.collect_speaker_names(db, conversation_id=None) == ()

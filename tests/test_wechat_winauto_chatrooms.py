@@ -70,7 +70,7 @@ class WechatWinAutoChatroomTests(unittest.TestCase):
             {
                 "event_key": "evt-001",
                 "conversation": {"external_id": "group:BOT-测试", "title": "BOT-测试", "chat_type": "group"},
-                "message": {"message_type": "text", "sender_id": "wxauto:水牛", "sender_name": "水牛", "content": "hello"},
+                "message": {"message_type": "text", "sender_id": "wxauto:小明", "sender_name": "小明", "content": "hello"},
                 "details": {"timestamp": "2026-03-31T08:00:00+00:00"},
             },
             conversation=conversation,

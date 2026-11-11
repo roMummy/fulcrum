@@ -45,7 +45,7 @@ def db():
 def test_selecting_group_lists_all_members_including_zero_points(db) -> None:
     """选了群后列出全部成员,没有积分的成员显示 0,同样可以被选中发放;有积分的排前面。"""
 
-    adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=7, operator="liuwei")
+    adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=7, operator="admin_user")
     result = build_points_accounts(db, group_id=GROUP)
     assert [(r["identity"]["name"], r["points"]) for r in result["rows"]] == [("小红", 7), ("小明", 0), ("小明二号", 0)]
     assert result["summary"] == {"accounts": 1, "points": 7}
@@ -55,15 +55,15 @@ def test_selecting_group_lists_all_members_including_zero_points(db) -> None:
 
 
 def test_grant_deduct_and_ledger_show_operator_and_nickname(db) -> None:
-    result = adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=50, operator="liuwei", note="活动奖励")
+    result = adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=50, operator="admin_user", note="活动奖励")
     assert result.ok and result.account["total_points"] == 50
-    assert adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=-20, operator="liuwei").account["total_points"] == 30
+    assert adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=-20, operator="admin_user").account["total_points"] == 30
     # 余额不足的扣减被拒绝,不产生负余额。
-    assert adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=-999, operator="liuwei").ok is False
+    assert adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=-999, operator="admin_user").ok is False
 
     ledger = build_points_ledger(db, group_id=GROUP)
     assert [(r["delta"], r["balance_after"], r["source_label"]) for r in ledger["rows"]] == [(-20, 30, "人工调整"), (50, 50, "人工调整")]
-    assert ledger["rows"][1]["identity"]["name"] == "小红" and ledger["rows"][1]["operator"] == "liuwei"
+    assert ledger["rows"][1]["identity"]["name"] == "小红" and ledger["rows"][1]["operator"] == "admin_user"
     assert build_points_ledger(db, keyword="小红")["paging"]["total"] == 2
     assert build_points_ledger(db, source="checkin")["paging"]["total"] == 0
 
@@ -73,13 +73,13 @@ def test_grant_deduct_and_ledger_show_operator_and_nickname(db) -> None:
 
 
 def test_same_form_token_only_records_once_and_unknown_member_rejected(db) -> None:
-    first = adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=10, operator="liuwei", request_id="tok1")
-    again = adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=10, operator="liuwei", request_id="tok1")
+    first = adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=10, operator="admin_user", request_id="tok1")
+    again = adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=10, operator="admin_user", request_id="tok1")
     assert first.ok and again.ok
     assert PointsService(db).get_user_points("wxid_a", GROUP)["total_points"] == 10
     # 不在群成员里、也没有账户的人不能凭空发放。
-    assert adjust_points(db, group_id=GROUP, user_id="wxid_ghost", amount=10, operator="liuwei").ok is False
-    assert adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=0, operator="liuwei").ok is False
+    assert adjust_points(db, group_id=GROUP, user_id="wxid_ghost", amount=10, operator="admin_user").ok is False
+    assert adjust_points(db, group_id=GROUP, user_id="wxid_a", amount=0, operator="admin_user").ok is False
 
 
 def test_group_options_include_enabled_group_without_any_points(db) -> None:
@@ -98,6 +98,6 @@ def test_adjust_audit_log_target_id_is_integer_account_id(db) -> None:
     from app.services.ops import record_audit
 
     AuditLog.__table__.create(db.get_bind(), checkfirst=True)
-    result = adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=5, operator="liuwei")
+    result = adjust_points(db, group_id=GROUP, user_id="wxid_b", amount=5, operator="admin_user")
     item = record_audit(db, "points.adjust", "points_account", (result.account or {}).get("id"), "group=g, user=wxid_b, amount=5")
     assert isinstance(item.target_id, int) and "wxid_b" in item.detail

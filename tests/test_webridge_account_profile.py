@@ -19,8 +19,8 @@ from app.models.entities import Bot, Channel, TaskJob
 from app.services.account_identity import account_identity, bot_identity
 from app.services.wechat_webridge import service
 
-WXID = "wxid_wmf72k4nmx4722"
-STATUS = {"ok": True, "account_id": WXID, "user_name": WXID, "nick_name": "水牛@rCodex", "avatar_url": "https://wx.qlogo.cn/a.png"}
+WXID = "wxid_demo0000000001"
+STATUS = {"ok": True, "account_id": WXID, "user_name": WXID, "nick_name": "演示账号@rCodex", "avatar_url": "https://wx.qlogo.cn/a.png"}
 
 
 @pytest.fixture()
@@ -43,13 +43,13 @@ def env():
 def test_wxid_names_are_replaced_by_nickname(env) -> None:
     db, bot, channel = env
     service._save_account_profile(db, channel, STATUS)
-    assert channel.name == "水牛@rCodex" and bot.name == "水牛@rCodex"
+    assert channel.name == "演示账号@rCodex" and bot.name == "演示账号@rCodex"
     runtime = json.loads(channel.runtime_info_json)
-    assert runtime["account_connection"]["display_name"] == "水牛@rCodex"
+    assert runtime["account_connection"]["display_name"] == "演示账号@rCodex"
     assert runtime["account_profile"]["avatar_url"] == "https://wx.qlogo.cn/a.png"
     # 展示:昵称为主,wxid 作为弱化的第二行,头像取资料
     ident = account_identity(channel)
-    assert (ident["name"], ident["external_id"], ident["show_id"]) == ("水牛@rCodex", WXID, True)
+    assert (ident["name"], ident["external_id"], ident["show_id"]) == ("演示账号@rCodex", WXID, True)
     assert ident["avatar_url"] == "https://wx.qlogo.cn/a.png"
     assert bot_identity(bot.name, [channel])["external_id"] == WXID
 
@@ -69,13 +69,13 @@ def test_custom_names_are_kept_and_auto_names_follow_nickname_changes(env) -> No
 
 def test_bot_name_conflict_and_empty_nickname_are_safe(env) -> None:
     db, bot, channel = env
-    db.add(Bot(tenant_id=1, name="水牛@rCodex", status="stopped", is_enabled=True))
+    db.add(Bot(tenant_id=1, name="演示账号@rCodex", status="stopped", is_enabled=True))
     db.flush()
     service._save_account_profile(db, channel, STATUS)
-    assert channel.name == "水牛@rCodex" and bot.name == WXID  # 机器人名被占用时保持原名
+    assert channel.name == "演示账号@rCodex" and bot.name == WXID  # 机器人名被占用时保持原名
     # 手机没回报昵称:什么都不改
     service._save_account_profile(db, channel, {"ok": True, "account_id": WXID, "nick_name": ""})
-    assert channel.name == "水牛@rCodex"
+    assert channel.name == "演示账号@rCodex"
 
 
 def test_enqueue_account_status_is_throttled(env) -> None:

@@ -169,7 +169,7 @@ X-MBA-Signature: HMAC_SHA256(webhook_secret, timestamp + "\n" + raw_body)
   "attachments": [
     {
       "file_name": "supplier-return.xls",
-      "storage_path": "/data/Fulcrum/data/inbound_files/...",
+      "storage_path": "/srv/fulcrum/data/inbound_files/...",
       "download_url": "http://mba.example.com/inbound-files/..."
     }
   ]

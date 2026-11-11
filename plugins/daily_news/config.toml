@@ -18,7 +18,7 @@ timeout_ms = 20000
 
 [runtime]
 baidu_api_url = "https://top.baidu.com/api/board?platform=wise&tab=realtime"
-news60s_api_url = "http://192.168.2.32:4399/v2/60s"
+news60s_api_url = ""
 default_timeout = 15
 baidu_limit = 30
 push_time = "08:30"
