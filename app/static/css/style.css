@@ -6677,3 +6677,33 @@ html.has-lightbox {
   font-size: 12px;
   font-weight: 400;
 }
+
+/* 插件页:使用方法、绑定卡片里的运行信息 */
+.plugin-usage {
+  margin-top: 14px;
+}
+
+.plugin-usage code {
+  margin: 0 2px;
+}
+
+.plugin-binding-info {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.plugin-binding-info p {
+  margin: 2px 0;
+}
+
+/* 插件配置卡片:分组标题与上方字段留出间距;底部按钮之间留空 */
+.form-grid > .gf-section {
+  margin-top: 10px;
+}
+
+.gf-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

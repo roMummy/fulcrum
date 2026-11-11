@@ -1,11 +1,6 @@
 {# 插件配置表单:字段来自清单 v2 的 [[config.fields]] 声明(中文标签、说明、范围、分组、下拉选项);
    没有声明的插件按默认值推断。保存由 plugin_schemas.merge_schema_config 处理,字段名统一是 schema__<key>。 #}
 {% if config_view.mode == 'schema' %}
-{% if config_view.description %}
-<div class="full-row">
-  <small>{{ config_view.description }}</small>
-</div>
-{% endif %}
 {% set ns = namespace(group='') %}
 {% for field in config_view.fields %}
 {% if field.group != ns.group %}
@@ -14,12 +9,12 @@
 {% endif %}
 {% if field.field_type == 'boolean' %}
 {# 开关:未勾选时由前面的隐藏域提交 false,勾选后同名字段在后,取最后一个。 #}
-<label class="gf-row switch-field full-row">
+<label class="gf-row switch-field full-row"{% if field.depends_on %} data-gf-depends="schema__{{ field.depends_on }}"{% endif %}>
   <span class="gf-row-label">{{ field.label }}{% if field.description %}<small class="field-hint">{{ field.description }}</small>{% endif %}</span>
   <span class="ui-switch ui-switch-small"><input type="hidden" name="schema__{{ field.name }}" value="false" /><input type="checkbox" name="schema__{{ field.name }}" value="true" role="switch"{% if field.value %} checked{% endif %} /><span class="ui-switch-track"></span></span>
 </label>
 {% else %}
-<label class="{% if field.field_type in ('textarea', 'list') %}full-row{% endif %}">
+<label class="{% if field.field_type in ('textarea', 'list') %}full-row{% endif %}"{% if field.depends_on %} data-gf-depends="schema__{{ field.depends_on }}"{% endif %}>
   <span>{{ field.label }}{% if field.required and not field.sensitive %}<em class="field-required" title="必填">*</em>{% endif %}</span>
   {% if field.field_type == 'select' %}
   <select name="schema__{{ field.name }}">

@@ -101,6 +101,7 @@
               <span class="ui-switch-track"></span>
             </span>
             <form method="post" action="/plugins/{{ item.id }}/reload">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
               <button class="btn btn-small btn-secondary" type="submit">重载</button>
             </form>
           </div>

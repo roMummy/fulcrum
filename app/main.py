@@ -4109,7 +4109,7 @@ async def plugin_detail_page(request: Request, plugin_id: int):
         return render(
             request,
             "plugin_detail.html",
-            page_title=f"插件详情 · {plugin.display_name}",
+            page_title=plugin.display_name,
             plugin=plugin,
             bindings=bindings,
             binding_cards=build_binding_schema_cards_with_dispatch(db, bindings),
@@ -4124,6 +4124,15 @@ async def plugin_detail_page(request: Request, plugin_id: int):
         db.close()
 
 
+def _safe_plugin_next(value: str, default: str) -> str:
+    """表单里的"保存后跳回哪里":只允许本站的 /plugins 路径(防开放重定向),否则用默认页。"""
+
+    candidate = str(value or "").strip()
+    if candidate.startswith("/plugins") and "//" not in candidate and "\\" not in candidate and "?" not in candidate and "\n" not in candidate:
+        return candidate
+    return default
+
+
 @app.post("/plugins/bind")
 async def bind_plugin_action(
     request: Request,
@@ -4131,10 +4140,12 @@ async def bind_plugin_action(
     plugin_id: int = Form(...),
     status: str = Form("enabled"),
     config_json: str = Form(""),
+    csrf_token: str = Form(""),
 ):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         plugin = db.get(Plugin, plugin_id)
         if not plugin:
             raise HTTPException(status_code=404, detail="Plugin not found")
@@ -4236,12 +4247,18 @@ async def toggle_plugin_direct_action(
 async def edit_plugin_binding_action(
     request: Request,
     binding_id: int,
-    status: str = Form("enabled"),
+    status: str | None = Form(None),
     config_json: str = Form(""),
+    csrf_token: str = Form(""),
+    next: str = Form(""),
 ):
+    """保存绑定配置。启用/停用由单独的开关负责,表单里没带 status 时保持原状态;
+    页面脚本用 fetch 提交时返回 JSON(弹出提示),普通表单提交则跳回 next(只允许本站 /plugins 路径)。"""
+
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
@@ -4256,28 +4273,32 @@ async def edit_plugin_binding_action(
         update_binding_config(
             db,
             binding,
-            status=status,
+            status=status or binding.status,
             config_json=merged_config.config_json,
             secret_config_patch=merged_config.secret_patch,
             clear_secret_fields=merged_config.clear_secret_fields,
         )
-        record_audit(db, "plugin.update", "bot_plugin", binding.id, f"status={status}")
-        return RedirectResponse(url="/plugins/runtime?notice=插件绑定配置已保存", status_code=303)
+        record_audit(db, "plugin.update", "bot_plugin", binding.id, f"status={binding.status}")
+        notice = "插件绑定配置已保存"
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"ok": True, "notice": notice})
+        return RedirectResponse(url=f"{_safe_plugin_next(next, '/plugins/runtime')}?notice={quote(notice)}", status_code=303)
     finally:
         db.close()
 
 
 @app.post("/plugins/{binding_id}/reload")
-async def reload_plugin_binding_action(request: Request, binding_id: int):
+async def reload_plugin_binding_action(request: Request, binding_id: int, csrf_token: str = Form(""), next: str = Form("")):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
         _, message = reload_binding(db, binding)
         record_audit(db, "plugin.reload", "bot_plugin", binding.id, message)
-        return RedirectResponse(url="/plugins/runtime?notice=" + quote(message), status_code=303)
+        return RedirectResponse(url=f"{_safe_plugin_next(next, '/plugins/runtime')}?notice={quote(message)}", status_code=303)
     finally:
         db.close()
 
@@ -4287,6 +4308,7 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")

@@ -131,8 +131,8 @@ def test_plugin_pages_do_not_offer_invalid_binding_or_configuration_only_copy() 
     list_template = (PROJECT_ROOT / "app/templates/plugins.html").read_text(encoding="utf-8")
     detail_template = (PROJECT_ROOT / "app/templates/plugin_detail.html").read_text(encoding="utf-8")
 
-    # 插件目录页当前采用紧凑列表展示，直接以 supports_execution 控制可执行状态；
-    # migration_state 只保留在后端筛选和详情页，避免旧卡片模板断言阻塞当前页面。
-    assert "runtime_info.supports_execution" in list_template
+    # 插件目录页采用紧凑列表:只在有问题时显示"暂不可用/有提示"徽标(不再给每个插件挂"可执行"),
+    # 损坏的插件(manifest 有错误)明确提示不可用;详情页只有能执行的插件才提供"绑定到机器人"入口。
+    assert "runtime_info.manifest_errors" in list_template and "暂不可用" in list_template
     assert "{% if plugin_runtime_info.supports_execution %}" in detail_template
-    assert "仅配置型" not in detail_template
+    assert "仅配置型" not in detail_template and "仅配置型" not in list_template

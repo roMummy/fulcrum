@@ -44,7 +44,7 @@
         if (state) state.textContent = master.checked ? master.dataset.onText : master.dataset.offText;
       }
       card.querySelectorAll("[data-gf-depends]").forEach(function (el) {
-        var dependency = card.querySelector('[name="' + el.dataset.gfDepends + '"]');
+        var dependency = card.querySelector('input[type="checkbox"][name="' + el.dataset.gfDepends + '"]');
         el.classList.toggle("is-dim", !!dependency && !dependency.checked);
       });
       // 运行模式:选中的那一项高亮

@@ -1,4 +1,6 @@
 {% extends 'base.html' %}
+{# 插件页:配置是主体。每个绑定的机器人一张卡片(和群功能同一套交互:右侧小箭头展开、开关点击即保存、保存用 fetch 并弹出提示)。
+   编码、版本、作者、适用范围、能力标签这些很少有人看的信息都收进最下面折叠的"技术信息"。 #}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
@@ -11,129 +13,94 @@
 </div>
 {% endblock %}
 {% block content %}
+{% set info = plugin_runtime_info %}
 <section class="work-surface">
-  <div class="plugin-detail-hero">
-    <div>
-      <div class="chip-row">
-        <span class="chip chip-outline">{{ plugin.plugin_type or '插件' }}</span>
-        <span class="chip {% if plugin_runtime_info.migration_state == 'migrated' %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '状态正常' if plugin_runtime_info.migration_state == 'migrated' else '需要处理' }}
-        </span>
-        <span class="chip {% if plugin_runtime_info.supports_execution %}chip-success{% else %}chip-muted{% endif %}">
-          {{ '可执行' if plugin_runtime_info.supports_execution else '不可执行' }}
-        </span>
-      </div>
-      <h2 class="plugin-detail-title">{{ plugin.display_name }}</h2>
-      <p class="plugin-detail-description">{{ plugin.description or '这个插件暂时还没有补充描述。' }}</p>
-    </div>
-    <div class="plugin-detail-summary">
-      <div><span>插件编码</span><strong><code>{{ plugin.code }}</code></strong></div>
-      <div><span>默认状态</span><strong>{{ '默认启用' if plugin.default_enabled else '默认关闭' }}</strong></div>
-      <div><span>版本</span><strong>{{ plugin.version or '-' }}</strong></div>
-      <div><span>作者</span><strong>{{ plugin.author or '-' }}</strong></div>
-    </div>
+  <p class="plugin-detail-description">{{ plugin.description or '这个插件暂时还没有补充描述。' }}</p>
+  {% if info.manifest_errors or info.manifest_warnings %}
+  <div class="chip-row">
+    {% if info.manifest_errors %}<span class="chip badge-error">暂不可用</span>{% else %}<span class="chip badge-warning">有提示</span>{% endif %}
   </div>
-
-  <div class="plugin-detail-meta-grid">
-    <div class="subsection">
-      <strong>适用范围</strong>
-      <p class="muted-text">渠道：{{ plugin_runtime_info.channel_types|join('、') if plugin_runtime_info.channel_types else '未限制' }}</p>
-      <p class="muted-text">会话：{{ plugin_runtime_info.chat_types|join('、') if plugin_runtime_info.chat_types else '未限制' }}</p>
-      <p class="muted-text">消息：{{ plugin_runtime_info.message_types|join('、') if plugin_runtime_info.message_types else '未限制' }}</p>
-    </div>
-    <div class="subsection">
-      <strong>触发方式</strong>
-      <p class="muted-text">命令：{{ plugin_runtime_info.commands|join('、') if plugin_runtime_info.commands else '无固定命令' }}</p>
-      <p class="muted-text">是否必须提及：{{ '是' if plugin_runtime_info.require_mention else '否' }}</p>
-      <p class="muted-text">能力标签：{{ plugin_runtime_info.capabilities|join('、') if plugin_runtime_info.capabilities else '暂无' }}</p>
-    </div>
+  {% endif %}
+  <div class="plugin-usage">
+    <strong>使用方法</strong>
+    <p class="muted-text">
+      {% if info.commands %}在聊天里发送命令：{% for command in info.commands %}<code>{{ command }}</code>{% if not loop.last %}、{% endif %}{% endfor %}{% else %}这个插件没有固定命令，按它的配置触发{% endif %}{% if info.keywords %}；消息里包含关键词 {% for word in info.keywords %}<code>{{ word }}</code>{% if not loop.last %}、{% endif %}{% endfor %} 时也会触发{% endif %}。{% if info.require_mention %}在群里需要先 @ 机器人。{% endif %}
+    </p>
   </div>
 </section>
 
-{% if plugin_runtime_info.manifest_errors or plugin_runtime_info.manifest_warnings %}
+{% if info.manifest_errors or info.manifest_warnings %}
 <section class="work-surface">
-  <h2>使用提醒</h2>
-  {% if plugin_runtime_info.manifest_errors %}
+  {% if info.manifest_errors %}
   <div class="plugin-overview-alert plugin-overview-alert-danger">
     <strong>当前插件还不能正常加载</strong>
-    <p>{{ plugin_runtime_info.manifest_errors|join('；') }}</p>
+    <p>{{ info.manifest_errors|join('；') }}</p>
   </div>
   {% endif %}
-  {% if plugin_runtime_info.manifest_warnings %}
+  {% if info.manifest_warnings %}
   <div class="plugin-overview-alert plugin-overview-alert-warning">
     <strong>当前插件还有一些提示项</strong>
-    <p>{{ plugin_runtime_info.manifest_warnings|join('；') }}</p>
+    <p>{{ info.manifest_warnings|join('；') }}</p>
   </div>
   {% endif %}
 </section>
 {% endif %}
 
 <section class="work-surface">
-  <div class="toolbar">
-    <div>
-      <h2>当前绑定</h2>
-    </div>
-  </div>
-  {# 绑定卡片必须直接使用运行视图对象，避免视觉类名替换影响模板循环变量。 #}
+  <div class="toolbar"><div><h2>绑定的机器人</h2></div></div>
+  {% if binding_cards %}
+  <div class="gf-list">
   {% for card in binding_cards %}
   {% set item = card.binding %}
+  {% set enabled = item.status == 'enabled' %}
   {% set dispatch_view = card.dispatch_view or {} %}
-  <article class="plugin-binding-card">
-    <div class="plugin-binding-card-head">
-      <div>
+  <form method="post" action="/plugins/{{ item.id }}/edit" class="gf-card{% if enabled %} is-on{% endif %}" data-gf-card data-gf-key="plugin-binding-{{ item.id }}" data-gf-save-url="/plugins/{{ item.id }}/edit"{% if loop.first %} data-gf-open="1"{% endif %}>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="next" value="/plugins/{{ plugin.id }}" />
+    <header class="gf-head">
+      <div class="gf-head-copy" data-gf-toggle-title>
         <h3>{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }})</h3>
-        <div class="chip-row">
-          <span class="chip {% if item.status == 'enabled' %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if item.status == 'enabled' else '已停用' }}</span>
-          <span class="chip chip-outline">运行态 {{ card.runtime_view.display_status }}</span>
+        <p>运行态 {{ card.runtime_view.display_status }}{% if card.runtime_view.last_execution_at %} · 最近执行 {{ card.runtime_view.last_execution_at|bj_time }}{% endif %}</p>
+      </div>
+      <div class="gf-head-actions">
+        <label class="gf-master" title="启用或停用这个绑定">
+          <span class="gf-master-text" data-gf-state>{{ '已启用' if enabled else '已停用' }}</span>
+          <span class="ui-switch">
+            <input type="checkbox" role="switch" aria-label="启用 {{ bot_name_map.get(item.bot_id, 'Bot') }}" data-gf-master data-on-text="已启用" data-off-text="已停用" data-autosave-url="/plugins/{{ item.id }}/toggle" data-autosave-key="enabled" data-autosave-form="{}"{% if enabled %} checked{% endif %} />
+            <span class="ui-switch-track"></span>
+          </span>
+        </label>
+        <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>
+      </div>
+    </header>
+    <div class="gf-collapse" data-gf-collapse hidden>
+      <div class="gf-body">
+        <div class="form-grid">
+          {% with config_view=card.config_view %}
+            {% include '_plugin_config_form.html' %}
+          {% endwith %}
+        </div>
+        <div class="plugin-binding-info">
+          <p class="muted-text">最近执行：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}　{{ card.runtime_view.last_execution_summary or '' }}</p>
+          <p class="muted-text">最近调度：{{ dispatch_view.status or '-' }}{% if dispatch_view.message %}　{{ dispatch_view.message }}{% endif %}　最近重载：{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}</p>
         </div>
       </div>
-      <div class="actions">
-        <button class="btn btn-small btn-secondary" type="button" data-modal-open="edit-plugin-binding-{{ item.id }}">修改配置</button>
-        <form method="post" action="/plugins/{{ item.id }}/reload">
-          <button class="btn btn-small btn-secondary" type="submit">重载</button>
-        </form>
-      </div>
+      <footer class="gf-foot">
+        <button class="btn" type="submit">保存</button>
+        {# 重载是另一个表单(HTML 不允许表单嵌套),用 form 属性让这个按钮提交它。 #}
+        <button class="btn btn-secondary" type="submit" form="reload-binding-{{ item.id }}">重载</button>
+      </footer>
     </div>
-    <div class="plugin-detail-meta-grid">
-      <div class="subsection">
-        <strong>最近执行</strong>
-        <p class="muted-text">时间：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}</p>
-        <p class="muted-text">摘要：{{ card.runtime_view.last_execution_summary or '-' }}</p>
-      </div>
-      <div class="subsection">
-        <strong>最近调度</strong>
-        <p class="muted-text">状态：{{ dispatch_view.status or '-' }}</p>
-        <p class="muted-text">说明：{{ dispatch_view.message or '-' }}</p>
-      </div>
-    </div>
-  </article>
-
-  <dialog class="app-modal" id="edit-plugin-binding-{{ item.id }}">
-    <div class="app-modal-card">
-      <div class="app-modal-head">
-        <div>
-          <h2>修改绑定配置</h2>
-          <p class="muted-text">{{ bot_name_map.get(item.bot_id, 'Bot') }} (#{{ item.bot_id }}) / {{ item.plugin.display_name if item.plugin else ('插件 #' ~ item.plugin_id) }}</p>
-        </div>
-        <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
-      </div>
-      <form method="post" action="/plugins/{{ item.id }}/edit" class="form-grid">
-        {# 状态开关(表单字段,随「保存」一起提交):未勾选时由前面的隐藏域提交 disabled,勾选后同名字段在后,取最后一个 enabled。 #}
-        <label class="gf-row switch-field"><span class="gf-row-label">启用</span><span class="ui-switch"><input type="hidden" name="status" value="disabled" /><input type="checkbox" name="status" value="enabled" role="switch"{% if item.status == 'enabled' %} checked{% endif %} /><span class="ui-switch-track"></span></span></label>
-        <label><span>最近重载</span><input value="{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}" disabled /></label>
-        {% with config_view=card.config_view %}
-          {% include '_plugin_config_form.html' %}
-        {% endwith %}
-        <div class="full-row form-actions-inline">
-          <button class="btn" type="submit">保存配置</button>
-          <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
-        </div>
-      </form>
-    </div>
-  </dialog>
-  {% else %}
-  <p class="muted-text">这个插件当前还没有绑定到任何机器人。</p>
+  </form>
+  <form id="reload-binding-{{ item.id }}" method="post" action="/plugins/{{ item.id }}/reload" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="next" value="/plugins/{{ plugin.id }}" />
+  </form>
   {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted-text">这个插件还没有绑定到任何机器人。{% if info.supports_execution %}点右上角「绑定到机器人」开始使用。{% endif %}</p>
+  {% endif %}
 </section>
 
 <dialog class="app-modal" id="create-plugin-binding-modal">
@@ -145,6 +112,7 @@
       <button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button>
     </div>
     <form method="post" action="/plugins/bind" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="plugin_id" value="{{ plugin.id }}" />
       <label><span>机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label class="gf-row switch-field"><span class="gf-row-label">启用</span><span class="ui-switch"><input type="hidden" name="status" value="disabled" /><input type="checkbox" name="status" value="enabled" role="switch" checked /><span class="ui-switch-track"></span></span></label>
@@ -166,32 +134,43 @@
       <div class="plugin-detail-meta-grid">
         <div class="subsection">
           <strong>插件信息</strong>
-          <p class="muted-text">插件分类：{{ plugin_runtime_info.plugin_category or '-' }}</p>
+          <p class="muted-text">插件编码：<code>{{ plugin.code }}</code></p>
+          <p class="muted-text">版本：{{ plugin.version or '-' }}　作者：{{ plugin.author or '-' }}</p>
+          <p class="muted-text">默认状态：{{ '默认启用' if plugin.default_enabled else '默认关闭' }}</p>
+          <p class="muted-text">插件分类：{{ info.plugin_category or '-' }}　类型：{{ plugin.plugin_type or '-' }}</p>
           <p class="muted-text">配置来源：{% if plugin_config_view.mode == 'schema' %}{{ plugin_config_view.title }} / {{ plugin_config_view.schema_version }}{% else %}仅 JSON 配置{% endif %}</p>
         </div>
         <div class="subsection">
-          <strong>执行参数</strong>
-          <p class="muted-text">执行能力：{{ plugin_runtime_info.execution_capability or '-' }}</p>
-          <p class="muted-text">优先级：{{ plugin_runtime_info.priority or '-' }}</p>
-          <p class="muted-text">消费策略：{{ plugin_runtime_info.consume_policy or '-' }}</p>
-          <p class="muted-text">超时：{{ plugin_runtime_info.timeout_ms or '-' }}</p>
+          <strong>适用范围</strong>
+          <p class="muted-text">渠道：{{ info.channel_types|join('、') if info.channel_types else '未限制' }}</p>
+          <p class="muted-text">会话：{{ info.chat_types|join('、') if info.chat_types else '未限制' }}</p>
+          <p class="muted-text">消息：{{ info.message_types|join('、') if info.message_types else '未限制' }}</p>
+          <p class="muted-text">能力标签：{{ info.capabilities|join('、') if info.capabilities else '暂无' }}</p>
         </div>
       </div>
       <div class="plugin-detail-meta-grid">
         <div class="subsection">
-          <strong>文件位置</strong>
-          <p class="muted-text">Config TOML：{{ plugin_runtime_info.config_path or '-' }}</p>
-          <p class="muted-text">逻辑入口：{{ plugin_runtime_info.entrypoint_path or '-' }}</p>
-          <p class="muted-text">后台页面：{{ plugin_runtime_info.admin_surfaces|join('、') if plugin_runtime_info.admin_surfaces else '-' }}</p>
+          <strong>执行参数</strong>
+          <p class="muted-text">执行能力：{{ info.execution_capability or '-' }}</p>
+          <p class="muted-text">优先级：{{ info.priority or '-' }}</p>
+          <p class="muted-text">消费策略：{{ info.consume_policy or '-' }}</p>
+          <p class="muted-text">超时：{{ info.timeout_ms or '-' }}</p>
         </div>
         <div class="subsection">
-          <strong>Manifest</strong>
-          <p class="muted-text">校验状态：{{ 'valid' if plugin_runtime_info.manifest_valid else 'invalid' }}</p>
-          <p class="muted-text">错误：{{ plugin_runtime_info.manifest_errors|join('；') if plugin_runtime_info.manifest_errors else '-' }}</p>
-          <p class="muted-text">提示：{{ plugin_runtime_info.manifest_warnings|join('；') if plugin_runtime_info.manifest_warnings else '-' }}</p>
+          <strong>文件位置</strong>
+          <p class="muted-text">Config TOML：{{ info.config_path or '-' }}</p>
+          <p class="muted-text">逻辑入口：{{ info.entrypoint_path or '-' }}</p>
+          <p class="muted-text">后台页面：{{ info.admin_surfaces|join('、') if info.admin_surfaces else '-' }}</p>
         </div>
+      </div>
+      <div class="subsection">
+        <strong>Manifest</strong>
+        <p class="muted-text">校验状态：{{ 'valid' if info.manifest_valid else 'invalid' }}</p>
+        <p class="muted-text">错误：{{ info.manifest_errors|join('；') if info.manifest_errors else '-' }}</p>
+        <p class="muted-text">提示：{{ info.manifest_warnings|join('；') if info.manifest_warnings else '-' }}</p>
       </div>
     </div>
   </details>
 </section>
+<script src="/static/js/group-features.js" defer></script>
 {% endblock %}
