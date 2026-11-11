@@ -690,7 +690,9 @@ def test_webridge_text_command_carries_quote_and_mentions(monkeypatch) -> None:
     monkeypatch.setattr(service, "enqueue_job", lambda db, **kw: captured.append(kw) or SimpleNamespace(id=1))
     channel = Channel(id=9, bot_id=1, tenant_id=3, name="微桥", channel_type="wechat_webridge")
     conversation = Conversation(id=11, bot_id=1, channel_id=9, external_id="1@chatroom", chat_type="group", tenant_id=1)
-    service.enqueue_message_command(object(), channel, conversation, {"message_type": "text", "content": "hi", "quote_message_id": "555", "mention_user_list": ["wxid_a"]})
+    # 出站前会查"bot 是否已退出这个群":给一个最小的数据库替身(查不到已退出记录)。
+    db = SimpleNamespace(scalar=lambda stmt: None)
+    service.enqueue_message_command(db, channel, conversation, {"message_type": "text", "content": "hi", "quote_message_id": "555", "mention_user_list": ["wxid_a"]})
     params = captured[0]["payload"]["command"]["params"]
     assert params["quote_message_id"] == "555" and params["mention_user_list"] == ["wxid_a"]
 

@@ -15,6 +15,14 @@ from app.services.outbound_files import externalize_media_payload, redact_base64
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 
+
+class _FakeDb:
+    """enqueue_job 被桩掉了;出站前会查"bot 是否已退出这个群",这里一律查不到。"""
+
+    def scalar(self, stmt):
+        return None
+
+
 def test_image_base64_becomes_file_url(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(outbound_files, "OUTBOUND_FILE_ROOT", tmp_path)
     payload = {"message_type": "image", "base64": base64.b64encode(PNG).decode(), "conversation_id": 4}
@@ -73,8 +81,8 @@ def test_webridge_auto_outbound_maps_media_to_native_command(monkeypatch) -> Non
     channel = SimpleNamespace(id=2, tenant_id=1)
     conversation = SimpleNamespace(id=4, external_id="wxid-bob")
 
-    service.enqueue_message_command(object(), channel, conversation, {"message_type": "video", "video_url": "http://h/outbound-files/2/x/video.mp4", "receiver_id": "wxid-bob"})
-    service.enqueue_message_command(object(), channel, conversation, {"message_type": "image", "image_url": "http://h/outbound-files/2/y/image.png", "receiver_id": "wxid-bob"})
+    service.enqueue_message_command(_FakeDb(), channel, conversation, {"message_type": "video", "video_url": "http://h/outbound-files/2/x/video.mp4", "receiver_id": "wxid-bob"})
+    service.enqueue_message_command(_FakeDb(), channel, conversation, {"message_type": "image", "image_url": "http://h/outbound-files/2/y/image.png", "receiver_id": "wxid-bob"})
 
     first, second = (item["payload"]["command"] for item in captured)
     assert first["type"] == "send_video_from_url" and first["params"]["source"].endswith("video.mp4")
