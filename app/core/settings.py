@@ -61,6 +61,23 @@ class Settings(BaseSettings):
     def is_dev_like(self) -> bool:
         return self.app_env.strip().lower() in {"dev", "local", "demo", "test"}
 
+    def validate_runtime_secrets(self) -> None:
+        """非开发环境必须配置真实的 SECRET_KEY,否则拒绝启动。
+
+        SECRET_KEY 用来签名登录 Cookie、给密码哈希加盐、派生机器人令牌和 API 密钥的加密密钥,也用于验证码。
+        默认值写在公开源码里,任何人都知道;忘了配置的部署等于没有保护,所以必须在启动时拦住。
+        开发/测试环境(APP_ENV 为 dev/local/demo/test)不受影响。
+        """
+
+        if self.is_dev_like:
+            return
+        key = str(self.secret_key or "").strip()
+        if not key or key.lower().startswith("change-") or len(key) < 32:
+            raise RuntimeError(
+                "SECRET_KEY 未配置或仍是示例值(至少 32 位随机字符串);非开发环境拒绝启动。"
+                "可用 `python -c \"import secrets; print(secrets.token_urlsafe(48))\"` 生成。"
+            )
+
     @property
     def should_seed_demo_users(self) -> bool:
         if self.auth_seed_demo_users is not None:
@@ -79,6 +96,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+settings.validate_runtime_secrets()
 Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
 Path(settings.log_dir).mkdir(parents=True, exist_ok=True)
 Path(settings.plugins_dir).mkdir(parents=True, exist_ok=True)
