@@ -23,17 +23,6 @@ data/inbound_files/
 # brainstorming 可视化预览只用于本地讨论，不进入版本库。
 .superpowers/
 
-# 企业微信 provider 的 32 位打包环境和 PyInstaller 产物体积较大，
-# 只作为本地交付结果保留，避免把虚拟环境或生成文件提交到版本库。
-vendors/workwechat_provider/.venv32/
-# 可选的本地便携 32 位 Python 目录，供没有 py 启动器的打包机继续构建客户端包。
-vendors/workwechat_provider/.python310-32/
-vendors/workwechat_provider/build/
-vendors/workwechat_provider/dist/
-vendors/workwechat_provider/*.spec
-# provider 本地运行状态目录包含投递确认 pending、幂等缓存和 Hook 临时数据，不进入版本库。
-vendors/workwechat_provider/data/
-
 *.exe
 
 # 本机部署凭据（201 服务器与 Git 账号），禁止进入版本库。

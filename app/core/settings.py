@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     data_dir: str = str(Path(__file__).resolve().parents[2] / "data")
     log_dir: str = str(Path(__file__).resolve().parents[2] / "logs")
-    vendors_dir: str = str(Path(__file__).resolve().parents[2] / "vendors")
     database_url: str = f"sqlite:///{Path(__file__).resolve().parents[2] / 'data' / 'app.db'}"
     database_echo: bool = False
     database_pool_size: int = 10
@@ -83,4 +82,3 @@ settings = Settings()
 Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
 Path(settings.log_dir).mkdir(parents=True, exist_ok=True)
 Path(settings.plugins_dir).mkdir(parents=True, exist_ok=True)
-Path(settings.vendors_dir).mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,7 @@
 # WeChat WinAuto Provider 接入方案
 
+> provider 客户端不随本仓库发布；本文描述它与服务端之间的通信契约。
+
 ## 目标
 
 `wxauto` 依赖 Windows 桌面微信客户端，不适合直接嵌入当前主服务。推荐采用“双进程”结构：

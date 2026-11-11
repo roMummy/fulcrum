@@ -1,6 +1,0 @@
-# 测试环境 python3.10 32位
-PySide2>=5.15.0
-Flask>=2.0.0
-requests>=2.25.0
-PyYAML>=5.4.0
-pyinstaller>=5.0.0

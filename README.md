@@ -442,10 +442,9 @@ curl -X POST "http://192.168.2.142:8280/channels/3/outbound/upload-and-send" `
 
 ### workwechat Provider
 
-仓库里附带了企业微信 Hook 高层 provider：
-
-- [vendors/workwechat_provider](/data/multi-bot-saas/vendors/workwechat_provider)
-- [WorkWechat Provider 接入说明](/data/multi-bot-saas/docs/workwechat_provider.md)
+企业微信 Hook provider 是运行在企业本地 Windows 机器上的独立客户端，**不随本仓库发布**
+（它依赖第三方 Hook 组件，需要使用者自行获取并遵守其许可）。本仓库只包含服务端对它的支持，
+通信契约见 [WorkWechat Provider 接入说明](docs/workwechat_provider.md)。
 
 推荐使用方式：
 

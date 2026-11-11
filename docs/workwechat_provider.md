@@ -8,17 +8,17 @@
 2. 高层 `workwechat_provider`：负责自动拉起 Hook runtime，把主服务出站消息翻译成 Hook 指令，并把 Hook 回调翻译成主服务入站事件。
 3. 云端 WS/拉取会话：企业本地 provider 主动连接云端，避免云端访问企业内网 provider。
 
-## 目录
+## 说明
 
-- [vendors/workwechat_provider](/d:/learn/multi-bot-admin/vendors/workwechat_provider)
-- 内置 Hook runtime：[vendors/workwechat_provider/hook_runtime](/d:/learn/multi-bot-admin/vendors/workwechat_provider/hook_runtime)
+provider 客户端和它内置的 Hook runtime 是独立分发的 Windows 程序，**不在本仓库中**；
+本文描述它与服务端之间的通信契约和配置方式。Hook 组件来自第三方，需自行获取并遵守其许可。
 
 ## 启动 workwechat provider
 
 只需要启动 provider，provider 会自动拉起内置 `hook_runtime/http_py.py`：
 
 ```powershell
-cd D:\learn\multi-bot-admin\vendors\workwechat_provider
+cd <provider 安装目录>
 .\setup-provider.bat
 .\open-config.bat
 .\start-provider.bat
