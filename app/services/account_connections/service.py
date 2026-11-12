@@ -160,6 +160,10 @@ def begin_account_connection(
         from app.services.wechat_webridge.access import initialize_connection
 
         initialize_connection(channel, resolved_api_base)
+    elif channel.channel_type == "wechat_gugatool":
+        from app.services.guga_agent.access import initialize_connection
+
+        initialize_connection(channel, resolved_api_base)
     _save_connection_state(
         channel,
         {
@@ -233,6 +237,19 @@ def finalize_account_connection(
             or connection.get("device_fingerprint_hash") != hash_device_fingerprint(identity.device_key)
         ):
             raise AccountConnectionError("connection_identity_changed")
+    if channel.channel_type == "wechat_gugatool":
+        # Agent 模式只比对手机注册快照，不再反向访问手机。
+        from app.services.guga_agent.service import registration
+
+        registered = registration(channel)
+        current_account = str(registered.get("account_id") or "").strip()
+        if (
+            not current_account
+            or not expected_account_id
+            or expected_account_id != current_account
+            or connection.get("account_id") != current_account
+        ):
+            raise AccountConnectionError("connection_identity_changed")
     tenant_id = require_tenant_id()
     bot = db.scalar(
         select(Bot).where(Bot.id == channel.bot_id, Bot.tenant_id == tenant_id, Bot.deleted_at.is_(None)).with_for_update()
@@ -271,6 +288,19 @@ def finalize_account_connection(
         db.refresh(bot)
         db.refresh(channel)
         db.refresh(binding)
+        if channel.channel_type == "wechat_gugatool":
+            # 接入成功后主动让手机回传通讯录,好友页无需再手动触发。
+            from app.services.guga_agent.service import enqueue_command
+
+            enqueue_command(
+                db,
+                channel,
+                command_name="get_friend_list",
+                params={},
+                priority=45,
+                purpose="friend_sync",
+            )
+            db.commit()
         return FinalizedAccountConnection(bot=bot, channel=channel, binding=binding)
     except BotEntitlementError as exc:
         db.rollback()

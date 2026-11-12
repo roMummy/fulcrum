@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 插件只处理平台标准文本事件并输出标准文本或图片，不依赖具体渠道 Provider。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 115

@@ -105,6 +105,27 @@
     </div>
   </div>
 </section>
+{% elif channel.channel_type == 'wechat_gugatool' %}
+<section class="work-surface">
+  <div class="toolbar">
+    <div><h2>咕嘎助手账号</h2></div>
+    <div class="actions">
+      {% if can_manage_channel %}
+      <form method="post" action="/channels/{{ channel.id }}/wechat-gugatool/sync-friends">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="btn btn-secondary" type="submit">同步好友</button>
+      </form>
+      {% endif %}
+      <a class="btn btn-ghost" href="/contacts?channel_id={{ channel.id }}">好友</a>
+      <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
+    </div>
+  </div>
+  <div class="stats-grid compact-grid">
+    <div class="metric-item"><span>手机端</span><strong>{{ '已连接' if channel.is_enabled else '未连接' }}</strong></div>
+    <div class="metric-item"><span>账号昵称</span><strong>{{ account.name or '-' }}</strong></div>
+  </div>
+  <p class="muted-text top-gap">好友资料由手机端通讯录回传；手机在线时点「同步好友」即可刷新。</p>
+</section>
 {% endif %}
 
 {% if wechat_ipad_group_summary %}

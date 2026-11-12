@@ -132,6 +132,8 @@ def download_wechat_media_attachment(
     attachment: MessageAttachment,
     channel: Channel,
 ) -> dict[str, Any]:
+    if attachment.provider == "wechat_gugatool":
+        return _download_wechat_gugatool_attachment(db, attachment=attachment, channel=channel)
     if attachment.provider == "workwechat" and attachment.attachment_type == "file":
         return _download_workwechat_file_attachment(db, attachment=attachment, channel=channel)
     if attachment.attachment_type == "image":
@@ -458,6 +460,45 @@ def _download_wechat_video_attachment(db: Session, *, attachment: MessageAttachm
     )
     resolved = _resolve_binary_response(response, default_mime_type="video/mp4", default_extension=".mp4")
     return _persist_attachment_content(db, attachment=attachment, response=response, resolved=resolved, metadata=metadata)
+
+
+def _download_wechat_gugatool_attachment(db: Session, *, attachment: MessageAttachment, channel: Channel) -> dict[str, Any]:
+    """手机端先把消息媒体落到本地缓存，回传下载地址后主服务再取字节。
+
+    走 ``DownloadMessageMedia`` + ``GET DownloadFile`` 两跳，避免要求主服务和
+    手机在同一容器网络，也避免把 aeskey 之类的解密参数落到主服务。
+    """
+
+    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+
+    metadata = _parse_json(attachment.metadata_json)
+    adapter = WechatGugatoolAdapter()
+    response = adapter.download_message_media(
+        channel,
+        to_wxid=str(metadata.get("to_wxid") or ""),
+        local_id=_coerce_optional_int(metadata.get("local_message_id")),
+        msg_svr_id=_coerce_optional_int(metadata.get("server_message_id")),
+    )
+    data = response.get("data") or {}
+    base64_payload = str(data.get("Base64") or data.get("base64") or "").strip()
+    if not base64_payload:
+        raise ValueError("wechat_gugatool_media_base64_missing")
+    content = base64.b64decode(base64_payload, validate=False)
+    mime_type = str(data.get("ContentType") or data.get("content_type") or "").strip()
+    resolved_mime = mime_type or "application/octet-stream"
+    source_kind = "base64"
+    return _persist_attachment_content(
+        db,
+        attachment=attachment,
+        response=response.get("raw") if isinstance(response.get("raw"), dict) else {},
+        resolved={
+            "content": content,
+            "mime_type": resolved_mime,
+            "extension": _guess_extension(resolved_mime, content),
+            "source_kind": source_kind,
+        },
+        metadata=metadata,
+    )
 
 
 def _persist_attachment_content(

@@ -125,3 +125,5 @@ tests/test_image_captcha.py
 tests/test_guess_image_bank.py
 tests/test_plugin_guess_image.py
 tests/test_guess_image_pages.py
+tests/test_safe_fetch.py
+tests/test_guga_agent_security.py

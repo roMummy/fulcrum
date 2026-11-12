@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 插件只输出平台标准图片回复，不绑定微信、Telegram 或其他 Provider。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 95

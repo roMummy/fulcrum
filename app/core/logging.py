@@ -27,7 +27,7 @@ class ContextFormatter(logging.Formatter):
             context_text = " ".join(f"{key}={value}" for key, value in sorted(context.items()))
             base_message = f"{base_message} | {context_text}"
         # 长轮询地址带渠道凭据，应用日志和异常堆栈均不能保存原始 Token。
-        return re.sub(r"(/api/wechat-webridge/\d+/)[A-Za-z0-9_-]{43}(?=[/\s?\"']|$)", r"\1[已隐藏]", base_message)
+        return re.sub(r"(/api/(?:wechat-webridge|guga-agent)/\d+/)[A-Za-z0-9_-]{43}(?=[/\s?\"']|$)", r"\1[已隐藏]", base_message)
 
 
 class ColorConsoleFormatter(ContextFormatter):

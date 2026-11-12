@@ -22,6 +22,7 @@ def test_public_channel_catalog_contains_real_supported_channels() -> None:
         "wechat_ipad",
         "wechat_winauto",
         "wechat_webridge",
+        "wechat_gugatool",
         "telegram",
     )
 
@@ -30,6 +31,8 @@ def test_public_channel_catalog_uses_business_platform_names() -> None:
     """租户页面展示业务平台名称，不能暴露 Hook 等内部实现术语。"""
 
     assert get_channel_type_definition("workwechat").label == "企业微信"
+    # 咕嘎助手是对外产品名，渠道编码同样使用 wechat_gugatool。
+    assert get_channel_type_definition("wechat_gugatool").label == "咕嘎助手"
 
 
 def test_wechat_ipad_catalog_has_no_channel_level_login_proxy_fields() -> None:

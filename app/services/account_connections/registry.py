@@ -29,4 +29,8 @@ def get_account_connector(channel_type: str | None) -> AccountConnector:
         from .wechat_webridge import WechatWeBridgeAccountConnector
 
         return WechatWeBridgeAccountConnector()
+    if normalized == "wechat_gugatool":
+        from .wechat_gugatool import WechatGugatoolAccountConnector
+
+        return WechatGugatoolAccountConnector()
     raise AccountConnectionError("connection_type_not_supported")

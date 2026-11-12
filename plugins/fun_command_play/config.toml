@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 趣味命令只消费平台标准文本，回复协议转换统一交给渠道适配器。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 85

@@ -135,6 +135,35 @@ def test_trial_binding_hashes_device_and_cannot_exceed_one_bot(db: Session) -> N
     assert quota.remaining == 0
 
 
+def test_released_binding_can_rebind_same_account(db: Session) -> None:
+    """释放后的绑定不再占用账号身份，可以立即重新接入。"""
+
+    seeded = _seed_entitlements(db)
+    paid = seeded["paid_tenant"]
+    with tenant_scope(paid.id):
+        first = bind_bot_account(
+            db,
+            adapter_type="generic-api",
+            bot_account_id="rebindable-account",
+            device_fingerprint="rebind-device-a",
+        )
+        first.status = "released"
+        db.commit()
+
+        second = bind_bot_account(
+            db,
+            adapter_type="generic-api",
+            bot_account_id="rebindable-account",
+            device_fingerprint="rebind-device-b",
+        )
+        # 唯一约束要求复用原绑定行，释放信息被清空并刷新为当前设备。
+        assert second.id == first.id
+        assert second.status == "active"
+        assert second.released_at is None
+        assert second.release_reason is None
+        assert second.device_fingerprint_hash == hash_device_fingerprint("rebind-device-b")
+
+
 def test_bot_account_and_device_cannot_cross_tenants(db: Session) -> None:
     """机器人账号与设备归属均为全局边界，不能通过换企业重复绑定。"""
 

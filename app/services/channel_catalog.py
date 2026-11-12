@@ -76,6 +76,12 @@ def _build_wechat_webridge_adapter():
     return WechatWeBridgeAdapter()
 
 
+def _build_wechat_gugatool_adapter():
+    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+
+    return WechatGugatoolAdapter()
+
+
 def _build_telegram_adapter():
     from app.services.channel_adapters.telegram import TelegramAdapter
 
@@ -151,6 +157,17 @@ CHANNEL_TYPE_DEFINITIONS = (
             *COMMON_POLICY_FIELDS,
         ),
         adapter_factory=_build_wechat_webridge_adapter,
+    ),
+    ChannelTypeDefinition(
+        code="wechat_gugatool",
+        label="咕嘎助手",
+        summary="通过 iPhone 上的咕嘎助手客户端主动连接平台，收发消息并管理群。",
+        runtime_mode="platform_polling",
+        capabilities=frozenset({"send", "inbound", "health", "polling", "media", "chatrooms"}),
+        config_fields=(
+            *COMMON_POLICY_FIELDS,
+        ),
+        adapter_factory=_build_wechat_gugatool_adapter,
     ),
     ChannelTypeDefinition(
         code="telegram",

@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # Cookie 只能通过私聊提交，避免群聊成员看到其他用户的京东凭证。
-channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct"]
 message_types = ["text"]
 priority = 100

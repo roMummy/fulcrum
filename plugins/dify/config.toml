@@ -9,7 +9,7 @@ default_enabled = true
 
 [capability]
 # 文本、引用和媒体统一使用平台标准事件与回复，不绑定某一个消息协议。
-channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 120

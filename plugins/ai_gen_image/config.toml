@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 生图请求在平台已有的异步插件分发任务中执行，回复统一进入渠道出站队列。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 110

@@ -160,13 +160,19 @@ def add_verified_bot_binding(
     if len(normalized_display_name) > 150:
         raise BotEntitlementError("display_name_too_long")
 
-    existing_account = db.scalar(
+    same_account_bindings = db.scalars(
         select(BotBinding).where(
             BotBinding.adapter_type == normalized_adapter,
             BotBinding.bot_account_id == normalized_account,
         )
-    )
-    if existing_account is not None:
+    ).all()
+    if any(binding.status != "released" for binding in same_account_bindings):
+        raise BotEntitlementError("bot_account_already_bound")
+    # 数据库唯一约束 (adapter_type, bot_account_id) 决定同一账号只能有一条绑定记录，
+    # 释放后重新接入必须复用原行，而不是插入新行。其他租户的历史绑定仍按已占用处理，
+    # 避免释放操作把账号归属自动转移给别的租户。
+    released_binding = same_account_bindings[0] if same_account_bindings else None
+    if released_binding is not None and released_binding.tenant_id != tenant_id:
         raise BotEntitlementError("bot_account_already_bound")
 
     existing_device = db.scalar(
@@ -191,6 +197,24 @@ def add_verified_bot_binding(
     elif existing_claim is not None and existing_claim.tenant_id != tenant_id:
         # 付费不会绕过设备单租户归属；同一租户从试用续费后则继续复用原设备。
         raise BotEntitlementError("device_owned_by_other_tenant")
+
+    if released_binding is not None:
+        # 复用已释放的绑定行，清空释放信息并刷新为当前设备与渠道。
+        released_binding.bot_id = bot_id
+        released_binding.channel_id = channel_id
+        released_binding.display_name = normalized_display_name or None
+        released_binding.device_fingerprint_hash = fingerprint_hash
+        released_binding.status = "active"
+        released_binding.bound_at = now_shanghai()
+        released_binding.released_at = None
+        released_binding.released_by_user_id = None
+        released_binding.release_reason = None
+        try:
+            db.flush()
+            return released_binding
+        except IntegrityError as exc:
+            db.rollback()
+            raise BotEntitlementError("bot_binding_conflict") from exc
 
     binding = BotBinding(
         tenant_id=tenant_id,

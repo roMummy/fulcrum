@@ -360,6 +360,7 @@ A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录�
 | `workwechat` | 企业微信 | 客户端远端执行并主动领取任务 | 已连接企业微信客户端及在线账号 |
 | `wechat_ipad` | 微信 iPad 协议 | 平台按租户执行消息同步、心跳和登录恢复 | API Base |
 | `wechat_winauto` | 微信 Windows | HTTP 执行端与 Webhook | API Base |
+| `wechat_gugatool` | 咕嘎助手 | 手机端主动连接平台，HTTP 长轮询或 WebSocket | 平台生成的 Agent 地址 |
 | `telegram` | Telegram | 平台按租户调用 Bot API 拉取更新 | Bot Token |
 
 接入向导可以保留尚未验证的停用草稿，但只有可信身份验证和额度绑定都完成后才能启用。渠道类型、关联机器人和可信账号创建后不可由租户修改；企业微信客户端关联也只在首次接入时确定。只有声明需要远端执行器的渠道会保存客户端和账号主键，其他渠道即使夹带这些字段也会被服务端清空。
