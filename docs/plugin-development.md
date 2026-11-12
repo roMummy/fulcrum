@@ -219,6 +219,15 @@ return PluginExecutionResult(
 | `state_store.PluginStateStore` | 当前租户、当前绑定内的小型 JSON 状态（单条 ≤ 64KB，支持过期） |
 | `rate_limit.PluginRateLimiter` | 按用户/群的频率限制 |
 | `text_generation` | 调用租户配置的模型生成文本 |
+| `member_names` | 批量把群成员 ID 换成群昵称(排行榜、点名必用) |
+
+### 显示成员名字:存 ID,显示时再换
+
+消息里的 `sender_name` 并不可靠(微桥常常给不出,会退化成 wxid)。做排行榜、点名这类要显示人名的功能时:
+
+- **存稳定的用户 ID**(`request.context.sender_id`),不要把当时的名字当作数据存下来;
+- **显示时**调用 `member_names(db, channel_id=..., group_external_id=..., user_ids=[...], fallbacks={id: 旧名字})`,一次查询批量换成本群群昵称,昵称之后改了排行榜也会跟着变;
+- 查不到昵称时才用 `fallbacks`(它本身是 wxid 会被忽略),最后才显示 ID。
 
 ## 6. 安全规则
 

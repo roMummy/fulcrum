@@ -16,6 +16,7 @@ from app.services.plugin_runtime.messages import (
     PluginMessageReader,
     PluginMessageRecord,
 )
+from app.services.plugin_runtime.member_names import member_names
 from app.services.plugin_runtime.rate_limit import PluginRateLimitDecision, PluginRateLimiter
 from app.services.plugin_runtime.replies import file_reply, image_reply, link_reply, standard_replies, text_reply, video_reply
 from app.services.plugin_runtime.scheduler import enqueue_plugin_scheduled_action
@@ -45,6 +46,7 @@ __all__ = [
     "PluginMessageRecord",
     "PluginRateLimitDecision",
     "PluginRateLimiter",
+    "member_names",
     "PluginRuntimeDefinition",
     "PluginStateStore",
     "PluginTextGenerationClient",
