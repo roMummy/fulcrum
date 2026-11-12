@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.services.chatroom_directory import get_or_create_chatroom
 from app.models.entities import Channel, Chatroom
 
 
@@ -57,20 +57,7 @@ def upsert_manual_chatroom(
     normalized_external_id = str(external_id or "").strip()
     if not normalized_external_id:
         raise ValueError("external_id is required")
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == normalized_external_id)
-    )
-    created = False
-    if not chatroom:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=normalized_external_id,
-            status="pending_sync",
-        )
-        db.add(chatroom)
-        db.flush()
-        created = True
+    chatroom, created = get_or_create_chatroom(db, channel, normalized_external_id, status="pending_sync")
     mark_chatroom_discovered(db, channel=channel, chatroom=chatroom, registration_source="manual")
     chatroom.registration_source = "manual"
     chatroom.is_registered = True

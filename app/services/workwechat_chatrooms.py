@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
 from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
+from app.services.chatroom_directory import get_or_create_chatroom
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, Message, TaskJob
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
@@ -702,13 +703,7 @@ def _materialize_chatrooms_from_conversations(db: Session, channel: Channel) -> 
 
 
 def _get_or_create_chatroom(db: Session, *, channel: Channel, external_id: str, status: str) -> tuple[Chatroom, bool]:
-    chatroom = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
-    if chatroom:
-        return chatroom, False
-    chatroom = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, status=status)
-    db.add(chatroom)
-    db.flush()
-    return chatroom, True
+    return get_or_create_chatroom(db, channel, external_id, status=status)
 
 
 def _get_or_create_member(db: Session, *, channel: Channel, chatroom: Chatroom, member_external_id: str) -> tuple[ChatroomMember, bool]:

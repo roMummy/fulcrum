@@ -194,6 +194,8 @@ class Conversation(Base, TenantOwnedMixin, TimestampMixin):
 
 class Chatroom(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "chatrooms"
+    # 同一渠道里一个群只能有一条记录:并发到达的首条消息/事件靠它兜底,冲突方回读已有的那条,而不是各建一条。
+    __table_args__ = (UniqueConstraint("channel_id", "external_id", name="uq_chatrooms_channel_external"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), index=True)
@@ -221,6 +223,7 @@ class Chatroom(Base, TenantOwnedMixin, TimestampMixin):
 
 class ChatroomMember(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "chatroom_members"
+    __table_args__ = (UniqueConstraint("chatroom_id", "member_external_id", name="uq_chatroom_members_room_member"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     chatroom_id: Mapped[int] = mapped_column(ForeignKey("chatrooms.id"), index=True)
@@ -455,6 +458,8 @@ class OpenApiUsageRecord(Base, TenantOwnedMixin, TimestampMixin):
 
 class GroupPluginScope(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "group_plugin_scopes"
+    # 一个群对一个插件绑定只能有一条作用域设置
+    __table_args__ = (UniqueConstraint("chatroom_id", "bot_plugin_id", name="uq_group_plugin_scopes_room_binding"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)

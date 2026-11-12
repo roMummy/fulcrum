@@ -143,6 +143,13 @@ class _FakeDirectoryDB:
     def flush(self) -> None:
         return None
 
+    def begin_nested(self):
+        """建群走"SAVEPOINT 内插入、撞唯一键就回读"的统一入口,替身只需要一个什么都不做的上下文管理器。"""
+
+        from contextlib import nullcontext
+
+        return nullcontext()
+
 
 def test_persist_directory_result_reads_group_id_and_nick_name() -> None:
     """groups_all 的群 ID 在 account_id、群名在 nick_name，不能因字段名不同而整条丢弃。"""

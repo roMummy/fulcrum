@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Chatroom, ChatroomMember, TaskJob
+from app.services.chatroom_directory import get_or_create_chatroom, get_or_create_member
 from app.services.task_queue import parse_job_payload
 from app.services.wechat_webridge import service, wakeup
 
@@ -135,16 +136,11 @@ def apply_event(db: Session, channel: Channel, normalized: dict[str, Any], conve
     parsed = parse_member_change(normalized)
     if not parsed:
         return
-    room = find_room(db, channel, conversation.external_id)
     now = now_shanghai()
-    if room is None:
-        room = Chatroom(
-            tenant_id=channel.tenant_id, bot_id=channel.bot_id, channel_id=channel.id,
-            external_id=conversation.external_id, name=conversation.title or conversation.external_id,
-            status="pending_sync", is_active=True, management_status="enabled", first_seen_at=now,
-        )
-        db.add(room)
-        db.flush()
+    room, _created = get_or_create_chatroom(
+        db, channel, conversation.external_id, name=conversation.title or conversation.external_id,
+        status="pending_sync", is_active=True, management_status="enabled", first_seen_at=now,
+    )
     if room.management_status == "archived":
         return
     details = normalized.setdefault("details", {})
@@ -168,12 +164,9 @@ def apply_event(db: Session, channel: Channel, normalized: dict[str, Any], conve
             continue
         was_active = member is not None and member.status == "active"
         if member is None:
-            member = ChatroomMember(
-                tenant_id=channel.tenant_id, chatroom_id=room.id, bot_id=channel.bot_id,
-                channel_id=channel.id, member_external_id=item["external_id"],
-                nickname=item["display_name"], status="active",
+            member, _member_created = get_or_create_member(
+                db, channel, room, item["external_id"], nickname=item["display_name"], status="active",
             )
-            db.add(member)
         profile = service.as_object(details.get("member_profile"))
         if profile.get("nickname"):
             member.nickname = str(profile["nickname"])[:255]

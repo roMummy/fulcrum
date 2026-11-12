@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember
+from app.models.entities import Channel
+from app.services.chatroom_directory import get_or_create_chatroom, get_or_create_member
 from app.services.wechat_webridge import member_directory as directory
 from app.services.wechat_webridge import service
 
@@ -37,16 +37,12 @@ def observe_message(db: Session, channel: Channel, normalized: dict[str, Any], c
         return
     from app.services.channel_events import _resolve_event_time
 
-    room = directory.find_room(db, channel, conversation.external_id)
     now = now_shanghai()
-    if room is None:
-        room = Chatroom(
-            tenant_id=channel.tenant_id, bot_id=channel.bot_id, channel_id=channel.id,
-            external_id=conversation.external_id, name=conversation.title or conversation.external_id,
-            status="pending_sync", is_active=True, management_status="enabled", first_seen_at=now,
-        )
-        db.add(room)
-        db.flush()
+    # 并发的首批消息只会有一个真正建群,其余回读同一条(数据库唯一约束兜底)
+    room, _created = get_or_create_chatroom(
+        db, channel, conversation.external_id, name=conversation.title or conversation.external_id,
+        status="pending_sync", is_active=True, management_status="enabled", first_seen_at=now,
+    )
     if room.management_status == "archived" or room.status == "left":
         return
     room.last_seen_at = now
@@ -55,17 +51,9 @@ def observe_message(db: Session, channel: Channel, normalized: dict[str, Any], c
     missing_sender = False
     membership_changed = False
     if sender_id and sender_id != room.external_id:
-        member = db.scalar(select(ChatroomMember).where(
-            ChatroomMember.tenant_id == channel.tenant_id, ChatroomMember.chatroom_id == room.id,
-            ChatroomMember.member_external_id == sender_id,
-        ))
-        missing_sender = member is None
-        if member is None:
-            member = ChatroomMember(
-                tenant_id=channel.tenant_id, bot_id=channel.bot_id, channel_id=channel.id,
-                chatroom_id=room.id, member_external_id=sender_id, status="active",
-            )
-            db.add(member)
+        member, member_created = get_or_create_member(db, channel, room, sender_id, status="active")
+        missing_sender = member_created
+        if member_created:
             membership_changed = True
         member_state = service.as_object(directory.extra_object(member.extra_json).get(directory.STATE_KEY))
         missing_sender = missing_sender or member.status != "active" or bool(member_state.get("observed_only")) or not member.nickname or member.nickname == sender_id

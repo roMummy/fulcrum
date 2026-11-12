@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
 from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
+from app.services.chatroom_directory import get_or_create_chatroom
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
 from app.services.plugin_runtime.registry import get_plugin_schema
@@ -42,21 +43,7 @@ def sync_wechat_winauto_chatroom_from_message(
         or chatroom_external_id
     ).strip() or chatroom_external_id
     synced_at = _resolve_synced_at((normalized.get("details") or {}).get("timestamp"))
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == chatroom_external_id)
-    )
-    chatroom_created = False
-    if not chatroom:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=chatroom_external_id,
-            name=chatroom_name,
-            status="message_observed",
-        )
-        db.add(chatroom)
-        db.flush()
-        chatroom_created = True
+    chatroom, chatroom_created = get_or_create_chatroom(db, channel, chatroom_external_id, name=chatroom_name, status="message_observed")
     mark_chatroom_discovered(
         db,
         channel=channel,
@@ -111,21 +98,9 @@ def sync_wechat_winauto_chatrooms(db: Session, channel: Channel) -> dict[str, An
         external_id = str(conversation.external_id or "").strip()
         if not external_id:
             continue
-        chatroom = db.scalar(
-            select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id)
-        )
-        chatroom_created = False
-        if not chatroom:
-            chatroom = Chatroom(
-                bot_id=channel.bot_id,
-                channel_id=channel.id,
-                external_id=external_id,
-                status="message_observed",
-            )
-            db.add(chatroom)
-            db.flush()
+        chatroom, chatroom_created = get_or_create_chatroom(db, channel, external_id, status="message_observed")
+        if chatroom_created:
             created_count += 1
-            chatroom_created = True
         else:
             updated_count += 1
         observed_at = conversation.last_message_at or conversation.created_at or now_shanghai()

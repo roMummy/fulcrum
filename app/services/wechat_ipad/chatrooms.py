@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
 from app.services.plugin_scopes import binding_group_default_enabled
+from app.services.chatroom_directory import get_or_create_chatroom
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope
 from app.services.chatroom_registry import mark_chatroom_discovered
 from app.services.wechat_ipad.cache import remember_chatroom, remember_chatroom_members, remember_member
@@ -33,20 +34,7 @@ def sync_wechat_ipad_chatroom_from_message(
         return {"chatroom_created": False, "member_created": False, "chatroom_id": "", "member_external_id": ""}
 
     synced_at = _resolve_synced_at(details.get("timestamp"))
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == chatroom_external_id)
-    )
-    chatroom_created = False
-    if not chatroom:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=chatroom_external_id,
-            status="message_observed",
-        )
-        db.add(chatroom)
-        db.flush()
-        chatroom_created = True
+    chatroom, chatroom_created = get_or_create_chatroom(db, channel, chatroom_external_id, status="message_observed")
     remember_chatroom(channel.id, chatroom_external_id)
     mark_chatroom_discovered(
         db,
@@ -146,20 +134,7 @@ def upsert_wechat_ipad_chatroom_profile(
         raise ValueError("chatroom_external_id is required")
 
     resolved_synced_at = synced_at or now_shanghai()
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == normalized_chatroom_id)
-    )
-    chatroom_created = False
-    if not chatroom:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=normalized_chatroom_id,
-            status="pending_sync",
-        )
-        db.add(chatroom)
-        db.flush()
-        chatroom_created = True
+    chatroom, chatroom_created = get_or_create_chatroom(db, channel, normalized_chatroom_id, status="pending_sync")
     remember_chatroom(channel.id, chatroom_external_id)
     mark_chatroom_discovered(
         db,

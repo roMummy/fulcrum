@@ -129,3 +129,5 @@ tests/test_plugin_guess_image.py
 tests/test_guess_image_pages.py
 tests/test_safe_fetch.py
 tests/test_guga_agent_security.py
+tests/test_chatroom_unique_constraints.py
+tests/test_channel_chatroom_creation.py

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.services.chatroom_directory import get_or_create_chatroom
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation
 from app.services.chatroom_registry import mark_chatroom_discovered
 from app.services.wechat_gugatool_directory import (
@@ -53,21 +54,10 @@ def sync_wechat_gugatool_chatroom_from_message(
     roster = cached_group(int(channel.id), external_id) or {}
     roster_members = roster.get("members") if isinstance(roster.get("members"), dict) else {}
 
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id)
+    chatroom, created = get_or_create_chatroom(
+        db, channel, external_id, status="message_observed",
+        name=_resolve_chatroom_name(roster, conversation_payload, conversation, external_id),
     )
-    created = False
-    if chatroom is None:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=external_id,
-            status="message_observed",
-            name=_resolve_chatroom_name(roster, conversation_payload, conversation, external_id),
-        )
-        db.add(chatroom)
-        db.flush()
-        created = True
 
     # 新建的群、或还没落过名册的群，整体写一次成员；之后每条消息只更新发送者。
     previous_extra = _parse_json(chatroom.extra_json)
@@ -178,21 +168,7 @@ def apply_wechat_gugatool_roster_result(
     finish_group_refresh(int(channel.id), room)
 
     seen_at = now_shanghai()
-    chatroom = db.scalar(
-        select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == room)
-    )
-    created = False
-    if chatroom is None:
-        chatroom = Chatroom(
-            bot_id=channel.bot_id,
-            channel_id=channel.id,
-            external_id=room,
-            status="message_observed",
-            name=title or room,
-        )
-        db.add(chatroom)
-        db.flush()
-        created = True
+    chatroom, created = get_or_create_chatroom(db, channel, room, status="message_observed", name=title or room)
     if title:
         chatroom.name = title[:255]
     chatroom.last_synced_at = seen_at

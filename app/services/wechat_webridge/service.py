@@ -215,12 +215,11 @@ def persist_directory_result(
             external_id = _directory_id(item, "account_id", "room_id", "chatroom_id", "user_name", "wxid", "id")
             if not external_id:
                 continue
-            room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id).with_for_update().execution_options(populate_existing=True))
-            if room is None:
-                # 新发现的群默认启用;已存在的群保持后台设置的启用状态,
-                # 同步群列表不能把手动停用的群重新打开。
-                room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now, is_active=True, management_status="enabled")
-                db.add(room)
+            # 新发现的群默认启用;已存在的群保持后台设置的启用状态,
+            # 同步群列表不能把手动停用的群重新打开。并发的消息驱动建群与群列表同步共用同一个"查或建"。
+            from app.services.chatroom_directory import get_or_create_chatroom
+
+            room, _created = get_or_create_chatroom(db, channel, external_id, first_seen_at=now, is_active=True, management_status="enabled")
             # 之前被标记为已退出的群又出现在列表里:恢复退群前的启用状态。
             from app.services.wechat_webridge import group_sync
 
