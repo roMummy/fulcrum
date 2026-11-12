@@ -77,7 +77,7 @@
     groupOf(input).forEach(function (item) { item.checked = item.dataset.autosaveWas === "1"; });
   }
 
-  function onChange(event) {
+  async function onChange(event) {
     var input = event.target;
     if (!(input instanceof HTMLInputElement) || !input.dataset.autosaveUrl) return;
     var request = buildRequest(input);
@@ -85,9 +85,19 @@
     holders.forEach(function (item) { item.disabled = true; });
     var wrapper = input.closest(".ui-switch");
     if (wrapper) wrapper.classList.add("is-busy");
+    // 首次绑定才询问，普通启停继续沿用已保存的群范围。
+    if (input.dataset.pluginBinding === "new" && input.checked) {
+      request.data.group_default_enabled = window.appDialog ? await window.appDialog.confirm({
+        title: "是否对所有群开放？",
+        message: "选“是”后，此插件将对该机器人的所有群开放，包括以后同步的新群。选“否”后仅绑定插件，再到群管理中选择需要启用的群。群本身也需要处于正常运行状态。",
+        confirmText: "是，对所有群开放",
+        cancelText: "否，稍后选择群聊"
+      }) : false;
+    }
     post(input.dataset.autosaveUrl, request.data, request.asJson)
       .then(function (result) {
         if (result.ok) {
+          if (result.payload.is_bound && input.dataset.pluginBinding) input.dataset.pluginBinding = "bound";
           remember(input);
           toast(result.payload.notice || "已保存", "success");
           input.dispatchEvent(new CustomEvent("autosave:done", { bubbles: true, detail: { response: result.payload, checked: input.checked } }));

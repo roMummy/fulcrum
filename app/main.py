@@ -76,6 +76,7 @@ from app.services.crud import (
     get_bot,
     get_channel,
     toggle_binding,
+    unbind_plugin,
     toggle_bot,
     toggle_channel,
     update_binding_config,
@@ -168,7 +169,8 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_config_override,
     update_wechat_winauto_chatroom_scope_enabled,
 )
-from app.services.directory_pages import build_chatroom_directory, build_contact_directory, channel_options
+from app.services.directory_pages import build_chatroom_directory, build_chatroom_plugin_directory, build_contact_directory, channel_options, chatroom_plugin_options
+from app.services.wechat_ipad.chatrooms import update_group_plugin_scope_enabled
 from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
@@ -495,7 +497,7 @@ def filtered_channels_query(db: Session):
 
 
 def filtered_bindings_query(db: Session):
-    return db.scalars(select(BotPlugin).order_by(BotPlugin.id.desc())).all()
+    return db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound").order_by(BotPlugin.id.desc())).all()
 
 
 def render(request: Request, template: str, **context):
@@ -1059,7 +1061,7 @@ def build_plugin_toggle_matrix(
     bindings: list[BotPlugin],
     plugin_runtime_map: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
-    binding_map = {(binding.bot_id, binding.plugin_id): binding for binding in bindings}
+    binding_map = {(binding.bot_id, binding.plugin_id): binding for binding in bindings if binding.status != "unbound"}
     # 插件开关是实际业务入口，只展示已经验证可执行的目录插件。损坏 manifest
     # 或缺少真实入口的镜像仍留在下方诊断清单，但不能被租户绑定或启用。
     executable_plugins = [
@@ -1075,7 +1077,7 @@ def build_plugin_toggle_matrix(
         for plugin in executable_plugins:
             runtime_info = plugin_runtime_map.get(plugin.code, {})
             binding = binding_map.get((bot.id, plugin.id))
-            is_enabled = str(binding.status or "").strip() == "enabled" if binding else bool(plugin.default_enabled)
+            is_enabled = bool(binding and str(binding.status or "").strip() == "enabled")
             if is_enabled:
                 enabled_count += 1
             plugin_items.append(
@@ -1568,7 +1570,7 @@ async def bot_detail_page(request: Request, bot_id: int, return_to: str = ""):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
         channels = db.scalars(select(Channel).where(Channel.bot_id == bot_id, Channel.deleted_at.is_(None)).order_by(Channel.id.desc())).all()
-        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == bot_id).order_by(BotPlugin.id.desc())).all()
+        bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.desc())).all()
         conversation_count = db.scalar(select(func.count(Conversation.id)).where(Conversation.bot_id == bot_id)) or 0
         return render(
             request,
@@ -2471,6 +2473,102 @@ async def chatroom_directory_page(request: Request, q: str = "", channel_id: int
             pager_base=_directory_pager_base("/chatrooms", q=directory["keyword"], channel_id=channel_id, status=directory["status"]),
             notice=request.query_params.get("notice", ""),
         )
+    finally:
+        db.close()
+
+
+@app.get("/chatrooms/plugin-scopes", response_class=HTMLResponse)
+async def chatroom_plugin_scopes_page(request: Request, plugin_id: int = 0, q: str = "", channel_id: int = 0, scope_status: str = "", scope_source: str = "", page: int = 1):
+    user = enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        directory = build_chatroom_plugin_directory(db, tenant_id=user.tenant_id, plugin_id=plugin_id, keyword=q, channel_id=channel_id, scope_status=scope_status, scope_source=scope_source, page=page)
+        if plugin_id and directory["plugin"] is None:
+            raise HTTPException(status_code=404, detail="插件未绑定或当前不可用")
+        return render(
+            request,
+            "chatroom_plugin_scopes.html",
+            page_title="群插件批量管理",
+            directory=directory,
+            tenant_id=user.tenant_id,
+            pager_base=_directory_pager_base("/chatrooms/plugin-scopes", plugin_id=plugin_id, q=directory["keyword"], channel_id=channel_id, scope_status=directory["status"], scope_source=directory["source"]),
+            selection_cleared=request.query_params.get("selection_cleared") == "1",
+            notice=request.query_params.get("notice", ""),
+        )
+    finally:
+        db.close()
+
+
+@app.post("/chatrooms/plugins/batch")
+async def batch_chatroom_plugin_scope_action(
+    request: Request,
+    plugin_id: int = Form(...),
+    chatroom_ids: list[int] = Form(...),
+    mode: str = Form(...),
+    csrf_token: str = Form(""),
+    next: str = Form(""),
+):
+    """只调整所选群内的一个插件，不打开群总开关或机器人插件总开关。"""
+
+    user = enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
+        if mode not in {"enabled", "disabled"}:
+            raise HTTPException(status_code=400, detail="请选择启用或禁用")
+        room_ids = set(chatroom_ids)
+        if not room_ids or len(room_ids) > 1000:
+            raise HTTPException(status_code=400, detail="请选择 1 至 1000 个群聊，可跨页选择")
+        option = {item["id"]: item for item in chatroom_plugin_options(db, user.tenant_id)}.get(plugin_id)
+        if option is None:
+            raise HTTPException(status_code=404, detail="插件未绑定或当前不可用")
+        rooms = db.scalars(select(Chatroom).where(Chatroom.id.in_(room_ids))).all()
+        if len(rooms) != len(room_ids):
+            raise HTTPException(status_code=404, detail="所选群聊不存在或不属于当前企业")
+        channels = {int(item.id): item for item in db.scalars(select(Channel).where(Channel.id.in_({room.channel_id for room in rooms}))).all()}
+        bindings = {
+            int(item.bot_id): item
+            for item in db.scalars(select(BotPlugin).where(BotPlugin.plugin_id == plugin_id, BotPlugin.status != "unbound")).all()
+        }
+        # 整批验证通过后才修改，避免遇到未绑定或跨账号的群时只保存了前半批。
+        for room in rooms:
+            channel = channels.get(int(room.channel_id))
+            binding = bindings.get(int(room.bot_id))
+            if (
+                not channel or channel.deleted_at is not None
+                or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES
+                or channel.bot_id != room.bot_id
+                or room.tenant_id != user.tenant_id or channel.tenant_id != user.tenant_id
+                or room.status == "left" or binding is None
+                or binding.tenant_id != user.tenant_id or room.bot_id not in option["bot_ids"]
+            ):
+                raise HTTPException(status_code=400, detail="所选群包含未绑定该插件、已退出或不可操作的群，请重新选择")
+        for room in rooms:
+            update_group_plugin_scope_enabled(
+                db,
+                channel=channels[int(room.channel_id)],
+                chatroom=room,
+                bot_plugin_id=bindings[int(room.bot_id)].id,
+                enabled=mode == "enabled",
+                operator_id=user.user_id,
+                audit_note="群管理批量启用插件" if mode == "enabled" else "群管理批量禁用插件",
+                source="group_scope_batch_toggle",
+            )
+        db.commit()
+        record_audit(db, "chatroom.plugin-scope.batch", "plugin", plugin_id, f"mode={mode}, chatrooms={','.join(str(item) for item in sorted(room_ids))}, operator={user.username}")
+        verb = "启用" if mode == "enabled" else "禁用"
+        message = f"已在 {len(rooms)} 个群聊中{verb}「{option['name']}」"
+        if mode == "enabled":
+            message += "；群聊和机器人上的插件总开关均开启后才会运行"
+        target = urlsplit(str(next or ""))
+        location = f"/chatrooms/plugin-scopes?{target.query}&" if target.path == "/chatrooms/plugin-scopes" and not target.netloc and not target.scheme else f"/chatrooms/plugin-scopes?plugin_id={plugin_id}&"
+        redirect_url = f"{location}selection_cleared=1&notice={quote(message)}"
+        if request.headers.get("X-Requested-With") == "fetch":
+            return JSONResponse({"ok": True, "notice": message, "count": len(rooms), "redirect_url": redirect_url})
+        return RedirectResponse(url=redirect_url, status_code=303)
+    except (HTTPException, ValueError):
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -4027,7 +4125,7 @@ async def plugins_page(request: Request):
         visible_plugin_ids = {plugin.id for plugin in plugins}
         bindings = [
             item
-            for item in db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+            for item in db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound", BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
             if item.plugin_id in visible_plugin_ids
         ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
@@ -4110,7 +4208,7 @@ async def plugin_runtime_page(request: Request):
         visible_plugin_ids = {plugin.id for plugin in plugins}
         bindings = [
             item
-            for item in db.scalars(select(BotPlugin).where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+            for item in db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound", BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
             if item.plugin_id in visible_plugin_ids
         ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
@@ -4139,7 +4237,7 @@ async def plugin_detail_page(request: Request, plugin_id: int):
     try:
         sync_plugins_from_directory(db)
         plugin = _get_tenant_usable_plugin(db, plugin_id)
-        bindings = db.scalars(select(BotPlugin).where(BotPlugin.plugin_id == plugin_id, BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
+        bindings = db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound", BotPlugin.plugin_id == plugin_id, BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
         for binding in bindings:
@@ -4154,6 +4252,7 @@ async def plugin_detail_page(request: Request, plugin_id: int):
             plugin_config_view=build_plugin_config_view(plugin.code, None),
             plugin_runtime_info=get_plugin_runtime_meta(plugin.code),
             bots=bots,
+            bindable_bots=[bot for bot in bots if bot.id not in {binding.bot_id for binding in bindings}],
             bot_name_map=bot_name_map,
             runtime_summary=build_plugin_runtime_summary([plugin], bindings),
             notice=request.query_params.get("notice", ""),
@@ -4200,6 +4299,7 @@ async def bind_plugin_action(
     plugin_id: int = Form(...),
     status: str = Form("enabled"),
     config_json: str = Form(""),
+    group_default_enabled: bool = Form(False),
     csrf_token: str = Form(""),
 ):
     enforce_role(request, "ops")
@@ -4207,6 +4307,8 @@ async def bind_plugin_action(
     try:
         require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         plugin = _get_tenant_usable_plugin(db, plugin_id)
+        if get_bot(db, bot_id) is None:
+            raise HTTPException(status_code=404, detail="机器人不存在")
         form = await request.form()
         merged_config = merge_schema_config(
             plugin.code,
@@ -4218,6 +4320,7 @@ async def bind_plugin_action(
             plugin_id=plugin_id,
             status=status,
             config_json=merged_config.config_json,
+            group_default_enabled=group_default_enabled,
         )
         binding = bind_plugin(
             db,
@@ -4227,6 +4330,23 @@ async def bind_plugin_action(
         )
         record_audit(db, "plugin.bind", "bot_plugin", binding.id, f"bot={binding.bot_id}, plugin={binding.plugin_id}")
         return RedirectResponse(url=f"/plugins/{plugin_id}?notice=" + quote("插件绑定已保存"), status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/plugins/{binding_id}/unbind")
+async def unbind_plugin_action(request: Request, binding_id: int, csrf_token: str = Form("")):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
+        binding = get_binding(db, binding_id)
+        if binding is None:
+            raise HTTPException(status_code=404, detail="插件绑定不存在")
+        plugin_id = binding.plugin_id
+        unbind_plugin(db, binding)
+        record_audit(db, "plugin.unbind", "bot_plugin", binding_id, f"bot={binding.bot_id}, plugin={plugin_id}")
+        return RedirectResponse(url=f"/plugins/{plugin_id}?notice=" + quote("插件已从机器人解绑，历史数据和配置已保留"), status_code=303)
     finally:
         db.close()
 
@@ -4258,6 +4378,7 @@ async def toggle_plugin_direct_action(
     bot_id: int = Form(...),
     plugin_id: int = Form(...),
     enabled: bool = Form(...),
+    group_default_enabled: bool = Form(False),
     csrf_token: str = Form(""),
 ):
     """插件页里按机器人启停插件的开关:点击即保存,提交目标状态(幂等),返回 JSON 供页面脚本更新状态标签并弹出提示。
@@ -4276,13 +4397,15 @@ async def toggle_plugin_direct_action(
         if enabled and plugin.code in blocked_plugin_codes(db, _current_tenant_id()):
             raise HTTPException(status_code=403, detail="该插件已被平台停用或对当前租户不可用")
         binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
-        if binding:
+        if binding and binding.status != "unbound":
             if (binding.status == "enabled") != enabled:
                 toggle_binding(db, binding)
                 record_audit(db, "plugin.toggle-direct", "bot_plugin", binding.id, f"status={binding.status}")
         elif enabled:
-            binding = bind_plugin(db, BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status="enabled", config_json=None))
+            binding = bind_plugin(db, BotPluginBindCreate(bot_id=bot_id, plugin_id=plugin_id, status="enabled", config_json=binding.config_json if binding else None, group_default_enabled=group_default_enabled))
             record_audit(db, "plugin.toggle-direct", "bot_plugin", binding.id, "created=enabled")
+        elif binding and binding.status == "unbound":
+            binding = None
         is_enabled = bool(binding and str(binding.status or "").strip() == "enabled")
         enabled_count = db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == bot_id, BotPlugin.status == "enabled")) or 0
         total_count = db.scalar(select(func.count(Plugin.id))) or 0

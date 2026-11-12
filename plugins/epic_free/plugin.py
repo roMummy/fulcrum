@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.services.plugin_scopes import group_plugin_scope_enabled
 from app.models.entities import (
     BotPlugin,
     Channel,
@@ -37,7 +38,7 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 )
-MANAGED_GROUP_CHANNEL_TYPES = {"wechat_ipad", "wechat_winauto", "workwechat"}
+MANAGED_GROUP_CHANNEL_TYPES = {"wechat_ipad", "wechat_winauto", "workwechat", "wechat_webridge"}
 LOCALE_PATTERN = re.compile(r"^[A-Za-z]{2,3}-[A-Za-z]{2}$")
 COUNTRY_PATTERN = re.compile(r"^[A-Za-z]{2}$")
 logger = get_logger(__name__)
@@ -275,6 +276,7 @@ def _resolve_target_conversations(
         channel = db.get(Channel, int(conversation.channel_id or 0))
         if channel is None or int(channel.bot_id) != int(binding.bot_id) or not channel.is_enabled:
             continue
+        scope = None
         if str(channel.channel_type or "").strip() in MANAGED_GROUP_CHANNEL_TYPES:
             chatroom = db.scalar(
                 select(Chatroom).where(
@@ -292,8 +294,8 @@ def _resolve_target_conversations(
                         GroupPluginScope.bot_plugin_id == int(binding.id),
                     )
                 )
-                if scope is not None and not bool(scope.enabled):
-                    continue
+        if not group_plugin_scope_enabled(binding, scope):
+            continue
         resolved.append(conversation)
     return resolved
 

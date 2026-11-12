@@ -13,6 +13,7 @@ from app.core.time import SHANGHAI_TZ, now_shanghai
 from app.models.entities import Channel, Chatroom, Conversation, Message, MessageAttachment, TaskJob
 from app.models.saas import ProviderNodeAccount
 from app.services.open_webhooks import dispatch_open_message_event, dispatch_open_send_result_event
+from app.services.plugin_scopes import cancel_disallowed_plugin_outbound_job
 from app.services.task_queue import (
     OUTBOUND_DISPATCH_JOB,
     WORKWECHAT_CLOUD_CONTROL_JOB,
@@ -115,6 +116,8 @@ def claim_cloud_jobs(db: Session, channel: Channel, *, batch_size: int = DEFAULT
             continue
         conversation = None
         if str(job.job_type or "") == WORKWECHAT_CLOUD_OUTBOUND_JOB:
+            if cancel_disallowed_plugin_outbound_job(db, channel=channel, job=job, payload=payload):
+                continue
             conversation = db.get(Conversation, int(payload.get("conversation_id") or 0))
             if not conversation:
                 continue
@@ -171,6 +174,8 @@ def claim_provider_node_jobs(
             continue
         conversation = None
         if str(job.job_type or "") == WORKWECHAT_CLOUD_OUTBOUND_JOB:
+            if cancel_disallowed_plugin_outbound_job(db, channel=channel, job=job, payload=payload):
+                continue
             conversation = db.get(Conversation, int(payload.get("conversation_id") or 0))
             if conversation is None:
                 continue

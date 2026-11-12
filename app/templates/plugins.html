@@ -64,7 +64,7 @@
           {# 启停开关:点击即保存,提示由 switches.js 弹出;状态标签与"当前启用 n / m"由页面底部的小脚本同步。 #}
           <label class="plugin-switch-row">
             <span class="ui-switch">
-              <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin_name }}" data-autosave-url="/plugins/toggle-direct" data-autosave-key="enabled" data-autosave-form='{"bot_id": "{{ row.bot_id }}", "plugin_id": "{{ item.plugin_id }}"}'{% if item.is_enabled %} checked{% endif %} />
+              <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin_name }}" data-plugin-binding="{{ 'bound' if item.is_bound else 'new' }}" data-autosave-url="/plugins/toggle-direct" data-autosave-key="enabled" data-autosave-form='{"bot_id": "{{ row.bot_id }}", "plugin_id": "{{ item.plugin_id }}"}'{% if item.is_enabled %} checked{% endif %} />
               <span class="ui-switch-track"></span>
             </span>
           </label>

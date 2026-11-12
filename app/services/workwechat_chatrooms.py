@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
+from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, Message, TaskJob
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
@@ -327,7 +328,7 @@ def build_workwechat_chatroom_list(db: Session, channel: Channel) -> dict[str, A
         .where(Chatroom.channel_id == channel.id)
         .order_by(Chatroom.last_synced_at.desc(), Chatroom.id.desc())
     ).all()
-    bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id).order_by(BotPlugin.id.asc())).all()
+    bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())).all()
     scope_rows = db.scalars(
         select(GroupPluginScope)
         .where(GroupPluginScope.channel_id == channel.id)
@@ -408,7 +409,7 @@ def build_workwechat_chatroom_list(db: Session, channel: Channel) -> dict[str, A
 def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
     # 详情页组合群资料、成员快照、群消息流水和群级插件作用域，保持和 wechat 渠道页面结构一致。
     _materialize_chatrooms_from_conversations(db, channel)
-    bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id).order_by(BotPlugin.id.asc())).all()
+    bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())).all()
     members = db.scalars(
         select(ChatroomMember)
         .where(ChatroomMember.chatroom_id == chatroom.id)
@@ -878,7 +879,7 @@ def _build_binding_items(bindings: list[BotPlugin], scope_rows: list[GroupPlugin
         enabled_binding_count += 1 if binding_enabled else 0
         scope = scope_map.get(binding.id)
         scope_status = str(getattr(scope, "scope_status", "") or "inherited")
-        scope_enabled = bool(getattr(scope, "enabled", binding_enabled))
+        scope_enabled = group_plugin_scope_enabled(binding, scope)
         inherited_scope_count += 1 if scope_status == "inherited" else 0
         overridden_scope_count += 0 if scope_status == "inherited" else 1
         effective_enabled_count += 1 if scope_enabled else 0
@@ -980,7 +981,7 @@ def _count_effective_enabled_bindings(bindings: list[BotPlugin], binding_enabled
         scope = scope_map.get(binding.id)
         if scope is not None:
             count += 1 if bool(scope.enabled) else 0
-        elif binding_enabled_map.get(binding.id):
+        elif binding_group_default_enabled(binding):
             count += 1
     return count
 

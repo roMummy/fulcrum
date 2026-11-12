@@ -16,6 +16,7 @@ from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, Message, TaskJob, WebridgeDeviceSample, WorkWechatContact
 from app.services import payment_ledger
 from app.services.identity_directory import looks_like_raw_id
+from app.services.plugin_scopes import cancel_disallowed_plugin_outbound_job
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
 from app.core.logging import get_logger
 
@@ -709,6 +710,8 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
             continue
         # 待确认账号只允许读取基础资料，业务命令需在用户确认后才下发。
         if channel.is_enabled is False and text(as_object(data.get("command")).get("type")) not in {"account_status", "device_status"}:
+            continue
+        if cancel_disallowed_plugin_outbound_job(db, channel=channel, job=job, payload=data):
             continue
         job.status = "running"
         job.attempts = int(job.attempts or 0) + 1

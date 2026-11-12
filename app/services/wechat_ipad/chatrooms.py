@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
+from app.services.plugin_scopes import binding_group_default_enabled
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope
 from app.services.chatroom_registry import mark_chatroom_discovered
 from app.services.wechat_ipad.cache import remember_chatroom, remember_chatroom_members, remember_member
@@ -225,7 +226,7 @@ def materialize_group_plugin_scopes_for_chatroom(
     source: str = "group_scope_materialized",
 ) -> list[GroupPluginScope]:
     bindings = db.scalars(
-        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id).order_by(BotPlugin.id.asc())
+        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())
     ).all()
     existing_scopes = db.scalars(
         select(GroupPluginScope).where(
@@ -245,7 +246,7 @@ def materialize_group_plugin_scopes_for_chatroom(
             )
             db.add(scope)
             scope.scope_status = "inherited"
-            scope.enabled = str(binding.status or "").strip() == "enabled"
+            scope.enabled = binding_group_default_enabled(binding)
             scope.action_scope = "all"
             scope.audit_note = "auto materialized from bot_plugin binding"
             scope.extra_json = json.dumps(
@@ -275,7 +276,7 @@ def update_group_plugin_scope_enabled(
     source: str = "group_scope_manual_toggle",
 ) -> GroupPluginScope:
     binding = db.get(BotPlugin, bot_plugin_id)
-    if not binding or binding.bot_id != channel.bot_id:
+    if not binding or binding.bot_id != channel.bot_id or binding.status == "unbound":
         raise ValueError("bot_plugin binding not found for channel bot")
 
     scope = _ensure_group_plugin_scope(
@@ -322,7 +323,7 @@ def reset_group_plugin_scope_to_inherited(
     source: str = "group_scope_reset_to_inherited",
 ) -> GroupPluginScope:
     binding = db.get(BotPlugin, bot_plugin_id)
-    if not binding or binding.bot_id != channel.bot_id:
+    if not binding or binding.bot_id != channel.bot_id or binding.status == "unbound":
         raise ValueError("bot_plugin binding not found for channel bot")
 
     scope = _ensure_group_plugin_scope(
@@ -333,7 +334,7 @@ def reset_group_plugin_scope_to_inherited(
         source=source,
     )
     scope.scope_status = "inherited"
-    scope.enabled = str(binding.status or "").strip() == "enabled"
+    scope.enabled = binding_group_default_enabled(binding)
     scope.action_scope = scope.action_scope or "all"
     scope.policy_effect = None
     scope.config_override_json = None
@@ -366,7 +367,7 @@ def update_group_plugin_scope_config_override(
     source: str = "group_scope_config_override",
 ) -> GroupPluginScope:
     binding = db.get(BotPlugin, bot_plugin_id)
-    if not binding or binding.bot_id != channel.bot_id:
+    if not binding or binding.bot_id != channel.bot_id or binding.status == "unbound":
         raise ValueError("bot_plugin binding not found for channel bot")
 
     scope = _ensure_group_plugin_scope(
@@ -378,7 +379,7 @@ def update_group_plugin_scope_config_override(
     )
     previous_status = str(scope.scope_status or "inherited")
     normalized_override = str(config_override_json or "").strip() or None
-    binding_enabled = str(binding.status or "").strip() == "enabled"
+    binding_enabled = binding_group_default_enabled(binding)
     has_enable_override = bool(scope.enabled) != binding_enabled
     scope.scope_status = "overridden" if normalized_override is not None or has_enable_override else "inherited"
     if previous_status == "inherited":
@@ -437,7 +438,7 @@ def _ensure_group_plugin_scope(
         chatroom_id=chatroom.id,
         bot_plugin_id=binding.id,
         scope_status="inherited",
-        enabled=str(binding.status or "").strip() == "enabled",
+        enabled=binding_group_default_enabled(binding),
         action_scope="all",
     )
     db.add(scope)

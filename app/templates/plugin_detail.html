@@ -6,7 +6,7 @@
   {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
   <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">进入业务后台</a>
   {% endif %}
-  {% if plugin_runtime_info.supports_execution %}
+  {% if plugin_runtime_info.supports_execution and bindable_bots %}
   <button class="btn" type="button" data-modal-open="create-plugin-binding-modal">绑定到机器人</button>
   {% endif %}
   <a class="btn btn-secondary" href="/plugins/runtime">查看全部运行状态</a>
@@ -81,6 +81,7 @@
           {% endwith %}
         </div>
         <div class="plugin-binding-info">
+          <p class="muted-text">群默认范围：{{ '对所有群开放' if item.group_default_enabled else '仅对单独启用的群开放' }}。可到<a href="/chatrooms/plugin-scopes?plugin_id={{ plugin.id }}">群插件批量管理</a>查看和调整群聊。</p>
           <p class="muted-text">最近执行：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}　{{ card.runtime_view.last_execution_summary or '' }}</p>
           <p class="muted-text">最近调度：{{ dispatch_view.status or '-' }}{% if dispatch_view.message %}　{{ dispatch_view.message }}{% endif %}　最近重载：{{ item.last_reload_at|bj_time if item.last_reload_at else '-' }}</p>
         </div>
@@ -89,12 +90,16 @@
         <button class="btn" type="submit">保存</button>
         {# 重载是另一个表单(HTML 不允许表单嵌套),用 form 属性让这个按钮提交它。 #}
         <button class="btn btn-secondary" type="submit" form="reload-binding-{{ item.id }}">重载</button>
+        <button class="btn btn-danger" type="submit" form="unbind-binding-{{ item.id }}">解绑机器人</button>
       </footer>
     </div>
   </form>
   <form id="reload-binding-{{ item.id }}" method="post" action="/plugins/{{ item.id }}/reload" hidden>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <input type="hidden" name="next" value="/plugins/{{ plugin.id }}" />
+  </form>
+  <form id="unbind-binding-{{ item.id }}" method="post" action="/plugins/{{ item.id }}/unbind" hidden data-confirm-mode="confirm" data-confirm-title="解绑机器人？" data-confirm-message="解绑后，此机器人将停止运行该插件，并清除该绑定的群启用设置。历史数据和配置会保留；已经下发的消息无法撤回。" data-confirm-tone="danger" data-confirm-confirm-text="确认解绑">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   </form>
   {% endfor %}
   </div>
@@ -114,8 +119,9 @@
     <form method="post" action="/plugins/bind" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="plugin_id" value="{{ plugin.id }}" />
-      <label><span>机器人</span><select name="bot_id" required>{% for bot in bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
+      <label><span>机器人</span><select name="bot_id" required>{% for bot in bindable_bots %}<option value="{{ bot.id }}">{{ bot.name }} (#{{ bot.id }})</option>{% endfor %}</select></label>
       <label class="gf-row switch-field"><span class="gf-row-label">启用</span><span class="ui-switch"><input type="hidden" name="status" value="disabled" /><input type="checkbox" name="status" value="enabled" role="switch" checked /><span class="ui-switch-track"></span></span></label>
+      <label class="full-row"><span>首次绑定后，是否对所有群开放？</span><select name="group_default_enabled" required><option value="" selected disabled>请选择群开放范围</option><option value="false">否，稍后在群管理中选择群聊</option><option value="true">是，对所有群开放</option></select><small class="muted-text">选“是”会沿用当前全群开放的方式，并包括以后同步的新群；群本身也需要处于正常运行状态。已有绑定的范围不会因保存配置而改变。</small></label>
       {% with config_view=plugin_config_view %}
         {% include '_plugin_config_form.html' %}
       {% endwith %}

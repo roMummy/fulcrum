@@ -63,6 +63,10 @@ tests/test_platform_proxy_pool.py
 tests/test_platform_system_info.py
 tests/test_plugin_common_services.py
 tests/test_plugin_detail_page.py
+tests/test_plugin_binding_actions.py
+tests/test_plugin_group_defaults.py
+tests/test_chatroom_plugin_batch.py
+tests/test_plugin_outbound_claim_scopes.py
 tests/test_plugin_manifest.py
 tests/test_plugin_media_boundaries.py
 tests/test_plugin_message_reader.py

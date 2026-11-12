@@ -132,7 +132,7 @@ def usage_summary(db: Session) -> dict[int, PluginUsage]:
             func.count(BotPlugin.id),
             func.sum(case((BotPlugin.status == "enabled", 1), else_=0)),
         )
-        .where(BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))))
+        .where(BotPlugin.status != "unbound", BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))))
         .group_by(BotPlugin.plugin_id)
     ).all()
     return {int(plugin_id): PluginUsage(int(tenants or 0), int(bindings or 0), int(enabled or 0)) for plugin_id, tenants, bindings, enabled in rows}

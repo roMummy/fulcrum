@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
+from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
 from app.services.plugin_runtime.registry import get_plugin_schema
@@ -174,7 +175,7 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
         .order_by(Chatroom.last_synced_at.desc(), Chatroom.id.desc())
     ).all()
     bindings = db.scalars(
-        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id).order_by(BotPlugin.id.asc())
+        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())
     ).all()
     scope_rows = db.scalars(
         select(GroupPluginScope)
@@ -201,7 +202,7 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
             if scope is not None:
                 if bool(scope.enabled):
                     effective_enabled_count += 1
-            elif binding_enabled_map.get(binding.id):
+            elif binding_group_default_enabled(binding):
                 effective_enabled_count += 1
         if overridden_scope_count > 0:
             overridden_chatroom_count += 1
@@ -257,7 +258,7 @@ def build_wechat_winauto_chatroom_list(db: Session, channel: Channel) -> dict[st
 def build_wechat_winauto_chatroom_detail(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
     sync_wechat_winauto_chatrooms(db, channel)
     bindings = db.scalars(
-        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id).order_by(BotPlugin.id.asc())
+        select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())
     ).all()
     scope_rows = db.scalars(
         select(GroupPluginScope)
@@ -285,7 +286,7 @@ def build_wechat_winauto_chatroom_detail(db: Session, channel: Channel, chatroom
             enabled_binding_count += 1
         scope = scope_map.get(binding.id)
         scope_status = str(getattr(scope, "scope_status", "") or "inherited")
-        scope_enabled = bool(getattr(scope, "enabled", binding_enabled))
+        scope_enabled = group_plugin_scope_enabled(binding, scope)
         if scope_status == "inherited":
             inherited_scope_count += 1
         else:

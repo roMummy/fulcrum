@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.tenant_context import require_tenant_id
-from app.models.entities import Bot, BotPlugin, Channel, Plugin
+from app.core.time import now_shanghai
+from app.models.entities import Bot, BotPlugin, Channel, GroupPluginScope, Plugin, TaskJob
 from app.schemas.forms import BotCreate, BotPluginBindCreate, BotUpdate, ChannelCreate, ChannelUpdate
 from app.services.channel_catalog import get_channel_type_definition
 from app.services.plugin_secrets import (
@@ -178,6 +179,9 @@ def bind_plugin(
         select(BotPlugin).where(BotPlugin.bot_id == data.bot_id, BotPlugin.plugin_id == data.plugin_id)
     )
     if existing:
+        # 解绑保留业务数据；重新绑定时必须重新选择群开放范围。
+        if existing.status == "unbound":
+            existing.group_default_enabled = data.group_default_enabled
         existing.status = data.status
         existing.config_json = data.config_json
         _apply_binding_secret_changes(
@@ -199,6 +203,7 @@ def bind_plugin(
         status=data.status,
         runtime_status="running" if data.status == "enabled" else "disabled",
         config_json=data.config_json,
+        group_default_enabled=data.group_default_enabled,
     )
     db.add(binding)
     # AES-GCM 的 AAD 需要稳定绑定主键，因此必须先 flush 获得 binding.id，
@@ -216,7 +221,44 @@ def bind_plugin(
 
 
 def get_binding(db: Session, binding_id: int) -> BotPlugin | None:
-    return db.get(BotPlugin, binding_id)
+    binding = db.get(BotPlugin, binding_id)
+    return binding if binding is not None and binding.status != "unbound" else None
+
+
+def unbind_plugin(db: Session, binding: BotPlugin) -> None:
+    """解除使用关系并保留配置、状态及业务历史，避免外键级联误删。"""
+
+    from app.services.plugin_runtime.scheduler import SCHEDULED_RELATED_PREFIX
+    from app.services.task_queue import parse_job_payload
+
+    binding.status = "unbound"
+    binding.runtime_status = "disabled"
+    binding.group_default_enabled = False
+    for scope in db.scalars(select(GroupPluginScope).where(GroupPluginScope.bot_plugin_id == binding.id)).all():
+        db.delete(scope)
+    # 定时动作和已排队的插件出站都要取消，重新绑定不能复活旧任务。
+    plugin_code = str(binding.plugin.code or "") if binding.plugin else ""
+    for job in db.scalars(select(TaskJob).where(
+        TaskJob.status == "pending",
+        TaskJob.related_id == binding.id,
+        (TaskJob.related_type.startswith(SCHEDULED_RELATED_PREFIX, autoescape=True))
+        | (TaskJob.related_type == f"{plugin_code}_binding"),
+    )).all():
+        job.status = "cancelled"
+        job.finished_at = now_shanghai()
+        job.error_message = "插件已解绑，取消待执行任务"
+    channel_ids = set(db.scalars(select(Channel.id).where(Channel.bot_id == binding.bot_id)).all())
+    # 天气订阅和普通回复按会话关联，必须核对载荷中的插件及渠道，不能只用 related_id。
+    for job in db.scalars(select(TaskJob).where(
+        TaskJob.status == "pending",
+    )).all():
+        payload = parse_job_payload(job)
+        if payload.get("plugin_code") == plugin_code and payload.get("channel_id") in channel_ids:
+            job.status = "cancelled"
+            job.finished_at = now_shanghai()
+            job.error_message = "插件已解绑，取消待发送消息"
+    db.commit()
+    _stop_binding_connection_if_needed(binding)
 
 
 def toggle_binding(db: Session, binding: BotPlugin) -> BotPlugin:

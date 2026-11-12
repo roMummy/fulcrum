@@ -126,6 +126,8 @@ def _build_binding_request(
 ) -> tuple[str | None, PluginExecutionRequest]:
     """从可信绑定统一构造普通、消息和定时请求，确保三条链路使用同一密钥边界。"""
 
+    if binding.status == "unbound":
+        raise ValueError("插件已从机器人解绑，请重新绑定后再使用")
     plugin_code = binding.plugin.code if binding.plugin else None
     runtime_payload = dict(payload or {})
     ordinary_config = _parse_config_json(binding.config_json)

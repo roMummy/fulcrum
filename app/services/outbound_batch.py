@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.models.entities import Channel, Conversation, TaskJob
 from app.services.task_queue import enqueue_job
+from app.services.plugin_scopes import plugin_group_conversation_enabled
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
 
 
@@ -34,6 +35,9 @@ def enqueue_outbound_job(
     插件只描述标准消息和业务归属，不感知企微云轮询、云端直发或其他渠道的
     队列差异。计划发送、幂等键和重试次数也在这里统一传入底层任务队列。
     """
+
+    if not plugin_group_conversation_enabled(db, channel=channel, conversation=conversation, plugin_code=plugin_code):
+        raise ValueError("当前群未启用该插件，已停止创建推送任务")
 
     job = enqueue_job(
         db,
@@ -68,6 +72,8 @@ def enqueue_outbound_jobs(
     related_id: int | None,
     priority: int,
 ) -> list[int]:
+    if not plugin_group_conversation_enabled(db, channel=channel, conversation=conversation, plugin_code=plugin_code):
+        return []
     job_ids: list[int] = []
     for payload in payloads:
         job = enqueue_outbound_job(
@@ -98,6 +104,7 @@ def enqueue_outbound_jobs_by_conversation(
     job_ids: list[int] = []
     failed_targets: list[dict[str, Any]] = []
     pushed_conversation_count = 0
+    skipped_conversation_count = 0
 
     for conversation in conversations:
         try:
@@ -106,6 +113,11 @@ def enqueue_outbound_jobs_by_conversation(
                 raise ValueError("channel_not_found")
             if not channel.is_enabled:
                 raise ValueError("channel_disabled")
+
+            # 群未授权是正常跳过，不能进入异常回滚而撤销其他群已创建的任务。
+            if not plugin_group_conversation_enabled(db, channel=channel, conversation=conversation, plugin_code=plugin_code):
+                skipped_conversation_count += 1
+                continue
 
             payloads = payload_builder(conversation, channel)
             job_ids.extend(
@@ -143,6 +155,7 @@ def enqueue_outbound_jobs_by_conversation(
         "job_ids": job_ids,
         "failed_targets": failed_targets,
         "pushed_conversation_count": pushed_conversation_count,
+        "skipped_conversation_count": skipped_conversation_count,
     }
 
 

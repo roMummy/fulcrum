@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, GroupPluginScope, Plugin
 from app.services.channel_events import ingest_inbound_event
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone
@@ -636,7 +637,7 @@ def build_wechat_ipad_contact_list(channel: Channel, *, limit: int = 100) -> dic
 
 def build_wechat_ipad_group_summary(db: Session, channel: Channel, *, now: datetime | None = None) -> dict[str, Any]:
     bot_plugin_count = int(
-        db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == channel.bot_id)) or 0
+        db.scalar(select(func.count(BotPlugin.id)).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound")) or 0
     )
     enabled_bot_plugin_count = int(
         db.scalar(
@@ -1383,7 +1384,7 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
     ).all()
     bindings = db.scalars(
         select(BotPlugin)
-        .where(BotPlugin.bot_id == channel.bot_id)
+        .where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound")
         .order_by(BotPlugin.id.asc())
     ).all()
     member_count_rows = db.execute(
@@ -1436,7 +1437,7 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
             if scope is not None:
                 if bool(scope.enabled):
                     effective_enabled_count += 1
-            elif binding_enabled_map.get(binding.id):
+            elif binding_group_default_enabled(binding):
                 effective_enabled_count += 1
         effective_disabled_count = max(len(bindings) - effective_enabled_count, 0)
         if overridden_scope_count > 0:
@@ -1499,7 +1500,7 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
     ).all()
     bindings = db.scalars(
         select(BotPlugin)
-        .where(BotPlugin.bot_id == channel.bot_id)
+        .where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound")
         .order_by(BotPlugin.id.asc())
     ).all()
     scope_rows = db.scalars(
@@ -1565,7 +1566,7 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
             enabled_binding_count += 1
         scope = scope_map.get(binding.id)
         scope_status = str(getattr(scope, "scope_status", "") or "inherited")
-        scope_enabled = bool(getattr(scope, "enabled", binding_enabled))
+        scope_enabled = group_plugin_scope_enabled(binding, scope)
         if scope_status == "inherited":
             inherited_scope_count += 1
         else:

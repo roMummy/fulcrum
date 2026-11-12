@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.db import TenantSessionLocal
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
+from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
 from app.models.entities import (
     BotPlugin,
     Channel,
@@ -447,7 +448,7 @@ def _group_reply_allowed(
         )
     )
     if chatroom is None:
-        return True
+        return binding_group_default_enabled(binding)
     scope = db.scalar(
         select(GroupPluginScope).where(
             GroupPluginScope.channel_id == int(channel.id),
@@ -455,7 +456,7 @@ def _group_reply_allowed(
             GroupPluginScope.bot_plugin_id == int(binding.id),
         )
     )
-    return scope is None or bool(scope.enabled)
+    return group_plugin_scope_enabled(binding, scope)
 
 
 def _extract_reply_text(package: Mapping[str, Any]) -> str:

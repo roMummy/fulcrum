@@ -3,6 +3,7 @@
 {# 群管理:所有账号的群合在一起。一行一个群,点整行进入群页面,启用/停用直接在行内完成。 #}
 {% block hero_actions %}
 <div class="chip-row">
+  <a class="btn btn-secondary" href="/chatrooms/plugin-scopes">群插件批量管理</a>
   <span class="chip chip-outline">共 {{ directory.summary.total }} 个群</span>
   <span class="chip chip-success">已启用 {{ directory.summary.enabled }}</span>
   {% if directory.summary.pending %}<span class="chip chip-muted">待启用 {{ directory.summary.pending }}</span>{% endif %}

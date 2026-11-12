@@ -14,9 +14,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.services.points import PointsService
-from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, WorkWechatContact
+from app.models.entities import Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, WorkWechatContact
 from app.services.chatroom_registry import MANAGEMENT_STATUS_LABELS
 from app.services.identity_directory import _avatar_from_extra, make_identity
+from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES
+from app.services.plugin_governance import tenant_visible_plugins
 
 PAGE_SIZE = 30
 # 群运行模式在列表里的中文说法,与群详情共用 chatroom_registry 里的定义。
@@ -49,6 +51,113 @@ def channel_options(db: Session) -> list[dict[str, Any]]:
     """可供筛选的渠道:只列出有群或好友资料的渠道,名称取渠道自己的显示名。"""
 
     return [{"id": int(item.id), "name": item.name or f"账号 #{item.id}"} for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None)).order_by(Channel.id.asc())).all()]
+
+
+def chatroom_plugin_options(db: Session, tenant_id: int) -> list[dict[str, Any]]:
+    """群批量设置只列出本企业已绑定、且拥有有效群渠道的插件。"""
+
+    bindings = db.execute(
+        select(BotPlugin.plugin_id, BotPlugin.bot_id)
+        .join(Bot, Bot.id == BotPlugin.bot_id)
+        .where(
+            BotPlugin.tenant_id == tenant_id,
+            BotPlugin.status != "unbound",
+            Bot.tenant_id == tenant_id,
+            Bot.deleted_at.is_(None),
+            BotPlugin.bot_id.in_(
+                select(Channel.bot_id).where(
+                    Channel.tenant_id == tenant_id,
+                    Channel.deleted_at.is_(None),
+                    Channel.channel_type.in_(GROUP_SCOPED_CHANNEL_TYPES),
+                )
+            ),
+        )
+    ).all()
+    bot_ids: dict[int, set[int]] = {}
+    for plugin_id, bot_id in bindings:
+        bot_ids.setdefault(int(plugin_id), set()).add(int(bot_id))
+    return [
+        {"id": int(plugin.id), "name": plugin.display_name, "bot_ids": sorted(bot_ids[int(plugin.id)])}
+        for plugin in tenant_visible_plugins(db, tenant_id)
+        if int(plugin.id) in bot_ids
+    ]
+
+
+def build_chatroom_plugin_directory(
+    db: Session,
+    *,
+    tenant_id: int,
+    plugin_id: int = 0,
+    keyword: str = "",
+    channel_id: int = 0,
+    scope_status: str = "",
+    scope_source: str = "",
+    page: int = 1,
+) -> dict[str, Any]:
+    """单插件群设置目录；保存的群开关和机器人总开关分别展示。"""
+
+    options = chatroom_plugin_options(db, tenant_id)
+    selected = {item["id"]: item for item in options}.get(plugin_id)
+    q = (keyword or "").strip()[:100]
+    scope_status = scope_status if scope_status in {"enabled", "disabled"} else ""
+    scope_source = scope_source if scope_source in {"inherited", "overridden"} else ""
+    result = {"rows": [], "paging": _page(0, page), "plugin_options": options, "plugin": selected, "keyword": q, "channel_id": channel_id, "status": scope_status, "source": scope_source, "channels": [], "matching_room_ids": []}
+    if selected is None:
+        return result
+    channels = db.scalars(select(Channel).where(
+        Channel.tenant_id == tenant_id,
+        Channel.bot_id.in_(selected["bot_ids"]),
+        Channel.deleted_at.is_(None),
+        Channel.channel_type.in_(GROUP_SCOPED_CHANNEL_TYPES),
+    ).order_by(Channel.name, Channel.id)).all()
+    result["channels"] = [{"id": int(item.id), "name": item.name} for item in channels]
+    stmt = (
+        select(Chatroom, Channel, BotPlugin, GroupPluginScope)
+        .join(Channel, Channel.id == Chatroom.channel_id)
+        .join(BotPlugin, (BotPlugin.bot_id == Chatroom.bot_id) & (BotPlugin.plugin_id == plugin_id))
+        .outerjoin(GroupPluginScope, (GroupPluginScope.chatroom_id == Chatroom.id) & (GroupPluginScope.channel_id == Channel.id) & (GroupPluginScope.bot_plugin_id == BotPlugin.id) & (GroupPluginScope.tenant_id == tenant_id))
+        .where(
+            Chatroom.tenant_id == tenant_id,
+            Channel.tenant_id == tenant_id,
+            Channel.id.in_([item.id for item in channels]),
+            Channel.bot_id == Chatroom.bot_id,
+            BotPlugin.tenant_id == tenant_id,
+            BotPlugin.status != "unbound",
+        )
+    )
+    if channel_id:
+        stmt = stmt.where(Channel.id == channel_id)
+    if q:
+        like = _like(q)
+        stmt = stmt.where(or_(Chatroom.name.like(like, escape="\\"), Chatroom.remark.like(like, escape="\\"), Chatroom.external_id.like(like, escape="\\")))
+    # 此处只读保存的选择；总开关关闭不能把“本群已启用”显示为“已禁用”。
+    saved_enabled = func.coalesce(GroupPluginScope.enabled, BotPlugin.group_default_enabled)
+    if scope_status:
+        stmt = stmt.where(saved_enabled.is_(scope_status == "enabled"))
+    if scope_source:
+        stmt = stmt.where(func.coalesce(GroupPluginScope.scope_status, "inherited") == scope_source)
+    # 全选复用列表的全部筛选条件，但不受分页限制；多读一条用于提示超出单批上限。
+    result["matching_room_ids"] = [int(room_id) for room_id in db.scalars(
+        stmt.with_only_columns(Chatroom.id).where(Chatroom.status != "left").order_by(Chatroom.id).limit(1001)
+    ).all()]
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    paging = _page(total, page)
+    rows = []
+    for room, channel, binding, scope in db.execute(stmt.order_by((Chatroom.status == "left").asc(), Chatroom.name, Chatroom.id).offset(paging["offset"]).limit(PAGE_SIZE)).all():
+        rows.append({
+            "id": int(room.id),
+            "channel_id": int(channel.id),
+            "channel_name": channel.name,
+            "identity": make_identity(room.external_id, room.remark or room.name, _avatar_from_extra(room.extra_json)),
+            "enabled": bool(scope.enabled) if scope is not None else bool(binding.group_default_enabled),
+            "source": "overridden" if scope is not None and scope.scope_status == "overridden" else "inherited",
+            "binding_enabled": binding.status == "enabled",
+            "group_label": "已退出" if room.status == "left" else MANAGEMENT_LABELS.get(room.management_status or "discovered", "待启用"),
+            "group_running": room.status != "left" and room.management_status == "enabled" and bool(room.is_active),
+            "selectable": room.status != "left",
+        })
+    result.update(rows=rows, paging=paging)
+    return result
 
 
 def build_chatroom_directory(db: Session, *, keyword: str = "", channel_id: int = 0, status: str = "", page: int = 1) -> dict[str, Any]:

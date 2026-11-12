@@ -22,6 +22,9 @@
     if (openInstance && !event.composedPath().includes(openInstance.root)) closeOpen();
   });
   window.addEventListener("resize", closeOpen);
+  document.addEventListener("scroll", (event) => {
+    if (openInstance && event.target !== openInstance.panel) closeOpen();
+  }, true);
 
   class UiSelect {
     constructor(select) {
@@ -38,6 +41,7 @@
       select.addEventListener("change", () => this.sync());
       // 表单 reset 或脚本直接赋值 value 不会触发 change,事件循环末再对齐一次。
       select.form?.addEventListener("reset", () => setTimeout(() => this.sync(), 0));
+      select.closest("dialog")?.addEventListener("close", () => this.close());
     }
 
     build() {
@@ -109,6 +113,7 @@
           return item;
         }),
       );
+      if (this.isOpen()) this.positionPanel();
     }
 
     open() {
@@ -118,16 +123,27 @@
       this.root.classList.add(OPEN_CLASS);
       this.button.setAttribute("aria-expanded", "true");
       openInstance = this;
-      // 靠近视口底部时向上展开,避免面板被截断。
-      const rect = this.button.getBoundingClientRect();
-      const room = window.innerHeight - rect.bottom;
-      this.root.classList.toggle("ui-select-up", room < 260 && rect.top > room);
+      this.positionPanel();
       const selectedItem = this.panel.querySelector(".is-selected") || this.panel.querySelector(".ui-select-option:not(.is-disabled)");
       this.setActive(selectedItem);
     }
 
+    positionPanel() {
+      // 弹窗始终保留内部滚动，下拉在卡片可见区域内选择方向并限制高度。
+      const rect = this.button.getBoundingClientRect();
+      const cardRect = this.root.closest(".app-modal-card")?.getBoundingClientRect();
+      const top = Math.max(0, cardRect?.top ?? 0);
+      const bottom = Math.min(window.innerHeight, cardRect?.bottom ?? window.innerHeight);
+      const below = Math.max(0, bottom - rect.bottom - 14);
+      const above = Math.max(0, rect.top - top - 14);
+      const up = below < Math.min(264, this.panel.scrollHeight + 2) && above > below;
+      this.root.classList.toggle("ui-select-up", up);
+      this.panel.style.maxHeight = `${Math.min(264, up ? above : below)}px`;
+    }
+
     close() {
       this.panel.hidden = true;
+      this.panel.style.removeProperty("max-height");
       this.root.classList.remove(OPEN_CLASS, "ui-select-up");
       this.button.setAttribute("aria-expanded", "false");
       if (openInstance === this) openInstance = null;
@@ -137,7 +153,11 @@
       this.panel.querySelectorAll(".is-active").forEach((el) => el.classList.remove("is-active"));
       if (!item) return;
       item.classList.add("is-active");
-      item.scrollIntoView({ block: "nearest" });
+      // 只滚动选项列表，scrollIntoView 会把外层弹窗及页面一起滚动。
+      const top = item.offsetTop;
+      const bottom = top + item.offsetHeight;
+      if (top < this.panel.scrollTop) this.panel.scrollTop = top;
+      else if (bottom > this.panel.scrollTop + this.panel.clientHeight) this.panel.scrollTop = bottom - this.panel.clientHeight;
     }
 
     choose(index) {

@@ -125,6 +125,8 @@ class BotPlugin(Base, TenantOwnedMixin, TimestampMixin):
     bot_id: Mapped[int] = mapped_column(ForeignKey("bots.id"), index=True)
     plugin_id: Mapped[int] = mapped_column(ForeignKey("plugins.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="enabled")
+    # 旧绑定维持全群继承；新绑定由表单显式保存操作者选择，默认不向群开放。
+    group_default_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
     runtime_status: Mapped[str] = mapped_column(String(20), default="idle")
     last_reload_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_execution_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)

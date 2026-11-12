@@ -5109,11 +5109,6 @@ code {
   font-size: 13px;
 }
 
-/* 弹窗里的卡片自带滚动,面板需要能溢出卡片边界显示,这里让弹窗卡片内下拉面板不被裁切。 */
-.app-modal-card:has(.ui-select-open) {
-  overflow: visible;
-}
-
 @media (max-width: 1100px) {
   .ui-select-trigger {
     min-height: 44px;

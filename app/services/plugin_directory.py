@@ -30,6 +30,7 @@ from app.services.plugin_manifest import ManifestParseError, PluginSchedule, par
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
+from app.services.plugin_scopes import group_plugin_scope_enabled
 
 
 ENTRYPOINT_CANDIDATES = ("plugin.py", "main.py", "plugin_main.py")
@@ -502,8 +503,8 @@ def build_static_dispatch_plan(
             continue
         scope = group_scope_map.get(binding.id)
         scope_status = str(getattr(scope, "scope_status", "") or "inherited")
-        scope_enabled = bool(getattr(scope, "enabled", False)) if scope is not None else None
-        if scope is not None and not scope_enabled:
+        scope_enabled = group_plugin_scope_enabled(binding, scope) if context.chat_type == "group" else None
+        if context.chat_type == "group" and not scope_enabled:
             skipped.append((plugin_code, "group_scope_disabled"))
             logger.debug(
                 "static plan skipped plugin",
@@ -713,7 +714,7 @@ def evaluate_dynamic_matches(
     for candidate in static_plan.candidates:
         binding = db.get(BotPlugin, candidate.binding_id)
         discovered = get_discovered_plugin(candidate.plugin_code)
-        if not binding or not discovered:
+        if not binding or binding.status != "enabled" or not discovered:
             decisions.append(
                 PluginMatchDecision(candidate=candidate, matched=False, reason="candidate_context_missing")
             )
@@ -802,7 +803,7 @@ def execute_dispatch_plan(
             continue
 
         binding = db.get(BotPlugin, candidate.binding_id)
-        if not binding:
+        if not binding or binding.status != "enabled":
             logger.debug("plugin execution skipped because binding missing", extra={"plugin_code": candidate.plugin_code})
             executions.append(
                 PluginDispatchExecution(

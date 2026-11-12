@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.plugin_scopes import group_plugin_scope_enabled
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Message, Plugin
 from app.services.plugin_directory import DiscoveredPlugin, get_discovered_plugin
 from app.services.plugin_runtime.contracts import (
@@ -19,7 +20,7 @@ from app.services.plugin_runtime.replies import standard_replies, text_reply
 
 PLUGIN_CODE = "robot_menu"
 COMMANDS = ("菜单", "功能菜单")
-MANAGED_GROUP_CHANNEL_TYPES = {"wechat_ipad", "wechat_winauto", "workwechat"}
+MANAGED_GROUP_CHANNEL_TYPES = {"wechat_ipad", "wechat_winauto", "workwechat", "wechat_webridge"}
 NON_USER_PLUGIN_TYPES = {"system", "scheduled", "timer", "cron"}
 
 
@@ -156,7 +157,7 @@ def _plugin_is_visible(
         return False
     if not _capability_matches(discovered, trusted):
         return False
-    if scope is not None and not bool(scope.enabled):
+    if not group_plugin_scope_enabled(binding, scope):
         return False
 
     binding_config = _parse_json_object(binding.config_json)
@@ -252,6 +253,7 @@ def _require_trusted_group_message(
         return None, _error_result("当前群未启用功能菜单。", "binding_scope_disabled")
 
     chatroom: Chatroom | None = None
+    menu_scope = None
     channel_type = str(channel.channel_type or "").strip()
     if channel_type in MANAGED_GROUP_CHANNEL_TYPES:
         chatroom = db.scalar(
@@ -270,8 +272,8 @@ def _require_trusted_group_message(
                     GroupPluginScope.bot_plugin_id == int(binding.id),
                 )
             )
-            if menu_scope is not None and not bool(menu_scope.enabled):
-                return None, _error_result("当前群未启用功能菜单。", "group_scope_disabled")
+    if not group_plugin_scope_enabled(binding, menu_scope):
+        return None, _error_result("当前群未启用功能菜单。", "group_scope_disabled")
     return (
         TrustedMenuContext(
             execution=context,

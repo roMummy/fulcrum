@@ -134,5 +134,5 @@ def test_plugin_pages_do_not_offer_invalid_binding_or_configuration_only_copy() 
     # 插件目录页采用紧凑列表:只在有问题时显示"暂不可用/有提示"徽标(不再给每个插件挂"可执行"),
     # 损坏的插件(manifest 有错误)明确提示不可用;详情页只有能执行的插件才提供"绑定到机器人"入口。
     assert "runtime_info.manifest_errors" in list_template and "暂不可用" in list_template
-    assert "{% if plugin_runtime_info.supports_execution %}" in detail_template
+    assert "{% if plugin_runtime_info.supports_execution and bindable_bots %}" in detail_template  # 还要有可绑定的机器人才显示绑定入口
     assert "仅配置型" not in detail_template and "仅配置型" not in list_template

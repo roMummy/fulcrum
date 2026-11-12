@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% from '_identity.html' import identity %}
+{% block hero_actions %}
+<a class="btn btn-secondary" href="/chatrooms">返回群管理</a>
+{% endblock %}
+{% block content %}
+{% set can_edit = current_user.role in ['operator', 'tenant_admin'] %}
+<section class="work-surface">
+  <form method="get" action="/chatrooms/plugin-scopes" class="compact-filter-form">
+    <label class="compact-filter-field"><span>插件</span>
+      <select name="plugin_id" required>
+        <option value="">请选择插件</option>
+        {% for plugin in directory.plugin_options %}<option value="{{ plugin.id }}"{% if directory.plugin and directory.plugin.id == plugin.id %} selected{% endif %}>{{ plugin.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="compact-filter-field"><span>账号</span>
+      <select name="channel_id">
+        <option value="0">全部账号</option>
+        {% for channel in directory.channels %}<option value="{{ channel.id }}"{% if directory.channel_id == channel.id %} selected{% endif %}>{{ channel.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="compact-filter-field"><span>搜索群聊</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="群名称、备注或群 ID" /></label>
+    <label class="compact-filter-field"><span>插件设置</span>
+      <select name="scope_status">
+        <option value="">全部状态</option>
+        <option value="enabled"{% if directory.status == 'enabled' %} selected{% endif %}>已启用</option>
+        <option value="disabled"{% if directory.status == 'disabled' %} selected{% endif %}>已禁用</option>
+      </select>
+    </label>
+    <label class="compact-filter-field"><span>设置来源</span>
+      <select name="scope_source">
+        <option value="">全部来源</option>
+        <option value="inherited"{% if directory.source == 'inherited' %} selected{% endif %}>继承默认</option>
+        <option value="overridden"{% if directory.source == 'overridden' %} selected{% endif %}>单独设置</option>
+      </select>
+    </label>
+    <div class="compact-filter-actions"><button class="btn" type="submit">查看群设置</button>{% if directory.plugin %}<a class="btn btn-secondary" href="/chatrooms/plugin-scopes?plugin_id={{ directory.plugin.id }}">重置筛选</a>{% endif %}</div>
+  </form>
+</section>
+
+{% if directory.plugin %}
+<section class="work-surface">
+  <div class="section-heading"><div><h2>{{ directory.plugin.name }} · 群设置</h2><p class="muted-text">共 {{ directory.paging.total }} 个匹配群聊。已启用／已禁用表示保存的群插件选择；插件总开关和群运行模式单独显示。</p></div></div>
+  {% if can_edit %}
+  <form method="post" action="/chatrooms/plugins/batch" id="chatroom-plugin-batch" class="compact-filter-form" data-selection-key="fulcrum:group-plugin:{{ tenant_id }}:{{ directory.plugin.id }}" data-clear-selection="{{ 'true' if selection_cleared else 'false' }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="plugin_id" value="{{ directory.plugin.id }}" />
+    <input type="hidden" name="next" value="{{ pager_base }}&page={{ directory.paging.page }}" />
+    <div class="form-actions-inline">
+      <button class="btn btn-secondary" type="button" data-select-matching data-room-ids='{{ directory.matching_room_ids|tojson }}'{% if not directory.matching_room_ids or directory.matching_room_ids|length > 1000 %} disabled{% endif %}>全选筛选结果（{% if directory.matching_room_ids|length > 1000 %}超过 1000{% else %}{{ directory.matching_room_ids|length }}{% endif %} 个群）</button>
+      <button class="btn" type="submit" name="mode" value="enabled" data-batch-submit>批量启用</button>
+      <button class="btn btn-secondary" type="submit" name="mode" value="disabled" data-batch-submit>批量禁用</button>
+      <button class="btn btn-secondary" type="button" data-clear-selection>清空选择</button>
+      <span class="muted-text" data-selection-count aria-live="polite">勾选下方群聊后提交</span>
+    </div>
+    <span data-cross-page-inputs hidden></span>
+    <p class="muted-text" data-selection-notice role="status">支持跨页、跨筛选保留选择。「全选筛选结果」包含所有分页，并替换当前选择；已退出群不参与。每次最多 1000 个群聊，超过时请缩小筛选范围。提交成功后清空选择。</p>
+  </form>
+  <p class="muted-text">批量操作只修改所选群的插件设置。群处于正常运行，且机器人上的插件总开关开启后，插件才会响应；已退出的群不可操作。</p>
+  {% endif %}
+  {% if directory.rows %}
+  <div class="table-scroll">
+    <table class="table">
+      <thead><tr>{% if can_edit %}<th class="col-compact"><input type="checkbox" data-select-page aria-label="全选本页可操作群聊" /></th>{% endif %}<th>群聊</th><th>账号</th><th>插件设置</th><th>群运行状态</th><th>插件总开关</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for item in directory.rows %}
+        <tr>
+          {% if can_edit %}<td class="col-compact"><input type="checkbox" name="chatroom_ids" value="{{ item.id }}" form="chatroom-plugin-batch" data-scope-room aria-label="选择 {{ item.identity.name }}"{% if not item.selectable %} disabled title="机器人已退出该群"{% endif %} /></td>{% endif %}
+          <td>{{ identity(item.identity, 'lg') }}</td>
+          <td>{{ item.channel_name }}</td>
+          <td><span class="chip {{ 'chip-success' if item.enabled else 'chip-muted' }}">{{ '已启用' if item.enabled else '已禁用' }}</span><div class="muted-text">{{ '单独设置' if item.source == 'overridden' else '继承默认' }}</div></td>
+          <td><span class="chip {{ 'chip-success' if item.group_running else 'chip-muted' }}">{{ item.group_label }}</span>{% if not item.group_running %}<div class="muted-text">本群当前不运行插件</div>{% endif %}</td>
+          <td><span class="chip {{ 'chip-success' if item.binding_enabled else 'chip-muted' }}">{{ '已开启' if item.binding_enabled else '已关闭' }}</span>{% if not item.binding_enabled %}<div class="muted-text">群设置保留，插件暂不运行</div>{% endif %}</td>
+          <td><a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}?tab=plugins">详情</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include '_pager.html' %}
+  {% else %}<p class="muted-text">没有符合筛选条件的群聊。</p>{% endif %}
+</section>
+{% elif directory.plugin_options %}
+<section class="work-surface"><p class="muted-text">请先选择一个插件并点击「查看群设置」，查看每个群的当前状态，再跨页勾选并批量操作。</p></section>
+{% else %}
+<section class="work-surface"><p class="muted-text">还没有绑定到微信账号的可用插件，请先在插件页面绑定机器人。</p><a class="btn" href="/plugins">去绑定插件</a></section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/js/chatroom-plugin-scopes.js" defer></script>{% endblock %}

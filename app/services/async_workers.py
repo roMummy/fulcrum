@@ -13,7 +13,7 @@ from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, Conversation, ErrorLog, Message, MessageAttachment, RawWebhookEvent, TaskJob
+from app.models.entities import BotPlugin, Channel, Conversation, ErrorLog, Message, MessageAttachment, Plugin, RawWebhookEvent, TaskJob
 from app.models.saas import Tenant
 from app.services.ai_intent_worker import poll_ai_intent_jobs
 from app.core.text_column import dump_json_for_text_column
@@ -24,6 +24,7 @@ from app.services.inbound_media import download_wechat_media_attachment, mark_at
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
+from app.services.plugin_scopes import plugin_group_conversation_enabled
 from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
 from app.services.task_queue import (
     INBOUND_MEDIA_FETCH_JOB,
@@ -329,6 +330,16 @@ def _process_outbound_dispatch_job(db: Session, job: TaskJob, payload: dict[str,
     outbound_payload = payload.get("payload")
     if not isinstance(outbound_payload, dict):
         raise ValueError("payload_missing")
+    plugin_code = str(payload.get("plugin_code") or "").strip()
+    if plugin_code:
+        binding = db.scalar(select(BotPlugin).join(Plugin, Plugin.id == BotPlugin.plugin_id).where(
+            BotPlugin.bot_id == channel.bot_id, Plugin.code == plugin_code,
+        ))
+        # 入队后仍可能解绑或关闭群权限；真正发给渠道前再核对一次。
+        if (binding is not None and binding.status == "unbound") or not plugin_group_conversation_enabled(
+            db, channel=channel, conversation=conversation, plugin_code=plugin_code,
+        ):
+            return {"skipped": True, "reason": "plugin_scope_disabled"}
     if _is_expired_outbound_job(job):
         age_seconds = _outbound_job_age_seconds(job)
         logger.warning(

@@ -63,3 +63,4 @@ class BotPluginBindCreate(BaseModel):
     plugin_id: int
     status: str = "enabled"
     config_json: str | None = None
+    group_default_enabled: bool = False
