@@ -8,6 +8,7 @@ from .open_media import router as open_media_router
 from .payment_webhooks import router as payment_webhook_router
 from .tool_api import router as tool_api_router
 from .workwechat_provider_cloud import provider_router, router as workwechat_provider_cloud_router
+from .guga_agent import router as guga_agent_router
 
 __all__ = [
     "tool_api_router",
@@ -22,6 +23,7 @@ __all__ = [
     "workwechat_provider_cloud_router",
     "provider_router",
     "wechat_webridge_router",
+    "guga_agent_router",
 ]
 
 from .wechat_webridge import router as wechat_webridge_router

@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 游戏逻辑只依赖平台标准群消息、状态、积分和出站能力，因此所有已支持渠道共用同一实现。
-channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "telegram", "openclaw", "simulator", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["group"]
 message_types = ["text"]
 priority = 100

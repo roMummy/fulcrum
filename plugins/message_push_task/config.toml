@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 插件只依赖标准群文本和通用出站队列，不绑定任何具体 provider 实现。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["group"]
 message_types = ["text"]
 priority = 150

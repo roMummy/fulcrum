@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from app.services.group_features.registry import GroupFeature, register
 
-# 只有微桥和 iPad 渠道支持入站媒体下载。
-SUPPORTED_CHANNEL_TYPES = ("wechat_ipad", "wechat_webridge")
+# iPad、微桥和咕嘎助手都实现了入站媒体下载（手机侧解密后回传）。
+SUPPORTED_CHANNEL_TYPES = ("wechat_ipad", "wechat_webridge", "wechat_gugatool")
 
 FEATURE = register(
     GroupFeature(

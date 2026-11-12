@@ -13,7 +13,7 @@
         address.select();
         if (!document.execCommand("copy")) throw new Error("copy_failed");
       }
-      copyStatus.textContent = "地址已复制，请粘贴到微桥插件的服务端地址。";
+      copyStatus.textContent = panel.dataset.copyStatus || "地址已复制，请粘贴到微桥插件的服务端地址。";
     } catch (_) {
       address.focus();
       address.select();
@@ -40,7 +40,7 @@
       panel.querySelector("[data-connection-waiting]").hidden = connected;
       panel.querySelector("[data-connection-account]").hidden = !connected;
       panel.querySelector("[data-account-id]").textContent = account.account_id || "";
-      panel.querySelector("[data-account-nickname]").textContent = account.nickname || "正在读取，暂未取得昵称";
+      panel.querySelector("[data-account-nickname]").textContent = account.nickname || panel.dataset.nicknamePending || "正在读取，暂未取得昵称";
       panel.querySelector("[data-account-version]").textContent = account.runtime_version || "暂未上报";
       confirm.elements.expected_account_id.value = account.account_id || "";
       confirm.hidden = connection.state !== "verified";

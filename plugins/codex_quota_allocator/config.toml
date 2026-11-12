@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 插件只消费平台标准文本消息并返回标准文本回复，不依赖任何具体渠道实现。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text"]
 priority = 110

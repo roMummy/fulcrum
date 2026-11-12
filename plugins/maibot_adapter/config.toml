@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # MaiBot 使用平台标准消息维度，连接和回复不依赖微信、企微或 Telegram Provider。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["direct", "group"]
 message_types = ["text", "image", "file", "video", "voice", "location", "app", "emoji", "system"]
 priority = 145

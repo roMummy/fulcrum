@@ -9,7 +9,7 @@ default_enabled = false
 
 [capability]
 # 后台任务只读取平台标准消息与群成员数据，不直接访问任何渠道 Provider。
-channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge"]
+channel_types = ["wechat_ipad", "wechat_winauto", "openclaw", "simulator", "telegram", "workwechat", "wechat_webridge", "wechat_gugatool"]
 chat_types = ["group"]
 message_types = ["text"]
 priority = 80

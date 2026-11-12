@@ -18,8 +18,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, Conversation, Message, MessageAttachment, TaskJob
+from app.models.entities import Channel, Conversation, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.services.inbound_media import create_wechat_media_attachment, mark_attachment_failed
+from app.services.task_queue import INBOUND_MEDIA_FETCH_JOB, enqueue_job
 from app.services.wechat_webridge.service import build_upload_url, enqueue_media_upload_command
 
 MEDIA_TYPES = {"image", "video", "voice", "emoji", "file"}
@@ -93,7 +94,13 @@ def request(db: Session, message: Message) -> dict[str, Any]:
         return current
     conversation = db.get(Conversation, message.conversation_id)
     channel = db.get(Channel, conversation.channel_id) if conversation is not None and conversation.channel_id else None
-    if channel is None or channel.channel_type != "wechat_webridge":
+    if channel is None:
+        return _result("failed", None, "这个渠道暂不支持按需获取媒体")
+    if channel.channel_type == "wechat_gugatool":
+        # iOS 渠道的媒体在手机本地，按 DownloadMessageMedia → DownloadFile 两跳取回，
+        # 复用入站媒体任务的下载实现，这里只负责建附件记录并入队。
+        return _request_wechat_gugatool(db, message=message, channel=channel, conversation=conversation)
+    if channel.channel_type != "wechat_webridge":
         return _result("failed", None, "这个渠道暂不支持按需获取媒体")
     if not message.external_message_id:
         return _result("failed", None, "缺少微信消息编号，无法获取")
@@ -112,3 +119,90 @@ def request(db: Session, message: Message) -> dict[str, Any]:
     attachment.metadata_json = json.dumps({**_meta(attachment), "upload_job_id": int(job.id), "requested_at": now_shanghai().isoformat()}, ensure_ascii=False, sort_keys=True)
     db.flush()
     return _result("loading", attachment)
+
+
+def _request_wechat_gugatool(
+    db: Session,
+    *,
+    message: Message,
+    channel: Channel,
+    conversation: Conversation,
+) -> dict[str, Any]:
+    """iOS 渠道的按需取媒体：建附件 + 入队入站媒体任务，由后台两跳取回。"""
+
+    attachment = _latest_attachment(db, message)
+    metadata = _wechat_gugatool_media_metadata(
+        db,
+        message=message,
+        channel=channel,
+        conversation=conversation,
+        attachment=attachment,
+    )
+    if not metadata.get("local_message_id") and not metadata.get("server_message_id"):
+        return _result("failed", attachment, "缺少微信消息编号，无法获取")
+    if attachment is None:
+        attachment = create_wechat_media_attachment(
+            db,
+            channel=channel,
+            raw_event_id=None,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            attachment_type=message.message_type,
+            metadata=metadata,
+            provider=channel.channel_type,
+        )
+    attachment.status = "pending"
+    attachment.last_error = None
+    job = enqueue_job(
+        db,
+        job_type=INBOUND_MEDIA_FETCH_JOB,
+        payload={"attachment_id": attachment.id, "channel_id": channel.id},
+        priority=95,
+        related_type="message_attachment",
+        related_id=attachment.id,
+    )
+    # upload_job_id/requested_at 是页面轮询判断"是否在获取中/是否超时"的依据。
+    attachment.metadata_json = json.dumps(
+        {**metadata, "upload_job_id": int(job.id), "requested_at": now_shanghai().isoformat()},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    db.flush()
+    return _result("loading", attachment)
+
+
+def _wechat_gugatool_media_metadata(
+    db: Session,
+    *,
+    message: Message,
+    channel: Channel,
+    conversation: Conversation,
+    attachment: MessageAttachment | None,
+) -> dict[str, Any]:
+    """优先用附件里已有的定位信息；没有就回查原始事件里的微信消息 ID。"""
+
+    existing = _meta(attachment) if attachment is not None else {}
+    if existing.get("local_message_id") or existing.get("server_message_id"):
+        return {**existing, "to_wxid": existing.get("to_wxid") or conversation.external_id}
+
+    payload: dict[str, Any] = {}
+    if message.external_message_id:
+        event = db.scalar(
+            select(RawWebhookEvent).where(
+                RawWebhookEvent.channel_id == channel.id,
+                RawWebhookEvent.event_key == message.external_message_id,
+            )
+        )
+        if event is not None:
+            try:
+                parsed = json.loads(event.payload_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = {}
+            if isinstance(parsed, dict):
+                payload = parsed
+    return {
+        "to_wxid": conversation.external_id,
+        "local_message_id": payload.get("localMessageID") or None,
+        "server_message_id": payload.get("serverMessageID") or None,
+        "message_type": payload.get("messageType") or None,
+    }

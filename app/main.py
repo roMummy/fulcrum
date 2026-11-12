@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.routing import Match
 
-from app.api import channel_inbound_router, channel_outbound_router, wechat_webridge_router, customer_operations_router, open_api_router, open_media_router, open_messages_router, open_resources_router, payment_webhook_router, provider_router, tool_api_router, workwechat_provider_cloud_router
+from app.api import channel_inbound_router, channel_outbound_router, wechat_webridge_router, customer_operations_router, guga_agent_router, open_api_router, open_media_router, open_messages_router, open_resources_router, payment_webhook_router, provider_router, tool_api_router, workwechat_provider_cloud_router
 from app.api.local_proxy_connector import router as local_proxy_connector_router
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import settings
@@ -178,6 +178,7 @@ from app.services.identity_directory import IdentityDirectory
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, initialize_connection as initialize_webridge_connection
+from app.services.guga_agent.access import account_info as guga_account_info, connection_url as guga_connection_url, initialize_connection as initialize_guga_connection
 from app.services.outbound_files import build_public_base_url
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
@@ -233,6 +234,7 @@ app.include_router(open_media_router)
 app.include_router(payment_webhook_router)
 app.include_router(workwechat_provider_cloud_router)
 app.include_router(wechat_webridge_router)
+app.include_router(guga_agent_router)
 app.include_router(local_proxy_connector_router)
 app.include_router(provider_router)
 # 平台和租户认证使用独立 Router 与 Cookie，主应用只负责统一注册和请求身份恢复。
@@ -266,6 +268,7 @@ PUBLIC_MACHINE_PREFIXES = (
     "/api/workwechat/provider",
     "/api/provider",
     "/api/wechat-webridge",
+    "/api/guga-agent",
     "/outbound-files/",
     "/inbound-files/",
     "/webhooks/",
@@ -1862,7 +1865,16 @@ async def channel_connect_page(request: Request):
             channel is not None
             and (network_setup or request.query_params.get("relogin") == "1")
         )
-        if channel is not None and channel.channel_type == "wechat_webridge":
+        if channel is not None and channel.channel_type == "wechat_gugatool":
+            if not guga_connection_url(channel):
+                try:
+                    require_tenant_mutation_allowed(require_user(request))
+                except TenantPolicyError as exc:
+                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+                initialize_guga_connection(channel, build_public_base_url(request))
+                db.commit()
+            stage = "guga"
+        elif channel is not None and channel.channel_type == "wechat_webridge":
             if not webridge_connection_url(channel):
                 try:
                     require_tenant_mutation_allowed(require_user(request))
@@ -1897,6 +1909,8 @@ async def channel_connect_page(request: Request):
             connection=connection,
             webridge_url=webridge_connection_url(channel) if channel and channel.channel_type == "wechat_webridge" else "",
             webridge_account=webridge_account_info(channel) if channel and channel.channel_type == "wechat_webridge" else {},
+            guga_url=guga_connection_url(channel) if channel and channel.channel_type == "wechat_gugatool" else "",
+            guga_account=guga_account_info(channel) if channel and channel.channel_type == "wechat_gugatool" else {},
             quota=quota,
             quota_error=quota_error,
             provider_nodes=list_provider_nodes(db),
@@ -1952,7 +1966,7 @@ async def channel_connect_start_action(
                 channel_type=channel_type,
                 display_name=display_name,
                 connection_values={
-                    "api_base": build_public_base_url(request) if channel_type == "wechat_webridge" else api_base,
+                    "api_base": build_public_base_url(request) if channel_type in {"wechat_webridge", "wechat_gugatool"} else api_base,
                     "bot_token": bot_token,
                     "adapter_config_json": adapter_config_json,
                     "provider_node_id": provider_node_id,
@@ -1975,7 +1989,7 @@ async def channel_connect_start_action(
                         "connector_id": proxy_connector_id,
                     },
                 )
-            elif channel.channel_type != "wechat_webridge":
+            elif channel.channel_type not in {"wechat_webridge", "wechat_gugatool"}:
                 verify_account_connection(db, channel_id=channel.id)
         except (AccountConnectionError, BotEntitlementError, LoginProxyPoolError, ValueError) as exc:
             message = quote(_account_connection_error_message(str(exc)))
@@ -2079,10 +2093,11 @@ async def channel_connect_status(request: Request, channel_id: int):
     db = get_session()
     try:
         channel = get_channel(db, channel_id)
-        if channel is None or channel.channel_type != "wechat_webridge":
+        if channel is None or channel.channel_type not in {"wechat_webridge", "wechat_gugatool"}:
             raise HTTPException(status_code=404, detail="Connection not found")
+        account = webridge_account_info(channel) if channel.channel_type == "wechat_webridge" else guga_account_info(channel)
         return JSONResponse(
-            {"connection": _channel_connection_state(channel), "account": webridge_account_info(channel)},
+            {"connection": _channel_connection_state(channel), "account": account},
             headers={"Cache-Control": "no-store"},
         )
     finally:
@@ -2419,8 +2434,13 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             detail = build_workwechat_chatroom_detail(db, channel, chatroom)
         elif channel.channel_type == "wechat_webridge":
             detail = build_webridge_chatroom_detail(db, channel, chatroom)
+        elif channel.channel_type == "wechat_gugatool":
+            # 咕嘎助手的群实体由群消息驱动创建，详情页复用通用构造但隐藏同步按钮。
+            from app.services.wechat_gugatool_chatrooms import build_wechat_gugatool_chatroom_detail
+
+            detail = build_wechat_gugatool_chatroom_detail(db, channel, chatroom)
         else:
-            raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge channels")
+            raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
         return render(
             request,
             "chatroom_detail.html",
@@ -3087,6 +3107,35 @@ async def sync_wechat_ipad_contacts_action(request: Request, channel_id: int):
         overview = sync_wechat_ipad_contacts(db, channel)
         message = str(overview.get("last_contact_sync_summary") or overview.get("last_status_summary") or "已执行联系人同步")
         record_audit(db, "channel.wechat-ipad.sync-contacts", "channel", channel.id, message)
+        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/wechat-gugatool/sync-friends")
+async def sync_wechat_gugatool_friends_action(request: Request, channel_id: int, csrf_token: str = Form("")):
+    """下发好友同步命令,由手机领取后回传通讯录。"""
+
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type != "wechat_gugatool":
+            raise HTTPException(status_code=404, detail="GugaTool channel not found")
+        from app.services.guga_agent.service import enqueue_command
+
+        enqueue_command(
+            db,
+            channel,
+            command_name="get_friend_list",
+            params={},
+            priority=45,
+            purpose="friend_sync",
+        )
+        db.commit()
+        message = "已下发好友同步命令，手机在线时会自动回传。"
+        record_audit(db, "channel.wechat-gugatool.sync-friends", "channel", channel.id, message)
         return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
     finally:
         db.close()

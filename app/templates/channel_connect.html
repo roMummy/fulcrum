@@ -6,7 +6,7 @@
 </div>
 {% endblock %}
 {% block content %}
-{% set step_number = 1 if stage in ['choose', 'wechat_method'] else (3 if stage == 'confirm' or (stage == 'webridge' and connection.state in ['verified', 'active']) else 2) %}
+{% set step_number = 1 if stage in ['choose', 'wechat_method'] else (3 if stage == 'confirm' or (stage in ['webridge', 'guga'] and connection.state in ['verified', 'active']) else 2) %}
 <nav class="connection-steps" aria-label="账号接入进度">
   <div class="connection-step{% if step_number >= 1 %} is-active{% endif %}"><span>1</span><strong>选择平台</strong></div>
   <div class="connection-step{% if step_number >= 2 %} is-active{% endif %}"><span>2</span><strong>连接账号</strong></div>
@@ -31,6 +31,11 @@
     <a class="connection-choice" href="/channels/connect?channel_type=workwechat">
       <span class="connection-choice-mark">企</span>
       <span><strong>企业微信</strong><small>连接企业微信客户端中的在线账号</small></span>
+      <span aria-hidden="true">&#8250;</span>
+    </a>
+    <a class="connection-choice" href="/channels/connect?channel_type=wechat_gugatool">
+      <span class="connection-choice-mark">咕</span>
+      <span><strong>咕嘎助手</strong><small>通过 iPhone 上的咕嘎助手客户端接入微信</small></span>
       <span aria-hidden="true">&#8250;</span>
     </a>
     <a class="connection-choice" href="/channels/connect?channel_type=telegram">
@@ -78,6 +83,7 @@
         {% if requested_type == 'telegram' %}连接 Telegram
         {% elif requested_type == 'workwechat' %}连接企业微信
         {% elif requested_type == 'wechat_ipad' %}连接微信 iPad 协议
+        {% elif requested_type == 'wechat_gugatool' %}连接咕嘎助手
         {% elif requested_type == 'wechat_webridge' %}连接微桥 WeBridge
         {% else %}连接微信 Windows 客户端{% endif %}
       </h2>
@@ -119,16 +125,56 @@
     </label>
     {% elif requested_type == 'wechat_ipad' %}
     {% include '_wechat_ipad_login_network.html' %}
+    {% elif requested_type == 'wechat_gugatool' %}
+    <p class="muted-text full-row">保存后会生成这个账号专属的 Agent 地址。把地址填到手机咕嘎助手的「服务器地址」，连接方式可选 HTTP 长轮询或 WebSocket；手机注册后在这里核对微信账号并确认接入。</p>
     {% elif requested_type == 'wechat_webridge' %}
     <p class="muted-text full-row">下一步自动生成专属长轮询地址，复制到手机微桥插件后，在这里核对微信账号并确认接入。</p>
     {% endif %}
     <div class="full-row form-actions-inline">
-      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type == 'wechat_webridge' %}生成长轮询地址{% else %}验证账号{% endif %}</button>
+      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type == 'wechat_webridge' %}生成长轮询地址{% elif requested_type == 'wechat_gugatool' %}生成接入地址{% else %}验证账号{% endif %}</button>
       <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}">上一步</a>
       {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes">连接新客户端</a>{% endif %}
     </div>
   </form>
 </section>
+{% elif stage == 'guga' and channel %}
+<section class="work-surface connection-surface" data-webridge-connect data-status-url="/channels/{{ channel.id }}/connect/status" data-copy-status="地址已复制，请粘贴到咕嘎助手的「服务器地址」。" data-nickname-pending="暂未获取，收到群消息后自动补全">
+  <div class="section-head">
+    <div><h2>连接咕嘎助手</h2><p>复制地址 → 手机填写 → 核对并确认</p></div>
+    <span class="chip{% if connection.state == 'active' %} chip-success{% else %} chip-muted{% endif %}" data-connection-state>{{ connection.label }}</span>
+  </div>
+  <label for="webridge-connection-url"><strong>专属 Agent 地址</strong></label>
+  <div class="webridge-connection-address top-gap">
+    <textarea id="webridge-connection-url" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="webridge-address-help">{{ guga_url }}</textarea>
+    <button class="btn btn-secondary" type="button" data-copy-address>复制地址</button>
+  </div>
+  <p id="webridge-copy-status" role="status" aria-live="polite"></p>
+  <p class="muted-text" id="webridge-address-help">在手机咕嘎助手设置页把完整地址填入「服务器地址」，连接方式选 HTTP 或 WebSocket，然后打开总开关。地址内含这个账号的专属 Token，请勿用于其他账号。</p>
+  <p class="notice-card top-gap" data-connection-waiting{% if guga_account.account_id %} hidden{% endif %} role="status">等待手机连接，连接后会自动显示微信账号信息。</p>
+  <div class="top-gap" data-connection-account{% if not guga_account.account_id %} hidden{% endif %}>
+    <div class="webridge-account-heading">
+      <span class="identity-avatar" data-account-avatar{% if not guga_account.avatar_url %} hidden{% endif %}><img{% if guga_account.avatar_url %} src="{{ guga_account.avatar_url }}"{% endif %} alt="微信头像" referrerpolicy="no-referrer" /></span>
+      <h3>请核对连接的微信账号</h3>
+    </div>
+    <dl class="connection-confirm-list">
+      <div><dt>微信昵称</dt><dd data-account-nickname>{{ guga_account.nickname or '暂未获取，收到群消息后自动补全' }}</dd></div>
+      <div><dt>微信账号 ID</dt><dd data-account-id>{{ guga_account.account_id }}</dd></div>
+      <div><dt>手机端版本</dt><dd data-account-version>{{ guga_account.runtime_version or '暂未上报' }}</dd></div>
+      <div><dt>连接方式</dt><dd>{{ guga_account.transport or 'http' }}</dd></div>
+      <div><dt>确认后占用</dt><dd>1 个机器人额度</dd></div>
+    </dl>
+    <form method="post" action="/channels/{{ channel.id }}/connect/finalize" class="form-actions-inline top-gap" data-connection-confirm{% if connection.state != 'verified' %} hidden{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="expected_account_id" value="{{ guga_account.account_id }}" />
+      <input type="hidden" name="display_name" value="{{ channel.name }}" />
+      <button class="btn" type="submit">确认信息并接入</button>
+    </form>
+    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}>进入账号管理</a>
+  </div>
+  <p class="muted-text" data-connection-error role="status" aria-live="polite"></p>
+  <a class="btn btn-ghost top-gap" href="/channels">稍后继续</a>
+</section>
+<script src="/static/js/webridge-connect.js" defer></script>
 {% elif stage == 'webridge' and channel %}
 <section class="work-surface connection-surface" data-webridge-connect data-status-url="/channels/{{ channel.id }}/connect/status">
   <div class="section-head">
