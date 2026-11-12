@@ -58,7 +58,7 @@ TARGET_PLUGIN_CODES = {
 }
 
 # 这两个目录是 SaaS 自有业务，不属于 A-BOT 复刻范围，但仍必须满足同一目录契约。
-SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow"}
+SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow", "idiom_guess"}
 
 # 排除项和平台原生能力不能重新以目录插件形式出现。平台管理、统计、运维和群级
 # 作用域已经有唯一 SaaS 页面和服务入口，不保留 A-BOT 单机管理兼容目录。

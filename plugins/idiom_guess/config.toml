@@ -1,0 +1,81 @@
+[plugin]
+code = "idiom_guess"
+display_name = "看图猜成语"
+plugin_type = "message"
+version = "1.0.1"
+author = "Hao"
+description = "456 道看图猜成语，支持群聊抢答、答案解释、本群答对题数排行和每日定时开局。"
+default_enabled = false
+
+[capability]
+channel_types = ["wechat_webridge", "wechat_ipad", "wechat_winauto", "workwechat"]
+chat_types = ["group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 10000
+
+[matcher]
+require_mention = false
+
+[runtime]
+trigger_keywords = ["猜成语", "看图猜成语"]
+leaderboard_limit = 5
+game_timeout_minutes = 30
+leaderboard_delay_seconds = 1
+scheduled_enabled = false
+send_time = "20:00"
+
+[[config.fields]]
+key = "trigger_keywords"
+label = "开局关键词"
+kind = "tags"
+default = ["猜成语", "看图猜成语"]
+hint = "精确匹配后出题；答题直接发送成语，不用加命令前缀。"
+group = "游戏"
+
+[[config.fields]]
+key = "game_timeout_minutes"
+label = "单局有效分钟数"
+kind = "number"
+default = 30
+min = 0
+max = 1440
+hint = "过期后可重新开局，0 表示不过期。过期不主动公布答案。"
+group = "游戏"
+
+[[config.fields]]
+key = "leaderboard_limit"
+label = "排行榜人数"
+kind = "number"
+default = 5
+min = 1
+max = 50
+group = "排行榜"
+
+[[config.fields]]
+key = "leaderboard_delay_seconds"
+label = "排行榜延迟秒数"
+kind = "number"
+default = 1
+min = 0
+max = 60
+hint = "答对解释进入发送队列后，再延迟发送本群排行榜。"
+group = "排行榜"
+
+[[config.fields]]
+key = "scheduled_enabled"
+label = "每天定时开局"
+kind = "bool"
+default = false
+hint = "需要安装随包说明中的宿主调度补丁；仅向已启用本插件的受管群发送。"
+group = "定时开局"
+
+[[config.fields]]
+key = "send_time"
+label = "每天开局时间（北京时间）"
+kind = "time"
+default = "20:00"
+depends_on = "scheduled_enabled"
+hint = "当天只发送一次；错过时间后首次扫描会补发当天题目。"
+group = "定时开局"
