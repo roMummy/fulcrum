@@ -313,7 +313,7 @@ def _declared_schedule_codes() -> set[str]:
 
 
 def _build_declared_schedule_specs(schedules: tuple, config: Mapping[str, Any], current: datetime) -> tuple[PluginScheduledActionSpec, ...]:
-    """按清单声明生成定时计划:daily 每天一次(错过补发),interval 按时间桶;幂等键由时间决定,不会重复入队。"""
+    """按清单声明生成定时计划:daily 每天一次且只在到点后的窗口内触发(错过不补发),interval 按时间桶;幂等键由时间决定,不会重复入队。"""
 
     specs: list[PluginScheduledActionSpec] = []
     for item in schedules:
@@ -322,7 +322,8 @@ def _build_declared_schedule_specs(schedules: tuple, config: Mapping[str, Any], 
         if item.kind == "daily":
             hour, minute = _parse_clock_time(str(config.get(item.time_key) or item.default_time) if item.time_key else item.default_time)
             scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if current < scheduled_for:
+            # 只在到点后的窗口内触发:服务重启、停机错过了窗口就跳过当天,不补发。
+            if not 0 <= (current - scheduled_for).total_seconds() < item.grace_seconds:
                 continue
         else:
             interval = max(item.min_interval, min(_coerce_int(config.get(item.interval_key), item.default_interval) if item.interval_key else item.default_interval, item.max_interval))

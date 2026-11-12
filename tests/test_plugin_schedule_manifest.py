@@ -72,6 +72,7 @@ high_side_effect = false
         ('[[schedule]]\naction = "x"\nkind = "daily"\ndefault_time = "08:00"\n[[schedule]]\naction = "x"\nkind = "daily"\ndefault_time = "09:00"', "重复"),
         ('[[schedule]]\naction = "x"\nkind = "daily"\ndefault_time = "08:00"\npriority = 999', "priority"),
         ('[[schedule]]\naction = "x"\nkind = "daily"\ndefault_time = "08:00"\nhigh_side_effect = "yes"', "high_side_effect"),
+        ('[[schedule]]\naction = "x"\nkind = "daily"\ndefault_time = "08:00"\ngrace_seconds = 5', "grace_seconds"),
     ],
 )
 def test_bad_declarations_make_the_plugin_invalid_with_a_reason(body, expected) -> None:
@@ -100,13 +101,16 @@ def test_scheduler_builds_daily_and_interval_specs_from_the_declaration() -> Non
     (poll,), _ = _read('[[schedule]]\naction = "p"\nkind = "interval"\ninterval_key = "n"\ndefault_interval = 300\nmin_interval = 60\nmax_interval = 3600')
     day = now_shanghai().replace(hour=21, minute=30, second=0, microsecond=0)
 
-    assert _specs((daily,), {}, day) == ()                                  # 开关没打开
-    (spec,) = _specs((daily,), {"on": True}, day)
-    assert spec.action_key == "d" and (spec.scheduled_for.hour, spec.scheduled_for.minute) == (20, 0)  # 缺省 20:00,已过则补发当天
-    assert _specs((daily,), {"on": True}, day.replace(hour=19)) == ()      # 还没到时间
-    (custom,) = _specs((daily,), {"on": True, "t": "21:15"}, day)
+    at = day.replace(hour=20, minute=0)
+    assert _specs((daily,), {}, at + timedelta(seconds=10)) == ()          # 开关没打开
+    (spec,) = _specs((daily,), {"on": True}, at + timedelta(seconds=10))
+    assert spec.action_key == "d" and (spec.scheduled_for.hour, spec.scheduled_for.minute) == (20, 0)  # 缺省 20:00
+    assert _specs((daily,), {"on": True}, at - timedelta(seconds=1)) == ()  # 还没到时间
+    assert _specs((daily,), {"on": True}, at + timedelta(seconds=119))[0].scheduled_for == spec.scheduled_for  # 窗口内重复扫描:同一时刻,幂等
+    assert _specs((daily,), {"on": True}, at + timedelta(seconds=120)) == ()  # 过了窗口:不补发(例如服务刚启动)
+    assert _specs((daily,), {"on": True}, day) == ()                        # 21:30 才启动:错过 20:00,当天不再触发
+    (custom,) = _specs((daily,), {"on": True, "t": "21:15"}, day.replace(minute=15, second=30))
     assert (custom.scheduled_for.hour, custom.scheduled_for.minute) == (21, 15)
-    assert _specs((daily,), {"on": True}, day + timedelta(minutes=1))[0].scheduled_for == spec.scheduled_for  # 同一天同一时刻幂等
 
     (bucket,) = _specs((poll,), {"n": 10}, day)                             # 间隔被钳制到下限 60 秒
     assert int(bucket.scheduled_for.timestamp()) % 60 == 0

@@ -174,9 +174,10 @@ enabled_key = "scheduled_enabled" # 可选:开关型配置项,打开才触发;�
 # interval 改用:interval_key / default_interval(秒) / min_interval / max_interval
 priority = 70                    # 可选,1-200
 high_side_effect = true          # 可选:会发消息的动作保持 true,失败后不自动重放
+grace_seconds = 120              # 可选:daily 到点后多久内还算准时,超过不补发(30-3600)
 ```
 
-- daily 在当天时间到达后首次扫描触发,错过会补发当天一次;interval 按时间桶触发。同一计划同一时刻只会入队一次。
+- daily 只在设定时间之后的一小段窗口内触发(默认 120 秒,可用 `grace_seconds` 调到 30-3600);**错过窗口(服务没运行、重启晚了)就跳过当天,不补发**,所以服务启动时不会冒出一条过期的任务;interval 按时间桶触发。同一计划同一时刻只会入队一次。
 - 触发时平台调用 `execute_scheduled_action(db, request)`;`request.context` 带租户、绑定和机器人,**不带会话**,需要对哪些群发由插件自己决定(例如只发给启用了本插件的群)。
 - 声明有误(缺 `default_time`、间隔越界、动作重复等)时插件被标记为无效并显示原因。
 - 参考 `plugins/idiom_guess/config.toml`。

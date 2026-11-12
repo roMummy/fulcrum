@@ -37,7 +37,7 @@
 1. 在 `config.toml` 写 `[[schedule]]`(`kind = "daily"` 每天一次,或 `"interval"` 按间隔),用 `enabled_key` 指向一个开关配置项;
 2. 在 `plugin.py` 实现 `execute_scheduled_action(db, request)`,`request.action` 就是声明里的 `action`;
 3. 平台只告诉你「到点了」和哪个绑定,**不带会话**,发给哪些群由插件决定;发消息用 `enqueue_outbound_job` 入队,不要直接调渠道;
-4. 同一计划同一时刻平台只触发一次,错过会补发当天一次,不需要自己做去重。
+4. 同一计划同一时刻平台只触发一次,错过时间窗口(服务没运行、重启晚了)就跳过当天,不补发,也不需要自己做去重。
 
 ## 注意
 

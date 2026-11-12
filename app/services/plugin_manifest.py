@@ -41,7 +41,8 @@ SCHEDULE_KINDS = ("daily", "interval")
 class PluginSchedule:
     """插件在清单里声明的一条定时计划(`[[schedule]]`),调度器据此自动入队,不需要改调度代码。
 
-    - kind="daily":每天在 time_key 配置的时间(缺省 default_time)触发一次,错过后首次扫描补发当天;
+    - kind="daily":每天在 time_key 配置的时间(缺省 default_time)触发一次;只在该时间之后 grace_seconds 秒的窗口内触发,
+      错过窗口(例如服务当时没运行、重启晚了)就跳过当天,**不补发**;
     - kind="interval":每隔 interval_key 配置的秒数(缺省 default_interval,限制在 min/max 内)触发一次;
     - enabled_key:控制该计划是否生效的开关型配置项;不写表示总是生效;
     触发后调用插件的 execute_scheduled_action(db, request),request.action 就是这里的 action。
@@ -58,6 +59,8 @@ class PluginSchedule:
     enabled_key: str = ""
     priority: int = 70
     high_side_effect: bool = True
+    # daily 的触发窗口(秒):到点后多久内还算准时;超过就不再触发
+    grace_seconds: int = 120
 
 
 class ManifestParseError(ValueError):
@@ -110,6 +113,10 @@ def read_schedules(parsed: dict[str, Any]) -> tuple[tuple[PluginSchedule, ...], 
         if not isinstance(high_side_effect, bool):
             errors.append(f"{name}:high_side_effect 必须是 true 或 false")
             continue
+        grace = item.get("grace_seconds", 120)
+        if isinstance(grace, bool) or not isinstance(grace, int) or not 30 <= grace <= 3600:
+            errors.append(f"{name}:grace_seconds 必须是 30-3600 的整数")
+            continue
         if kind == "daily":
             time_key, default_time = str(item.get("time_key") or "").strip(), str(item.get("default_time") or "").strip()
             if time_key and not KEY_PATTERN.match(time_key):
@@ -118,7 +125,7 @@ def read_schedules(parsed: dict[str, Any]) -> tuple[tuple[PluginSchedule, ...], 
             if not TIME_PATTERN.match(default_time):
                 errors.append(f"{name}:daily 必须提供 default_time,格式 HH:MM")
                 continue
-            schedules.append(PluginSchedule(action, kind, time_key=time_key, default_time=default_time, enabled_key=enabled_key, priority=priority, high_side_effect=high_side_effect))
+            schedules.append(PluginSchedule(action, kind, time_key=time_key, default_time=default_time, enabled_key=enabled_key, priority=priority, high_side_effect=high_side_effect, grace_seconds=grace))
         else:
             interval_key = str(item.get("interval_key") or "").strip()
             default_interval, minimum, maximum = item.get("default_interval"), item.get("min_interval", 60), item.get("max_interval", 86_400)
