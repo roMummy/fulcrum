@@ -1,7 +1,7 @@
 """群成员变更提醒:同步群成员加入、退出和群昵称变化,并按群开关在群里发送通知与欢迎卡片。
 
 原先是 group_member_change 插件,现在属于群自身能力:不需要机器人绑定,
-在群详情页「功能」里打开即可;成员状态同步和通知都只看本群配置。
+在群详情页「功能」里打开即可;微桥成员目录由入站事件独立更新,本功能只控制通知。
 """
 
 from __future__ import annotations
@@ -91,16 +91,22 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
     change_type = str(parsed["change_type"])
     members = list(parsed["members"])
     new_name = str(parsed.get("new_name") or "")
-    previous = lookup_previous_names(ctx.db, chatroom=ctx.chatroom, members=members) if change_type == "rename" else {}
-    apply_member_change(
-        ctx.db, channel=ctx.channel, chatroom=ctx.chatroom,
-        change_type=change_type, members=members, new_name=new_name,
-    )
-    # 微桥事件自带变更后的群人数,直接校准,不必等下一次全量同步。
-    if isinstance(parsed.get("after_count"), int):
-        ctx.chatroom.member_count = int(parsed["after_count"])
+    directory = ctx.details.get("member_directory")
+    if ctx.channel.channel_type == "wechat_webridge":
+        # 入站事务已更新微桥目录;异步通知不能再写一次,否则会把更新后的资料回滚。
+        if isinstance(directory, Mapping) and not directory.get("applied"):
+            return None
+        previous = dict(directory.get("previous") or {}) if isinstance(directory, Mapping) else {}
+    else:
+        previous = lookup_previous_names(ctx.db, chatroom=ctx.chatroom, members=members) if change_type == "rename" else {}
+        apply_member_change(
+            ctx.db, channel=ctx.channel, chatroom=ctx.chatroom,
+            change_type=change_type, members=members, new_name=new_name,
+        )
+        if isinstance(parsed.get("after_count"), int):
+            ctx.chatroom.member_count = int(parsed["after_count"])
 
-    # 状态同步无论通知开关如何都会做;下面只决定要不要发消息。
+    # 下面的开关只决定要不要发消息。
     notify_key = {"join": "notify_join", "left": "notify_leave", "removed": "notify_leave", "rename": "notify_rename"}[change_type]
     if not ctx.config.get(notify_key):
         return []
@@ -175,7 +181,7 @@ def _parse_structured_member_change(normalized_event: Mapping[str, Any]) -> dict
         parsed["new_name"] = str(member_change.get("new_room_nick_name") or "").strip()
         parsed["old_name"] = str(member_change.get("old_room_nick_name") or "").strip()
     after_count = member_change.get("after_count")
-    if isinstance(after_count, int) and after_count >= 0:
+    if isinstance(after_count, int) and not isinstance(after_count, bool) and after_count >= 0:
         parsed["after_count"] = after_count
     return parsed
 

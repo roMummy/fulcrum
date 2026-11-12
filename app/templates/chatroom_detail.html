@@ -134,13 +134,14 @@
   </div>
   <div class="table-scroll">
   <table class="table">
-    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后发言</th></tr></thead>
+    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th><th>状态</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后发言</th></tr></thead>
     <tbody>
       {% for item in detail.members %}
       <tr>
         <td>{{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}</td>
         <td>{{ item.display_name }}</td>
         <td>{{ item.role_label }}</td>
+        <td>{{ item.status_label }}</td>
         {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}">调整</a></td>{% endif %}
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}{% if item.last_active_label %}<div class="muted-text">{{ item.last_active_label }}</div>{% endif %}</td>
       </tr>

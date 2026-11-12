@@ -106,6 +106,8 @@ tests/test_webridge_lag.py
 tests/test_webridge_media_default_off.py
 tests/test_webridge_media_upload.py
 tests/test_webridge_member_events.py
+tests/test_webridge_member_directory.py
+tests/test_webridge_message_directory.py
 tests/test_webridge_outbound_record.py
 tests/test_wechat_ipad_874_contract.py
 tests/test_wechat_ipad_login_proxy_flow.py

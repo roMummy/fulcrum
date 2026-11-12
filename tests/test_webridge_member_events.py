@@ -37,11 +37,12 @@ def test_join_event_and_welcome_reply():
 
 
 def test_nickname_change_event():
-    event = _normalize("group_member_nickname_change", old_room_nick_name="a", new_room_nick_name="新群昵称")
+    event = _normalize("group_member_nickname_change", old_room_nick_name="旧群昵称", new_room_nick_name="新群昵称")
     assert event["message"]["message_type"] == "group_member_nickname_change"
     parsed = parse_member_change(event)
     assert parsed["change_type"] == "rename" and parsed["new_name"] == "新群昵称"
-    # 改群昵称发变动通知:旧名取库里记录,没有则写“未设置”
+    assert parsed["old_name"] == "旧群昵称"
+    # 改群昵称发变动通知:优先保留事件里的旧昵称,缺失时使用改名前的目录资料。
     reply = build_reply_text(
         "rename",
         parsed["members"],

@@ -71,3 +71,9 @@ def _ensure_loaded() -> None:
         return
     _loaded = True
     from app.services.group_features import ai_chat, inactive_rank, media_download, member_change, red_packet, transfer_receive, trigger_reply  # noqa: F401
+
+    # 目录事件会先单独导入成员解析器;页面顺序仍按这里的声明,不能受首次入站事件影响。
+    ordered = {module.FEATURE.key: module.FEATURE for module in (ai_chat, inactive_rank, media_download, member_change, red_packet, transfer_receive, trigger_reply)}
+    ordered.update(_FEATURES)
+    _FEATURES.clear()
+    _FEATURES.update(ordered)

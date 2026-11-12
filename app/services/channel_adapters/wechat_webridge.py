@@ -109,7 +109,7 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
             "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "message_id", "from_user", "to_user", "payer_username", "receiver_username", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
             "contact": {key: body.get(key) for key in ("contact_id", "contact_ref", "encrypt_username", "ticket", "nickname") if body.get(key) is not None},
-            "group": {key: body.get(key) for key in ("room_id", "member_id", "member_ids", "group_name", "operation") if body.get(key) is not None},
+            "group": {key: body.get(key) for key in ("room_id", "member_id", "member_ids", "group_name", "room_name", "room_remark", "operation") if body.get(key) is not None},
             "moment": {key: body.get(key) for key in ("sns_id", "media_id", "author_id", "operation_id") if body.get(key) is not None},
         }
         if message_type == "pat":
@@ -122,7 +122,11 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         if member_change:
             # 结构化成员事件:插件直接读 details.member_change,消息内容写成中文,后台和日志可读。
             details["member_change"] = member_change
+            details["member_profile"] = {"nickname": body.get("member_nick_name")}
             content = content or member_change["summary"]
+        timestamp = body.get("create_time", payload.get("create_time"))
+        if timestamp is not None:
+            details["timestamp"] = timestamp
         return {
             "adapter_type": self.adapter_type,
             "event_key": str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None,
@@ -212,7 +216,11 @@ def _build_member_change(event_name: str, body: dict[str, Any]) -> dict[str, Any
     elif change_type == "left":
         result["summary"] = f"{name} 退出了群聊"
     else:
+        if not isinstance(body.get("new_room_nick_name"), str):
+            return None
         new_name = str(body.get("new_room_nick_name") or "").strip()
         result["new_room_nick_name"] = new_name
+        if isinstance(body.get("old_room_nick_name"), str):
+            result["old_room_nick_name"] = body["old_room_nick_name"]
         result["summary"] = f"{name} 将群昵称改为 {new_name}" if new_name else f"{name} 清除了群昵称"
     return result

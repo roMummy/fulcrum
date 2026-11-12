@@ -17,12 +17,25 @@ from sqlalchemy.orm import sessionmaker
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob
 from app.services.group_features import dispatch as dispatch_module
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.group_features.registry import all_features, get_feature
 from app.services.group_features.store import get_state, is_enabled, save_state
 from app.services.group_features.view import build_feature_cards, save_from_form
+from app.services.wechat_webridge.member_directory import apply_event
+
+
+def test_feature_order_is_independent_of_early_member_parser_import():
+    import subprocess
+    import sys
+
+    subprocess.run([sys.executable, "-c", (
+        "from app.services.group_features import member_change; "
+        "from app.services.group_features.registry import all_features; "
+        "assert [f.key for f in all_features()] == "
+        "['ai_chat', 'inactive_rank', 'media_download', 'member_change', 'red_packet', 'transfer_receive', 'trigger_reply']"
+    )], check=True, capture_output=True, text=True)
 
 
 @pytest.fixture()
@@ -30,7 +43,7 @@ def env():
     """一个微桥群 + 几个成员;收集 send_replies 的调用以便断言回复内容。"""
 
     engine = create_engine("sqlite://")
-    for table in (Channel, Conversation, Chatroom, ChatroomMember):
+    for table in (Channel, Conversation, Chatroom, ChatroomMember, TaskJob):
         table.__table__.create(engine)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with tenant_scope(1):
@@ -165,7 +178,9 @@ def test_member_change_join_notifies_syncs_and_sends_card(env, sent):
         env.room, "member_change", enabled=True,
         config={"card_enabled": True, "card_title": "欢迎 {nickname}", "card_desc": "到点了 {now}", "card_url": "https://example.com/rules"},
     )
-    executed = dispatch_group_features(env.db, env.channel, _join_event(), conversation_id=env.conversation.id)
+    event = _join_event()
+    apply_event(env.db, env.channel, event, env.conversation)
+    executed = dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
     assert executed == ["member_change"] and not consumed_command(executed)
     replies = sent[0]["replies"]
     assert replies[0]["content"] == "📋 群成员变动通知:\n🆕 成员新增: 小明"
@@ -180,12 +195,16 @@ def test_member_change_join_notifies_syncs_and_sends_card(env, sent):
 def test_member_change_switches_and_bad_card_url(env, sent):
     # 关掉加入通知:仍同步成员,但不发消息
     save_state(env.room, "member_change", enabled=True, config={"notify_join": False})
-    dispatch_group_features(env.db, env.channel, _join_event("小红"), conversation_id=env.conversation.id)
+    event = _join_event("小红")
+    apply_event(env.db, env.channel, event, env.conversation)
+    dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
     assert sent == []
     assert env.db.scalar(select(ChatroomMember).where(ChatroomMember.display_name == "小红")) is not None
     # 卡片地址不是 http(s) 网址:跳过卡片,文字通知照发
     save_state(env.room, "member_change", enabled=True, config={"card_enabled": True, "card_url": "不是网址"})
-    dispatch_group_features(env.db, env.channel, _join_event("小刚"), conversation_id=env.conversation.id)
+    event = _join_event("小刚")
+    apply_event(env.db, env.channel, event, env.conversation)
+    dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
     assert [item["type"] for item in sent[0]["replies"]] == ["text"]
     # 普通聊天文本与本能力无关:不执行
     sent.clear()

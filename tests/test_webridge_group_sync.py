@@ -207,6 +207,38 @@ def test_the_member_result_for_a_new_group_is_stored(env) -> None:
     assert sorted((m.member_external_id, m.role) for m in rows) == [("wxid_a", "owner"), ("wxid_b", "member")] and room.member_count == 2
 
 
+def test_directory_sync_preserves_group_settings_and_local_member_metadata(env) -> None:
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM, members=1)
+    settings = {"member_change": {"enabled": True, "config": {"notify_join": False}}}
+    room.extra_json = json.dumps({"group_features": settings, "auto_download_media": True})
+    member = db.scalar(select(ChatroomMember).where(ChatroomMember.chatroom_id == room.id))
+    member.extra_json = json.dumps({"local_note": "keep"})
+    service.persist_directory_result(db, channel, {"type": "groups_all"}, {"groups": [
+        {"account_id": OLD_ROOM, "nick_name": "新群名", "avatar_url": "group.png"},
+    ]})
+    extra = json.loads(room.extra_json)
+    assert extra["group_features"] == settings and extra["auto_download_media"] is True
+    assert extra["avatar_url"] == "group.png" and room.name == "新群名"
+    service.persist_directory_result(db, channel, {"type": "room_members", "params": {"room_id": OLD_ROOM}}, {
+        "members": [{"account_id": member.member_external_id, "nick_name": "更新昵称", "avatar_url": "member.png"}],
+    })
+    extra = json.loads(member.extra_json)
+    assert extra["local_note"] == "keep" and extra["avatar_url"] == "member.png"
+    assert member.nickname == "更新昵称"
+
+
+@pytest.mark.parametrize("extra", ["broken", "[]", "null"])
+def test_directory_sync_recovers_invalid_extra_json(env, extra) -> None:
+    db, channel = env
+    room = _add_room(db, channel, OLD_ROOM)
+    room.extra_json = extra
+    service.persist_directory_result(db, channel, {"type": "groups_all"}, {
+        "groups": [{"account_id": OLD_ROOM, "nick_name": "群"}],
+    })
+    assert json.loads(room.extra_json)["source"] == "wechat_webridge"
+
+
 def test_member_requests_are_capped_per_round_and_retried_only_after_the_backoff(env) -> None:
     db, channel = env
     for number in range(group_sync.MAX_MEMBER_SYNC_PER_ROUND + 4):

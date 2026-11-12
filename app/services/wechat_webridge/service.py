@@ -167,10 +167,25 @@ def _directory_id(item: dict[str, Any], *keys: str) -> str:
     return next((str(item.get(key) or "").strip() for key in keys if str(item.get(key) or "").strip()), "")
 
 
-def persist_directory_result(db: Session, channel: Channel, command: dict[str, Any], result: dict[str, Any]) -> dict[str, int]:
+def _merge_directory_extra(existing: str | None, **updates: Any) -> str:
+    """目录同步只更新协议资料,保留群功能、媒体开关及本地成员元数据。"""
+
+    try:
+        extra = as_object(json.loads(existing or "{}"))
+    except (TypeError, ValueError):
+        extra = {}
+    return json.dumps({**extra, **updates}, ensure_ascii=False, sort_keys=True)
+
+
+def persist_directory_result(
+    db: Session, channel: Channel, command: dict[str, Any], result: dict[str, Any],
+    *, snapshot_revision: int | None = None, snapshot_started_at: datetime | None = None,
+) -> dict[str, int]:
     """把好友、群组和群成员同步结果写入现有联系人与群组实体。"""
 
     command_name = text(command.get("type") or command.get("command_name"))
+    if command_name in {"groups_all", "room_members"}:
+        db.flush()
     now = now_shanghai()
     counts = {"contacts": 0, "groups": 0, "members": 0}
     if command_name in {"friends", "friends_all"}:
@@ -200,23 +215,32 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
             external_id = _directory_id(item, "account_id", "room_id", "chatroom_id", "user_name", "wxid", "id")
             if not external_id:
                 continue
-            room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id))
+            room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == external_id).with_for_update().execution_options(populate_existing=True))
             if room is None:
                 # 新发现的群默认启用;已存在的群保持后台设置的启用状态,
                 # 同步群列表不能把手动停用的群重新打开。
                 room = Chatroom(bot_id=channel.bot_id, channel_id=channel.id, external_id=external_id, first_seen_at=now, is_active=True, management_status="enabled")
                 db.add(room)
-            # 之前被标记为已退出的群又出现在列表里:先恢复退群前的启用状态(下面会覆盖 extra_json,所以要先读)。
+            # 之前被标记为已退出的群又出现在列表里:恢复退群前的启用状态。
             from app.services.wechat_webridge import group_sync
 
             group_sync.restore_if_returned(room)
-            room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
-            room.remark = str(item.get("remark") or "")[:255] or None
             room.status = "synced"
             room.last_seen_at = now
             room.last_synced_at = now
-            room.member_count = int(item.get("member_count") or item.get("member_total") or item.get("member_num") or room.member_count or 0)
-            room.extra_json = json.dumps({"source": "wechat_webridge", "avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
+            from app.services.wechat_webridge import member_directory
+
+            latest_event = member_directory.state(room).get("event_received_at")
+            newer_event = latest_event and snapshot_started_at is not None and datetime.fromisoformat(latest_event) > ensure_shanghai_datetime(snapshot_started_at)
+            if not newer_event:
+                room.name = str(item.get("display_name") or item.get("room_name") or item.get("nick_name") or item.get("nickname") or item.get("name") or external_id)[:255]
+                room.remark = str(item.get("remark") or "")[:255] or None
+                for key in ("member_count", "member_total", "member_num"):
+                    value = item.get(key)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        room.member_count = value
+                        break
+            room.extra_json = _merge_directory_extra(room.extra_json, source="wechat_webridge", avatar_url=item.get("avatar_url") or item.get("avatar") or "", raw=item)
             conversation = db.scalar(select(Conversation).where(Conversation.channel_id == channel.id, Conversation.external_id == external_id))
             if conversation is not None:
                 conversation.title = room.name
@@ -224,10 +248,33 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
     elif command_name == "room_members":
         params = as_object(command.get("params") or command.get("args"))
         room_id = _directory_id(params, "room_id", "chatroom_id", "conversation_id")
-        room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == room_id)) if room_id else None
+        room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == room_id).with_for_update().execution_options(populate_existing=True)) if room_id else None
         if room:
+            from app.services.wechat_webridge import member_directory
+
+            # 手机查询期间又发生了成员事件:整份旧快照不落库,完成任务后再安排一次读取。
+            if snapshot_revision is not None and snapshot_revision != member_directory.revision(room):
+                return {**counts, "stale_snapshot": 1}
+            latest_event = member_directory.state(room).get("event_received_at")
+            if snapshot_revision is None and latest_event and snapshot_started_at is not None and datetime.fromisoformat(latest_event) > ensure_shanghai_datetime(snapshot_started_at):
+                return {**counts, "stale_snapshot": 1}
+            if result.get("room_id") and text(result["room_id"]) != room_id:
+                return {**counts, "invalid_snapshot": 1}
+            items = _result_items(result, "members", "items")
+            complete = member_directory.complete_snapshot(result, items)
+            if isinstance(result.get("room_name"), str) and result["room_name"]:
+                room.name = result["room_name"][:255]
+                conversation = db.scalar(select(Conversation).where(Conversation.channel_id == channel.id, Conversation.external_id == room_id))
+                if conversation is not None:
+                    conversation.title = room.name
+            if isinstance(result.get("room_remark"), str):
+                room.remark = result["room_remark"][:255] or None
+            owner = text(result.get("owner_user_name") or result.get("owner_wxid"))
+            if owner:
+                room.owner_external_id = owner[:128]
             seen_ids: set[str] = set()
-            for item in _result_items(result, "members", "items"):
+            explicitly_left: set[str] = set()
+            for item in items:
                 external_id = _directory_id(item, "account_id", "user_name", "wxid", "id")
                 if not external_id:
                     continue
@@ -236,22 +283,44 @@ def persist_directory_result(db: Session, channel: Channel, command: dict[str, A
                 if member is None:
                     member = ChatroomMember(chatroom_id=room.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=external_id)
                     db.add(member)
-                member.nickname = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or external_id)[:255]
-                member.display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or external_id)[:255]
-                member.status = "active"
+                member.nickname = str(item.get("nick_name") or item.get("nickname") or member.nickname or item.get("display_name") or external_id)[:255]
+                member_state = as_object(member_directory.extra_object(member.extra_json).get(member_directory.STATE_KEY))
+                member_state["observed_only"] = False
+                if isinstance(item.get("room_nick_name"), str):
+                    member_state["room_nickname"] = item["room_nick_name"][:255]
+                room_nickname = member_state.get("room_nickname")
+                member.display_name = str(room_nickname if room_nickname else (member.nickname if room_nickname == "" else item.get("display_name") or item.get("remark") or member.display_name or member.nickname))[:255]
+                # 不完整快照只补资料,不能把明确退群的人重新改成在群。
+                if member.status == "left" and member_state.get("membership") == "left":
+                    # 明确退群事件的优先级高于快照出现;真实入群事件/新发言会恢复状态。
+                    explicitly_left.add(external_id)
+                elif complete or not member_state.get("event_at"):
+                    member.status = "active"
                 # 微桥成员项自带 is_owner / is_admin，群详情的角色概览依赖 role 字段。
-                member.role = "owner" if item.get("is_owner") else ("admin" if item.get("is_admin") else "member")
+                if item.get("is_owner") or external_id == owner:
+                    member.role = "owner"
+                elif "is_admin" in item:
+                    member.role = "admin" if item["is_admin"] else "member"
+                elif not member.role or (owner and member.role == "owner"):
+                    member.role = "member"
                 member.last_synced_at = now
-                member.extra_json = json.dumps({"avatar_url": item.get("avatar_url") or item.get("avatar") or "", "raw": item}, ensure_ascii=False, sort_keys=True)
+                extra = member_directory.extra_object(member.extra_json)
+                member.extra_json = _merge_directory_extra(
+                    member.extra_json, avatar_url=item.get("avatar_url") or item.get("avatar") or extra.get("avatar_url") or "", raw=item,
+                    **{member_directory.STATE_KEY: member_state},
+                )
                 counts["members"] += 1
             # 以前的群友要保留:这次名单里已经没有的成员只标记为已退群,不删除,历史发言与积分都还在。
             # 名单为空或返回自带“被截断/还有更多”标记时不是完整名单,不做标记,避免一次异常返回误伤全员。
-            if seen_ids and not (result.get("truncated") or result.get("has_more")):
+            if complete:
                 counts["members_left"] = _mark_missing_members_left(db, room, seen_ids, now)
-                room.member_count = len(seen_ids)
+                room.member_count = len(seen_ids - explicitly_left)
             else:
-                room.member_count = max(room.member_count, counts["members"])
+                room.member_count = max(room.member_count, len(seen_ids - explicitly_left))
             room.last_synced_at = now
+            counts["members_complete"] = int(complete)
+            if complete:
+                member_directory.save_state(room, synced_at=now.isoformat())
     if any(counts.values()):
         db.flush()
         logger.info("webridge directory persisted", extra={"channel_id": channel.id, "command_name": command_name, **counts})
@@ -532,13 +601,19 @@ def enqueue_command(
     if not isinstance(args, dict):
         raise ValueError("webridge_command_args_must_be_object")
     normalized_request_id = text(request_id) or f"cmd_{uuid.uuid4().hex}"
+    payload = {
+        "channel_id": int(channel.id),
+        "command": {"request_id": normalized_request_id, "type": normalized_name, "params": args},
+    }
+    if normalized_name == "room_members":
+        from app.services.wechat_webridge import member_directory
+
+        room = member_directory.find_room(db, channel, text(args.get("room_id")))
+        payload["directory_revision"] = member_directory.revision(room)
     return enqueue_job(
         db,
         job_type=JOB_TYPE,
-        payload={
-            "channel_id": int(channel.id),
-            "command": {"request_id": normalized_request_id, "type": normalized_name, "params": args},
-        },
+        payload=payload,
         priority=priority,
         dedupe_key=f"webridge:{channel.id}:{normalized_request_id}",
         available_at=available_at,
@@ -633,6 +708,9 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     from app.services.wechat_webridge import group_sync
 
     group_sync.reconcile_if_due(db, channel)
+    from app.services.wechat_webridge import member_directory
+
+    member_directory.retry_due(db, channel)
 
 
 def _enqueue_device_status(db: Session, channel: Channel) -> None:
@@ -725,6 +803,12 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
             command["request_id"] = text(command.get("request_id")) or f"job_{int(job.id)}"
             command["type"] = text(command.get("type") or command.get("command_name"))
             command["params"] = as_object(command.get("params") or command.get("args"))
+            if command["type"] == "room_members":
+                from app.services.wechat_webridge import member_directory
+
+                room = member_directory.find_room(db, channel, text(command["params"].get("room_id")))
+                data["directory_revision"] = member_directory.revision(room)
+                job.payload_json = json.dumps(data, ensure_ascii=False, sort_keys=True)
             if command["type"]:
                 # 微桥 8080 插件按 command_name/args 读取任务；保留 type/params 供旧客户端和内部调试使用。
                 command["command_name"] = command["type"]
@@ -890,17 +974,36 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
 
             # 群列表同步:先记下已有的群,结果写入后对"新发现的群"继续下发成员同步。
             known_before = group_sync.known_room_ids(db, channel) if command_type == "groups_all" else None
-            counts = persist_directory_result(db, channel, command, result)
+            counts = persist_directory_result(
+                db, channel, command, result, snapshot_revision=data.get("directory_revision"),
+                snapshot_started_at=job.started_at or job.created_at,
+            )
             if known_before is not None:
                 group_sync.after_groups_result(db, channel, known_before, group_sync.complete_snapshot_ids(command, result))
             if command_type == "device_status":
                 _save_device_status(db, channel, as_object(result.get("result")) or result)
             elif command_type == "account_status":
                 _save_account_profile(db, channel, as_object(result.get("result")) or result)
+            elif command_type == "room_members":
+                from app.services.wechat_webridge import member_directory
+
+                job.status = "completed"
+                db.flush()
+                member_directory.after_result(
+                    db, channel, text(as_object(command.get("params")).get("room_id")),
+                    complete=bool(counts.get("members_complete")), stale=bool(counts.get("stale_snapshot")),
+                )
             settle_outbound_message(db, job, ok=True)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
+        failed_command = as_object(data.get("command"))
+        if failed_command.get("type") == "room_members":
+            from app.services.wechat_webridge import member_directory
+
+            job.status = "failed"
+            db.flush()
+            member_directory.after_result(db, channel, text(as_object(failed_command.get("params")).get("room_id")), complete=False)
         settle_outbound_message(db, job, ok=False, error=text(result.get("error") or payload.get("error") or "webridge_command_failed"))
         fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
         logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
