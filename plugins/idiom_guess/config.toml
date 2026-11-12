@@ -2,7 +2,7 @@
 code = "idiom_guess"
 display_name = "看图猜成语"
 plugin_type = "message"
-version = "1.0.1"
+version = "1.0.2"
 author = "Hao"
 description = "456 道看图猜成语，支持群聊抢答、答案解释、本群答对题数排行和每日定时开局。"
 default_enabled = false
@@ -25,6 +25,15 @@ game_timeout_minutes = 30
 leaderboard_delay_seconds = 1
 scheduled_enabled = false
 send_time = "20:00"
+
+# 定时计划声明:平台调度器据此每天在 send_time 调用本插件的 execute_scheduled_action("idiom_daily_start"),
+# 不需要改调度代码;只有 scheduled_enabled 打开的绑定才会触发。
+[[schedule]]
+action = "idiom_daily_start"
+kind = "daily"
+time_key = "send_time"
+default_time = "20:00"
+enabled_key = "scheduled_enabled"
 
 [[config.fields]]
 key = "trigger_keywords"
@@ -68,7 +77,7 @@ key = "scheduled_enabled"
 label = "每天定时开局"
 kind = "bool"
 default = false
-hint = "需要安装随包说明中的宿主调度补丁；仅向已启用本插件的受管群发送。"
+hint = "仅向已启用本插件的受管群发送。"
 group = "定时开局"
 
 [[config.fields]]

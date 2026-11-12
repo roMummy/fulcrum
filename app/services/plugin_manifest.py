@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 try:  # Python 3.11+ 自带;3.10 使用 requirements 里的 tomli
@@ -32,6 +33,33 @@ KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+ACTION_PATTERN = re.compile(r"^[a-z][a-z0-9_.:-]{0,31}$")
+SCHEDULE_KINDS = ("daily", "interval")
+
+
+@dataclass(frozen=True)
+class PluginSchedule:
+    """插件在清单里声明的一条定时计划(`[[schedule]]`),调度器据此自动入队,不需要改调度代码。
+
+    - kind="daily":每天在 time_key 配置的时间(缺省 default_time)触发一次,错过后首次扫描补发当天;
+    - kind="interval":每隔 interval_key 配置的秒数(缺省 default_interval,限制在 min/max 内)触发一次;
+    - enabled_key:控制该计划是否生效的开关型配置项;不写表示总是生效;
+    触发后调用插件的 execute_scheduled_action(db, request),request.action 就是这里的 action。
+    """
+
+    action: str
+    kind: str
+    time_key: str = ""
+    default_time: str = ""
+    interval_key: str = ""
+    default_interval: int = 0
+    min_interval: int = 60
+    max_interval: int = 86_400
+    enabled_key: str = ""
+    priority: int = 70
+    high_side_effect: bool = True
+
+
 class ManifestParseError(ValueError):
     """config.toml 不是合法的 TOML。"""
 
@@ -41,6 +69,70 @@ def parse_manifest(raw_text: str) -> dict[str, Any]:
         return tomllib.loads(raw_text)
     except tomllib.TOMLDecodeError as exc:
         raise ManifestParseError(str(exc)) from exc
+
+
+def read_schedules(parsed: dict[str, Any]) -> tuple[tuple[PluginSchedule, ...], list[str]]:
+    """读取并校验 [[schedule]];返回 (计划列表, 错误列表),错误会让插件被标记为无效。"""
+
+    raw = parsed.get("schedule")
+    if raw is None:
+        return (), []
+    if not isinstance(raw, list):
+        return (), ["schedule 必须写成 [[schedule]] 表数组"]
+    schedules: list[PluginSchedule] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, start=1):
+        name = f"schedule 第 {index} 项"
+        if not isinstance(item, dict):
+            errors.append(f"{name}必须是表")
+            continue
+        action = str(item.get("action") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+        if not ACTION_PATTERN.match(action):
+            errors.append(f"{name}:action 必须是小写字母开头、不超过 32 位的动作代码")
+            continue
+        if action in seen:
+            errors.append(f"{name}:action「{action}」重复")
+            continue
+        seen.add(action)
+        if kind not in SCHEDULE_KINDS:
+            errors.append(f"{name}:kind 必须是 {' / '.join(SCHEDULE_KINDS)}")
+            continue
+        enabled_key = str(item.get("enabled_key") or "").strip()
+        if enabled_key and not KEY_PATTERN.match(enabled_key):
+            errors.append(f"{name}:enabled_key 格式不对")
+            continue
+        priority, high_side_effect = item.get("priority", 70), item.get("high_side_effect", True)
+        if isinstance(priority, bool) or not isinstance(priority, int) or not 1 <= priority <= 200:
+            errors.append(f"{name}:priority 必须是 1-200 的整数")
+            continue
+        if not isinstance(high_side_effect, bool):
+            errors.append(f"{name}:high_side_effect 必须是 true 或 false")
+            continue
+        if kind == "daily":
+            time_key, default_time = str(item.get("time_key") or "").strip(), str(item.get("default_time") or "").strip()
+            if time_key and not KEY_PATTERN.match(time_key):
+                errors.append(f"{name}:time_key 格式不对")
+                continue
+            if not TIME_PATTERN.match(default_time):
+                errors.append(f"{name}:daily 必须提供 default_time,格式 HH:MM")
+                continue
+            schedules.append(PluginSchedule(action, kind, time_key=time_key, default_time=default_time, enabled_key=enabled_key, priority=priority, high_side_effect=high_side_effect))
+        else:
+            interval_key = str(item.get("interval_key") or "").strip()
+            default_interval, minimum, maximum = item.get("default_interval"), item.get("min_interval", 60), item.get("max_interval", 86_400)
+            if interval_key and not KEY_PATTERN.match(interval_key):
+                errors.append(f"{name}:interval_key 格式不对")
+                continue
+            if not all(isinstance(v, int) and not isinstance(v, bool) for v in (default_interval, minimum, maximum)):
+                errors.append(f"{name}:interval 必须提供整数 default_interval(秒),min_interval/max_interval 也必须是整数")
+                continue
+            if not 30 <= minimum <= maximum <= 604_800 or not minimum <= default_interval <= maximum:
+                errors.append(f"{name}:间隔需满足 30 ≤ min_interval ≤ default_interval ≤ max_interval ≤ 604800 秒")
+                continue
+            schedules.append(PluginSchedule(action, kind, interval_key=interval_key, default_interval=default_interval, min_interval=minimum, max_interval=maximum, enabled_key=enabled_key, priority=priority, high_side_effect=high_side_effect))
+    return tuple(schedules), errors
 
 
 def _is_number(value: Any) -> bool:

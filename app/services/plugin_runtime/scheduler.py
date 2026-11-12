@@ -135,26 +135,12 @@ def schedule_due_plugin_actions(db: Session, *, now: datetime | None = None) -> 
     """扫描当前租户已启用绑定，并为已到期计划创建统一任务。"""
 
     current = ensure_shanghai_datetime(now)
+    # 参与调度的插件 = 清单里声明了 [[schedule]] 的目录插件 + 仍由下面分支硬编码的几个老插件。
+    scheduled_codes = LEGACY_SCHEDULED_PLUGIN_CODES | _declared_schedule_codes()
     bindings = db.scalars(
         select(BotPlugin)
         .join(Plugin, Plugin.id == BotPlugin.plugin_id)
-        .where(
-            BotPlugin.status == "enabled",
-            Plugin.code.in_(
-                (
-                    "daily_news",
-                    "daily_ranking",
-                    "dota2_stats",
-                    "douyu",
-                    "epic_free",
-                    "game_task",
-                    "member_context",
-                    "message_summary",
-                    "value_rank",
-                    "weather",
-                )
-            ),
-        )
+        .where(BotPlugin.status == "enabled", Plugin.code.in_(sorted(scheduled_codes)))
         .order_by(BotPlugin.id.asc())
     ).all()
     created_jobs: list[TaskJob] = []
@@ -305,6 +291,52 @@ def normalize_action_key(action_key: str) -> str:
     ):
         raise PluginSchedulerError("插件动作代码格式不合法")
     return normalized
+
+
+# 还在下面 _build_plugin_schedule_specs 里按编码硬编码的老插件;新插件一律在清单里声明 [[schedule]]。
+LEGACY_SCHEDULED_PLUGIN_CODES = frozenset(
+    {"daily_news", "daily_ranking", "dota2_stats", "douyu", "epic_free", "game_task", "member_context", "message_summary", "value_rank", "weather"}
+)
+
+
+def _declared_schedules(plugin_code: str) -> tuple:
+    from app.services.plugin_directory import get_discovered_plugin
+
+    found = get_discovered_plugin(plugin_code)
+    return found.schedules if found is not None and found.is_valid else ()
+
+
+def _declared_schedule_codes() -> set[str]:
+    from app.services.plugin_directory import discover_plugins
+
+    return {item.manifest.code for item in discover_plugins() if item.is_valid and item.schedules}
+
+
+def _build_declared_schedule_specs(schedules: tuple, config: Mapping[str, Any], current: datetime) -> tuple[PluginScheduledActionSpec, ...]:
+    """按清单声明生成定时计划:daily 每天一次(错过补发),interval 按时间桶;幂等键由时间决定,不会重复入队。"""
+
+    specs: list[PluginScheduledActionSpec] = []
+    for item in schedules:
+        if item.enabled_key and not _coerce_bool(config.get(item.enabled_key), False):
+            continue
+        if item.kind == "daily":
+            hour, minute = _parse_clock_time(str(config.get(item.time_key) or item.default_time) if item.time_key else item.default_time)
+            scheduled_for = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if current < scheduled_for:
+                continue
+        else:
+            interval = max(item.min_interval, min(_coerce_int(config.get(item.interval_key), item.default_interval) if item.interval_key else item.default_interval, item.max_interval))
+            scheduled_for = datetime.fromtimestamp(math.floor(current.timestamp() / interval) * interval, tz=current.tzinfo)
+        specs.append(
+            PluginScheduledActionSpec(
+                action_key=item.action,
+                scheduled_for=scheduled_for,
+                parameters={},
+                high_side_effect=item.high_side_effect,
+                priority=item.priority,
+            )
+        )
+    return tuple(specs)
 
 
 def _build_plugin_schedule_specs(
@@ -647,7 +679,7 @@ def _build_plugin_schedule_specs(
                 priority=70,
             ),
         )
-    return ()
+    return _build_declared_schedule_specs(_declared_schedules(plugin_code), config, current)
 
 
 def _build_schedule_dedupe_key(

@@ -158,6 +158,27 @@ options = ["fast", { value = "slow", label = "慢速" }]
 
 参考仓库里的 `plugins/weather/config.toml` 和 `plugins/robot_menu/config.toml`，它们已经按本规范声明了配置字段。
 
+### 2.9 `[[schedule]]` 定时计划（已实现）
+
+要让插件定时执行(每日推送、定时开局、定期轮询),在清单里声明,**不需要改平台的调度代码**:
+
+```toml
+[[schedule]]
+action = "daily_push"            # 动作代码,调用 execute_scheduled_action 时 request.action 就是它
+kind = "daily"                   # daily 每天一次 / interval 每隔一段时间
+time_key = "send_time"           # daily:存放 HH:MM 的配置项 key(可省略,则固定用 default_time)
+default_time = "20:00"           # daily 必填
+enabled_key = "scheduled_enabled" # 可选:开关型配置项,打开才触发;不写表示总是触发
+# interval 改用:interval_key / default_interval(秒) / min_interval / max_interval
+priority = 70                    # 可选,1-200
+high_side_effect = true          # 可选:会发消息的动作保持 true,失败后不自动重放
+```
+
+- daily 在当天时间到达后首次扫描触发,错过会补发当天一次;interval 按时间桶触发。同一计划同一时刻只会入队一次。
+- 触发时平台调用 `execute_scheduled_action(db, request)`;`request.context` 带租户、绑定和机器人,**不带会话**,需要对哪些群发由插件自己决定(例如只发给启用了本插件的群)。
+- 声明有误(缺 `default_time`、间隔越界、动作重复等)时插件被标记为无效并显示原因。
+- 参考 `plugins/idiom_guess/config.toml`。
+
 ## 3. 入口函数 `plugin.py`
 
 入口都是模块级函数（也可以提供 `plugin` / `PLUGIN` 对象，方法同名）。全部可选，按需实现。
@@ -295,7 +316,7 @@ return PluginExecutionResult(
 | 配置表单中 `depends_on` 的变淡效果 | 已实现 |
 | 英文界面（`label_en`） | 规划中 |
 | 插件配置与群功能一致的卡片式界面 | 已实现 |
-| 定时任务的声明（现在由平台调度器按插件编码写死） | 规划中 |
+| 定时任务的声明 `[[schedule]]`（新插件用声明；weather 等 10 个老插件仍由调度器按编码处理） | 已实现 |
 | 素材/规则集合与图片上传（自动生成的列表管理页） | 规划中 |
 | 「素材回复」等免代码配方 | 规划中 |
 | 平台后台上传 zip 安装/升级插件，升级前自动存档、可回滚到最近 10 个历史版本（不重启生效；新装默认仅平台可见） | 已实现 |

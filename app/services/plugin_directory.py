@@ -26,7 +26,7 @@ from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
 from app.services.plugin_governance import blocked_plugin_codes
 from app.services.config_fields import ConfigField
-from app.services.plugin_manifest import ManifestParseError, parse_manifest, read_config_fields
+from app.services.plugin_manifest import ManifestParseError, PluginSchedule, parse_manifest, read_config_fields, read_schedules
 from app.services.outbound_files import externalize_media_payload, redact_base64_fields
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
@@ -125,6 +125,8 @@ class DiscoveredPlugin:
     secret_fields: tuple[str, ...] = ()
     # 清单 v2 的 [[config.fields]] 声明;为空表示插件没有声明,配置页回退到按默认值推断。
     config_fields: tuple[ConfigField, ...] = ()
+    # 清单里声明的 [[schedule]] 定时计划;调度器据此自动入队,新增定时插件不需要改调度代码。
+    schedules: tuple[PluginSchedule, ...] = ()
     admin_config: Mapping[str, Any] = field(default_factory=dict)
     validation_errors: tuple[str, ...] = ()
     validation_warnings: tuple[str, ...] = ()
@@ -2232,6 +2234,8 @@ def _build_discovered_plugin(
         errors.insert(0, parse_error)
     config_fields, field_errors = read_config_fields(parsed)
     errors += field_errors
+    schedules, schedule_errors = read_schedules(parsed)
+    errors += schedule_errors
     # 声明为 secret 的字段自动按密钥处理(加密保存、不进普通配置),不必在 [secrets] 里再写一遍。
     secret_fields = tuple(dict.fromkeys((*_extract_secret_fields(parsed), *(item.key for item in config_fields if item.kind == "secret"))))
     runtime_config = _extract_runtime_config(parsed)
@@ -2247,6 +2251,7 @@ def _build_discovered_plugin(
         runtime_config=runtime_config,
         secret_fields=secret_fields,
         config_fields=config_fields,
+        schedules=schedules,
         admin_config=_extract_admin_config(parsed),
         config_path=config_path,
         entrypoint_path=entrypoint_path,
