@@ -1,5 +1,5 @@
 {% extends 'auth_base.html' %}
-{% from '_auth_fields.html' import password_field %}
+{% from '_auth_fields.html' import captcha_field, password_field %}
 {% block access_title_id %}platform-login-title{% endblock %}
 {% block access_headline %}全局尽在掌握，<br />运营从容有序。{% endblock %}
 {% block access_summary %}关注每一位租户，让平台稳步向前。{% endblock %}
@@ -13,6 +13,7 @@
 <form method="post" action="/platform/login" class="form-grid auth-form-grid">
   <label class="access-field" for="platform-username"><span>用户名</span><input id="platform-username" name="username" autocomplete="username" spellcheck="false" value="{{ prefill_username or '' }}" placeholder="请输入管理员用户名" required /></label>
   {{ password_field('platform-password') }}
+  {{ captcha_field('platform-captcha', captcha_refresh_url, captcha_token, captcha_image) }}
   <div class="auth-form-actions"><button class="btn auth-submit" type="submit">登录平台后台 <span aria-hidden="true">→</span></button></div>
 </form>
 <p class="access-switch">企业用户？<a href="/login">前往企业工作台 <span aria-hidden="true">↗</span></a></p>

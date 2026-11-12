@@ -75,6 +75,7 @@ from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 import app.services.wechat_ipad.service as wechat_ipad_service
 from app.services.wechat_ipad.service import build_wechat_ipad_group_summary, build_wechat_ipad_overview, refresh_wechat_ipad_status
 from app.services.wechat_ipad.chatrooms import upsert_wechat_ipad_chatroom_profile
+from captcha_helpers import tenant_login_captcha
 
 
 def seed_legacy_test_fixture(db):
@@ -239,7 +240,7 @@ class MultiBotAdminTestCase(unittest.TestCase):
     def login(self, username="admin", password="admin123"):
         response = self.client.post(
             "/login",
-            data={"username": username, "password": password},
+            data={**tenant_login_captcha(), "username": username, "password": password},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
@@ -6339,7 +6340,7 @@ consume_policy = "shared"
         for _ in range(2):
             bad_login = self.client.post(
                 "/login",
-                data={"username": "admin", "password": "wrong-pass"},
+                data={**tenant_login_captcha(), "username": "admin", "password": "wrong-pass"},
                 follow_redirects=False,
             )
             self.assertEqual(bad_login.status_code, 401)
@@ -6348,7 +6349,7 @@ consume_policy = "shared"
 
         third_bad_login = self.client.post(
             "/login",
-            data={"username": "admin", "password": "wrong-pass"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "wrong-pass"},
             follow_redirects=False,
         )
         self.assertEqual(third_bad_login.status_code, 401)
@@ -6440,7 +6441,7 @@ consume_policy = "shared"
         self.client.post("/logout", follow_redirects=False)
         bad_login = self.client.post(
             "/login",
-            data={"username": "admin", "password": "admin123"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "admin123"},
             follow_redirects=False,
         )
         self.assertEqual(bad_login.status_code, 200)
@@ -6448,7 +6449,7 @@ consume_policy = "shared"
 
         good_login = self.client.post(
             "/login",
-            data={"username": "admin", "password": "admin456"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "admin456"},
             follow_redirects=False,
         )
         self.assertEqual(good_login.status_code, 303)
@@ -6478,14 +6479,14 @@ consume_policy = "shared"
         self.client.cookies.clear()
         bad_login = self.client.post(
             "/login",
-            data={"username": "admin", "password": "admin123"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "admin123"},
             follow_redirects=False,
         )
         self.assertEqual(bad_login.status_code, 200)
 
         good_login = self.client.post(
             "/login",
-            data={"username": "admin", "password": "admin456"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "admin456"},
             follow_redirects=False,
         )
         self.assertEqual(good_login.status_code, 303)
@@ -6513,7 +6514,7 @@ consume_policy = "shared"
 
         login_again = self.client.post(
             "/login",
-            data={"username": "viewer", "password": "viewer123"},
+            data={**tenant_login_captcha(), "username": "viewer", "password": "viewer123"},
             follow_redirects=False,
         )
         self.assertEqual(login_again.status_code, 200)
@@ -6553,7 +6554,7 @@ consume_policy = "shared"
 
         login_response = self.client.post(
             "/login",
-            data={"username": "legacy-admin", "password": "legacy123"},
+            data={**tenant_login_captcha(), "username": "legacy-admin", "password": "legacy123"},
             follow_redirects=False,
         )
         self.assertEqual(login_response.status_code, 303)

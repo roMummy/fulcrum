@@ -15,6 +15,7 @@ from app.models.entities import AdminUser
 from app.models.saas import PlatformSession, PlatformUser, Tenant, TenantSession, TenantUser
 from app.services.auth import build_auth_cookie, hash_password as hash_legacy_password
 from app.services.saas_auth import hash_credential, hash_password
+from captcha_helpers import platform_login_captcha, tenant_login_captcha
 
 
 # 新 SaaS 身份必须使用全新的 Cookie 名称，避免浏览器把旧单租户后台的签名身份
@@ -211,19 +212,19 @@ def test_login_errors_are_uniform_and_identity_tables_cannot_be_mixed(
 
     tenant_wrong_password = client.post(
         "/login",
-        data={"mobile": "13600136000", "password": PLATFORM_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "13600136000", "password": PLATFORM_PASSWORD},
     )
     tenant_unknown = client.post(
         "/login",
-        data={"mobile": "13500135000", "password": TENANT_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "13500135000", "password": TENANT_PASSWORD},
     )
     platform_wrong_password = client.post(
         "/platform/login",
-        data={"username": "ops", "password": TENANT_PASSWORD},
+        data={**platform_login_captcha(), "username": "ops", "password": TENANT_PASSWORD},
     )
     platform_unknown = client.post(
         "/platform/login",
-        data={"username": "nobody", "password": PLATFORM_PASSWORD},
+        data={**platform_login_captcha(), "username": "nobody", "password": PLATFORM_PASSWORD},
     )
 
     for response in (tenant_wrong_password, tenant_unknown):
@@ -243,7 +244,7 @@ def test_tenant_login_creates_database_session_and_logout_revokes_it(
 
     login = client.post(
         "/login",
-        data={"mobile": "13600136000", "password": TENANT_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "13600136000", "password": TENANT_PASSWORD},
     )
 
     assert login.status_code == 303
@@ -284,7 +285,7 @@ def test_platform_login_uses_platform_path_and_logout_revokes_session(
 
     login = client.post(
         "/platform/login",
-        data={"username": "ops", "password": PLATFORM_PASSWORD},
+        data={**platform_login_captcha(), "username": "ops", "password": PLATFORM_PASSWORD},
     )
 
     assert login.status_code == 303

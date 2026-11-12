@@ -15,6 +15,7 @@ from app.models.entities import Bot
 from app.core.time import now_shanghai
 from app.models.saas import SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.saas_auth import hash_password
+from captcha_helpers import tenant_login_captcha
 
 
 TENANT_PASSWORD = "Tenant-isolation-123"
@@ -103,7 +104,7 @@ def tenant_web_context(tmp_path, monkeypatch):
     with TestClient(main_module.app, follow_redirects=False) as client:
         login = client.post(
             "/login",
-            data={"mobile": "13500135001", "password": TENANT_PASSWORD},
+            data={**tenant_login_captcha(), "mobile": "13500135001", "password": TENANT_PASSWORD},
         )
         assert login.status_code == 303
         yield client, ids

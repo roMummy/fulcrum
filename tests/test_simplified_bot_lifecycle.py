@@ -26,6 +26,7 @@ from app.schemas.forms import BotCreate, BotUpdate
 from app.services.auth import hash_password
 from app.services.crud import create_bot, update_bot
 from app.services.ops import build_monitoring_snapshot
+from captcha_helpers import tenant_login_captcha
 
 
 DELETED_TABLES = {"bot_groups", "config_templates", "bot_tags", "bot_tag_links"}
@@ -77,7 +78,7 @@ def authenticated_client():
     with TestClient(app) as client:
         login = client.post(
             "/login",
-            data={"username": "admin", "password": "admin123"},
+            data={**tenant_login_captcha(), "username": "admin", "password": "admin123"},
             follow_redirects=False,
         )
         assert login.status_code == 303

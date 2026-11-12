@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.db import SessionLocal
 from app.models.saas import PlatformUser
+from app.services.image_captcha import CaptchaChallenge, consume_captcha_challenge, create_captcha_challenge
 from app.services.saas_auth import (
     authenticate_platform_user,
     create_platform_session,
@@ -22,12 +23,14 @@ from app.services.saas_auth import (
 from app.web.auth_common import (
     PLATFORM_CSRF_COOKIE,
     PLATFORM_HOME_PATH,
+    PLATFORM_LOGIN_CAPTCHA_PURPOSE,
     PLATFORM_LOGIN_ERROR,
     PLATFORM_LOGIN_PATH,
     PLATFORM_LOGOUT_PATH,
     PLATFORM_PASSWORD_PATH,
     build_auth_page_context,
     delete_platform_auth_cookies,
+    record_auth_event,
     platform_session_token,
     request_ip_address,
     request_user_agent,
@@ -47,15 +50,20 @@ def _render_login(
     notice: str = "",
     status_code: int = 200,
     username: str = "",
+    challenge: CaptchaChallenge | None = None,
 ):
     """渲染平台登录页，任何失败都只回填用户名，不回填密码。"""
 
+    resolved_challenge = challenge or create_captcha_challenge(purpose=PLATFORM_LOGIN_CAPTCHA_PURPOSE)
     context = build_auth_page_context(
         request,
         page_title="平台登录",
         notice=notice,
         prefill_username=username,
         identity_kind="platform",
+        captcha_token=resolved_challenge.token,
+        captcha_image=resolved_challenge.image_data_uri,
+        captcha_refresh_url="/auth/captcha?purpose=" + PLATFORM_LOGIN_CAPTCHA_PURPOSE,
     )
     return templates.TemplateResponse(request, "platform_login.html", context, status_code=status_code)
 
@@ -106,11 +114,39 @@ async def platform_login_action(
     request: Request,
     username: str = Form(""),
     password: str = Form(""),
+    captcha_token: str = Form(""),
+    captcha_answer: str = Form(""),
 ):
     """只查询平台账号表并创建平台数据库会话。"""
 
     normalized_username = username.strip()
+    captcha_result = consume_captcha_challenge(
+        captcha_token,
+        captcha_answer,
+        purpose=PLATFORM_LOGIN_CAPTCHA_PURPOSE,
+    )
+    if not captcha_result.valid:
+        record_auth_event(
+            request,
+            event="login captcha rejected",
+            auth_scope="platform",
+            reason=captcha_result.reason,
+            identity=normalized_username,
+        )
+        return _render_login(
+            request,
+            notice="图形验证码错误或已过期",
+            status_code=400,
+            username=normalized_username,
+        )
     if not normalized_username or not password:
+        record_auth_event(
+            request,
+            event="login credentials rejected",
+            auth_scope="platform",
+            reason="missing_credentials",
+            identity=normalized_username,
+        )
         return _render_login(
             request,
             notice=PLATFORM_LOGIN_ERROR,
@@ -121,6 +157,13 @@ async def platform_login_action(
     with SessionLocal() as db:
         user = authenticate_platform_user(db, normalized_username, password)
         if user is None:
+            record_auth_event(
+                request,
+                event="login credentials rejected",
+                auth_scope="platform",
+                reason="invalid_credentials",
+                identity=normalized_username,
+            )
             return _render_login(
                 request,
                 notice=PLATFORM_LOGIN_ERROR,
@@ -134,6 +177,14 @@ async def platform_login_action(
             user_agent=request_user_agent(request),
         )
         must_change_password = user.must_change_password
+
+    record_auth_event(
+        request,
+        event="login succeeded",
+        auth_scope="platform",
+        reason="authenticated",
+        identity=normalized_username,
+    )
 
     target = PLATFORM_PASSWORD_PATH if must_change_password else PLATFORM_HOME_PATH
     response = RedirectResponse(url=target, status_code=303)

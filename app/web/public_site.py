@@ -5,19 +5,27 @@ from __future__ import annotations
 from decimal import Decimal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.core.db import SessionLocal
 from app.models.saas import SaasPlan, TenantUser
 from app.services.billing import list_public_plans
-from app.services.image_captcha import create_captcha_challenge, verify_captcha
+from app.services.image_captcha import (
+    CAPTCHA_PURPOSES,
+    CaptchaChallenge,
+    consume_captcha_challenge,
+    create_captcha_challenge,
+)
 from app.services.registration import RegistrationError, register_trial_tenant
 from app.services.saas_auth import authenticate_tenant_account, create_tenant_session
 from app.web.auth_common import (
+    REGISTRATION_CAPTCHA_PURPOSE,
     TENANT_HOME_PATH,
+    TENANT_LOGIN_CAPTCHA_PURPOSE,
     TENANT_LOGIN_ERROR,
+    record_auth_event,
     request_ip_address,
     request_user_agent,
     set_tenant_auth_cookies,
@@ -63,7 +71,7 @@ def _render_register(
 ):
     """每次渲染注册页都签发新验证码，失败时只回填非敏感文本字段。"""
 
-    challenge = create_captcha_challenge()
+    challenge = create_captcha_challenge(purpose=REGISTRATION_CAPTCHA_PURPOSE)
     context = _context(
         request,
         page_title="免费试用",
@@ -71,6 +79,7 @@ def _render_register(
         notice_tone="danger" if notice else "",
         captcha_token=challenge.token,
         captcha_image=challenge.image_data_uri,
+        captcha_refresh_url="/auth/captcha?purpose=" + REGISTRATION_CAPTCHA_PURPOSE,
         form_values=form_values or {},
     )
     return templates.TemplateResponse(request, "register.html", context, status_code=status_code)
@@ -82,15 +91,20 @@ def _render_enterprise_login(
     notice: str = "",
     status_code: int = 200,
     mobile: str = "",
+    challenge: CaptchaChallenge | None = None,
 ):
     """渲染企业账号手机号登录页，认证失败时绝不回填密码。"""
 
+    resolved_challenge = challenge or create_captcha_challenge(purpose=TENANT_LOGIN_CAPTCHA_PURPOSE)
     context = _context(
         request,
         page_title="企业账号登录",
         notice=notice,
         notice_tone="danger" if notice else "",
         prefill_mobile=mobile,
+        captcha_token=resolved_challenge.token,
+        captcha_image=resolved_challenge.image_data_uri,
+        captcha_refresh_url="/auth/captcha?purpose=" + TENANT_LOGIN_CAPTCHA_PURPOSE,
     )
     return templates.TemplateResponse(request, "enterprise_login.html", context, status_code=status_code)
 
@@ -118,6 +132,25 @@ async def pricing_page(request: Request):
         request,
         "pricing.html",
         _context(request, page_title="套餐价格", plans=plans),
+    )
+
+
+@router.get("/auth/captcha", response_class=JSONResponse)
+async def auth_captcha(purpose: str = REGISTRATION_CAPTCHA_PURPOSE):
+    """签发认证页换图所需的短时挑战，不建立数据库记录。"""
+
+    normalized_purpose = (purpose or "").strip().lower()
+    if normalized_purpose not in CAPTCHA_PURPOSES:
+        raise HTTPException(status_code=400, detail="captcha_purpose_invalid")
+    challenge = create_captcha_challenge(purpose=normalized_purpose)
+    return JSONResponse(
+        {
+            "purpose": challenge.purpose,
+            "token": challenge.token,
+            "image": challenge.image_data_uri,
+            "expires_at": challenge.expires_at,
+        },
+        headers={"Cache-Control": "no-store"},  # 一次性挑战不能被浏览器或代理缓存
     )
 
 
@@ -150,7 +183,19 @@ async def register_action(
         "enterprise_name": (enterprise_name or "").strip(),
         "contact_name": (contact_name or "").strip(),
     }
-    if not verify_captcha(captcha_token, captcha_answer):
+    captcha_result = consume_captcha_challenge(
+        captcha_token,
+        captcha_answer,
+        purpose=REGISTRATION_CAPTCHA_PURPOSE,
+    )
+    if not captcha_result.valid:
+        record_auth_event(
+            request,
+            event="registration captcha rejected",
+            auth_scope="registration",
+            reason=captcha_result.reason,
+            identity=mobile,
+        )
         return _render_register(
             request,
             notice="图形验证码错误或已过期",
@@ -225,11 +270,39 @@ async def enterprise_login_action(
     request: Request,
     mobile: str = Form(""),
     password: str = Form(""),
+    captcha_token: str = Form(""),
+    captcha_answer: str = Form(""),
 ):
     """只按企业账号手机号验证，由账号记录恢复租户，不接受客户端提交租户身份。"""
 
     normalized_mobile = (mobile or "").strip()
+    captcha_result = consume_captcha_challenge(
+        captcha_token,
+        captcha_answer,
+        purpose=TENANT_LOGIN_CAPTCHA_PURPOSE,
+    )
+    if not captcha_result.valid:
+        record_auth_event(
+            request,
+            event="login captcha rejected",
+            auth_scope="tenant",
+            reason=captcha_result.reason,
+            identity=normalized_mobile,
+        )
+        return _render_enterprise_login(
+            request,
+            notice="图形验证码错误或已过期",
+            status_code=400,
+            mobile=normalized_mobile,
+        )
     if not normalized_mobile or not password:
+        record_auth_event(
+            request,
+            event="login credentials rejected",
+            auth_scope="tenant",
+            reason="missing_credentials",
+            identity=normalized_mobile,
+        )
         return _render_enterprise_login(
             request,
             notice=TENANT_LOGIN_ERROR,
@@ -239,6 +312,13 @@ async def enterprise_login_action(
     with SessionLocal() as db:
         user = authenticate_tenant_account(db, normalized_mobile, password)
         if user is None:
+            record_auth_event(
+                request,
+                event="login credentials rejected",
+                auth_scope="tenant",
+                reason="invalid_credentials",
+                identity=normalized_mobile,
+            )
             return _render_enterprise_login(
                 request,
                 notice=TENANT_LOGIN_ERROR,
@@ -251,6 +331,14 @@ async def enterprise_login_action(
             ip_address=request_ip_address(request),
             user_agent=request_user_agent(request),
         )
+
+    record_auth_event(
+        request,
+        event="login succeeded",
+        auth_scope="tenant",
+        reason="authenticated",
+        identity=normalized_mobile,
+    )
 
     response = RedirectResponse(url=TENANT_HOME_PATH, status_code=303)
     set_tenant_auth_cookies(response, session)

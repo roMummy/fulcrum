@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     auth_cookie_max_age_seconds: int = 43200
     auth_cookie_secure: bool | None = None
     auth_cookie_samesite: str = "lax"
+    # 验证码挑战只保存在单进程有界内存中，不写数据库；容量和有效期都允许部署环境微调，
+    # 服务实现还会再次收敛范围，避免错误配置造成无界内存增长或过长的挑战寿命。
+    captcha_cache_max_entries: int = 4096
+    captcha_ttl_seconds: int = 300
     tool_api_key: str = ""
     # 对外可访问的 Fulcrum 基址。云端拉取模式下 provider 可能不在 Fulcrum 同一台机器，
     # 如果后台通过 127.0.0.1 登录，必须用这个配置生成文件下载链接，避免 provider 下载时连到自己的本机。

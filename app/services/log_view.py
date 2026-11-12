@@ -51,6 +51,10 @@ FIELD_LABELS = {
     "reply_preview": "回复",
     "adapter_type": "适配器",
     "ok": "成功",
+    "auth_scope": "认证入口",
+    "reason": "原因",
+    "identity_hint": "账号",
+    "client_ip": "客户端 IP",
 }
 
 # 事件名 -> 中文标题模板,模板里的 {字段} 取自该条日志的字段,取不到时显示 ?。
@@ -109,6 +113,10 @@ EVENT_TITLES = {
     "runtime executor executed": "插件运行器执行完成",
     "open webhook delivered": "开放接口回调已送达",
     "open webhook delivery failed": "开放接口回调失败",
+    "registration captcha rejected": "注册验证码校验失败",
+    "login captcha rejected": "登录验证码校验失败",
+    "login credentials rejected": "登录凭据校验失败",
+    "login succeeded": "登录成功",
 }
 
 

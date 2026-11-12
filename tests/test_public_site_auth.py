@@ -11,9 +11,10 @@ import app.core.db as db_module
 import app.main as main_module
 from app.core.db import Base
 from app.models.saas import PlatformUser, SaasPlan, Tenant, TenantSession, TenantUser
-from app.services.image_captcha import create_captcha_challenge, verify_captcha
+from app.services.image_captcha import consume_captcha_challenge, create_captcha_challenge
 from app.services.saas_auth import hash_password
 from app.web.auth_common import PLATFORM_SESSION_COOKIE, TENANT_SESSION_COOKIE
+from captcha_helpers import registration_captcha, tenant_login_captcha
 
 
 OWNER_PASSWORD = "Owner-secret-123"
@@ -131,13 +132,13 @@ def client(session_factory):
 def test_registration_captcha_is_signed_png_and_rejects_wrong_answer() -> None:
     """验证码答案不进入令牌明文，PNG 可渲染且签名验证拒绝错误答案。"""
 
-    challenge = create_captcha_challenge(answer="23456")
+    challenge = create_captcha_challenge(purpose="registration", answer="23456")
 
     assert challenge.image_data_uri.startswith("data:image/png;base64,")
     assert "23456" not in challenge.token
-    assert verify_captcha(challenge.token, "23456") is True
-    assert verify_captcha(challenge.token, "23457") is False
-    assert verify_captcha(challenge.token + "tampered", "23456") is False
+    assert consume_captcha_challenge(challenge.token, "23456", purpose="registration").valid is True
+    assert consume_captcha_challenge(challenge.token, "23457", purpose="registration").valid is False
+    assert consume_captcha_challenge(challenge.token + "tampered", "23456", purpose="registration").valid is False
 
 
 def test_public_pages_are_accessible_but_dashboard_requires_tenant_login(client: TestClient) -> None:
@@ -164,7 +165,7 @@ def test_owner_and_employee_share_mobile_login_and_tenant_session_cookie(
 
     owner_login = client.post(
         "/login",
-        data={"mobile": "+86 138-0013-8000", "password": OWNER_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "+86 138-0013-8000", "password": OWNER_PASSWORD},
     )
     assert owner_login.status_code == 303
     assert owner_login.headers["location"] == "/dashboard"
@@ -174,7 +175,7 @@ def test_owner_and_employee_share_mobile_login_and_tenant_session_cookie(
     client.cookies.clear()
     employee_login = client.post(
         "/login",
-        data={"mobile": "13700137000", "password": EMPLOYEE_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "13700137000", "password": EMPLOYEE_PASSWORD},
     )
     assert employee_login.status_code == 303
     assert employee_login.headers["location"] == "/dashboard"
@@ -191,7 +192,7 @@ def test_tenant_console_hides_platform_tools_and_old_internal_pages_return_404(
 
     login = client.post(
         "/login",
-        data={"mobile": "13800138000", "password": OWNER_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": "13800138000", "password": OWNER_PASSWORD},
     )
     assert login.status_code == 303
 
@@ -237,7 +238,7 @@ def test_owner_login_does_not_accept_the_old_employee_form_contract(client: Test
 
     response = client.post(
         "/login",
-        data={"tenant_code": "alpha", "username": "employee", "password": EMPLOYEE_PASSWORD},
+        data={**tenant_login_captcha(), "tenant_code": "alpha", "username": "employee", "password": EMPLOYEE_PASSWORD},
     )
     assert response.status_code == 400
     assert TENANT_SESSION_COOKIE not in response.headers.get("set-cookie", "")
@@ -248,7 +249,7 @@ def test_platform_cookie_cannot_authenticate_owner_entry(client: TestClient) -> 
 
     client.cookies.set(PLATFORM_SESSION_COOKIE, "forged-platform-token", path="/")
     page = client.get("/login")
-    failed = client.post("/login", data={"mobile": "13800138000", "password": "wrong-password"})
+    failed = client.post("/login", data={**tenant_login_captcha(), "mobile": "13800138000", "password": "wrong-password"})
 
     assert page.status_code == 200
     assert failed.status_code == 401
@@ -262,8 +263,6 @@ def test_register_route_creates_session_and_redirects_to_onboarding(
 ) -> None:
     """验证码通过后的公开注册会创建企业主会话并进入新手引导。"""
 
-    public_site = importlib.import_module("app.web.public_site")
-    monkeypatch.setattr(public_site, "verify_captcha", lambda _token, _answer: True)
     response = client.post(
         "/register",
         data={
@@ -272,8 +271,7 @@ def test_register_route_creates_session_and_redirects_to_onboarding(
             "confirm_password": "Register-secret-123",
             "enterprise_name": "新注册企业",
             "contact_name": "新企业主",
-            "captcha_token": "test-token",
-            "captcha_answer": "12345",
+            **registration_captcha(),
         },
     )
 

@@ -8,3 +8,20 @@
   </span>
 </div>
 {% endmacro %}
+
+{# 验证码组件统一处理令牌、图片和换图入口；具体用途由服务端生成的 refresh_url 决定。
+   token 和 image 必须显式传入:被 import 的宏看不到页面上下文,依赖隐式变量会渲染出空令牌(登录和注册全部失败)。 #}
+{% macro captcha_field(id, refresh_url, token, image, full_row=false) %}
+<div class="access-field access-captcha-field{% if full_row %} full-row{% endif %}" data-captcha-widget data-refresh-url="{{ refresh_url }}">
+  <label for="{{ id }}">图形验证码</label>
+  <div class="access-captcha-row">
+    <input id="{{ id }}" name="captcha_answer" inputmode="numeric" autocomplete="off" maxlength="5" pattern="[0-9]{5}" aria-describedby="{{ id }}-hint" required />
+    <span class="access-captcha-visual">
+      <img src="{{ image }}" width="166" height="54" alt="图形验证码" data-captcha-image />
+      <button class="access-captcha-refresh" type="button" data-captcha-refresh aria-label="换一张验证码">换一张</button>
+    </span>
+  </div>
+  <input type="hidden" name="captcha_token" value="{{ token }}" data-captcha-token />
+  <small id="{{ id }}-hint" class="access-captcha-hint">请输入图片中的 5 位数字</small>
+</div>
+{% endmacro %}

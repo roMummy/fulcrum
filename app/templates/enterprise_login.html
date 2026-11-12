@@ -1,5 +1,5 @@
 {% extends 'auth_base.html' %}
-{% from '_auth_fields.html' import password_field %}
+{% from '_auth_fields.html' import captcha_field, password_field %}
 {% block access_title_id %}enterprise-login-title{% endblock %}
 {% block content %}
 <div class="access-heading">
@@ -11,6 +11,7 @@
 <form method="post" action="/login" class="form-grid auth-form-grid">
   <label class="access-field" for="enterprise-mobile"><span>手机号</span><input id="enterprise-mobile" name="mobile" type="tel" autocomplete="username" inputmode="tel" value="{{ prefill_mobile or '' }}" placeholder="请输入手机号" required /></label>
   {{ password_field('enterprise-password') }}
+  {{ captcha_field('enterprise-captcha', captcha_refresh_url, captcha_token, captcha_image) }}
   <div class="auth-form-actions"><button class="btn auth-submit" type="submit">登录工作台 <span aria-hidden="true">→</span></button></div>
 </form>
 <p class="access-switch">还没有企业账号？<a href="/register">免费试用 7 天 <span aria-hidden="true">↗</span></a></p>

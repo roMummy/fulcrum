@@ -20,6 +20,7 @@ from app.models.entities import Bot, Channel
 from app.models.saas import BotBinding, PlatformProtocolService, ProviderNode, ProviderNodeAccount, SaasPlan, Tenant, TenantSubscription, TenantUser
 from app.services.provider_nodes import ProviderNodeError, validate_channel_executor_binding
 from app.services.saas_auth import hash_password
+from captcha_helpers import tenant_login_captcha
 
 
 TENANT_PASSWORD = "Provider-pages-123"
@@ -201,7 +202,7 @@ def _login(client: TestClient, username: str) -> str:
     client.cookies.clear()
     response = client.post(
         "/login",
-        data={"mobile": mobile_by_username[username], "password": TENANT_PASSWORD},
+        data={**tenant_login_captcha(), "mobile": mobile_by_username[username], "password": TENANT_PASSWORD},
     )
     assert response.status_code == 303
     csrf_token = client.cookies.get("mbs_tenant_csrf")

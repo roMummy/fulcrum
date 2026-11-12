@@ -15,6 +15,7 @@ from app.core.settings import settings
 from app.models.saas import BillingOrder, BotBinding, PlatformUser, SaasPlan, TenantSubscription, TenantUser
 from app.services.saas_auth import hash_password
 from app.web.auth_common import PLATFORM_CSRF_COOKIE, TENANT_CSRF_COOKIE
+from captcha_helpers import platform_login_captcha, registration_captcha
 
 
 OWNER_PASSWORD = "Commercial-owner-2026"
@@ -62,9 +63,6 @@ def commercial_env(tmp_path, monkeypatch):
         route_modules[module_name] = route_module
         if hasattr(route_module, "SessionLocal"):
             monkeypatch.setattr(route_module, "SessionLocal", factory)
-
-    # 图形验证码的签名与图片生成已由独立测试覆盖；本测试固定验证码结果以聚焦商业事务链路。
-    monkeypatch.setattr(route_modules["app.web.public_site"], "verify_captcha", lambda _token, _answer: True)
 
     with factory() as db:
         db.add_all(
@@ -130,8 +128,7 @@ def test_public_registration_payment_approval_and_bot_quota_flow(commercial_env)
                 "confirm_password": OWNER_PASSWORD,
                 "enterprise_name": "商业闭环测试企业",
                 "contact_name": "测试企业主",
-                "captcha_token": "isolated-test-token",
-                "captcha_answer": "12345",
+                **registration_captcha(),
             },
         )
         assert registration.status_code == 303
@@ -181,7 +178,7 @@ def test_public_registration_payment_approval_and_bot_quota_flow(commercial_env)
 
         platform_login = platform_client.post(
             "/platform/login",
-            data={"username": "commercial-admin", "password": PLATFORM_PASSWORD},
+            data={**platform_login_captcha(), "username": "commercial-admin", "password": PLATFORM_PASSWORD},
         )
         assert platform_login.status_code == 303
         platform_csrf = platform_client.cookies.get(PLATFORM_CSRF_COOKIE)

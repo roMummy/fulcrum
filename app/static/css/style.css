@@ -3170,6 +3170,56 @@ code {
   min-width: 0;
 }
 
+/* 认证页验证码保持输入、图片和换图操作在同一字段组内，窄屏也不会撑破表单。 */
+.access-captcha-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.access-captcha-visual {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.access-captcha-visual img {
+  display: block;
+  width: 138px;
+  height: auto;
+  background: #fff;
+  border-radius: var(--radius-sm);
+}
+
+.access-captcha-refresh {
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.access-captcha-refresh:hover {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+}
+
+.access-captcha-refresh:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.access-captcha-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .access-password {
   position: relative;
   display: block;
@@ -3696,22 +3746,6 @@ code {
   gap: 24px;
   color: var(--muted);
   font-size: 13px;
-}
-
-/* 验证码和输入在同一字段组内；图片保留清晰比例，不额外制造表单空行。 */
-.marketing-captcha-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 138px;
-  align-items: center;
-  gap: 12px;
-}
-
-.marketing-captcha-row img {
-  display: block;
-  width: 138px;
-  height: auto;
-  background: #fff;
-  border-radius: var(--radius-sm);
 }
 
 .payment-bank-details {

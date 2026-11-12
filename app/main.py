@@ -1284,6 +1284,7 @@ async def auth_middleware(request: Request, call_next):
         "/setup/completed",
         TENANT_LOGIN_PATH,
         PLATFORM_LOGIN_PATH,
+        "/auth/captcha",
     }
     # 认证中间件只保护应用真实注册的页面和接口。完全未注册的路径直接交给
     # FastAPI 生成原生 404；仅方法不匹配的路由仍继续处理，以保留标准 405 响应。

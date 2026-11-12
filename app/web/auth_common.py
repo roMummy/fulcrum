@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -15,7 +17,23 @@ from sqlalchemy.orm import Session
 from app.core.settings import settings
 from app.core.time import now_shanghai
 from app.services.csrf import verify_csrf_token
+from app.services.image_captcha import (
+    CAPTCHA_PURPOSE_PLATFORM_LOGIN,
+    CAPTCHA_PURPOSE_REGISTRATION,
+    CAPTCHA_PURPOSE_TENANT_LOGIN,
+)
 from app.services.saas_auth import CreatedSession, PlatformPrincipal, TenantPrincipal
+
+
+_AUTH_LOGGER = logging.getLogger("app.auth.security")
+AUTH_SECURITY_EVENTS = frozenset(
+    {
+        "registration captcha rejected",
+        "login captcha rejected",
+        "login credentials rejected",
+        "login succeeded",
+    }
+)
 
 
 # 新 SaaS 身份使用全新 Cookie 名称，旧单租户后台的 ``mba_auth`` 即使仍可验签，
@@ -42,6 +60,12 @@ PLATFORM_PASSWORD_PATH = "/platform/profile/password"
 
 TENANT_LOGIN_ERROR = "手机号或密码错误"
 PLATFORM_LOGIN_ERROR = "用户名或密码错误"
+
+# 认证验证码用途集中在 HTTP 边界，业务路由不能自行拼写字符串，避免把一个入口的挑战
+# 错误地交给另一个入口消费。具体签名与一次性消费由 image_captcha 服务负责。
+REGISTRATION_CAPTCHA_PURPOSE = CAPTCHA_PURPOSE_REGISTRATION
+TENANT_LOGIN_CAPTCHA_PURPOSE = CAPTCHA_PURPOSE_TENANT_LOGIN
+PLATFORM_LOGIN_CAPTCHA_PURPOSE = CAPTCHA_PURPOSE_PLATFORM_LOGIN
 
 # 中间件发现账号仍使用一次性初始密码时，只允许进入改密和注销端点。静态资源、
 # 登录页及机器接口应在主应用的公共路径判断中提前处理，不应混入此业务白名单。
@@ -99,6 +123,47 @@ def request_user_agent(request: Request) -> str | None:
     """提取浏览器标识用于会话审计，过长值在进入数据库前主动截断。"""
 
     return (request.headers.get("user-agent") or "").strip()[:1000] or None
+
+
+def login_identity_hint(auth_scope: str, identity: str) -> str:
+    """生成可供平台日志定位的脱敏账号片段，不把完整手机号或用户名写入日志。"""
+
+    normalized = (identity or "").strip()
+    if auth_scope == "tenant":
+        digits = re.sub(r"\D", "", normalized)
+        return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
+    if not normalized:
+        return "***"
+    if len(normalized) <= 2:
+        return "*" * len(normalized)
+    return f"{normalized[:2]}***{normalized[-1:]}"
+
+
+def record_auth_event(
+    request: Request,
+    *,
+    event: str,
+    auth_scope: str,
+    reason: str,
+    identity: str,
+) -> None:
+    """把认证安全事件写入现有滚动日志，不写数据库且不携带密码或令牌原文。"""
+
+    if event not in AUTH_SECURITY_EVENTS:
+        raise ValueError("auth_event_invalid")
+    # 登录成功保留 INFO 便于平台日志按时间追踪；验证码和密码失败使用 WARNING，
+    # 仍进入现有 app.log，但不会因为普通攻击流量伪装成应用异常堆栈。
+    level = logging.INFO if event == "login succeeded" else logging.WARNING
+    _AUTH_LOGGER.log(
+        level,
+        event,
+        extra={
+            "auth_scope": (auth_scope or "unknown").strip()[:32],
+            "reason": (reason or "unknown").strip()[:64],
+            "identity_hint": login_identity_hint(auth_scope, identity),
+            "client_ip": request_ip_address(request) or "unknown",
+        },
+    )
 
 
 def tenant_session_token(request: Request) -> str | None:

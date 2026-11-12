@@ -1,5 +1,5 @@
 {% extends 'auth_base.html' %}
-{% from '_auth_fields.html' import password_field %}
+{% from '_auth_fields.html' import captcha_field, password_field %}
 {% block access_title_id %}register-title{% endblock %}
 {% block access_headline %}给你的业务，<br />一个全新起点。{% endblock %}
 {% block access_summary %}创建企业，即可体验 7 天智能机器人服务。{% endblock %}
@@ -16,8 +16,7 @@
   <label class="access-field full-row" for="register-mobile"><span>手机号</span><input id="register-mobile" name="mobile" type="tel" autocomplete="tel" inputmode="tel" value="{{ form_values.mobile or '' }}" placeholder="作为企业所有者登录账号" required /></label>
   {{ password_field('register-password', autocomplete='new-password', minlength=8) }}
   {{ password_field('register-confirm-password', name='confirm_password', label='确认密码', autocomplete='new-password', minlength=8) }}
-  <input type="hidden" name="captcha_token" value="{{ captcha_token }}" />
-  <label class="access-field full-row" for="register-captcha"><span>图形验证码</span><span class="marketing-captcha-row"><input id="register-captcha" name="captcha_answer" inputmode="numeric" autocomplete="off" maxlength="5" required /><img src="{{ captcha_image }}" width="166" height="54" alt="图形验证码" /></span></label>
+  {{ captcha_field('register-captcha', captcha_refresh_url, captcha_token, captcha_image, true) }}
   <div class="full-row auth-form-actions"><button class="btn auth-submit" type="submit">创建企业并开始试用 <span aria-hidden="true">→</span></button></div>
 </form>
 <p class="access-switch">已有企业账号？<a href="/login">立即登录 <span aria-hidden="true">↗</span></a></p>
