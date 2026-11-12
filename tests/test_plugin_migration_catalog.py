@@ -61,7 +61,7 @@ NEW_PLUGIN_CODES = {
     "xiuxian",
 }
 
-SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow", "idiom_guess"}
+SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow", "idiom_guess", "guess_image"}
 
 # 这些能力已经明确排除或上移为平台原生能力。测试直接禁止同名目录出现，防止
 # 研发过程中为了快速复用又把 A-BOT 单机管理链路或不需要的内容带回 SaaS。
@@ -120,7 +120,7 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
 
     # 校验器应对公开仓库里的完整目录返回成功;私有插件目录(FULCRUM_PRIVATE_PLUGINS)不参与统计。
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "目录插件总数: 37" in result.stdout
-    assert "A-BOT 目标插件数: 34" in result.stdout
-    assert "SaaS 自有插件数: 3" in result.stdout
+    assert f"目录插件总数: {len(VERIFIED_TARGET_PLUGIN_CODES | VERIFIED_SAAS_OWN_PLUGIN_CODES)}" in result.stdout
+    assert f"A-BOT 目标插件数: {len(VERIFIED_TARGET_PLUGIN_CODES)}" in result.stdout
+    assert f"SaaS 自有插件数: {len(VERIFIED_SAAS_OWN_PLUGIN_CODES)}" in result.stdout
     assert "错误数量: 0" in result.stdout

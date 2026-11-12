@@ -34,7 +34,7 @@ def build_tenant_navigation(path: str) -> dict[str, object]:
         _item("消息", "/messages", normalized_path, ("/messages",)),
         _item("朋友圈", "/moments", normalized_path, ("/moments",)),
         _item("积分", "/points", normalized_path, ("/points",)),
-        _item("插件", "/plugins", normalized_path, ("/plugins",)),
+        _item("插件", "/plugins", normalized_path, ("/plugins", "/plugin-admin")),
         {
             "label": "账号接入",
             "href": "/channels",

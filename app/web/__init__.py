@@ -6,6 +6,7 @@
 """
 
 from app.web.group_triggers import router as group_triggers_router
+from app.web.guess_image import router as guess_image_router
 from app.web.platform_auth import router as platform_auth_router
 from app.web.platform_admin import router as platform_admin_router
 from app.web.platform_billing import router as platform_billing_router
@@ -21,6 +22,7 @@ from app.web.tenant_admin import router as tenant_admin_router
 
 __all__ = [
     "group_triggers_router",
+    "guess_image_router",
     "platform_admin_router",
     "platform_auth_router",
     "platform_billing_router",

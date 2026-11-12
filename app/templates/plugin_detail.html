@@ -4,7 +4,7 @@
 {% block hero_actions %}
 <div class="hero-action-cluster">
   {% if plugin_runtime_info.admin_extension and plugin_runtime_info.admin_extension.enabled %}
-  <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">进入业务后台</a>
+    <a class="btn" href="{{ plugin_runtime_info.admin_extension.base_path }}">{{ plugin_runtime_info.admin_extension.title or '进入业务后台' }}</a>
   {% endif %}
   {% if plugin_runtime_info.supports_execution and bindable_bots %}
   <button class="btn" type="button" data-modal-open="create-plugin-binding-modal">绑定到机器人</button>

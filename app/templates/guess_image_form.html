@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel gi-bank"><a href="{{ base }}">← 返回题库</a><h2>{{ '编辑题目' if question else '添加题目' }}</h2>
+{% if error %}<p class="notice-card" role="alert">{{ error }}</p>{% endif %}
+<form class="gi-form" method="post" enctype="multipart/form-data" action="{{ base }}/{{ 'questions/' ~ question.question_id if question else 'new' }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+{% if question %}<img class="gi-preview" src="{{ base }}/media/{{ question.asset_id }}" alt="当前题目图片" />{% endif %}
+<label>{{ '替换图片（不选则保留）' if question else '题目图片' }}<input type="file" name="image" accept="image/png,image/jpeg" {% if not question %}required{% endif %} /><small>静态 PNG / JPEG，≤ 5 MiB、400 万像素。</small></label>
+<label>答案<input type="text" name="answer" value="{{ draft.get('answer', '') }}" maxlength="80" required /><small>完全匹配纯文本；保留空格和大小写，不做模糊匹配。</small></label>
+<label>分类<input type="text" name="category" value="{{ draft.get('category', '') }}" maxlength="40" /></label>
+<label>标签<input type="text" name="tags" value="{{ draft.get('tags', '') }}" maxlength="300" placeholder="动物|自然" /><small>最多 12 个，用 | 分隔，每个不超过 24 字。</small></label>
+<label>来源<input type="text" name="source" value="{{ draft.get('source', '') }}" maxlength="500" placeholder="原始页面地址或作者信息" /></label>
+<label>授权说明<input type="text" name="license" value="{{ draft.get('license', '') }}" maxlength="500" placeholder="许可名称、授权依据或使用范围" /></label>
+<label>状态<select name="status">{% for value, label in [('draft','草稿'),('enabled','启用'),('disabled','停用')] %}<option value="{{ value }}" {% if draft.get('status', 'draft') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><small>启用需要填写来源和授权说明。</small></label>
+<div class="gi-actions"><button class="btn" type="submit">保存题目</button><a class="btn btn-secondary" href="{{ base }}">取消</a></div></form>
+{% if question %}<details class="gi-import"><summary>删除题目</summary><p>此操作删除题目记录。进行中的游戏继续使用开局时的题目快照，原图片保留。</p><form action="{{ base }}/questions/{{ question.question_id }}/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">确认删除这道题</button></form></details>{% endif %}
+</section>
+{% endblock %}

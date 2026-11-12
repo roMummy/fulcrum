@@ -1,0 +1,2 @@
+{% extends "base.html" %}
+{% block content %}<section class="panel gi-bank"><a href="{{ base }}">← 返回题库</a><h2>图片资源检查</h2><dl><dt>题库引用的图片</dt><dd>{{ audit.referenced }}</dd><dt>存储的图片原件</dt><dd>{{ audit.stored }}</dd><dt>缺失、损坏或缺缩略图</dt><dd>{{ audit.missing }}</dd><dt>保留的未引用图片</dt><dd>{{ audit.retained }}</dd></dl><p class="muted">替换或删除题目后保留图片，以保障进行中的游戏和已排队消息。此页面只检查，不自动删除资源。各租户使用独立目录。</p></section>{% endblock %}

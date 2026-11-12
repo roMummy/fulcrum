@@ -2431,6 +2431,30 @@ code {
   display: grid;
 }
 
+.plugin-catalog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.gi-heading, .gi-actions, .gi-filters, .gi-summary, .gi-card-title { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.gi-heading { justify-content: space-between; margin-bottom: 20px; }
+.gi-heading h2 { margin: 12px 0 8px; }
+.gi-summary { gap: 24px; padding: 16px 0; border-block: 1px solid var(--border); margin-bottom: 20px; }
+.gi-summary strong { margin-left: 8px; }
+.gi-filters { align-items: flex-end; }
+.gi-filters label, .gi-form label { display: grid; gap: 8px; }
+.gi-filters input, .gi-filters select { min-width: 160px; }
+.gi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 20px; }
+.gi-card { min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.gi-card img { display: block; width: 100%; height: 190px; object-fit: contain; background: var(--bg, #f5f6fa); }
+.gi-card-copy { padding: 16px; }
+.gi-card-title { justify-content: space-between; }
+.gi-card-title h3 { margin: 0; overflow-wrap: anywhere; }
+.gi-source { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
+.gi-form { max-width: 660px; display: grid; gap: 20px; }
+.gi-form small { color: var(--muted); }
+.gi-preview { max-width: 360px; max-height: 240px; object-fit: contain; }
+.gi-import { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.gi-import summary { cursor: pointer; font-weight: 600; }
+.gi-pagination { display: flex; gap: 12px; margin-top: 24px; }
+@media (max-width: 640px) { .gi-filters label { width: 100%; } .gi-filters input, .gi-filters select { width: 100%; } }
+
 .plugin-catalog-row {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto auto;
@@ -4060,7 +4084,7 @@ code {
     grid-column: 2;
   }
 
-  .plugin-catalog-row > .btn {
+  .plugin-catalog-row > .plugin-catalog-actions {
     grid-column: 3;
     grid-row: 1 / span 2;
   }

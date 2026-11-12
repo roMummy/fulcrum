@@ -162,7 +162,12 @@
         {# 只在有问题时提示;版本、作者这类信息收进详情页最下面的"技术信息"。 #}
         {% if runtime_info.manifest_errors %}<span class="chip badge-error">暂不可用</span>{% elif runtime_info.manifest_warnings %}<span class="chip badge-warning">有提示</span>{% endif %}
       </div>
-      <a class="btn btn-small btn-secondary" href="/plugins/{{ plugin.id }}" aria-label="配置 {{ plugin.display_name }}">配置</a>
+      <div class="plugin-catalog-actions">
+        <a class="btn btn-small btn-secondary" href="/plugins/{{ plugin.id }}" aria-label="配置 {{ plugin.display_name }}">配置</a>
+        {% if runtime_info.admin_extension and runtime_info.admin_extension.enabled and not runtime_info.manifest_errors %}
+        <a class="btn btn-small btn-secondary" href="{{ runtime_info.admin_extension.base_path }}">{{ runtime_info.admin_extension.title }}</a>
+        {% endif %}
+      </div>
     </article>
     {% endfor %}
   </div>

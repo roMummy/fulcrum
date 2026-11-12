@@ -1,0 +1,77 @@
+[plugin]
+code = "guess_image"
+display_name = "猜图片"
+plugin_type = "message"
+version = "1.0.0"
+author = "Fulcrum contributors"
+description = "租户独立题库的群聊猜图游戏，支持多轮抢答、首字提示和本局排行榜。"
+default_enabled = false
+
+[capability]
+channel_types = ["wechat_webridge", "wechat_ipad", "wechat_winauto", "workwechat"]
+chat_types = ["group"]
+message_types = ["text"]
+priority = 100
+consume_policy = "continue"
+timeout_ms = 10000
+
+[matcher]
+require_mention = false
+
+[admin]
+enabled = true
+title = "管理题库"
+base_path = "/plugin-admin/guess_image"
+
+[runtime]
+rounds = 5
+seconds = 60
+hint_remaining = 30
+daily_limit = 5
+category = ""
+
+[[config.fields]]
+key = "rounds"
+label = "每局题数"
+kind = "number"
+default = 5
+min = 1
+max = 20
+group = "游戏"
+
+[[config.fields]]
+key = "seconds"
+label = "每题限时（秒）"
+kind = "number"
+default = 60
+min = 5
+max = 600
+group = "游戏"
+
+[[config.fields]]
+key = "hint_remaining"
+label = "剩余多少秒时提示首字"
+kind = "number"
+default = 30
+min = 0
+max = 599
+hint = "0 关闭提示；大于或等于限时时不提示。"
+group = "游戏"
+
+[[config.fields]]
+key = "daily_limit"
+label = "每群每日默认开局上限"
+kind = "number"
+default = 5
+min = 0
+max = 10000
+hint = "北京时间零点重置，0 不限次。群主或群管理员可在群里发送“猜图片 次数 10 / 0 / 默认”。"
+group = "游戏"
+
+[[config.fields]]
+key = "category"
+label = "题目分类"
+kind = "text"
+default = ""
+hint = "留空使用本租户全部已启用题目；每局均匀随机抽取且不重复。"
+group = "题库"

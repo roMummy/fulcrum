@@ -7,6 +7,7 @@ from app.models.cultivation import (
     CultivationTransaction,
 )
 from app.models.plugin_business import CouponAccountBinding, FunCommandRule, GroupTriggerRule
+from app.models.guess_image import GuessImageImport, GuessImageQuestion
 from app.models.saas import (
     BillingOrder,
     BotBinding,
@@ -44,6 +45,8 @@ __all__ = [
     "ErrorLog",
     "CouponAccountBinding",
     "FunCommandRule",
+    "GuessImageImport",
+    "GuessImageQuestion",
     "CultivationClan",
     "CultivationCooldown",
     "CultivationInventory",

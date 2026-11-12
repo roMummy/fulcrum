@@ -233,6 +233,12 @@ def _derive_admin_extension(discovered: DiscoveredPlugin) -> dict[str, Any]:
     title = str(raw.get("title") or discovered.manifest.display_name or discovered.manifest.code).strip()
     entry = str(raw.get("entry") or "dashboard").strip() or "dashboard"
     base_path = str(raw.get("base_path") or f"/plugin-admin/{discovered.manifest.code}").strip()
+    # List buttons are links, never executable URLs or external redirects.
+    prefix = f"/plugin-admin/{discovered.manifest.code}"
+    if (base_path != prefix and not base_path.startswith(prefix + "/")) or any(
+        char in base_path for char in ("\\", "?", "#", "%")
+    ) or any(part in {".", "..", ""} for part in base_path.lstrip("/").split("/")):
+        return {"enabled": False}
     nav_items = raw.get("nav_items")
     normalized_nav = tuple(str(item).strip() for item in nav_items if str(item).strip()) if isinstance(nav_items, list) else ()
     return {

@@ -34,12 +34,15 @@ from app.models.entities import (
     WorkWechatContactRelation,
 )
 from app.models.mixins import TenantOwnedMixin
+from app.models.guess_image import GuessImageImport, GuessImageQuestion
 from app.models.saas import BotBinding
 
 
 # 该清单是共享数据库中的业务隔离边界。新增业务表时如果忘记加入租户混入，
 # 测试会要求开发者显式决定它属于租户数据还是平台全局数据，避免静默漏隔离。
 TENANT_OWNED_MODELS = {
+    GuessImageImport,
+    GuessImageQuestion,
     Bot,
     Channel,
     BotPlugin,

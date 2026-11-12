@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block content %}<section class="panel gi-bank"><a href="{{ base }}">← 返回题库</a><h2>确认导入题包</h2><p>已通过校验，共 {{ report.total }} 题；目前有 {{ report.skip }} 个 ID 已存在，将跳过。不会覆盖已有题目。</p><p class="muted">预览仅供当前登录会话使用，10 分钟后失效。以下展示前 20 题。</p>
+<table><thead><tr><th>答案</th><th>分类</th><th>状态</th></tr></thead><tbody>{% for row in report.samples %}<tr><td>{{ row.answer }}</td><td>{{ row.category or '未分类' }}</td><td>{{ {'draft':'草稿','enabled':'启用','disabled':'停用'}[row.status] }}</td></tr>{% endfor %}</tbody></table>
+<form method="post" action="{{ base }}/imports/confirm" class="gi-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="token" value="{{ token }}" /><button class="btn" type="submit">确认导入</button><a class="btn btn-secondary" href="{{ base }}">取消</a></form></section>{% endblock %}
