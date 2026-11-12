@@ -360,8 +360,7 @@ def _execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> P
             or not binding.bot or not binding.bot.is_enabled):
         return _result("skipped")
     today = now_shanghai().astimezone(BEIJING).date().isoformat()
-    if request.payload.get("date") != today:
-        return _result("skipped")
+    # 一天只开一局由下面的 daily_date 游标保证;不依赖调度器传参(声明式 [[schedule]] 不带 date)。
     cursor = _lock_binding(db, context)
     store = PluginStateStore(db, context)
     if cursor.get("daily_date") == today:

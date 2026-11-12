@@ -85,3 +85,88 @@ def test_the_template_replies_according_to_its_config_and_survives_bad_values(in
     bad = _run({"greeting": "", "times": "abc", "style": "???", "signature": "不是列表"})
     assert bad.ok and bad.output["reply_text"] == "你好~"
     assert _run({"times": 999}).output["reply_text"].count("你好") == 5
+
+
+# ---------- 示例演示的新能力:定时与成员昵称 ----------
+
+def test_the_template_declares_a_schedule_and_the_scheduler_picks_it_up(installed_template) -> None:
+    from app.services.plugin_runtime import scheduler
+
+    assert "hello_plugin" in scheduler._declared_schedule_codes()
+    (item,) = scheduler._declared_schedules("hello_plugin")
+    assert (item.action, item.kind, item.time_key, item.default_time, item.enabled_key) == ("daily_greeting", "daily", "send_time", "09:00", "scheduled_enabled")
+    found = plugin_directory.get_discovered_plugin("hello_plugin")
+    declared = {field.key for field in found.config_fields}
+    assert {"scheduled_enabled", "send_time", "daily_text"} <= declared  # 定时相关配置项在页面上可配
+    assert "你好榜" in found.matcher.commands
+
+
+def _sqlite_env():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, PluginStateRecord
+
+    engine = create_engine("sqlite://")
+    for table in (Channel, Conversation, Chatroom, ChatroomMember, PluginStateRecord, BotPlugin):
+        table.__table__.create(engine)
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def test_the_board_shows_group_nicknames_not_wxids(installed_template) -> None:
+    from app.core.tenant_context import tenant_scope
+    from app.core.tenant_db import tenant_session
+    from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation
+    from app.services.plugin_runtime.contracts import PluginExecutionContext
+
+    module = plugin_directory.load_directory_plugin("hello_plugin").instance._module
+    with tenant_scope(1), tenant_session(_sqlite_env()) as db:
+        channel = Channel(tenant_id=1, bot_id=1, name="微桥", channel_type="wechat_webridge")
+        db.add(channel)
+        db.flush()
+        conversation = Conversation(tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id="g@chatroom", chat_type="group")
+        room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="g@chatroom", name="群", is_active=True)
+        db.add_all([conversation, room])
+        db.flush()
+        db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_a1", display_name="小明", status="active"))
+        db.flush()
+
+        def say(sender: str, command: str = "你好"):
+            context = PluginExecutionContext(tenant_id=1, binding_id=9, bot_id=1, channel_id=channel.id, conversation_id=conversation.id, sender_id=sender)
+            request = PluginExecutionRequest(action="execute", config={}, payload={"command_name": command, "command_args": ""}, context=context)
+            return module.execute_message_action(db, request)
+
+        assert "还没有人" in say("wxid_a1", "你好榜").output["reply_text"]
+        say("wxid_a1"), say("wxid_a1"), say("wxid_zz")
+        board = say("wxid_a1", "你好榜").output["reply_text"].splitlines()
+        assert board == ["【本群打招呼排行榜】", "1. 小明 - 2次", "2. wxid_zz - 1次"]  # 成员表里有昵称就显示昵称;没有才显示 ID
+
+
+def test_the_scheduled_action_queues_one_message_per_enabled_group(installed_template, monkeypatch) -> None:
+    from app.core.tenant_context import tenant_scope
+    from app.core.tenant_db import tenant_session
+    from app.models.entities import BotPlugin, Channel, Chatroom, Conversation
+    from app.services.plugin_runtime.contracts import PluginExecutionContext
+
+    module = plugin_directory.load_directory_plugin("hello_plugin").instance._module
+    queued = []
+    monkeypatch.setattr(module, "enqueue_outbound_job", lambda db, **kw: queued.append(kw))
+    factory = _sqlite_env()
+    with tenant_scope(1), tenant_session(factory) as db:
+        channel = Channel(tenant_id=1, bot_id=1, name="微桥", channel_type="wechat_webridge", is_enabled=True)
+        db.add(channel)
+        db.flush()
+        for ext, status in (("a@chatroom", "enabled"), ("b@chatroom", "enabled"), ("c@chatroom", "discovered")):
+            db.add(Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id=ext, name=ext, is_active=True, management_status=status))
+            db.add(Conversation(tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id=ext, chat_type="group"))
+        db.flush()
+        fake_binding = type("B", (), {"id": 9, "status": "enabled", "bot_id": 1, "bot": type("Bot", (), {"is_enabled": True})()})()
+        monkeypatch.setattr(db, "get", lambda model, key: fake_binding if model is BotPlugin else None)
+        context = PluginExecutionContext(tenant_id=1, binding_id=9, bot_id=1)
+        run = lambda config, action="daily_greeting": module.execute_scheduled_action(db, PluginExecutionRequest(action=action, config=config, payload={}, context=context))
+        assert run({}).status == "skipped" and queued == []                              # 开关没打开
+        assert run({"scheduled_enabled": True}, action="other").status == "skipped"
+        result = run({"scheduled_enabled": True, "daily_text": "早!"})
+        assert result.ok and "2 个群" in result.message                                  # 只发给启用了群管理的两个群
+        assert sorted(item["conversation"].external_id for item in queued) == ["a@chatroom", "b@chatroom"]
+        assert {item["payload"]["content"] for item in queued} == {"早!"} and all(item["max_attempts"] == 1 for item in queued)

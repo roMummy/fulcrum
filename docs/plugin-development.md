@@ -19,9 +19,11 @@
 ```text
 plugins/
   weather/
-    config.toml      # 清单：身份、触发条件、配置字段声明（必需）
+    config.toml      # 清单：身份、触发条件、配置字段、定时计划声明（必需）
     plugin.py        # 入口（必需）
     service.py       # 可选：拆分的业务代码
+    assets/          # 可选：题库、图片等随包素材
+    README.md        # 可选：给使用者的说明
 ```
 
 - 目录名就是插件编码 `code`，必须与清单里的 `plugin.code` 一致，建议小写字母、数字、下划线。
@@ -156,7 +158,7 @@ options = ["fast", { value = "slow", label = "慢速" }]
 
 ### 2.8 完整示例
 
-参考仓库里的 `plugins/weather/config.toml` 和 `plugins/robot_menu/config.toml`，它们已经按本规范声明了配置字段。
+参考仓库里的 `plugins/weather/config.toml`、`plugins/robot_menu/config.toml`（配置字段），以及 `plugins/idiom_guess/config.toml`（配置字段 + 定时计划）。**最完整的演示是示例插件 `docs/plugin-template/hello_plugin`**：命令回复、配置字段、显示群昵称、状态存储、定时任务都在里面，文档中心可下载。
 
 ### 2.9 `[[schedule]]` 定时计划（已实现）
 
@@ -188,12 +190,16 @@ high_side_effect = true          # 可选:会发消息的动作保持 true,失�
 | `matches_event(context)` | 每条候选消息 | 自定义匹配，返回 `True/False` 或 `{"matched": bool, "reason": str, "debug": {...}}` |
 | `execute_action(request)` | 后台「重载」、无状态执行 | 返回 `PluginExecutionResult`。`request.action == "reload"` 用于健康检查 |
 | `execute_message_action(db, request)` | 由真实聊天消息触发 | 需要读写数据库的业务（如订阅）放这里，`db` 是当前租户的会话 |
-| `execute_scheduled_action(db, request)` | 到点的定时任务 | 批量推送等 |
+| `execute_scheduled_action(db, request)` | 清单里 `[[schedule]]` 声明的时间到了 | 每日推送、定时开局、定期轮询等，见 2.9 |
 | `handle_event(context)` | 观察型插件 | 处理事件，不要求回复 |
 
 `context`（`DirectoryPluginContext`）包含：`plugin_code`、`binding_id`、`bot_id`、`channel_id`、`channel_type`、`chat_type`、`message_type`、`content`、`sender_id`、`conversation_external_id`、`mentioned_self`、`command_name`、`matched_keyword`、`binding_config` 等。
 
 `request`（`PluginExecutionRequest`）包含：`action`、`config`（默认值 + 绑定配置 + 解密后的密钥）、`payload`、`context`（`PluginExecutionContext`：`tenant_id`、`binding_id`、`bot_id`、`channel_id`、`conversation_id`、`sender_id` 等）。
+
+`request.payload` 在消息触发时常用的键：`command_name`（命中的命令）、`command_args`（命令后面的文字）、`content`（消息原文）、`matched_keyword`、`sender_id`、`conversation_external_id`。
+
+**三种入口怎么选**：只回一句话、不需要数据库 → 只写 `execute_action`；要读写数据库（计数、订阅、排行）→ 写 `execute_message_action`（有它时消息触发优先走它，没有才退回 `execute_action`）；要定时 → 写 `[[schedule]]` + `execute_scheduled_action`。
 
 ### 返回值
 
@@ -241,6 +247,7 @@ return PluginExecutionResult(
 | `rate_limit.PluginRateLimiter` | 按用户/群的频率限制 |
 | `text_generation` | 调用租户配置的模型生成文本 |
 | `member_names` | 批量把群成员 ID 换成群昵称(排行榜、点名必用) |
+| `outbound_batch.enqueue_outbound_job` | 主动给某个会话发消息(定时推送必用)：传入会话、渠道和消息载荷，平台走统一出站队列 |
 
 ### 显示成员名字:存 ID,显示时再换
 
@@ -249,6 +256,30 @@ return PluginExecutionResult(
 - **存稳定的用户 ID**(`request.context.sender_id`),不要把当时的名字当作数据存下来;
 - **显示时**调用 `member_names(db, channel_id=..., group_external_id=..., user_ids=[...], fallbacks={id: 旧名字})`,一次查询批量换成本群群昵称,昵称之后改了排行榜也会跟着变;
 - 查不到昵称时才用 `fallbacks`(它本身是 wxid 会被忽略),最后才显示 ID。
+
+### 主动发消息（定时推送）
+
+回复消息时只要返回 `output["reply_text"]`，平台会发出去。**定时任务没有"当前消息"**，需要自己决定发给谁并入队：
+
+```python
+from app.services.outbound_batch import enqueue_outbound_job
+
+enqueue_outbound_job(
+    db, conversation=conversation, channel=channel,
+    payload={"external_id": conversation.external_id, "receiver_id": conversation.external_id,
+             "chat_type": "group", "message_type": "text", "content": "大家早上好!"},
+    plugin_code="my_plugin", related_type="my_plugin_binding", related_id=binding.id,
+    priority=60, max_attempts=1,   # 会发消息的任务不要自动重试，避免重复发送
+)
+```
+
+- 目标群：通常是 `Chatroom.bot_id == binding.bot_id`、`is_active` 且 `management_status == "enabled"` 的群，先确认渠道仍然启用；
+- 图片、语音、视频等媒体先转成可下载的文件地址（需配置 `PUBLIC_BASE_URL`），不要在载荷里放大段 base64；
+- 完整可运行的写法见 `hello_plugin` 的 `execute_scheduled_action`。
+
+### 状态存储的注意点
+
+`PluginStateStore` 的单条记录上限 64KB。人数不多时一个会话一条记录（key 带会话 ID）即可；**人很多的群，按用户各存一条**（key 用用户 ID 的哈希），像 `idiom_guess` 那样，否则会撑满单条记录。
 
 ## 6. 安全规则
 
@@ -293,6 +324,7 @@ return PluginExecutionResult(
 - 测试放在 `tests/test_plugin_<code>.py`。执行入口函数时传入构造好的 `PluginExecutionRequest`，外部 HTTP 用桩替换，**不要访问真实服务**。
 - 测试数据使用虚构值（微信号、群 ID、昵称都不要用真实的）。
 - 运行：`scripts/run_tests_isolated.sh tests/test_plugin_<code>.py`（每个文件独立进程和测试库）。
+- 示例插件 `hello_plugin` 有对应测试（`tests/test_plugin_template.py`），可以照着写：排行榜显示群昵称、定时入队、配置读取等怎么测都在里面。
 - 仓库有一个通用检查：所有随仓库发布的清单必须有效，且声明的 `commands` / `keywords` / `require_mention` 默认值与 `[matcher]` 一致（`tests/test_plugin_manifest.py`）。
 - 只在内网使用、不随仓库发布的插件目录，把目录名写进环境变量 `FULCRUM_PRIVATE_PLUGINS`（逗号分隔），目录校验会忽略它们。
 

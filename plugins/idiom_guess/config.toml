@@ -2,7 +2,7 @@
 code = "idiom_guess"
 display_name = "看图猜成语"
 plugin_type = "message"
-version = "1.0.2"
+version = "1.0.3"
 author = "Hao"
 description = "456 道看图猜成语，支持群聊抢答、答案解释、本群答对题数排行和每日定时开局。"
 default_enabled = false

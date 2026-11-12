@@ -42,7 +42,7 @@ def env():
 
 def test_the_bundled_plugin_is_valid_and_has_the_fixed_version() -> None:
     found = {item.manifest.code: item for item in plugin_directory.discover_plugins(force=True)}
-    assert found["idiom_guess"].is_valid and found["idiom_guess"].manifest.version == "1.0.2"
+    assert found["idiom_guess"].is_valid and found["idiom_guess"].manifest.version == "1.0.3"
 
 
 def test_leaderboard_shows_group_nicknames_and_keeps_old_records_readable(env) -> None:

@@ -4,9 +4,9 @@ code = "hello_plugin"
 display_name = "你好示例"
 plugin_type = "command"
 # 每次发布新版本都要改版本号,后台升级时会显示"旧版本 → 新版本"
-version = "1.0.0"
+version = "1.1.0"
 author = "your-name"
-description = "标准示例插件:收到命令后按配置打招呼。复制本目录改名即可开始你自己的插件。"
+description = "标准示例插件:命令打招呼、成员排行榜(显示群昵称)、每日定时问候。复制本目录改名即可开始你自己的插件。"
 default_enabled = false
 
 [capability]
@@ -20,7 +20,7 @@ timeout_ms = 5000
 
 [matcher]
 # 以下三项是默认值,每个机器人绑定可以在配置里覆盖(见下面同名的字段声明)
-commands = ["你好", "hello"]
+commands = ["你好", "hello", "你好榜"]
 keywords = []
 require_mention = false
 
@@ -31,6 +31,18 @@ times = 1
 loud = false
 style = "friendly"
 signature = ["Fulcrum"]
+scheduled_enabled = false
+send_time = "09:00"
+daily_text = "大家早上好!"
+
+# ---- 定时计划声明:平台调度器据此每天在 send_time 调用 execute_scheduled_action("daily_greeting"),
+# 不需要改任何调度代码;只有 scheduled_enabled 打开的绑定才会触发。daily 之外还有 interval(按间隔)。
+[[schedule]]
+action = "daily_greeting"
+kind = "daily"
+time_key = "send_time"            # 存放 HH:MM 的配置项;省略则固定用 default_time
+default_time = "09:00"
+enabled_key = "scheduled_enabled" # 开关型配置项;省略表示总是触发
 
 # ---- 配置表单声明:插件页会据此自动生成中文表单 ----
 # 字段类型 kind:text / textarea / number / bool / select / tags / url / time / secret
@@ -77,12 +89,36 @@ default = false
 hint = "开启后问候语后面加感叹号。"
 group = "行为"
 
+[[config.fields]]
+key = "scheduled_enabled"
+label = "每天定时问候"
+kind = "bool"
+default = false
+hint = "只会发到已启用本插件的受管群。"
+group = "定时"
+
+[[config.fields]]
+key = "send_time"
+label = "问候时间(北京时间)"
+kind = "time"
+default = "09:00"
+depends_on = "scheduled_enabled"
+group = "定时"
+
+[[config.fields]]
+key = "daily_text"
+label = "问候内容"
+kind = "text"
+default = "大家早上好!"
+depends_on = "scheduled_enabled"
+group = "定时"
+
 # 触发方式:与上面 [matcher] 的默认值保持一致
 [[config.fields]]
 key = "commands"
 label = "触发命令"
 kind = "tags"
-default = ["你好", "hello"]
+default = ["你好", "hello", "你好榜"]
 hint = "多个用逗号分隔。"
 group = "触发方式"
 
