@@ -16,7 +16,7 @@ from app.services.safe_fetch import UnsafeUrlError, ensure_public_http_url, open
     "url",
     [
         "http://127.0.0.1/x", "http://localhost/x", "http://127.1/x", "http://[::1]/x",
-        "http://10.0.0.5/x", "http://192.168.2.201:8280/x", "http://172.16.3.4/x",
+        "http://10.0.0.5/x", "http://192.168.50.10:8280/x", "http://172.16.3.4/x",
         "http://169.254.169.254/latest/meta-data/",          # 云元数据
         "http://0.0.0.0/x", "http://[::ffff:127.0.0.1]/x",   # IPv4 映射的回环
         "http://[fe80::1]/x", "http://224.0.0.1/x",
@@ -85,6 +85,6 @@ def test_the_gugatool_adapter_refuses_internal_media_urls() -> None:
     from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
 
     adapter = WechatGugatoolAdapter()
-    for url in ("http://192.168.2.201:8280/secret", "http://127.0.0.1:9064/", "http://169.254.169.254/latest/meta-data/"):
+    for url in ("http://192.168.50.10:8280/secret", "http://127.0.0.1:9064/", "http://169.254.169.254/latest/meta-data/"):
         with pytest.raises(RuntimeError, match="地址不允许"):
             adapter._load_media_bytes({"image_url": url}, url_keys=("image_url",), b64_keys=("base64",))
