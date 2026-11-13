@@ -103,8 +103,6 @@ class WorkWechatChatroomTests(unittest.TestCase):
 
         detail = build_workwechat_chatroom_detail(self.db, self.channel, chatroom)
         self.assertEqual(detail["member_record_count"], 1)
-        self.assertEqual(detail["message_flow"]["total"], 1)
-        self.assertEqual(detail["message_flow"]["items"][0]["content"], "hello")
 
     def test_new_message_without_title_refreshes_chatroom_name_from_provider_list(self):
         conversation = Conversation(

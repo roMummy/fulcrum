@@ -2195,12 +2195,7 @@ async def channel_detail_page(request: Request, channel_id: int):
         except BotEntitlementError as exc:
             quota = None
             quota_error = _account_connection_error_message(str(exc))
-        message_page_size = 20
-        raw_message_page = str(request.query_params.get("message_page", "1")).strip()
-        try:
-            message_page = max(int(raw_message_page), 1)
-        except ValueError:
-            message_page = 1
+        # 消息列表只在消息中心里有一份:账号详情只显示总数和入口,不再自带分页表。
         message_total = int(
             db.scalar(
                 select(func.count(Message.id))
@@ -2209,30 +2204,6 @@ async def channel_detail_page(request: Request, channel_id: int):
             )
             or 0
         )
-        message_total_pages = max((message_total + message_page_size - 1) // message_page_size, 1)
-        message_page = min(message_page, message_total_pages)
-        message_offset = (message_page - 1) * message_page_size
-        recent_channel_messages = db.scalars(
-            select(Message)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .where(Conversation.channel_id == channel.id)
-            .order_by(Message.id.desc())
-            .offset(message_offset)
-            .limit(message_page_size)
-        ).all()
-        message_pagination = {
-            "page": message_page,
-            "page_size": message_page_size,
-            "total": message_total,
-            "total_pages": message_total_pages,
-            "has_prev": message_page > 1,
-            "has_next": message_page < message_total_pages,
-            "prev_page": message_page - 1 if message_page > 1 else 1,
-            "next_page": message_page + 1 if message_page < message_total_pages else message_total_pages,
-            "from_index": message_offset + 1 if message_total else 0,
-            "to_index": min(message_offset + len(recent_channel_messages), message_total),
-        }
-        recent_message_identities = IdentityDirectory(db).for_messages(recent_channel_messages)
         # workwechat 云端 WS/拉取模式由本地 provider 主动注册和领取任务，不需要主服务直连 provider 的 API Base。
         workwechat_cloud_poll_config = load_cloud_poll_config(channel) if channel.channel_type == "workwechat" else None
         workwechat_cloud_poll_enabled = bool(
@@ -2280,9 +2251,7 @@ async def channel_detail_page(request: Request, channel_id: int):
                 for item in CHANNEL_TYPE_FORM_SCHEMA_BY_CODE[channel.channel_type]["config_fields"]
             },
             provider_nodes=provider_nodes,
-            recent_channel_messages=recent_channel_messages,
-            recent_message_identities=recent_message_identities,
-            message_pagination=message_pagination,
+            message_total=message_total,
             token_preview=channel.bot_token_masked or "-",
             health_checks=health_checks,
             channel_health_timeline=build_channel_health_timeline(db, channel.id),
@@ -2462,6 +2431,11 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
         # 群头像与列表共用已保存的群资料，避免渠道详情遗漏头像后退回首字占位。
         detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
+        # 群消息只在消息中心里有一份:这里给出直达这个群会话的入口,不再自带一张最近 30 条的表
+        group_conversation_id = db.scalar(
+            select(Conversation.id).where(Conversation.channel_id == channel.id, Conversation.external_id == chatroom.external_id)
+        )
+        detail["message_center_href"] = "/messages?" + urlencode({"channel_id": channel.id, **({"conversation_id": int(group_conversation_id)} if group_conversation_id else {"chat_type": "group"})})
         return render(
             request,
             "chatroom_detail.html",
@@ -2470,7 +2444,7 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             chatroom=chatroom,
             detail=detail,
             # 群详情分为 功能/插件/成员/消息/资料 五个标签，非法值回落到功能。
-            tab=tab if tab in ("features", "plugins", "members", "messages", "profile") else "features",
+            tab=tab if tab in ("features", "plugins", "members", "profile") else "features",
             # 没单独保存过设置的能力跟随默认值:AI 对话跟随租户「AI 助手」里的聊天开关。
             features=build_feature_cards(chatroom, channel.channel_type, defaults={"ai_chat": bool(getattr(ai_dispatch.get_ai_setting(db), "chat_enabled", False))}),
             group_modes=GROUP_MODE_OPTIONS,

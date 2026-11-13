@@ -35,7 +35,7 @@
     <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">群功能</a>
     <a href="{{ base_url }}?tab=plugins" class="{{ 'active' if tab == 'plugins' }}">插件 ({{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }})</a>
     <a href="{{ base_url }}?tab=members" class="{{ 'active' if tab == 'members' }}">成员 ({{ detail.members|length }})</a>
-    <a href="{{ base_url }}?tab=messages" class="{{ 'active' if tab == 'messages' }}">消息</a>
+    <a href="{{ detail.message_center_href }}" title="在消息中心查看这个群的消息">消息 <span class="i i-external" aria-hidden="true"></span></a>
     <a href="{{ base_url }}?tab=profile" class="{{ 'active' if tab == 'profile' }}">资料</a>
   </nav>
 
@@ -135,28 +135,6 @@
   </div>
   {% else %}
   <p class="muted-text">{{ detail.member_section_hint or '还没有成员信息，请点击右上角同步。' }}</p>
-  {% endif %}
-
-  {% elif tab == 'messages' %}
-  {% set flow = detail.message_flow if detail.message_flow is defined else none %}
-  {% if flow and flow['items'] %}
-  {# 只展示最近 30 条，最新的在底部；完整检索走“消息”主入口。 #}
-  <div class="table-scroll">
-  <table class="table">
-    <thead><tr><th class="col-time">时间</th><th>发送者</th><th>内容</th></tr></thead>
-    <tbody>
-      {% for item in (flow['items'][:30])|reverse %}
-      <tr>
-        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>{{ identity(item.identity) }}</td>
-        <td><div class="message-preview">{{ (item.content or '')[:200] }}{{ '...' if (item.content or '')|length > 200 }}</div></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}
-  <p class="muted-text">本群还没有消息记录。</p>
   {% endif %}
 
   {% else %}

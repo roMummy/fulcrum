@@ -50,3 +50,29 @@ def test_the_back_button_renders_before_the_page_title(provider_page_context) ->
     # 右侧操作区不再有"返回xx"文字按钮
     actions = html[html.index('class="page-header-actions"'): html.index("</section>", html.index('class="page-header-actions"'))]
     assert "返回" not in actions
+
+
+# ---------- 消息列表只在消息中心里有一份 ----------
+
+from tests.test_switch_autosave import webridge_group  # noqa: E402,F401  (含 fixture)
+
+
+def test_the_account_page_links_to_the_message_center_instead_of_repeating_a_message_table(webridge_group) -> None:
+    client, _ids, channel_id, _room_id = webridge_group
+    _login(client, "admin")
+    html = client.get(f"/channels/{channel_id}").text
+    section = html[html.index('id="channel-message-section"'):]
+    section = section[: section.index("</section>")]
+    assert f'href="/messages?channel_id={channel_id}"' in section and "<table" not in section and "message-record-table" not in html
+
+
+def test_the_group_page_sends_messages_to_the_message_center_with_the_conversation_selected(webridge_group) -> None:
+    client, _ids, channel_id, room_id = webridge_group
+    _login(client, "admin")
+    html = client.get(f"/channels/{channel_id}/chatrooms/{room_id}").text
+    nav = html[html.index('class="tab-bar"'):]
+    nav = nav[: nav.index("</nav>")]
+    assert "/messages?" in nav and "tab=messages" not in nav          # 消息不再是群详情里的一个标签,而是通往消息中心的入口
+    assert "本群还没有消息记录" not in html
+    # 老的 ?tab=messages 不再有对应内容,不做兼容别名,落回默认的群功能标签
+    assert client.get(f"/channels/{channel_id}/chatrooms/{room_id}?tab=messages").status_code == 200

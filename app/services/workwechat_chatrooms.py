@@ -430,7 +430,6 @@ def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Ch
 
     binding_items, binding_summary = _build_binding_items(bindings, scope_rows)
     member_items = [_format_member_item(member) for member in members]
-    message_flow = _build_message_flow(db, channel, chatroom)
     role_counts = _build_role_counts(members)
     return {
         "chatroom_id": chatroom.id,
@@ -457,7 +456,6 @@ def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Ch
         "sync_action": f"/channels/{channel.id}/chatrooms/{chatroom.id}/sync",
         "sync_button_label": "同步当前群成员",
         "member_section_hint": "成员快照来自企微 Hook 11040；如果暂未同步，先展示群消息中出现过的发言成员。",
-        "message_flow": message_flow,
         "binding_summary": binding_summary,
     }
 
@@ -805,45 +803,6 @@ def _normalize_member_item(item: dict[str, Any]) -> dict[str, Any]:
         "join_time": item.get("join_time") or item.get("joinTime"),
         "sex": item.get("sex") or item.get("gender"),
         "raw_member": item,
-    }
-
-
-def _build_message_flow(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
-    conversation = db.scalar(
-        select(Conversation).where(
-            Conversation.channel_id == channel.id,
-            Conversation.external_id == chatroom.external_id,
-        )
-    )
-    if not conversation:
-        return {"items": [], "total": 0, "conversation_id": None, "limit": MESSAGE_FLOW_LIMIT}
-    messages = db.scalars(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.desc(), Message.id.desc())
-        .limit(MESSAGE_FLOW_LIMIT)
-    ).all()
-    from app.services.identity_directory import IdentityDirectory
-
-    identities = IdentityDirectory(db).for_messages(messages)
-    return {
-        "items": [
-            {
-                "id": message.id,
-                "direction": message.direction,
-                "sender": identities[int(message.id)]["name"],
-                "sender_id": message.sender_id or "",
-                "identity": identities[int(message.id)],
-                "message_type": message.message_type or "text",
-                "status": message.status or "-",
-                "content": message.content or "",
-                "created_at": _format_dt(message.created_at),
-            }
-            for message in messages
-        ],
-        "total": len(messages),
-        "conversation_id": conversation.id,
-        "limit": MESSAGE_FLOW_LIMIT,
     }
 
 

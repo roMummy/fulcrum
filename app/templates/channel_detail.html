@@ -206,40 +206,12 @@
 </section>
 {% endif %}
 
-{# 消息记录属于账号业务数据，即使暂时离线也必须可查，不能再由扫码状态控制显隐。 #}
+{# 消息记录只在消息中心里有一份:这里给出总数和入口,不再重复一张分页表。 #}
 <section class="work-surface" id="channel-message-section">
   <div class="toolbar">
-    <div><h2>最近消息</h2></div>
-    <div class="actions">
-      <span class="chip chip-muted">共 {{ message_pagination.total }} 条</span>
-      <a class="btn btn-secondary" href="/messages?channel_id={{ channel.id }}">查看全部</a>
-    </div>
+    <div><h2>消息</h2><p class="muted-text">本账号共 {{ message_total }} 条消息，完整记录、检索与发送都在消息中心。</p></div>
+    <a class="btn btn-secondary" href="/messages?channel_id={{ channel.id }}"><span class="i i-message" aria-hidden="true"></span><span>进入消息中心</span></a>
   </div>
-  {% if recent_channel_messages %}
-  <table class="table table-tight message-record-table">
-    <thead><tr><th class="col-dir">方向</th><th class="col-time">时间</th><th>发送者</th><th class="col-type">类型</th><th>内容</th></tr></thead>
-    <tbody>
-      {% for item in recent_channel_messages|reverse %}
-      <tr>
-        <td class="col-dir">{{ tone_chip('入站' if item.direction == 'in' else '出站', 'success' if item.direction == 'in' else 'outline') }}</td>
-        <td class="col-time">{{ item.created_at|bj_time if item.created_at else '-' }}</td>
-        <td>{{ identity(recent_message_identities.get(item.id)) }}</td>
-        <td class="col-type"><span class="chip chip-muted">{{ item.message_type }}</span></td>
-        <td><div class="message-preview">{{ (item.content or '')[:120] }}{% if (item.content or '')|length > 120 %}…{% endif %}</div></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <div class="list-pagination">
-    <div class="list-pagination-summary">当前显示 {{ message_pagination.from_index }} - {{ message_pagination.to_index }} / {{ message_pagination.total }}</div>
-    <div class="list-pagination-actions">
-      {% if message_pagination.has_prev %}<a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.prev_page }}#channel-message-section">上一页</a>{% endif %}
-      {% if message_pagination.has_next %}<a class="btn btn-secondary" href="/channels/{{ channel.id }}?message_page={{ message_pagination.next_page }}#channel-message-section">下一页</a>{% endif %}
-    </div>
-  </div>
-  {% else %}
-  <p class="muted-text">当前还没有消息记录。</p>
-  {% endif %}
 </section>
 
 {% if can_manage_channel %}
