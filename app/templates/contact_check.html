@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/contacts">返回好友列表</a>{% endblock %}
+{% block back %}<a class="page-back" href="/contacts" title="返回好友列表" aria-label="返回好友列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
+{% block hero_actions %}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/contact-check.css" />
 <div id="contact-check" data-can-edit="{{ 'true' if can_edit else 'false' }}">

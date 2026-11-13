@@ -93,9 +93,10 @@ def test_the_plugin_list_shows_problems_only_and_a_plain_config_button(pages, mo
     monkeypatch.setattr(main_module, "get_plugin_runtime_meta_map", runtime_with_manifest_error)
     _login(client, "admin")
     html = client.get("/plugins").text
-    rows = html.split('<article class="plugin-catalog-row">')[1:]
-    (row,) = [item for item in rows if f'<h3><a href="/plugins/{weather_id}">' in item]  # 按链接精确定位天气那一行
-    assert "暂不可用" in row and f'href="/plugins/{weather_id}"' in row and ">配置</a>" in row
+    rows = html.split('<article class="plugin-card')[1:]
+    (row,) = [item for item in rows if f'<h3><a href="/plugins/{weather_id}">' in item]  # 按链接精确定位天气那一张卡片
+    # 配置入口是只有图标的按钮,文字放在 aria-label/title 里
+    assert "暂不可用" in row and f'href="/plugins/{weather_id}"' in row and 'aria-label="配置 ' in row
     assert all("可执行" not in item and "查看详情" not in item for item in rows)  # 列表行里不再给每个插件挂"可执行"和版本号
 
 

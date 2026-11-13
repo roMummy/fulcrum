@@ -122,7 +122,7 @@ def test_detail_exposes_confirmation_and_explicit_first_binding_choice(pages):
     html = client.get(f"/plugins/{plugin_id}").text
     assert f'action="/plugins/{binding_id}/unbind"' in html and 'data-confirm-title="解绑机器人？"' in html
     assert 'name="group_default_enabled" required' in html and "首次绑定后，是否对所有群开放" in html
-    assert 'data-plugin-binding="new"' in client.get("/plugins").text
+    assert 'data-plugin-binding' not in client.get("/plugins").text  # 插件页不再带按机器人的开关,首次绑定只能在详情页选择
 
 
 @pytest.mark.parametrize("plugin_code", ["ai_dispatch", "group_feature:welcome"])

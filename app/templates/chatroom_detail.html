@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/chatrooms?channel_id={{ channel.id }}" title="返回群管理" aria-label="返回群管理"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% from '_identity.html' import identity %}
 {% from '_payment_ledger.html' import payment_ledger %}
 {% from '_config_card.html' import config_card %}
@@ -6,7 +7,7 @@
 {% set base_url = '/channels/' ~ channel.id ~ '/chatrooms/' ~ detail.chatroom_id %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}">返回群管理</a>
+  
   {% if detail.sync_action or channel.channel_type == 'wechat_ipad' or channel.channel_type == 'workwechat' %}
   <form method="post" action="{{ detail.sync_action or (base_url ~ '/sync') }}" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <button class="btn btn-secondary" type="submit">{{ detail.sync_button_label or '同步当前群' }}</button>

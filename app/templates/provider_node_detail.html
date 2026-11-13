@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/provider-nodes" title="返回客户端列表" aria-label="返回客户端列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/provider-nodes">返回客户端列表</a>
+  
   <span class="chip chip-outline">客户端 #{{ node.id }}</span>
   <span class="chip {% if node.status == 'active' %}chip-success{% elif node.status == 'pending' %}chip-outline{% else %}chip-muted{% endif %}">{{ {'active':'已激活','pending':'待激活','disabled':'已停用'}.get(node.status, node.status) }}</span>
 </div>

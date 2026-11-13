@@ -301,7 +301,8 @@ def test_plugins_and_directory_pages_use_switches_instead_of_buttons(plugin_env)
     client, ids, channel_id, room_id, plugin_id = plugin_env
     _login(client, "admin")
     plugins = client.get("/plugins").text
-    assert 'data-autosave-url="/plugins/toggle-direct"' in plugins and "plugin-switch-toggle" not in plugins and "展开配置插件开关" not in plugins
+    # 插件页只排布插件,不再有按机器人启停的开关;启停在插件详情页的绑定卡片里
+    assert "data-autosave-url" not in plugins and "plugin-switch-toggle" not in plugins and "展开配置插件开关" not in plugins
     directory = client.get("/chatrooms").text
     assert f'data-autosave-url="/channels/{channel_id}/chatrooms/{room_id}/management"' in directory and ">启用</button>" not in directory and ">已启用</button>" not in directory
 

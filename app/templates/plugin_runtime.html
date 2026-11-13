@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/plugins" title="返回插件管理" aria-label="返回插件管理"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/plugins">返回插件管理</a>
+  
   <span class="chip chip-outline">绑定 {{ runtime_summary.bindings_active }}/{{ runtime_summary.bindings_total }}</span>
 </div>
 {% endblock %}

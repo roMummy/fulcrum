@@ -572,7 +572,6 @@ code {
 .app-modal-head,
 .plugin-binding-card-head,
 .chatroom-scope-card-head,
-.plugin-toggle-panel-head,
 .wechat-action-result-head,
 .chatroom-scope-editor-head,
 .chatroom-json-hint-row {
@@ -1275,7 +1274,6 @@ code {
 .detail-grid,
 .provider-action-grid,
 .plugin-detail-meta-grid,
-.plugin-toggle-grid,
 .chatroom-scope-grid,
 .chatroom-scope-notes,
 .wechat-action-code-grid {
@@ -1296,7 +1294,6 @@ code {
 }
 
 .provider-action-grid,
-.plugin-toggle-grid,
 .chatroom-scope-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2464,15 +2461,7 @@ code {
 }
 
 /* 插件、群管理与运维内部控件使用浅色边界，避免每个子项重复产生浮起表面。 */
-.plugin-catalog-metrics {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
 
-.plugin-catalog-list {
-  display: grid;
-}
-
-.plugin-catalog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .gi-heading, .gi-actions, .gi-filters, .gi-summary, .gi-card-title { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .gi-heading { justify-content: space-between; margin-bottom: 20px; }
 .gi-heading h2 { margin: 12px 0 8px; }
@@ -2496,117 +2485,30 @@ code {
 .gi-pagination { display: flex; gap: 12px; margin-top: 24px; }
 @media (max-width: 640px) { .gi-filters label { width: 100%; } .gi-filters input, .gi-filters select { width: 100%; } }
 
-.plugin-catalog-row {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-  padding: 16px 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.plugin-catalog-row:last-child {
-  border-bottom: 0;
-}
-
-.plugin-catalog-icon {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  color: var(--primary-strong);
-  background: var(--primary-soft);
-  border-radius: 50%;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.plugin-catalog-row:nth-child(3n + 2) .plugin-catalog-icon {
-  color: var(--success);
-  background: var(--success-soft);
-}
-
-.plugin-catalog-row:nth-child(3n) .plugin-catalog-icon {
-  color: var(--info);
-  background: var(--info-soft);
-}
-
-.plugin-catalog-copy {
-  min-width: 0;
-}
-
-.plugin-catalog-copy h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.plugin-catalog-copy a {
-  text-decoration: none;
-}
-
-.plugin-catalog-copy a:hover {
-  color: var(--primary-strong);
-  text-decoration: underline;
-}
-
-.plugin-catalog-copy p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.plugin-catalog-copy .plugin-catalog-warning {
-  color: var(--warning);
-}
-
-.plugin-catalog-state {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.plugin-catalog-state .muted-text {
-  min-width: 40px;
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.plugin-toggle-stack {
-  display: grid;
-  gap: 12px;
-}
-
-.plugin-toggle-panel,
 .action-disclosure {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
 
-.plugin-toggle-panel > summary,
 .action-disclosure > summary {
   padding: 15px 17px;
   list-style: none;
   cursor: pointer;
 }
 
-.plugin-toggle-panel > summary::-webkit-details-marker,
 .action-disclosure > summary::-webkit-details-marker {
   display: none;
 }
 
-.plugin-toggle-panel[open] > summary,
 .action-disclosure[open] > summary {
   border-bottom: 1px solid var(--border);
 }
 
-.plugin-toggle-grid,
 .action-disclosure-body {
   padding: 16px;
 }
 
-.plugin-switch-card,
 .plugin-binding-card,
 .chatroom-scope-card,
 .wechat-action-result-block,
@@ -2618,30 +2520,15 @@ code {
   transition: background-color 360ms ease, border-color 360ms ease;
 }
 
-.plugin-switch-card:hover,
 .plugin-binding-card:hover,
 .chatroom-scope-card:hover {
   background: var(--surface-soft);
   border-color: var(--border-strong);
 }
 
-.plugin-switch-card-enabled {
-  border-color: var(--info);
-}
-
-.plugin-switch-copy p,
-.plugin-switch-feedback,
 .plugin-binding-card p {
   margin-bottom: 0;
 }
-
-.plugin-switch-meta {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
 
 .plugin-detail-hero {
   display: grid;
@@ -2681,8 +2568,7 @@ code {
   color: var(--muted);
 }
 
-.plugin-overview-alert,
-.plugin-switch-feedback {
+.plugin-overview-alert {
   margin-top: 12px;
   padding: 11px 13px;
   color: var(--warning);
@@ -4087,8 +3973,7 @@ code {
   }
 
   .provider-action-grid,
-  .plugin-toggle-grid,
-  .chatroom-scope-grid {
+.chatroom-scope-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -4107,28 +3992,15 @@ code {
 }
 
 @media (max-width: 820px) {
-  .plugin-catalog-metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  
 
-  .plugin-catalog-row {
-    grid-template-columns: 36px minmax(0, 1fr) auto;
-    gap: 10px;
-  }
+  
 
-  .plugin-catalog-icon {
-    width: 36px;
-    height: 36px;
-  }
+  
 
-  .plugin-catalog-state {
-    grid-column: 2;
-  }
+  
 
-  .plugin-catalog-row > .plugin-catalog-actions {
-    grid-column: 3;
-    grid-row: 1 / span 2;
-  }
+  
 
   /* 窄屏登录将输入置于视觉中心，品牌区缩为简短身份提示，表单不被装饰推离首屏。 */
   .access-topbar {
@@ -4391,10 +4263,9 @@ code {
   }
 
   .section-head,
-  .toolbar,
-  .plugin-binding-card-head,
-  .chatroom-scope-card-head,
-  .plugin-toggle-panel-head {
+.toolbar,
+.plugin-binding-card-head,
+.chatroom-scope-card-head {
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
@@ -4564,11 +4435,10 @@ code {
   }
 
   .time-metric-grid,
-  .provider-action-grid,
-  .plugin-toggle-grid,
-  .chatroom-scope-grid,
-  .chatroom-scope-facts,
-  .wechat-action-facts {
+.provider-action-grid,
+.chatroom-scope-grid,
+.chatroom-scope-facts,
+.wechat-action-facts {
     grid-template-columns: 1fr;
   }
 
@@ -6377,7 +6247,6 @@ details.disclosure > summary:hover::after {
 }
 
 /* 自己带内边距的展开块:箭头与文字左侧对称留出同样的边距。 */
-.plugin-toggle-panel,
 .action-disclosure {
   --disclosure-inset: 17px;
 }
@@ -7929,5 +7798,150 @@ textarea.tr-input {
   .tr-action-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* ---- 插件页:紧凑筛选条 + 多列网格(只展示"有哪些插件",配置在详情页) ---- */
+.plugin-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.plugin-filter select {
+  min-height: 38px;
+  max-width: 150px;
+}
+
+.plugin-filter-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.plugin-filter-search .i {
+  position: absolute;
+  left: 12px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.plugin-filter-search input {
+  width: 100%;
+  min-height: 38px;
+  padding-left: 36px;
+}
+
+.plugin-filter-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.plugin-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.plugin-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.plugin-card.is-broken {
+  background: var(--danger-soft);
+}
+
+.plugin-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.plugin-card:nth-child(3n + 2) .plugin-card-icon {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.plugin-card:nth-child(3n) .plugin-card-icon {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.plugin-card-copy {
+  min-width: 0;
+}
+
+.plugin-card-copy h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-card-copy h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.plugin-card-copy h3 a:hover {
+  color: var(--primary-strong);
+}
+
+.plugin-card-copy p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.plugin-card-copy .plugin-card-warning {
+  color: var(--warning);
+}
+
+.plugin-card.is-broken .plugin-card-warning {
+  color: var(--danger);
+}
+
+.plugin-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 560px) {
+  .plugin-filter select {
+    max-width: none;
+    flex: 1 1 45%;
   }
 }

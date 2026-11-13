@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="{{ triggers_url }}" title="返回规则列表" aria-label="返回规则列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {# 触发规则的新建/编辑表单。字段全部由 trigger_rules.catalog 注册信息生成,新增触发或回复类型不用改本模板。
    控件一律用产品自己的部件:选择块/分段选择/开关/文件选择器,不使用浏览器原生的单选、复选和文件框。 #}
 {% set accept_map = {'image': '.jpg,.jpeg,.png,.gif,.webp', 'audio': '.mp3,.wav,.amr,.silk,.m4a', 'video': '.mp4'} %}
@@ -53,7 +54,7 @@
   </div>
 {% endmacro %}
 
-{% block hero_actions %}<a class="btn btn-secondary" href="{{ triggers_url }}">返回规则列表</a>{% endblock %}
+{% block hero_actions %}{% endblock %}
 {% block content %}
 {% if form_error %}<section class="notice-card notice-card-danger">{{ form_error }}</section>{% endif %}
 <form method="post" enctype="multipart/form-data" action="{{ triggers_url }}{% if rule_id %}/{{ rule_id }}{% endif %}" class="tr-form" data-tr-form>

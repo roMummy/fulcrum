@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/channels" title="返回账号清单" aria-label="返回账号清单"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/channels">返回账号清单</a>
+  
   {% if quota %}<span class="chip chip-outline">剩余额度 {{ quota.remaining }}</span>{% endif %}
 </div>
 {% endblock %}

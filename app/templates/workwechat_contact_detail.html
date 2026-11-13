@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/channels/{{ channel.id }}/workwechat/contacts" title="返回联系人" aria-label="返回联系人"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% set is_create = mode == 'create' %}
 {% set form_action = '/channels/' ~ channel.id ~ '/workwechat/contacts' if is_create else '/channels/' ~ channel.id ~ '/workwechat/contacts/' ~ detail.id ~ '/edit' %}
 {% block page_intro %}
@@ -6,8 +7,8 @@
 {% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">返回联系人</a>
-  <a class="btn btn-secondary" href="/channels/{{ channel.id }}">返回渠道</a>
+  
+  
   <span class="chip chip-outline">渠道 #{{ channel.id }}</span>
   {% if detail %}<span class="chip {% if detail.sync_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ detail.sync_status_label }}</span>{% endif %}
 </div>

@@ -1130,59 +1130,6 @@ def build_plugin_runtime_summary(
     }
 
 
-def build_plugin_toggle_matrix(
-    bots: list[Bot],
-    plugins: list[Plugin],
-    bindings: list[BotPlugin],
-    plugin_runtime_map: dict[str, dict[str, object]],
-) -> list[dict[str, object]]:
-    binding_map = {(binding.bot_id, binding.plugin_id): binding for binding in bindings if binding.status != "unbound"}
-    # 插件开关是实际业务入口，只展示已经验证可执行的目录插件。损坏 manifest
-    # 或缺少真实入口的镜像仍留在下方诊断清单，但不能被租户绑定或启用。
-    executable_plugins = [
-        plugin
-        for plugin in plugins
-        if plugin_runtime_map.get(plugin.code, {}).get("migration_state") == "migrated"
-        and bool(plugin_runtime_map.get(plugin.code, {}).get("supports_execution"))
-    ]
-    rows: list[dict[str, object]] = []
-    for bot in bots:
-        plugin_items: list[dict[str, object]] = []
-        enabled_count = 0
-        for plugin in executable_plugins:
-            runtime_info = plugin_runtime_map.get(plugin.code, {})
-            binding = binding_map.get((bot.id, plugin.id))
-            is_enabled = bool(binding and str(binding.status or "").strip() == "enabled")
-            if is_enabled:
-                enabled_count += 1
-            plugin_items.append(
-                {
-                    "plugin_id": plugin.id,
-                    "plugin_code": plugin.code,
-                    "plugin_name": plugin.display_name,
-                    "binding_id": binding.id if binding else None,
-                    "is_bound": binding is not None,
-                    "is_enabled": is_enabled,
-                    "status_label": "已启用" if is_enabled else "已停用",
-                    "status_tone": "success" if is_enabled else "muted",
-                    "binding_status": str(binding.status or "").strip() if binding else "unbound",
-                    "runtime_status": str(binding.runtime_status or "").strip() if binding else "not_bound",
-                    "supports_execution": bool(runtime_info.get("supports_execution")),
-                    "manifest_valid": runtime_info.get("manifest_valid"),
-                }
-            )
-        rows.append(
-            {
-                "bot_id": bot.id,
-                "bot_name": bot.name,
-                "enabled_count": enabled_count,
-                "total_count": len(plugin_items),
-                "items": plugin_items,
-            }
-        )
-    return rows
-
-
 def format_setup_database_error(error: str) -> str:
     normalized = str(error or "").strip()
     lowered = normalized.lower()
@@ -4445,17 +4392,12 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
 
 @app.get("/plugins", response_class=HTMLResponse)
 async def plugins_page(request: Request):
+    """插件页只负责"有哪些插件":筛选 + 紧凑排布。按机器人启停、绑定和配置都在插件详情页里。"""
+
     db = get_session()
     try:
         sync_plugins_from_directory(db)
         plugins = tenant_visible_plugins(db, _current_tenant_id())
-        visible_plugin_ids = {plugin.id for plugin in plugins}
-        bindings = [
-            item
-            for item in db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound", BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
-            if item.plugin_id in visible_plugin_ids
-        ]
-        bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         plugin_runtime_map = get_plugin_runtime_meta_map(plugin.code for plugin in plugins)
         search_query = request.query_params.get("q", "").strip()
         plugin_type_filter = request.query_params.get("plugin_type", "").strip()
@@ -4463,11 +4405,6 @@ async def plugins_page(request: Request):
         migration_filter = request.query_params.get("migration_state", "").strip()
         execution_filter = request.query_params.get("execution_state", "").strip()
         manifest_filter = request.query_params.get("manifest_state", "").strip()
-        raw_open_bot_id = request.query_params.get("open_bot_id", "").strip()
-        try:
-            open_bot_id = int(raw_open_bot_id) if raw_open_bot_id else 0
-        except ValueError:
-            open_bot_id = 0
         filtered_plugins = [
             plugin
             for plugin in plugins
@@ -4482,19 +4419,12 @@ async def plugins_page(request: Request):
                 manifest_state=manifest_filter,
             )
         ]
-        for binding in bindings:
-            binding.runtime_status = compute_binding_runtime(binding)
         return render(
             request,
             "plugins.html",
-            page_title="插件管理",
+            page_title="插件",
             plugins=filtered_plugins,
-            all_plugins=plugins,
-            bindings=bindings,
-            bots=bots,
             plugin_runtime_map=plugin_runtime_map,
-            plugin_toggle_matrix=build_plugin_toggle_matrix(bots, filtered_plugins, bindings, plugin_runtime_map),
-            runtime_summary=build_plugin_runtime_summary(plugins, bindings, runtime_map=plugin_runtime_map),
             plugin_filters={
                 "q": search_query,
                 "plugin_type": plugin_type_filter,
@@ -4506,7 +4436,6 @@ async def plugins_page(request: Request):
             plugin_filter_options=build_plugin_filter_options(plugins, plugin_runtime_map),
             filtered_plugin_count=len(filtered_plugins),
             total_plugin_count=len(plugins),
-            open_bot_id=open_bot_id,
             notice=request.query_params.get("notice", ""),
         )
     finally:

@@ -1,5 +1,6 @@
 {% extends 'platform_base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/platform/tenants">返回租户清单</a>{% endblock %}
+{% block back %}<a class="page-back" href="/platform/tenants" title="返回租户清单" aria-label="返回租户清单"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
+{% block hero_actions %}{% endblock %}
 {% block content %}
 {% if initial_password %}
 <section class="notice-card">

@@ -183,7 +183,8 @@ def test_catalog_with_binding_does_not_prepare_detail_data_or_repeat_scans(
         event.remove(engine, "before_cursor_execute", record_query)
 
     assert response.status_code == 200
-    assert "当前启用 1 / 1" in response.text
-    assert 'data-plugin-binding="bound"' in response.text
+    # 插件页只排布插件,不再带"按机器人开关"那一块:既不显示绑定开关,也不需要去查绑定表
+    assert "demo" in response.text and 'data-plugin-binding' not in response.text and "当前启用" not in response.text
+    assert not any("bot_plugins" in query.lower() for query in queries)
     assert 0 < len(scans) <= 2
     assert not any("raw_webhook_events" in query.lower() for query in queries)

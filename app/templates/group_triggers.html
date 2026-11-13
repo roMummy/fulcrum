@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="{{ group_url }}?tab=features" title="返回群功能" aria-label="返回群功能"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {# 群级触发回复:规则列表,卡片网格。每条规则读起来是一句话:「当有人拍机器人时 → 回复:文字、图片」。 #}
 {% block page_intro %}设置「什么时候」自动回复「什么」,不需要写代码。{% endblock %}
 {% block hero_actions %}
-<a class="btn btn-secondary" href="{{ group_url }}?tab=features">返回群功能</a>
+
 {% if can_edit %}<a class="btn" href="{{ triggers_url }}/new">新建规则</a>{% endif %}
 {% endblock %}
 {% block content %}

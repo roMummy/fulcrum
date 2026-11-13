@@ -75,26 +75,10 @@ enabled = true
     discover_plugins(force=True)
 
     runtime_info = get_plugin_runtime_meta("empty_runtime")
-    matrix = main_module.build_plugin_toggle_matrix(
-        [Bot(id=1, tenant_id=1, name="测试机器人")],
-        [Plugin(id=1, code="empty_runtime", display_name="空运行插件", plugin_type="command")],
-        [],
-        {"empty_runtime": dict(runtime_info)},
-    )
-
     assert runtime_info["manifest_valid"] is True
     assert runtime_info["migration_state"] == "invalid"
     assert runtime_info["supports_execution"] is False
     assert runtime_info["schema_version"] is None
-    assert matrix == [
-        {
-            "bot_id": 1,
-            "bot_name": "测试机器人",
-            "enabled_count": 0,
-            "total_count": 0,
-            "items": [],
-        }
-    ]
 
 
 def test_platform_native_capabilities_do_not_reappear_as_plugins() -> None:

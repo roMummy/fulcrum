@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/plugins" title="返回插件" aria-label="返回插件"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {# 插件页:配置是主体。每个绑定的机器人一张卡片(和群功能同一套交互:右侧小箭头展开、开关点击即保存、保存用 fetch 并弹出提示)。
    编码、版本、作者、适用范围、能力标签这些很少有人看的信息都收进最下面折叠的"技术信息"。 #}
 {% block hero_actions %}

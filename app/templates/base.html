@@ -9,6 +9,7 @@
   <title>{{ page_title }} - Fulcrum</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/icons.css" />
   <link rel="stylesheet" href="/static/css/directory-sync.css" />
 </head>
 {# 首次安装页保留设置壳；企业与平台登录统一由 auth_base 提供视觉结构。 #}
@@ -96,9 +97,13 @@
     <div class="app-main">
       <main class="workspace" id="main-content" tabindex="-1">
       <section class="page-header">
-        <div class="page-header-copy">
-          <h1{% if page_title_class %} class="{{ page_title_class }}"{% endif %}>{{ page_title }}</h1>
-          <div class="page-intro">{% block page_intro %}{% endblock %}</div>
+        {# 返回按钮统一放在页头最左边:二级页面在自己的 {% block back %} 里放一个 .page-back 链接,不再把"返回xx"塞在右侧操作区。 #}
+        <div class="page-header-lead">
+          {% block back %}{% endblock %}
+          <div class="page-header-copy">
+            <h1{% if page_title_class %} class="{{ page_title_class }}"{% endif %}>{{ page_title }}</h1>
+            <div class="page-intro">{% block page_intro %}{% endblock %}</div>
+          </div>
         </div>
         <div class="page-header-actions">{% block hero_actions %}{% endblock %}</div>
       </section>

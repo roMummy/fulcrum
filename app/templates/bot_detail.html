@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="{{ back_href }}" title="返回列表" aria-label="返回列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% from '_identity.html' import identity %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
-  <a class="btn btn-secondary" href="{{ back_href }}">返回列表</a>
+  
   <button class="btn" type="button" data-modal-open="edit-bot-modal">修改机器人</button>
 </div>
 {% endblock %}

@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% block back %}<a class="page-back" href="/chatrooms" title="返回群管理" aria-label="返回群管理"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
 {% from '_identity.html' import identity %}
 {% block hero_actions %}
-<a class="btn btn-secondary" href="/chatrooms">返回群管理</a>
+
 {% endblock %}
 {% block content %}
 {% set can_edit = current_user.role in ['operator', 'tenant_admin'] %}
