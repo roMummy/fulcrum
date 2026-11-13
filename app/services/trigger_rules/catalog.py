@@ -235,7 +235,8 @@ PAT_TRIGGER = register_trigger(
                 hint="一般选第一个;选第二个机器人会回应群里所有拍一拍。",
             ),
         ),
-        variables=(RuleVariable("sender_name", "拍的人", "小红"), RuleVariable("patted_name", "被拍的人", "我")),
+        # 两个名字都是按 wxid 查群成员表得到的群昵称;查不到时拍的人退回 wxid,被拍的是机器人则显示"我"
+        variables=(RuleVariable("sender_name", "拍的人的群昵称", "小红"), RuleVariable("patted_name", "被拍的人的群昵称", "小明")),
         summarize=lambda params: "有人拍机器人时" if str(params.get("scope") or "me") != "any" else "群里有人被拍时",
     )
 )
