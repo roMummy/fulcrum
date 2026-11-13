@@ -30,6 +30,7 @@ tests/test_group_gate_webridge.py
 tests/test_group_red_packet.py
 tests/test_group_run_mode.py
 tests/test_group_transfer_receive.py
+tests/test_identity_directory.py
 tests/test_legacy_import.py
 tests/test_local_proxy_connector.py
 tests/test_local_proxy_connector_ws.py

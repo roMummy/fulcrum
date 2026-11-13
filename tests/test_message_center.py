@@ -7,7 +7,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.models.entities import Conversation, Message
+from app.models.entities import Chatroom, ChatroomMember, Conversation, Message
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 TOTAL = 75
@@ -76,6 +76,22 @@ def test_short_conversation_has_nothing_more_to_load(seeded) -> None:
         db.commit()
         short_id = int(short.id)
     assert 'data-has-more="0"' in client.get(f"/messages?conversation_id={short_id}").text
+
+
+def test_synced_member_profile_appears_on_page_and_both_history_directions(seeded) -> None:
+    client, ids, conversation_id, message_ids, _csrf = seeded
+    with ids["factory"]() as db:
+        room = Chatroom(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=ids["channel_id"], external_id="room@chatroom", name="测试群")
+        db.add(room)
+        db.flush()
+        db.add(ChatroomMember(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=ids["channel_id"], chatroom_id=room.id, member_external_id="wxid_a", display_name="wxid_a", nickname="同步后的昵称", extra_json='{"avatar_url": "https://example.com/synced.jpg"}'))
+        db.commit()
+    page = client.get(f"/messages?conversation_id={conversation_id}")
+    older = client.get(f"/messages/history?conversation_id={conversation_id}&before_id={message_ids[45]}")
+    newer = client.get(f"/messages/history?conversation_id={conversation_id}&after_id={message_ids[69]}")
+    assert page.status_code == older.status_code == newer.status_code == 200
+    for html in (page.text, older.json()["html"], newer.json()["html"]):
+        assert "同步后的昵称" in html and 'src="https://example.com/synced.jpg"' in html
 
 
 # ---------- 向上滚动加载更早 / 发送后拉新 ----------

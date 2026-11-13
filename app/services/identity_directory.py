@@ -1,6 +1,6 @@
 """统一的昵称头像解析：把 wxid 等外部 ID 换成后台可读的昵称与头像。
 
-数据来源按优先级：好友资料（备注/昵称）> 群成员资料 > 群档案 > 会话标题 > 消息自带 sender_name。
+群消息优先使用本群成员资料，其他场景优先好友资料；资料不完整时回退到消息自带 sender_name。
 页面只负责渲染“头像 + 昵称 + 下一行 ID”，不再自行拼接 wxid。
 """
 
@@ -23,6 +23,14 @@ def looks_like_raw_id(value: object) -> bool:
     """判断文本是否只是内部 ID，避免把 sender_name 里存的 wxid 当作昵称。"""
 
     return bool(_RAW_ID_PATTERN.match(str(value or "").strip()))
+
+
+def _readable_name(external_id: object, *candidates: object) -> str:
+    for candidate in candidates:
+        name = str(candidate or "").strip()
+        if name and name != str(external_id or "").strip() and not looks_like_raw_id(name):
+            return name
+    return ""
 
 
 def _avatar_from_extra(extra_json: str | None) -> str:
@@ -63,45 +71,54 @@ class IdentityDirectory:
 
     def __init__(self, db: Session):
         self.db = db
-        self._cache: dict[tuple[int, str], dict] = {}
+        self._cache: dict[tuple[int, str, str], dict] = {}
 
-    def preload(self, channel_id: int | None, external_ids: Iterable[object]) -> None:
+    def preload(self, channel_id: int | None, external_ids: Iterable[object], *, group_external_id: str = "") -> None:
         """批量加载一个渠道下的好友、群成员和群档案，避免逐条查询。"""
 
         cid = int(channel_id or 0)
         ids = {str(item or "").strip() for item in external_ids}
-        ids = {item for item in ids if item and (cid, item) not in self._cache}
+        ids = {item for item in ids if item and (cid, group_external_id, item) not in self._cache}
         if not cid or not ids:
             return
         found: dict[str, dict] = {}
-        for room in self.db.scalars(select(Chatroom).where(Chatroom.channel_id == cid, Chatroom.external_id.in_(ids))).all():
-            found[room.external_id] = make_identity(room.external_id, room.remark or room.name, _avatar_from_extra(room.extra_json))
-        for item in self.db.scalars(
-            select(ChatroomMember).where(ChatroomMember.channel_id == cid, ChatroomMember.member_external_id.in_(ids)).order_by(ChatroomMember.id.asc())
-        ).all():
-            name = item.display_name or item.nickname
-            if name and not looks_like_raw_id(name):
-                found[item.member_external_id] = make_identity(item.member_external_id, name, _avatar_from_extra(item.extra_json))
-        # 好友资料优先级最高，最后写入以覆盖群成员里的群昵称。
-        for contact in self.db.scalars(
-            select(WorkWechatContact).where(WorkWechatContact.channel_id == cid, WorkWechatContact.contact_external_id.in_(ids))
-        ).all():
-            name = contact.display_name or contact.name
-            if name and not looks_like_raw_id(name):
-                found[contact.contact_external_id] = make_identity(contact.contact_external_id, name, contact.avatar_url)
-        for ext in ids:
-            self._cache[(cid, ext)] = found.get(ext) or {}
 
-    def get(self, channel_id: int | None, external_id: object, fallback_name: object = "") -> dict:
+        def merge(ext: str, name: str, avatar: str) -> None:
+            previous = found.get(ext) or {}
+            if name or avatar:
+                # 名称与头像分别补齐，只有备注的好友记录不能抹掉已同步的成员头像。
+                found[ext] = make_identity(ext, name or previous.get("name"), avatar or previous.get("avatar_url"))
+
+        for room in self.db.scalars(select(Chatroom).where(Chatroom.channel_id == cid, Chatroom.external_id.in_(ids))).all():
+            merge(room.external_id, _readable_name(room.external_id, room.remark, room.name), _avatar_from_extra(room.extra_json))
+        member_query = select(ChatroomMember).where(ChatroomMember.channel_id == cid, ChatroomMember.member_external_id.in_(ids))
+        if group_external_id:
+            member_query = member_query.join(Chatroom, Chatroom.id == ChatroomMember.chatroom_id).where(
+                Chatroom.channel_id == cid, Chatroom.external_id == group_external_id,
+            )
+        members = self.db.scalars(member_query.order_by(ChatroomMember.id.asc())).all()
+        contacts = self.db.scalars(
+            select(WorkWechatContact).where(WorkWechatContact.channel_id == cid, WorkWechatContact.contact_external_id.in_(ids))
+        ).all()
+        member_profiles = [(item.member_external_id, _readable_name(item.member_external_id, item.display_name, item.nickname), _avatar_from_extra(item.extra_json)) for item in members]
+        contact_profiles = [(item.contact_external_id, _readable_name(item.contact_external_id, item.display_name, item.name), str(item.avatar_url or "").strip()) for item in contacts]
+        # 群消息以本群昵称为准；私聊等无群上下文的场景保留好友备注优先。
+        profiles = contact_profiles + member_profiles if group_external_id else member_profiles + contact_profiles
+        for ext, name, avatar in profiles:
+            merge(ext, name, avatar)
+        for ext in ids:
+            self._cache[(cid, group_external_id, ext)] = found.get(ext) or {}
+
+    def get(self, channel_id: int | None, external_id: object, fallback_name: object = "", *, group_external_id: str = "") -> dict:
         """读取身份；未同步资料时退回消息自带昵称，再退回 ID。"""
 
         cid = int(channel_id or 0)
         ext = str(external_id or "").strip()
-        if cid and ext and (cid, ext) not in self._cache:
-            self.preload(cid, [ext])
-        hit = self._cache.get((cid, ext)) or {}
+        if cid and ext and (cid, group_external_id, ext) not in self._cache:
+            self.preload(cid, [ext], group_external_id=group_external_id)
+        hit = self._cache.get((cid, group_external_id, ext)) or {}
         if hit:
-            return hit
+            return make_identity(ext, _readable_name(ext, hit["name"], fallback_name), hit["avatar_url"])
         return make_identity(ext, fallback_name, "")
 
     def for_messages(self, messages: Iterable[Message]) -> dict[int, dict]:
@@ -109,24 +126,24 @@ class IdentityDirectory:
 
         rows = list(messages)
         conv_ids = {int(item.conversation_id) for item in rows}
-        conv_channel = {
-            int(c.id): int(c.channel_id or 0)
+        conv_context = {
+            int(c.id): (int(c.channel_id or 0), str(c.external_id or "") if c.chat_type == "group" else "")
             for c in (self.db.scalars(select(Conversation).where(Conversation.id.in_(conv_ids))).all() if conv_ids else [])
         }
-        by_channel: dict[int, set[str]] = {}
+        by_context: dict[tuple[int, str], set[str]] = {}
         for item in rows:
             if item.sender_id:
-                by_channel.setdefault(conv_channel.get(int(item.conversation_id), 0), set()).add(item.sender_id)
-        for cid, ids in by_channel.items():
-            self.preload(cid, ids)
+                by_context.setdefault(conv_context.get(int(item.conversation_id), (0, "")), set()).add(item.sender_id)
+        for (cid, group_id), ids in by_context.items():
+            self.preload(cid, ids, group_external_id=group_id)
         result: dict[int, dict] = {}
         for item in rows:
-            cid = conv_channel.get(int(item.conversation_id), 0)
+            cid, group_id = conv_context.get(int(item.conversation_id), (0, ""))
             if is_system_sender(item.sender_id) or (item.direction == "out" and not item.sender_id):
                 # 出站消息展示为“我方”，不暴露 outbound-adapter 之类的内部标识。
                 result[int(item.id)] = {**make_identity("", "我方", ""), "show_id": False}
                 continue
-            result[int(item.id)] = self.get(cid, item.sender_id, item.sender_name)
+            result[int(item.id)] = self.get(cid, item.sender_id, item.sender_name, group_external_id=group_id)
         return result
 
     def for_conversations(self, conversations: Iterable[Conversation]) -> dict[int, dict]:
