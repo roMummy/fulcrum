@@ -233,9 +233,9 @@ BILLING_PAYMENT_INSTRUCTIONS=请完成转账后填写交易流水号并上传付
 python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
 ```
 
-## 插件迁移交付
+## 内置插件
 
-当前目录包含 34 个从 A-BOT 业务迁移的插件，以及 `customer_operations`、`supplier_order_flow` 两个 SaaS 自有插件。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不导入 A-BOT 的数据库、Redis、Provider 或单机管理运行时。
+`plugins/` 目录下随项目提供了一批开箱可用的业务插件，其中 `customer_operations`、`supplier_order_flow` 面向运营方的客户与供应链场景。插件统一通过可信租户运行上下文、标准消息回复、通用 HTTP、状态存储、限流和任务调度能力执行，不直接访问数据库、Redis 或具体渠道客户端。
 
 租户承担的 LLM、Dify、解析服务、NewAPI、MaiBot 等第三方成本，均由租户在插件绑定中维护地址和凭证。敏感字段使用 `ABOT_PLUGIN_SECRET_KEY` 加密后按租户和绑定隔离，目录配置不提供共享密钥或环境回退。
 
@@ -246,8 +246,6 @@ python3 -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_
 ```
 
 只在内网使用、不随本仓库发布的插件，把目录名写进环境变量 `FULCRUM_PRIVATE_PLUGINS`（逗号分隔），校验脚本会忽略它们。
-
-详细范围、迁移边界和定向验证记录见 [插件迁移台账](docs/plugin-migration-ledger.md)。
 
 想自己开发插件，请阅读 [插件开发规范](docs/plugin-development.md)：清单 `config.toml`、配置字段声明（自动生成配置页）、入口函数、安全规则和测试方法。
 
@@ -346,10 +344,6 @@ DATABASE_URL=sqlite:////app/data/app.db
 - `weather`
 
 插件由后台启动时自动扫描并同步到数据库。
-
-A-BOT 最新插件的审核、迁移、排除和平台原生替代范围记录在
-[`docs/plugin-migration-ledger.md`](docs/plugin-migration-ledger.md)。迁移只复用业务规则，
-不加载 A-BOT 的插件接口、数据库、全局 Redis 或微信客户端。
 
 ## 渠道与适配边界
 
