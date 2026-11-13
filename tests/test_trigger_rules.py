@@ -74,7 +74,7 @@ def test_pat_is_read_from_the_structured_ids_and_never_from_the_text() -> None:
     assert (other.from_id, other.patted_id, other.patted_is_me) == ("wxid_red", "wxid_other", False)
     # 适配器没有给出结构化字段:不是拍一拍,哪怕文案长得一模一样
     assert parse_pat(_view(text='"小红" 拍了拍 我')) is None
-    assert parse_pat(_view(text='"小红" 拍了拍 "水牛@rCodex"', details={})) is None
+    assert parse_pat(_view(text='"小红" 拍了拍 "小机@bot"', details={})) is None
     # 不是 pat 事件:即使带了 details.pat 也不当拍一拍
     assert parse_pat(_view("text", details=PAT_BOT)) is None
 
@@ -96,7 +96,7 @@ def test_names_only_fill_the_variables_and_fall_back_without_leaking_wxids() -> 
     result = pat.match({"scope": "me"}, nameless)
     assert result["patted_name"] == "我"            # 机器人自己没有昵称时用"我",不把 wxid 发到群里
     assert result["sender_name"] == "wxid_red"      # 拍的人查不到名字时只能退回 ID(这是已知的取舍)
-    assert pat.match({"scope": "me"}, _view(details=PAT_BOT, names={"wxid_bot": "水牛@rCodex", "wxid_red": "小红"}))["patted_name"] == "水牛@rCodex"
+    assert pat.match({"scope": "me"}, _view(details=PAT_BOT, names={"wxid_bot": "小机@bot", "wxid_red": "小红"}))["patted_name"] == "小机@bot"
 
 
 def test_keyword_trigger_modes() -> None:

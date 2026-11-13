@@ -1,7 +1,7 @@
 """全局约定:自己发的消息不进内容检测;拍一拍要能认出"拍的是机器人"。
 
-线上现象(用户在 BOT-测试群里实测):
-1. 拍一拍规则不触发。入站事件其实收到了,文案是 `"水牛" 拍了拍 "水牛@rCodex"`——被拍的人显示的是机器人自己的昵称,
+线上现象(用户在 测试群里实测):
+1. 拍一拍规则不触发。入站事件其实收到了,文案是 `"小明" 拍了拍 "小机@bot"`——被拍的人显示的是机器人自己的昵称,
    而匹配逻辑只认第一人称"我",所以"拍机器人自己时"这条规则永远不命中;
 2. 文本检测规则把自己发的消息当成检测内容(机器人的回复被协议回流、命中规则,会形成自问自答的循环)。
 """
@@ -103,11 +103,11 @@ def rule_env():
     with tenant_scope(1):
         with tenant_session(factory) as db:
             channel = Channel(tenant_id=1, bot_id=1, name="微桥", channel_type="wechat_webridge", status="online", is_enabled=True,
-                              runtime_info_json=json.dumps({"webridge": {"account_id": "wxid_bot"}, "account_profile": {"nickname": "水牛@rCodex"}}))
+                              runtime_info_json=json.dumps({"webridge": {"account_id": "wxid_bot"}, "account_profile": {"nickname": "小机@bot"}}))
             db.add(channel)
             db.flush()
             conversation = Conversation(tenant_id=1, bot_id=1, channel_id=channel.id, channel_type="wechat_webridge", external_id="g@chatroom", chat_type="group")
-            room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="g@chatroom", name="BOT-测试", is_active=True)
+            room = Chatroom(tenant_id=1, bot_id=1, channel_id=channel.id, external_id="g@chatroom", name="测试群", is_active=True)
             db.add_all([conversation, room])
             db.flush()
             save_state(room, "trigger_reply", enabled=True)
@@ -138,7 +138,7 @@ def _normalize(channel, payload: dict) -> dict:
 
 
 def _know_main(db, channel, room) -> None:
-    db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_main", display_name="水牛", status="active"))
+    db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_main", display_name="小明", status="active"))
     db.flush()
 
 
@@ -152,7 +152,7 @@ def test_patting_the_bot_triggers_the_rule_using_only_the_ids(rule_env, sent) ->
     event = _normalize(channel, _pat_payload(patted="wxid_bot", content="完全不同的一段文字"))
     assert event["details"]["pat"] == {"from_id": "wxid_main", "patted_id": "wxid_bot", "patted_is_me": True}
     assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == ["trigger_reply"]
-    assert sent == [[{"type": "text", "content": "别拍啦,水牛"}]]  # 名字按 ID 查群成员表得到
+    assert sent == [[{"type": "text", "content": "别拍啦,小明"}]]  # 名字按 ID 查群成员表得到
 
 
 def test_patting_someone_else_does_not_trigger_a_bot_only_rule(rule_env, sent) -> None:
@@ -194,6 +194,6 @@ def test_text_that_looks_like_a_pat_is_not_a_pat(rule_env, sent) -> None:
 
     db, channel, conversation, room = rule_env
     engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "any"}, "拍得好"))
-    event = _normalize(channel, _pat_payload(patted="wxid_bot", msg_type="text", content='"水牛" 拍了拍 "水牛@rCodex"'))
+    event = _normalize(channel, _pat_payload(patted="wxid_bot", msg_type="text", content='"小明" 拍了拍 "小机@bot"'))
     assert "pat" not in event["details"]
     assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == [] and sent == []
