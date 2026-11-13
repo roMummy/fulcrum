@@ -1,27 +1,47 @@
 from __future__ import annotations
 
+import importlib.util
+import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
-from app.models.entities import BotPlugin, Channel, Conversation, Message, SignInHistory, SignInRecord
+from app.models.entities import BotPlugin, Channel, Conversation, Message, PluginStateRecord, SignInHistory, SignInRecord
+from app.services.identity_directory import IdentityDirectory
 from app.services.points import PointsService
 from app.services.plugin_runtime.contracts import (
     PluginExecutionContext,
     PluginExecutionRequest,
     PluginExecutionResult,
 )
-from app.services.plugin_runtime.replies import standard_replies, text_reply
+from app.services.plugin_runtime.replies import image_reply, standard_replies, text_reply
+from app.services.plugin_runtime.state_store import PluginStateStore, parse_state_payload, serialize_state_payload
+
+
+# Load the helper from this installed package, including hot upgrades to a
+# configurable plugin directory, rather than importing a stale global module.
+_fortune_spec = importlib.util.spec_from_file_location(f"{__name__}_fortune", Path(__file__).with_name("fortune.py"))
+if _fortune_spec is None or _fortune_spec.loader is None:
+    raise ImportError("运势签到组件不可用")
+_fortune_module = importlib.util.module_from_spec(_fortune_spec)
+_fortune_spec.loader.exec_module(_fortune_module)
+daily_fortune = _fortune_module.daily_fortune
+experience_reward = _fortune_module.experience_reward
+level_info = _fortune_module.level_info
+_render_fortune_card = _fortune_module.render_card
 
 
 PLUGIN_CODE = "message_sign"
 SIGN_COMMAND = "签到"
 MAKEUP_COMMAND = "补签"
+FORTUNE_NAMESPACE = "message_sign_fortune"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,6 +53,11 @@ class SignConfig:
     streak_cycle: int
     max_streak_point: int
     makeup_cost: int
+    fortune_enabled: bool = True
+    fortune_image_enabled: bool = True
+    background_url: str = ""
+    sign_exp_min: int = 1
+    sign_exp_max: int = 100
 
 
 @dataclass(frozen=True)
@@ -47,6 +72,7 @@ class TrustedSignContext:
     sender_id: str
     sender_name: str
     group_id: str
+    avatar_url: str = ""
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
@@ -79,6 +105,15 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         return error or _error_result("当前群聊消息上下文无效。", "trusted_context_required")
 
     command = _parse_command(str(trusted.message.content or ""))
+    if command in {SIGN_COMMAND, MAKEUP_COMMAND}:
+        # A database write lock serializes requests across workers, including the
+        # first sign before a user record exists. Never use process-local locks.
+        db.execute(
+            update(BotPlugin)
+            .where(BotPlugin.id == trusted.binding.id, BotPlugin.tenant_id == trusted.execution.tenant_id)
+            .values(updated_at=BotPlugin.updated_at)
+            .execution_options(synchronize_session=False)
+        )
     if command == SIGN_COMMAND:
         return _handle_sign(db, trusted, config)
     if command == MAKEUP_COMMAND:
@@ -97,13 +132,19 @@ def _handle_sign(db: Session, trusted: TrustedSignContext, config: SignConfig) -
     if previous_sign is not None and previous_sign >= today_start:
         account = PointsService(db).get_user_points(trusted.sender_id, trusted.group_id) or {}
         current_points = int(account.get("total_points") or 0)
-        return _text_result(
+        fortune_state = _fortune_state(db, trusted, config, record, current, is_new=False)
+        db.commit()
+        return _sign_result(
             f"今天已经签过到了。\n累计签到 {int(record.total_sign_count or 0)} 次，当前积分 {current_points}。",
             "already_signed",
+            trusted=trusted, config=config, fortune_state=fortune_state,
             user_id=trusted.sender_id,
             group_id=trusted.group_id,
             total_sign_count=int(record.total_sign_count or 0),
             points=current_points,
+            points_awarded=0,
+            signin_streak=int(record.signin_streak or 0),
+            todays_rank=fortune_state.get("todays_rank"),
         )
 
     old_streak = int(record.signin_streak or 0) if record is not None else 0
@@ -148,6 +189,10 @@ def _handle_sign(db: Session, trusted: TrustedSignContext, config: SignConfig) -
         )
     )
 
+    # Experience is persisted in the same transaction as the sign and points.
+    fortune_state = _fortune_state(
+        db, trusted, config, record, current, is_new=True, todays_rank=todays_rank,
+    )
     reward_key = (
         f"message-sign:{int(trusted.binding.id)}:{int(trusted.conversation.id)}:"
         f"{int(trusted.message.id)}:reward"
@@ -174,9 +219,10 @@ def _handle_sign(db: Session, trusted: TrustedSignContext, config: SignConfig) -
     elif streak > 1:
         lines.append(f"当前连续签到 {streak} 天。")
     lines.append(f"累计签到 {int(record.total_sign_count or 0)} 次，当前积分 {balance}。")
-    return _text_result(
+    return _sign_result(
         "\n".join(lines),
         "signed",
+        trusted=trusted, config=config, fortune_state=fortune_state,
         user_id=trusted.sender_id,
         group_id=trusted.group_id,
         points_awarded=points_awarded,
@@ -335,6 +381,9 @@ def _require_trusted_group_message(
         or (context.sender_id is not None and str(context.sender_id).strip() != sender_id)
     ):
         return None, _error_result("当前群聊消息上下文无效。", "trusted_context_required")
+    identity = IdentityDirectory(db).get(
+        int(channel.id), sender_id, sender_name, group_external_id=group_id,
+    )
     return TrustedSignContext(
         execution=context,
         binding=binding,
@@ -342,8 +391,9 @@ def _require_trusted_group_message(
         conversation=conversation,
         message=message,
         sender_id=sender_id,
-        sender_name=sender_name or sender_id,
+        sender_name=str(identity["name"]),
         group_id=group_id,
+        avatar_url=str(identity["avatar_url"]),
     ), None
 
 
@@ -359,6 +409,17 @@ def _load_config(raw_config: Mapping[str, Any]) -> SignConfig:
         streak_cycle=_bounded_int(raw.get("streak_cycle"), default=1, minimum=1, maximum=365),
         max_streak_point=_bounded_int(raw.get("max_streak_point"), default=50, minimum=0, maximum=100_000),
         makeup_cost=_bounded_int(raw.get("makeup_cost"), default=10, minimum=1, maximum=1_000_000),
+        fortune_enabled=_as_bool(raw.get("fortune_enabled"), default=True),
+        fortune_image_enabled=_as_bool(raw.get("fortune_image_enabled"), default=True),
+        background_url=str(raw.get("background_url") or "").strip()[:2048],
+        sign_exp_min=min(
+            _bounded_int(raw.get("sign_exp_min"), default=1, minimum=1, maximum=100_000),
+            _bounded_int(raw.get("sign_exp_max"), default=100, minimum=1, maximum=100_000),
+        ),
+        sign_exp_max=max(
+            _bounded_int(raw.get("sign_exp_min"), default=1, minimum=1, maximum=100_000),
+            _bounded_int(raw.get("sign_exp_max"), default=100, minimum=1, maximum=100_000),
+        ),
     )
 
 
@@ -379,6 +440,8 @@ def _find_sign_record(db: Session, user_id: str, group_id: str) -> SignInRecord 
         .where(SignInRecord.user_id == user_id, SignInRecord.group_id == group_id)
         .order_by(SignInRecord.id.asc())
         .limit(1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
 
 
@@ -441,6 +504,99 @@ def _as_bool(value: Any, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _fortune_state(
+    db: Session, trusted: TrustedSignContext, config: SignConfig, record: SignInRecord,
+    current: datetime, *, is_new: bool, todays_rank: int | None = None,
+) -> dict[str, Any]:
+    """One bounded profile per user/group, with only today's fortune snapshot."""
+    if not config.fortune_enabled:
+        return {}
+    store = PluginStateStore(db, trusted.execution)
+    key = f"record:{int(record.id)}"
+    # Locking reads see the latest committed profile even when the caller's
+    # MySQL REPEATABLE READ transaction already has an older message snapshot.
+    row = db.scalar(
+        select(PluginStateRecord).where(
+            PluginStateRecord.tenant_id == trusted.execution.tenant_id,
+            PluginStateRecord.bot_plugin_id == trusted.execution.binding_id,
+            PluginStateRecord.namespace == FORTUNE_NAMESPACE,
+            PluginStateRecord.state_key == key,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    state = parse_state_payload(row.payload_json) if row is not None else {"total_exp": 0}
+    today = current.date().isoformat()
+    daily = state.get("daily") or {}
+    if daily.get("date") != today:
+        daily = {
+            "date": today,
+            "fortune": daily_fortune(trusted.execution.tenant_id, trusted.group_id, trusted.sender_id, current),
+            "todays_rank": None,
+        }
+    exp_awarded = 0
+    if is_new and state.get("last_reward_date") != today:
+        exp_awarded = experience_reward(
+            daily["fortune"], config.sign_exp_min, config.sign_exp_max,
+            f"{trusted.execution.tenant_id}:{trusted.group_id}:{trusted.sender_id}",
+        )
+        state["total_exp"] = int(state.get("total_exp") or 0) + exp_awarded
+        state["last_reward_date"] = today
+        daily["todays_rank"] = todays_rank
+    state["daily"] = daily
+    if row is None:
+        store.put(FORTUNE_NAMESPACE, key, state)
+    else:
+        row.payload_json = serialize_state_payload(state)
+        db.flush()
+    total_exp = int(state.get("total_exp") or 0)
+    return {
+        "fortune": daily["fortune"], "total_exp": total_exp,
+        "exp_awarded": exp_awarded, "level": level_info(total_exp),
+        "todays_rank": daily.get("todays_rank"),
+    }
+
+
+def _sign_result(
+    text: str, provider_status: str, *, trusted: TrustedSignContext, config: SignConfig,
+    fortune_state: Mapping[str, Any], **output: Any,
+) -> PluginExecutionResult:
+    """Render only after the reward commits; failures preserve full text output."""
+    if not fortune_state:
+        return _text_result(text, provider_status, **output)
+    fortune, level = fortune_state["fortune"], fortune_state["level"]
+    lines = [text]
+    if fortune_state["exp_awarded"]:
+        lines.append(f"获得 {fortune_state['exp_awarded']} 经验。")
+    lines.extend([
+        f"等级：Lv.{level['level']} {level['name']}，累计经验 {fortune_state['total_exp']}。",
+        f"今日运势：{fortune['luck']} / 99 · {fortune['description']}",
+        "宜：" + "；".join(f"{item['name']}：{item['text']}" for item in fortune["good_events"]),
+        "忌：" + "；".join(f"{item['name']}：{item['text']}" for item in fortune["bad_events"]),
+        fortune["hitokoto"], "随机生成，仅供娱乐。",
+    ])
+    text = chr(10).join(lines)
+    view = {
+        **output, **fortune_state, "provider_status": provider_status,
+        "username": trusted.sender_name, "avatar_url": trusted.avatar_url,
+        "background_url": config.background_url,
+    }
+    replies = [text_reply(text)]
+    card_status = "disabled"
+    if config.fortune_image_enabled:
+        try:
+            replies = [image_reply(base64_data=_render_fortune_card(view))]
+            card_status = "rendered"
+        except Exception as exc:
+            logger.warning("运势签到卡片生成失败，已使用文本回复", extra={"error_type": type(exc).__name__})
+            card_status = "failed"
+    return PluginExecutionResult(
+        ok=True, status="completed", message=text,
+        output={
+            **output, **fortune_state, "provider_status": provider_status,
+            "reply_text": text, "replies": standard_replies(replies), "card_status": card_status,
+        },
+    )
 
 
 def _text_result(text: str, provider_status: str, **output: Any) -> PluginExecutionResult:

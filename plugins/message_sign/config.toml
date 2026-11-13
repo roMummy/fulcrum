@@ -2,9 +2,9 @@
 code = "message_sign"
 display_name = "群签到"
 plugin_type = "command"
-version = "2.0.0"
+version = "2.1.1"
 author = "abot"
-description = "群聊签到、连续签到奖励、当日排名和昨天补签。"
+description = "群聊运势签到卡片、每日宜忌、经验等级、连续签到积分、当日排名和昨天补签。"
 default_enabled = false
 
 [capability]
@@ -20,7 +20,7 @@ timeout_ms = 12000
 # AI 调度声明：低风险，可由 AI 把“我要签到”改写成 /签到。
 routable = true
 risk = "low"
-summary = "群成员每日签到领取积分"
+summary = "群成员每日签到领取积分和经验，查看今日运势卡片"
 examples = ["我要签到", "今天打卡", "签个到"]
 needs_args = ""
 
@@ -34,3 +34,102 @@ max_point = 50
 streak_cycle = 1
 max_streak_point = 50
 makeup_cost = 10
+fortune_enabled = true
+fortune_image_enabled = true
+background_url = "https://cdn.jsdelivr.net/gh/fiatlux2333/astrbot_plugin_jrys@9efe04c5dc763cfe0853907f015ffb0249d824e5/assets/default_background.jpg"
+sign_exp_min = 1
+sign_exp_max = 100
+
+[[config.fields]]
+key = "min_point"
+label = "基础签到积分"
+kind = "number"
+default = 3
+min = 1
+max = 10000
+group = "签到积分"
+
+[[config.fields]]
+key = "max_point"
+label = "单次积分上限"
+kind = "number"
+default = 50
+min = 1
+max = 100000
+group = "签到积分"
+
+[[config.fields]]
+key = "streak_cycle"
+label = "连签奖励周期（天）"
+kind = "number"
+default = 1
+min = 1
+max = 365
+hint = "连签天数每满一个周期，额外增加 1 积分，受连签奖励上限约束。"
+group = "签到积分"
+
+[[config.fields]]
+key = "max_streak_point"
+label = "连签额外积分上限"
+kind = "number"
+default = 50
+min = 0
+max = 100000
+group = "签到积分"
+
+[[config.fields]]
+key = "makeup_cost"
+label = "补签消耗积分"
+kind = "number"
+default = 10
+min = 1
+max = 1000000
+hint = "只补昨天，补签不额外发放经验或今日签到奖励。"
+group = "签到积分"
+
+[[config.fields]]
+key = "fortune_enabled"
+label = "启用今日运势和经验等级"
+kind = "bool"
+default = true
+hint = "发送签到即可领取积分和经验并查看今日运势。关闭后恢复原有文字签到。"
+group = "运势签到"
+
+[[config.fields]]
+key = "fortune_image_enabled"
+label = "使用图片卡片"
+kind = "bool"
+default = true
+depends_on = "fortune_enabled"
+hint = "图片生成失败时自动回复完整文字结果，签到奖励仍正常入账。"
+group = "运势签到"
+
+[[config.fields]]
+key = "background_url"
+label = "卡片背景图地址"
+kind = "text"
+default = "https://cdn.jsdelivr.net/gh/fiatlux2333/astrbot_plugin_jrys@9efe04c5dc763cfe0853907f015ffb0249d824e5/assets/default_background.jpg"
+depends_on = "fortune_image_enabled"
+hint = "填写公网 HTTP/HTTPS 图片直链；留空或下载失败时使用内置背景。"
+group = "运势签到"
+
+[[config.fields]]
+key = "sign_exp_min"
+label = "签到经验下限"
+kind = "number"
+default = 1
+min = 1
+max = 100000
+depends_on = "fortune_enabled"
+group = "运势签到"
+
+[[config.fields]]
+key = "sign_exp_max"
+label = "签到经验上限"
+kind = "number"
+default = 100
+min = 1
+max = 100000
+depends_on = "fortune_enabled"
+hint = "经验奖励受当天运势影响；上下限填反时自动交换。积分仍按原有连签规则发放。"
+group = "运势签到"
