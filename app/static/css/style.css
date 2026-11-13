@@ -2006,8 +2006,7 @@ code {
 .form-grid label,
 .confirm-match-input,
 .wechat-action-field,
-.chatroom-scope-mode-form,
-.chatroom-scope-config-form {
+.chatroom-scope-mode-form {
   display: grid;
   gap: 6px;
   color: var(--text-soft);
@@ -2193,8 +2192,7 @@ code {
 }
 
 .auth-form-actions,
-.wechat-action-controls,
-.chatroom-scope-editor-actions {
+.wechat-action-controls {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -2611,7 +2609,6 @@ code {
 }
 
 .chatroom-scope-mode-form,
-.chatroom-scope-config-form,
 .wechat-action-composer,
 .wechat-action-result {
   padding: 18px;
@@ -2620,7 +2617,6 @@ code {
   border-radius: var(--radius-md);
 }
 
-.chatroom-json-editor,
 .wechat-action-json-panel,
 .wechat-action-payload,
 .log-message-block {
@@ -2632,20 +2628,6 @@ code {
   font-size: 12px;
 }
 
-.chatroom-json-editor {
-  overflow: hidden;
-}
-
-.chatroom-json-editor-bar {
-  display: flex;
-  justify-content: space-between;
-  padding: 10px 13px;
-  color: #cdd6d1;
-  background: #26302c;
-  font-size: 11px;
-}
-
-.chatroom-json-editor-textarea,
 .wechat-action-payload {
   width: 100%;
   min-height: 250px;

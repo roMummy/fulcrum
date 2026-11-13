@@ -99,8 +99,6 @@ from app.services.plugin_governance import blocked_plugin_codes, tenant_visible_
 from app.services.plugin_schemas import (
     build_plugin_config_view,
     deep_merge_config,
-    diff_config_override,
-    dump_config_json,
     get_plugin_config_schema,
     merge_schema_config,
     parse_config_json,
@@ -163,7 +161,6 @@ from app.services.wechat_ipad import (
     resolve_wechat_ipad_qrcode_image,
     sync_wechat_ipad_chatrooms,
     sync_wechat_ipad_contacts,
-    update_wechat_ipad_chatroom_scope_config_override,
     update_wechat_ipad_chatroom_scope_enabled,
 )
 from app.services.wechat_winauto_chatrooms import (
@@ -171,7 +168,6 @@ from app.services.wechat_winauto_chatrooms import (
     build_wechat_winauto_chatroom_list,
     reset_wechat_winauto_chatroom_scope,
     sync_wechat_winauto_chatrooms,
-    update_wechat_winauto_chatroom_scope_config_override,
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.directory_pages import build_chatroom_directory, build_chatroom_plugin_directory, build_contact_directory, channel_options, chatroom_plugin_options
@@ -197,7 +193,6 @@ from app.services.workwechat_chatrooms import (
     sync_workwechat_chatroom_members,
     sync_workwechat_chatroom_profile_from_list,
     sync_workwechat_chatrooms,
-    update_workwechat_chatroom_scope_config_override,
     update_workwechat_chatroom_scope_enabled,
 )
 from app.services.workwechat_contacts import (
@@ -4175,82 +4170,6 @@ async def reset_wechat_ipad_chatroom_scope_action(request: Request, channel_id: 
         db.commit()
         message = "已恢复继承 bot_plugin 绑定状态"
         record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.reset", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
-    finally:
-        db.close()
-
-
-@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/scopes/{bot_plugin_id}/config")
-async def update_wechat_ipad_chatroom_scope_config_action(
-    request: Request,
-    channel_id: int,
-    chatroom_id: int,
-    bot_plugin_id: int,
-    config_override_json: str = Form(""),
-):
-    user = enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        chatroom = db.get(Chatroom, chatroom_id)
-        if not chatroom or chatroom.channel_id != channel.id:
-            raise HTTPException(status_code=404, detail="Chatroom not found")
-        if channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
-            raise HTTPException(status_code=400, detail="Channel does not support group plugin scopes")
-        binding = db.get(BotPlugin, bot_plugin_id)
-        if not binding or binding.bot_id != channel.bot_id:
-            raise HTTPException(status_code=404, detail="Bot plugin binding not found")
-        normalized_override = config_override_json.strip()
-        normalized_to_save: str | None = None
-        if normalized_override:
-            parsed_override, config_error = parse_json_object(normalized_override)
-            if config_error:
-                return RedirectResponse(
-                    url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote('群级配置 JSON 无效：' + config_error)}",
-                    status_code=303,
-                )
-            effective_base = build_group_scope_effective_config(
-                getattr(binding.plugin, "code", None),
-                binding.config_json,
-                None,
-            )
-            computed_override = diff_config_override(effective_base, parsed_override)
-            normalized_to_save = dump_config_json(computed_override)
-        if channel.channel_type == "wechat_ipad":
-            update_wechat_ipad_chatroom_scope_config_override(
-                db,
-                channel=channel,
-                chatroom=chatroom,
-                bot_plugin_id=bot_plugin_id,
-                config_override_json=normalized_to_save,
-                operator_id=user.user_id,
-                audit_note=f"group override updated by {user.username}",
-            )
-        elif channel.channel_type == "wechat_winauto":
-            update_wechat_winauto_chatroom_scope_config_override(
-                db,
-                channel=channel,
-                chatroom=chatroom,
-                bot_plugin_id=bot_plugin_id,
-                config_override_json=normalized_to_save,
-                operator_id=user.user_id,
-                audit_note=f"group override updated by {user.username}",
-            )
-        else:
-            update_workwechat_chatroom_scope_config_override(
-                db,
-                channel=channel,
-                chatroom=chatroom,
-                bot_plugin_id=bot_plugin_id,
-                config_override_json=normalized_to_save,
-                operator_id=user.user_id,
-                audit_note=f"group override updated by {user.username}",
-            )
-        db.commit()
-        message = "已保存群级插件配置覆盖" if normalized_to_save else "已清空群级插件配置覆盖，恢复继承默认配置"
-        record_audit(db, f"channel.{channel.channel_type}.chatroom-scope.config", "group_plugin_scope", bot_plugin_id, f"chatroom={chatroom.id}")
         return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote(message)}", status_code=303)
     finally:
         db.close()

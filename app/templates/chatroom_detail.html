@@ -91,30 +91,13 @@
       <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-scope-reset-form{% if item.group_scope_status == 'inherited' %} hidden{% endif %}>
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <input type="hidden" name="mode" value="inherited" />
-        <button class="btn btn-secondary btn-small" type="submit">恢复默认</button>
+        <button class="btn btn-secondary btn-small btn-icon" type="submit" title="恢复默认（跟随机器人的设置）" aria-label="恢复默认"><span class="i i-undo" aria-hidden="true"></span></button>
       </form>
     </div>
-    <details class="disclosure">
-      <summary class="muted-text">高级配置与技术信息</summary>
-      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/config" class="chatroom-scope-config-form top-gap">
-        <span class="chatroom-scope-label">本群配置覆盖（JSON，仅保存与默认不同的部分）</span>
-        <textarea name="config_override_json" rows="8" class="chatroom-json-editor-textarea" spellcheck="false" data-json-editor>{{ item.group_scope_effective_config_json }}</textarea>
-        <div class="chatroom-scope-editor-actions" style="margin-top:8px;">
-          <button class="btn btn-secondary btn-small" type="button" data-json-format>格式化</button>
-          <button class="btn btn-secondary btn-small" type="button" data-json-clear>清空</button>
-          <button class="btn" type="submit">保存覆盖</button>
-        </div>
-      </form>
-      <p class="muted-text">
-        插件 <code>{{ item.plugin_code }}</code> · Binding #{{ item.binding_id }} · runtime={{ item.runtime_status }} ·
-        mode={{ item.group_scope_mode }} · effect={{ item.group_scope_effect }} · scope={{ item.group_scope_action_scope }} ·
-        最近执行 {{ item.last_execution_status }} {{ item.last_execution_at|bj_time if item.last_execution_at else '' }}
-      </p>
-    </details>
   </div>
   {% endfor %}
   {% else %}
-  <p class="muted-text">当前机器人还没有绑定插件，请先到“插件”中为机器人添加插件。</p>
+  <p class="muted-text">当前机器人还没有绑定插件，请先在“插件”页把插件绑定到机器人。</p>
   {% endif %}
 
   {% elif tab == 'members' %}
@@ -204,23 +187,6 @@
       const reset = row.querySelector("[data-scope-reset-form]");
       if (chip) chip.hidden = !custom;
       if (reset) reset.hidden = !custom;
-    });
-  })();
-</script>
-<script>
-  (() => {
-    document.querySelectorAll(".chatroom-scope-config-form").forEach((form) => {
-      const textarea = form.querySelector("[data-json-editor]");
-      const formatButton = form.querySelector("[data-json-format]");
-      const clearButton = form.querySelector("[data-json-clear]");
-      if (!textarea) return;
-      if (formatButton) formatButton.addEventListener("click", () => {
-        const raw = textarea.value.trim();
-        if (!raw) return;
-        try { textarea.value = JSON.stringify(JSON.parse(raw), null, 2); }
-        catch (error) { window.appDialog.alert({ title: "JSON 格式化失败", message: error.message, tone: "danger" }); }
-      });
-      if (clearButton) clearButton.addEventListener("click", () => { textarea.value = ""; textarea.focus(); });
     });
   })();
 </script>

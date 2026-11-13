@@ -18,7 +18,6 @@ __all__ = [
     "sync_wechat_ipad_chatrooms",
     "sync_wechat_ipad_contacts",
     "start_wechat_ipad_login",
-    "update_wechat_ipad_chatroom_scope_config_override",
     "update_wechat_ipad_chatroom_scope_enabled",
 ]
 

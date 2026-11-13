@@ -22,7 +22,6 @@ from app.services.wechat_ipad.contract import IPAD_874_CONTRACT
 from app.services.wechat_ipad.chatrooms import (
     materialize_group_plugin_scopes_for_chatroom,
     reset_group_plugin_scope_to_inherited,
-    update_group_plugin_scope_config_override,
     update_group_plugin_scope_enabled,
     upsert_wechat_ipad_chatroom_profile,
 )
@@ -1697,28 +1696,6 @@ def reset_wechat_ipad_chatroom_scope(
         operator_id=operator_id,
         audit_note=audit_note,
         source="wechat_ipad_chatroom_scope_reset",
-    )
-
-
-def update_wechat_ipad_chatroom_scope_config_override(
-    db: Session,
-    *,
-    channel: Channel,
-    chatroom: Chatroom,
-    bot_plugin_id: int,
-    config_override_json: str | None,
-    operator_id: int | None = None,
-    audit_note: str | None = None,
-) -> GroupPluginScope:
-    return update_group_plugin_scope_config_override(
-        db,
-        channel=channel,
-        chatroom=chatroom,
-        bot_plugin_id=bot_plugin_id,
-        config_override_json=config_override_json,
-        operator_id=operator_id,
-        audit_note=audit_note,
-        source="wechat_ipad_chatroom_scope_config_override",
     )
 
 

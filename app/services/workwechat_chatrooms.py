@@ -19,7 +19,6 @@ from app.services.plugin_schemas import deep_merge_config, dump_config_json, par
 from app.services.wechat_ipad.chatrooms import (
     materialize_group_plugin_scopes_for_chatroom,
     reset_group_plugin_scope_to_inherited,
-    update_group_plugin_scope_config_override,
     update_group_plugin_scope_enabled,
 )
 
@@ -486,19 +485,6 @@ def reset_workwechat_chatroom_scope(
     audit_note: str | None = None,
 ) -> GroupPluginScope:
     return reset_group_plugin_scope_to_inherited(db, channel=channel, chatroom=chatroom, bot_plugin_id=bot_plugin_id, operator_id=operator_id, audit_note=audit_note, source="workwechat_chatroom_scope_reset")
-
-
-def update_workwechat_chatroom_scope_config_override(
-    db: Session,
-    *,
-    channel: Channel,
-    chatroom: Chatroom,
-    bot_plugin_id: int,
-    config_override_json: str | None,
-    operator_id: int | None = None,
-    audit_note: str | None = None,
-) -> GroupPluginScope:
-    return update_group_plugin_scope_config_override(db, channel=channel, chatroom=chatroom, bot_plugin_id=bot_plugin_id, config_override_json=config_override_json, operator_id=operator_id, audit_note=audit_note, source="workwechat_chatroom_scope_config_override")
 
 
 def _fetch_provider_chatrooms(channel: Channel) -> dict[str, Any] | None:
