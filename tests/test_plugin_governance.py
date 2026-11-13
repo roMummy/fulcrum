@@ -219,6 +219,14 @@ def test_platform_page_requires_platform_auth_csrf_and_writes_audit(tmp_path, mo
         assert 'class="pp-grid"' in page.text and 'data-pp-card' in page.text and "丙租户" in page.text
         assert 'type="file"' in page.text and "hidden" in page.text.split('type="file"', 1)[1][:60]  # 上传用自绘按钮触发隐藏的文件框
         assert "data-pp-search" in page.text and "限定可见" in page.text
+        # 平台卡片同样展示实际版本与功能介绍，并允许通过介绍中的功能词搜索。
+        with factory() as db:
+            weather = db.scalar(select(Plugin).where(Plugin.code == "weather"))
+            version, description = weather.version, weather.description
+        (weather_card,) = [row.split("</article>", 1)[0] for row in page.text.split('<article class="pp-card')[1:] if 'data-code="weather"' in row.split("</article>", 1)[0]]
+        assert f'aria-label="版本 {version}"' in weather_card and f">v{version}</span>" in weather_card
+        assert f'<p class="plugin-card-description">{description}</p>' in weather_card
+        assert description in weather_card.split('data-search="', 1)[1].split('"', 1)[0]
 
         header = lambda token: {"X-CSRF-Token": token, "X-Requested-With": "fetch"}
         # 启停:点击即保存,提交目标状态(幂等),返回 JSON;令牌不对什么也不改

@@ -31,7 +31,7 @@
 - Modify: `tests/test_plugin_governance.py`（更新现有平台页面断言）
 
 1. 现有页面测试检查实际版本、介绍、配置入口以及错误提示；不新增仅镜像 HTML 结构的测试。
-2. 分文件隔离运行定向测试，命令：`PYTHON=python3 JOBS=2 scripts/run_tests_isolated.sh /tmp/plugin-card-test-files.txt`，清单只含以上两个文件。预期两个文件均通过。
+2. 分文件隔离运行定向测试，命令：`PYTHON=.venv/bin/python JOBS=2 TIMEOUT=90 scripts/run_tests_isolated.sh /tmp/plugin-card-test-files.txt`，清单只含以上两个文件。预期两个文件均通过；本机 TestClient 需要在沙箱外运行。
 3. 使用临时预览脚本渲染真实模板，加载仓库静态资源，在 1440×1000、1024×900、390×844 下检查三列、两列、一列与横向溢出，人工查看截图。
 4. 执行 `git diff --check`，检查未声明版本、空介绍及较长名称/介绍的实际渲染。
 

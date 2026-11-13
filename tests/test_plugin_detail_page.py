@@ -80,8 +80,12 @@ def test_each_binding_is_a_card_with_the_group_feature_interaction(pages) -> Non
     assert f'form="reload-binding-{binding_id}"' in html and f'id="reload-binding-{binding_id}"' in html
 
 
-def test_the_plugin_list_shows_problems_only_and_a_plain_config_button(pages, monkeypatch) -> None:
-    client, _ids, weather_id, _binding_id = pages
+def test_the_plugin_list_shows_versions_descriptions_problems_and_a_plain_config_button(pages, monkeypatch) -> None:
+    client, ids, weather_id, _binding_id = pages
+    # 卡片上的信息必须对应目录中的真实插件，不使用写死的演示版本或功能文案。
+    with ids["factory"]() as db:
+        weather = db.get(Plugin, weather_id)
+        version, description = weather.version, weather.description
     real = main_module.get_plugin_runtime_meta_map
 
     def runtime_with_manifest_error(codes):
@@ -97,7 +101,9 @@ def test_the_plugin_list_shows_problems_only_and_a_plain_config_button(pages, mo
     (row,) = [item for item in rows if f'<h3><a href="/plugins/{weather_id}">' in item]  # 按链接精确定位天气那一张卡片
     # 配置入口是只有图标的按钮,文字放在 aria-label/title 里
     assert "暂不可用" in row and f'href="/plugins/{weather_id}"' in row and 'aria-label="配置 ' in row
-    assert all("可执行" not in item and "查看详情" not in item for item in rows)  # 列表行里不再给每个插件挂"可执行"和版本号
+    assert f'aria-label="版本 {version}"' in row and f">v{version}</span>" in row
+    assert description in row
+    assert all("可执行" not in item and "查看详情" not in item for item in rows)  # 版本和介绍直接可读，正常执行状态不额外堆叠标签
 
 
 def test_a_dependent_field_is_marked_so_it_dims_when_its_switch_is_off() -> None:

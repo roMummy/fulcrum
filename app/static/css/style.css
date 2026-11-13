@@ -7190,8 +7190,184 @@ html.has-lightbox {
 }
 
 /* ============================================================
-   平台插件管理:卡片网格 + 共用弹窗
+   插件功能卡片：企业目录与平台管理共用结构，三列布局为版本和完整介绍留出阅读空间。
+   卡片仅设置最小高度；长名称、长介绍和异常信息均可自然撑高，底部操作通过弹性布局对齐。
    ============================================================ */
+.plugin-grid,
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.plugin-card,
+.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 240px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: border-color 200ms ease, box-shadow 200ms ease, background-color 200ms ease;
+}
+
+.plugin-card:hover,
+.pp-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.plugin-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.plugin-card-icon {
+  display: grid;
+  flex: 0 0 48px;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-radius: var(--radius-md);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.plugin-card:nth-child(3n + 2) .plugin-card-icon,
+.pp-card:nth-child(3n + 2) .plugin-card-icon {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.plugin-card:nth-child(3n) .plugin-card-icon,
+.pp-card:nth-child(3n) .plugin-card-icon {
+  color: var(--info);
+  background: var(--info-soft);
+}
+
+.plugin-card-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plugin-card-copy h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-wrap: wrap;
+}
+
+.plugin-card-copy h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.plugin-card-copy h3 a:hover {
+  color: var(--primary-strong);
+}
+
+.plugin-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 6px;
+}
+
+.plugin-card-version {
+  max-width: 100%;
+  padding: 3px 9px;
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plugin-card-code {
+  min-width: 0;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  white-space: normal;
+}
+
+.plugin-card-description {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.plugin-card-warning {
+  margin: 0;
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.plugin-card.is-broken {
+  border-color: var(--danger);
+}
+
+.plugin-card.is-broken .plugin-card-warning {
+  color: var(--danger);
+}
+
+.plugin-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.plugin-card-author {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.plugin-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* 平板收为两列，手机只保留一列；列宽允许收缩，不让版本号或长文本撑出横向滚动。 */
+@media (max-width: 1100px) {
+  .plugin-grid,
+  .pp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .plugin-grid,
+  .pp-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
+/* 平台插件管理的筛选、启停状态与共用弹窗。卡片基础视觉由上方统一维护。 */
 .pp-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -7207,73 +7383,12 @@ html.has-lightbox {
   font-size: 13px;
 }
 
-.pp-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 12px;
-}
-
-.pp-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 14px 16px;
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  transition: box-shadow 200ms ease-in-out, background-color 200ms ease-in-out;
-}
-
-.pp-card:hover {
-  box-shadow: var(--shadow-soft);
-}
-
 .pp-card.is-off {
   background: var(--surface-soft);
 }
 
-.pp-card.is-off .pp-card-title h3 {
+.pp-card.is-off .plugin-card-copy h3 {
   color: var(--muted);
-}
-
-.pp-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.pp-card-title {
-  min-width: 0;
-}
-
-.pp-card-title h3 {
-  margin: 0;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pp-card-sub {
-  margin: 2px 0 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pp-card-sub code {
-  padding: 0;
-  color: inherit;
-  font-size: inherit;
-  white-space: inherit;
-  word-break: normal;
-  overflow-wrap: normal;
-  background: none;
 }
 
 /* 卡片上可点击的小标签:看起来是一个状态,点开是设置 */
@@ -7314,8 +7429,8 @@ html.has-lightbox {
 }
 
 .pp-card-chips {
-  display: flex;
   flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 6px;
 }
 
@@ -7783,7 +7898,7 @@ textarea.tr-input {
   }
 }
 
-/* ---- 插件页:紧凑筛选条 + 多列网格(只展示"有哪些插件",配置在详情页) ---- */
+/* ---- 企业插件目录筛选条：保留紧凑筛选，结果使用上方统一的功能卡片。 ---- */
 .plugin-filter {
   display: flex;
   flex-wrap: wrap;
@@ -7792,16 +7907,19 @@ textarea.tr-input {
   margin-bottom: 14px;
 }
 
-.plugin-filter select {
-  min-height: 38px;
-  max-width: 150px;
+/* 下拉增强后由 .ui-select 包装节点参与排布，宽度必须约束实际的弹性子项。 */
+.plugin-filter > select,
+.plugin-filter > .ui-select {
+  flex: 0 1 132px;
+  width: 132px;
+  min-width: 0;
 }
 
 .plugin-filter-search {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1 1 220px;
+  flex: 1 1 260px;
   min-width: 180px;
 }
 
@@ -7814,7 +7932,7 @@ textarea.tr-input {
 
 .plugin-filter-search input {
   width: 100%;
-  min-height: 38px;
+  min-height: 40px;
   padding-left: 36px;
 }
 
@@ -7824,107 +7942,15 @@ textarea.tr-input {
   font-size: 12px;
 }
 
-.plugin-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 10px;
-}
-
-.plugin-card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  transition: border-color 200ms ease, box-shadow 200ms ease;
-}
-
-.plugin-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-card);
-}
-
-.plugin-card.is-broken {
-  background: var(--danger-soft);
-}
-
-.plugin-card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  color: var(--primary-strong);
-  background: var(--primary-soft);
-  border-radius: 10px;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.plugin-card:nth-child(3n + 2) .plugin-card-icon {
-  color: var(--success);
-  background: var(--success-soft);
-}
-
-.plugin-card:nth-child(3n) .plugin-card-icon {
-  color: var(--warning);
-  background: var(--warning-soft);
-}
-
-.plugin-card-copy {
-  min-width: 0;
-}
-
-.plugin-card-copy h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.plugin-card-copy h3 a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.plugin-card-copy h3 a:hover {
-  color: var(--primary-strong);
-}
-
-.plugin-card-copy p {
-  margin: 2px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.plugin-card-copy .plugin-card-warning {
-  color: var(--warning);
-}
-
-.plugin-card.is-broken .plugin-card-warning {
-  color: var(--danger);
-}
-
-.plugin-card-actions {
-  display: flex;
-  gap: 6px;
-}
-
 @media (max-width: 560px) {
-  .plugin-filter select {
-    max-width: none;
-    flex: 1 1 45%;
+  .plugin-filter-search {
+    flex-basis: 100%;
+  }
+
+  .plugin-filter > select,
+  .plugin-filter > .ui-select {
+    flex: 1 1 calc(50% - 4px);
+    width: auto;
   }
 }
 

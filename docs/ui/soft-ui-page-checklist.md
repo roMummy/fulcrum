@@ -1,6 +1,6 @@
 # Soft UI 逐页实施与验收清单
 
-依据：`soft-ui-guidelines.md`。更新时间：2026-10-21。先整理调性和规约，再实施认证、大盘、清单、详情与公开站点。
+依据：`soft-ui-guidelines.md`。更新时间：2026-11-14。先整理调性和规约，再实施认证、大盘、清单、详情与公开站点。
 
 ## 证据说明
 
@@ -39,7 +39,7 @@
 | 25 | 机器人详情 `bot_detail.html` | 绑定与配置分组、移除重复眉题 | D/M；`bot-detail` |
 | 26 | 节点清单 `provider_nodes.html` | 紧凑状态清单 | D/M；`nodes` |
 | 27 | 节点详情 `provider_node_detail.html` | 分组层次、时间信息不放大 | D/M；`node-detail` |
-| 28 | 插件 `plugins.html` | 目录改条目、警告可见、详情承载技术信息 | D/M/T；`plugins` |
+| 28 | 插件 `plugins.html`、平台插件 `platform_plugins.html` | 2026-11-14 改为三列功能卡片，展示真实版本、完整介绍和底部操作；平板两列、手机一列 | 两页真实模板本地预览：1440×1000、1024×900、390×844；无横向溢出；截图 `.run/plugin-card-preview/`，未部署验证 |
 | 29 | 能力详情 `plugin_detail.html` | 共享详情、密钥字段与弹窗样式覆盖 | D/M；`plugin-detail` |
 | 30 | 运行状态 `plugin_runtime.html` | 紧凑指标和执行记录 | D/M；`plugin-runtime` |
 | 31 | 会话清单 `conversations.html` | 共享紧凑筛选与表格 | D/M；`conversations` |
@@ -60,6 +60,16 @@
 共享壳：`base.html`、`platform_base.html`、`marketing_base.html`、`auth_base.html`。保留顶部导航、品牌命名、平台/企业身份与请求路径，不新增旧入口或第二套主题。未被当前路由使用的模板不因本轮调整新增入口。
 
 ## 实际验证记录
+
+### 2026-11-14 插件功能卡片
+
+- 使用 `.venv/bin/python` 和 `scripts/run_tests_isolated.sh` 分文件隔离运行 `tests/test_plugin_detail_page.py`、`tests/test_plugin_governance.py`，两个文件均通过。系统 Python 缺少 SQLAlchemy；沙箱中的 TestClient 超时，改用项目环境在沙箱外完成测试。
+- 另行执行 `tests/test_guess_image_pages.py::test_generic_second_button_tenant_navigation_and_readonly_permissions`，结果 `1 passed`，确认配置、管理题库入口及只读权限。最终筛选栏调整后重跑插件列表展示用例，结果 `1 passed`。
+- 使用仓库真实 Jinja 模板、插件清单和静态资源做本地 Chrome 预览，两页在 1440×1000、1024×900、390×844 下分别为三列、两列、一列；根节点无横向溢出，浏览器无 JavaScript 错误。
+- 使用明确标识的构造数据补查长名称、长版本、长介绍、模板转义、缺失版本与介绍、清单错误与警告、平台停用及空结果；未把构造数据当作线上数据。
+- 使用现有平台脚本实际检查按功能介绍搜索、空搜索结果、可见范围和历史版本弹窗，以及启停后的卡片状态同步。浏览器中的启停接口为本地模拟响应；服务端认证、CSRF 和审计由上述定向测试覆盖。
+- 三个修改的 Python 文件通过 AST 语法检查，两份页面模板通过 Jinja 加载检查，`git diff --check` 通过。
+- 截图与预览结果保存在本机忽略目录 `.run/plugin-card-preview/`。本次未执行全量测试，也未部署到远程服务器。
 
 ### 定向测试
 

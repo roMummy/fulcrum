@@ -1,6 +1,6 @@
 {% extends 'platform_base.html' %}
-{# 平台插件管理:卡片网格(一行多个),搜索与筛选;启停是点击即保存的开关;
-   可见范围(可搜索租户)和历史版本各用一个共用弹窗,打开时按所点的插件填充。 #}
+{# 平台插件管理与企业目录共用功能卡片的视觉结构，展示当前版本和完整功能介绍。
+   平台启停、可见范围与历史版本仍使用现有开关和共用弹窗，保持原有数据属性与交互协议。 #}
 {% block hero_actions %}
 <form id="pp-upload" method="post" action="/platform/plugins/upload" enctype="multipart/form-data" data-pp-upload>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -13,7 +13,7 @@
 {% set stopped_count = rows|selectattr('plugin.platform_status', 'ne', 'active')|list|length %}
 {% set limited_count = rows|selectattr('plugin.visibility', 'ne', 'all')|list|length %}
 <section class="pp-toolbar">
-  <label class="pp-search"><input type="search" placeholder="搜索插件名称或编码" autocomplete="off" data-pp-search /></label>
+  <label class="pp-search"><input type="search" placeholder="搜索名称、编码或功能介绍" aria-label="搜索插件" autocomplete="off" data-pp-search /></label>
   <div class="pp-seg" role="radiogroup" aria-label="筛选" data-pp-filter>
     <label class="pp-seg-item"><input type="radio" name="pp-filter" value="all" checked /><span>全部 {{ rows|length }}</span></label>
     <label class="pp-seg-item"><input type="radio" name="pp-filter" value="used" /><span>有租户在用</span></label>
@@ -29,27 +29,33 @@
   {% set stopped = plugin.platform_status != 'active' %}
   <article class="pp-card{% if stopped %} is-off{% endif %}" data-pp-card
     data-code="{{ plugin.code }}" data-name="{{ plugin.display_name }}"
-    data-search="{{ (plugin.display_name ~ ' ' ~ plugin.code)|lower }}"
+    data-search="{{ (plugin.display_name ~ ' ' ~ plugin.code ~ ' ' ~ (plugin.description or ''))|lower }}"
     data-stopped="{{ '1' if stopped else '0' }}" data-used="{{ '1' if row.usage.bindings else '0' }}"
     data-visibility="{{ plugin.visibility }}" data-plan-ids="{{ row.plan_ids|sort|join(',') }}" data-tenant-ids="{{ row.tenant_ids|sort|join(',') }}"
     data-versions='{{ row.versions|tojson }}'>
-    <header class="pp-card-head">
-      <div class="pp-card-title">
+    <header class="plugin-card-head">
+      <span class="plugin-card-icon" aria-hidden="true">{{ plugin.display_name[:1] }}</span>
+      <div class="plugin-card-copy">
         <h3 title="{{ plugin.display_name }}">{{ plugin.display_name }}</h3>
-        <p class="pp-card-sub"><code>{{ plugin.code }}</code> · v{{ plugin.version }}</p>
+        {# 版本徽标独立于编码展示，平台管理员仍可用编码准确识别与搜索插件。 #}
+        <div class="plugin-card-meta">
+          <span class="plugin-card-version"{% if plugin.version %} aria-label="版本 {{ plugin.version }}"{% endif %}>{{ 'v' ~ plugin.version if plugin.version else '版本未声明' }}</span>
+          <code class="plugin-card-code">{{ plugin.code }}</code>
+        </div>
       </div>
       <label class="ui-switch ui-switch-small" title="全平台启用或停用">
         <input type="checkbox" role="switch" aria-label="全平台启用" data-pp-switch data-autosave-url="/platform/plugins/{{ plugin.code }}/status"{% if not stopped %} checked{% endif %} />
         <span class="ui-switch-track"></span>
       </label>
     </header>
-    <div class="pp-card-chips">
+    <p class="plugin-card-description">{{ plugin.description or '暂未提供功能介绍。' }}</p>
+    <footer class="plugin-card-footer pp-card-chips">
       <button class="pp-chip-btn" type="button" data-pp-open-visibility title="设置哪些租户能用这个插件"><span data-pp-vis-chip>{{ visibility_labels.get(plugin.visibility, '未知') }}</span></button>
       {% if row.usage.bindings %}<span class="chip chip-muted" title="{{ row.usage.enabled }}/{{ row.usage.bindings }} 个绑定启用">{{ row.usage.tenants }} 个租户在用</span>{% endif %}
       {% if row.versions %}<button class="pp-chip-btn" type="button" data-pp-open-versions title="回滚到旧版本">历史版本 {{ row.versions|length }}</button>{% endif %}
       <span class="chip chip-danger" data-pp-off-chip{% if not stopped %} hidden{% endif %}>已停用</span>
       {% if plugin.missing_at %}<span class="chip chip-danger" title="自 {{ format_time(plugin.missing_at) }} 起在插件目录里找不到,记录和租户数据都保留">目录缺失</span>{% endif %}
-    </div>
+    </footer>
   </article>
   {% else %}
   <div class="empty-state"><strong>暂无插件</strong></div>

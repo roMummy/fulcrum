@@ -4286,7 +4286,7 @@ async def set_wechat_ipad_chatroom_scope_mode_action(
 
 @app.get("/plugins", response_class=HTMLResponse)
 async def plugins_page(request: Request):
-    """插件页只负责"有哪些插件":筛选 + 紧凑排布。按机器人启停、绑定和配置都在插件详情页里。"""
+    """插件目录用功能卡片展示名称、版本和完整介绍；按机器人启停、绑定和配置由详情页承接。"""
 
     db = get_session()
     try:
