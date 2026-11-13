@@ -36,7 +36,7 @@ max_streak_point = 50
 makeup_cost = 10
 fortune_enabled = true
 fortune_image_enabled = true
-background_url = "https://cdn.jsdelivr.net/gh/fiatlux2333/astrbot_plugin_jrys@9efe04c5dc763cfe0853907f015ffb0249d824e5/assets/default_background.jpg"
+background_url = ""
 sign_exp_min = 1
 sign_exp_max = 100
 
@@ -108,7 +108,7 @@ group = "运势签到"
 key = "background_url"
 label = "卡片背景图地址"
 kind = "text"
-default = "https://cdn.jsdelivr.net/gh/fiatlux2333/astrbot_plugin_jrys@9efe04c5dc763cfe0853907f015ffb0249d824e5/assets/default_background.jpg"
+default = ""
 depends_on = "fortune_image_enabled"
 hint = "填写公网 HTTP/HTTPS 图片直链；留空或下载失败时使用内置背景。"
 group = "运势签到"

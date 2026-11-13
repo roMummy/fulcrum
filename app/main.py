@@ -554,9 +554,18 @@ def _operation_json_requested(request: Request) -> bool:
     return request.headers.get("X-Requested-With") == "fetch" or "application/json" in request.headers.get("accept", "")
 
 
-def _require_operation_csrf(db: Session, request: Request) -> None:
-    if _operation_json_requested(request):
-        require_tenant_csrf(db, request, _csrf_from_header(request))
+async def _require_operation_csrf(db: Session, request: Request) -> None:
+    """同步/健康检查这类会改状态的 POST 一律校验 CSRF,不再只对 fetch 请求校验。
+
+    令牌有两个来源:页面脚本(fetch)放在 X-CSRF-Token 请求头里;没有脚本时的普通表单提交
+    放在隐藏字段 csrf_token 里。两处都没有或不匹配时由 require_tenant_csrf 拒绝。
+    """
+
+    token = _csrf_from_header(request)
+    if not token:
+        form = await request.form()
+        token = str(form.get("csrf_token") or "")
+    require_tenant_csrf(db, request, token)
 
 
 def _completed_operation_response(request: Request, message: str, redirect_url: str, *, ok: bool = True):
@@ -1740,7 +1749,7 @@ async def check_bot_status_action(request: Request, bot_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         bot = get_bot(db, bot_id)
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
@@ -3276,7 +3285,7 @@ async def check_channel_health_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3323,7 +3332,7 @@ async def pull_wechat_ipad_messages_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3342,7 +3351,7 @@ async def sync_wechat_ipad_chatrooms_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3362,7 +3371,7 @@ async def sync_wechat_ipad_contacts_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3715,7 +3724,7 @@ async def sync_workwechat_contacts_action(request: Request, channel_id: int, con
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3778,7 +3787,7 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3943,7 +3952,7 @@ async def sync_wechat_winauto_chatrooms_action(request: Request, channel_id: int
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3963,7 +3972,7 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -4509,7 +4518,7 @@ async def refresh_plugins_action(request: Request):
     enforce_role(request, "ops")
     db = get_session()
     try:
-        _require_operation_csrf(db, request)
+        await _require_operation_csrf(db, request)
         rows = sync_plugins_from_directory(db, force=True)
         record_audit(db, "plugin.refresh-directory", "plugin", None, f"count={len(rows)}")
         return _completed_operation_response(request, f"已刷新插件目录，共发现 {len(rows)} 个插件", "/plugins")

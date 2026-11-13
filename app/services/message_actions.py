@@ -77,6 +77,11 @@ def revoke_info(message: Message, channel: Channel | None) -> dict[str, Any]:
 
 
 def request_revoke(db: Session, channel: Channel, conversation: Conversation, message: Message) -> dict[str, Any]:
+    # 先锁住这条消息再判断"是否已有待执行的撤回":并发双击时第二个请求会等到第一个提交后,
+    # 读到 pending 状态直接返回,不会再入队第二条撤回命令。项目会话关闭了 autoflush,
+    # 刷新前必须先 flush,否则会用数据库旧值冲掉本事务里还没写入的修改。
+    db.flush()
+    db.refresh(message, with_for_update=True)
     if message.conversation_id != conversation.id:
         raise ValueError("消息不属于当前会话")
     if not is_own_message(message, channel):

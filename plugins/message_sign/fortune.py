@@ -6,6 +6,7 @@ Business records and the points ledger remain owned by the existing plugin.
 from __future__ import annotations
 
 import asyncio
+import threading
 import base64
 import hashlib
 import html
@@ -341,7 +342,22 @@ async def _render_png(html_content: str) -> bytes:
             await browser.close()
 
 
+# 同时最多启动 2 个 Chromium:群里有人刷签到时,没有上限会把 CPU 和内存拉满。
+# 等不到名额(2 秒)就抛错,调用方会自动改回复文字结果,签到奖励照常入账。
+_RENDER_SLOTS = threading.BoundedSemaphore(2)
+_RENDER_WAIT_SECONDS = 2
+
+
 def render_card(view: Mapping[str, Any]) -> str:
+    if not _RENDER_SLOTS.acquire(timeout=_RENDER_WAIT_SECONDS):
+        raise RuntimeError("fortune_render_busy")
+    try:
+        return _render_card(view)
+    finally:
+        _RENDER_SLOTS.release()
+
+
+def _render_card(view: Mapping[str, Any]) -> str:
     async def render() -> bytes:
         # Fetch in parallel so the 3-second image budget plus 7-second browser
         # budget fits inside the plugin's 12-second execution timeout.

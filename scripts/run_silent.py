@@ -24,4 +24,6 @@ with socket.socket() as probe:
 import uvicorn
 
 
-uvicorn.run("app.main:app", host="0.0.0.0", port=8280, use_colors=False)
+# 默认只监听本机:这个脚本面向单机桌面使用,不应在用户不知情时对局域网开放服务;
+# 需要对外时请改用反向代理或自行显式修改监听地址。
+uvicorn.run("app.main:app", host="127.0.0.1", port=8280, use_colors=False)

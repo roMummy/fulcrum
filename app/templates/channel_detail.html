@@ -30,7 +30,7 @@
     <div class="actions">
       {# iPad 登录状态由扫码业务流维护，租户详情页不再提供协议级健康检查。 #}
       {% if channel.channel_type != 'wechat_ipad' %}
-      <form method="post" action="/channels/{{ channel.id }}/health-check" data-action-feedback>
+      <form method="post" action="/channels/{{ channel.id }}/health-check" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <button class="btn btn-secondary" type="submit">检查连接</button>
       </form>
       {% endif %}
@@ -69,10 +69,10 @@
     <div class="metric-item"><span>绑定手机</span><strong>{{ wechat_ipad_overview.bind_mobile or '-' }}</strong></div>
   </div>
   <div class="form-actions-inline top-gap">
-    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts" data-action-feedback>
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <button class="btn btn-secondary" type="submit">同步联系人</button>
     </form>
-    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms" data-action-feedback>
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <button class="btn btn-secondary" type="submit">同步群聊</button>
     </form>
     <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
@@ -85,8 +85,8 @@
   <div class="toolbar">
     <div><h2>企业微信账号</h2></div>
     <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms" data-action-feedback><button class="btn btn-secondary" type="submit">同步群聊</button></form>
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts" data-action-feedback><button class="btn btn-secondary" type="submit">同步联系人</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">同步联系人</button></form>
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
       <a class="btn btn-ghost" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
     </div>
@@ -101,7 +101,7 @@
   <div class="toolbar">
     <div><h2>微信客户端</h2></div>
     <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms" data-action-feedback><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">同步群聊</button></form>
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
     </div>
   </div>
@@ -160,7 +160,7 @@
   <div class="toolbar">
     <div><h2>群聊</h2></div>
     <div class="actions">
-      {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}" data-action-feedback><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
+      {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">查看全部</a>
     </div>
   </div>

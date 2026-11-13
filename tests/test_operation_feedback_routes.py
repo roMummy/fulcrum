@@ -280,3 +280,31 @@ def test_explicit_danger_tone_and_incomplete_notices_render_as_errors(provider_p
     incomplete = client.get("/channels", params={"notice": "群资料同步未完成"})
     assert incomplete.status_code == 200 and incomplete.context["notice_tone"] == "danger"
     assert 'data-action-monitor data-state="error"' in incomplete.text
+
+
+def test_plain_form_posts_are_csrf_checked_on_every_state_changing_route(webridge_group) -> None:
+    """没有页面脚本时的普通表单提交也必须校验 CSRF。
+
+    此前这些路由只对带 X-Requested-With: fetch 的请求校验,普通表单 POST 完全不校验,
+    第三方页面可以诱导已登录的运维人员发起同步、健康检查等操作。
+    """
+
+    client, _ids, channel_id, room_id = webridge_group
+    csrf = _login(client, "admin")
+    paths = [
+        "/bots/1/status-check",
+        f"/channels/{channel_id}/health-check",
+        f"/channels/{channel_id}/wechat-ipad/pull-messages",
+        f"/channels/{channel_id}/wechat-ipad/sync-chatrooms",
+        f"/channels/{channel_id}/wechat-ipad/sync-contacts",
+        f"/channels/{channel_id}/workwechat/sync-contacts",
+        f"/channels/{channel_id}/workwechat/sync-chatrooms",
+        f"/channels/{channel_id}/wechat-winauto/sync-chatrooms",
+        f"/channels/{channel_id}/chatrooms/{room_id}/sync",
+        "/plugins/refresh",
+    ]
+    for path in paths:
+        assert client.post(path, follow_redirects=False).status_code == 403, path                       # 没有令牌
+        assert client.post(path, data={"csrf_token": "invalid"}, follow_redirects=False).status_code == 403, path
+        # 令牌正确时不再被 CSRF 拦下;后面可能因渠道类型不符等返回别的状态,这里只关心不是 403
+        assert client.post(path, data={"csrf_token": csrf}, follow_redirects=False).status_code != 403, path

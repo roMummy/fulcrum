@@ -41,7 +41,7 @@ def test_manifest_keeps_commands_and_exposes_fortune_configuration():
     assert plugin.matcher.commands == ("签到", "补签")
     fields = {field.name: field for field in get_plugin_schema("message_sign").fields}
     assert len(fields) == 10
-    assert fields["background_url"].default.startswith("https://cdn.jsdelivr.net/gh/fiatlux2333/astrbot_plugin_jrys@")
+    assert fields["background_url"].default == ""  # 默认使用随包背景,不在每次签到时访问外网
     assert fields["fortune_enabled"].default is True
     assert fields["fortune_image_enabled"].default is True
     assert fields["sign_exp_max"].default == 100
@@ -470,3 +470,20 @@ def test_render_card_embeds_both_downloaded_images(sign_module, monkeypatch):
     assert module.render_card({"avatar_url": "a", "background_url": "b"}) == base64.b64encode(b"png").decode()
     assert captured[0]["avatar_data_uri"] == "avatar:a"
     assert captured[0]["background_data_uri"] == "background:b"
+
+
+def test_render_slots_are_capped_and_a_busy_renderer_falls_back_to_text(sign_module, monkeypatch):
+    """同时渲染的 Chromium 有上限;等不到名额时抛错,调用方会改回复文字。"""
+
+    module = sign_module._fortune_module
+    monkeypatch.setattr(module, "_RENDER_WAIT_SECONDS", 0.05)
+    held = [module._RENDER_SLOTS.acquire(timeout=1) for _ in range(2)]  # 把两个名额都占住
+    try:
+        assert all(held)
+        with pytest.raises(RuntimeError, match="fortune_render_busy"):
+            module.render_card({"avatar_url": "", "background_url": ""})
+    finally:
+        for _ in held:
+            module._RENDER_SLOTS.release()
+    assert module._RENDER_SLOTS.acquire(timeout=1)  # 名额释放后恢复可用
+    module._RENDER_SLOTS.release()
