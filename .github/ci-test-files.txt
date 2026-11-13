@@ -131,3 +131,4 @@ tests/test_safe_fetch.py
 tests/test_guga_agent_security.py
 tests/test_chatroom_unique_constraints.py
 tests/test_channel_chatroom_creation.py
+tests/test_self_sent_and_pat.py

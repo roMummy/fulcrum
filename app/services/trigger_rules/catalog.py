@@ -70,6 +70,9 @@ class EventView:
     details: Mapping[str, Any] = field(default_factory=dict)
     # 群成员变动(入群/退群/改群昵称)事件解析结果,由群功能入口提供;不是成员事件时为 None
     member_change: Mapping[str, Any] | None = None
+    # 机器人自己在这个群里的各种称呼(账号昵称、群昵称、微信号),用来判断拍一拍拍的是不是机器人。
+    # 微信里被拍的人显示的是他的昵称,机器人被拍时文案是 `"A" 拍了拍 "机器人的昵称"`,不是"我"。
+    self_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -190,6 +193,8 @@ class PatInfo:
 
 _PAT_SPLIT = re.compile(r"^(?P<who>.*?)\s*拍了拍\s*(?P<target>.*)$", re.S)
 _PLACEHOLDER = re.compile(r"\$\{([^}]*)\}")
+# 被拍的人带引号时,取第一对引号里的名字;引号后面是"拍一拍后缀",例如 `"小明" 的棺材板说:挤一下`
+_QUOTED_TARGET = re.compile(r'^["“”](?P<name>.*?)["“”](?P<suffix>.*)$', re.S)
 
 
 def _clean_name(value: str) -> str:
@@ -199,10 +204,19 @@ def _clean_name(value: str) -> str:
     return text.strip().strip('"“”\'‘’ ').strip()
 
 
+def _same_name(left: str, right: str) -> bool:
+    return bool(left) and bool(right) and left.strip().casefold() == right.strip().casefold()
+
+
 def parse_pat(view: EventView) -> PatInfo | None:
     """从入站事件里尽可能容错地解析拍一拍:适配器放进 details.pat 的字段、sysmsg XML、"A 拍了拍 B" 文案。
 
-    微信里被拍的人看到的是"A 拍了拍我",所以机器人被拍时文案里目标是"我"。
+    被拍的是不是机器人,按下面的顺序判断:
+    1. 适配器明确告诉了(details.pat.patted_is_me)就用它;
+    2. 目标是"我"(被拍的人看到的第一人称);
+    3. 目标的名字和机器人自己的称呼(view.self_names:账号昵称、群昵称、微信号)一致——线上实测机器人被拍时
+       显示的是它的昵称 `"水牛" 拍了拍 "水牛@rCodex"`;
+    4. 都不是:有机器人称呼可比对时判定"是别人",一个称呼都没有就无法判断。
     无法确定被拍的是谁时 patted_is_me 为 None,「只有拍机器人时」不会触发,避免误回。
     """
 
@@ -230,21 +244,26 @@ def parse_pat(view: EventView) -> PatInfo | None:
     match = _PAT_SPLIT.match(template.replace("\n", " ")) if template else None
     if match:
         from_name = from_name or _clean_name(match.group("who"))
-        target = _clean_name(match.group("target"))
+        target_raw = match.group("target").strip()
+        quoted = _QUOTED_TARGET.match(target_raw)
+        target = _clean_name(quoted.group("name") if quoted else target_raw)
+        is_first_person = (not quoted) and target.startswith("我")
+        is_self_name = any(_same_name(target, name) for name in view.self_names)
         if is_me is None:
-            if target.startswith("我"):
+            if is_first_person or (quoted and target == "我") or is_self_name:
                 is_me = True
             elif target:
                 is_me = False
-        if not patted_name and target and not target.startswith("我"):
+        if not patted_name and target and not is_first_person:
             patted_name = target
-    if view.message_type != "pat" and match is None:
+    if view.message_type not in ("pat", "system") or (view.message_type != "pat" and match is None):
         return None
     return PatInfo(from_name=from_name, patted_name=patted_name, template=template, patted_is_me=is_me)
 
 
 def _match_pat(params: Mapping[str, Any], view: EventView) -> dict[str, str] | None:
-    if view.message_type != "pat":
+    # 拍一拍可能以专门的 pat 事件到达,也可能是系统消息(sysmsg)里带"拍了拍"文案,两种都认
+    if view.message_type not in ("pat", "system"):
         return None
     pat = parse_pat(view)
     if pat is None:
@@ -262,7 +281,7 @@ PAT_TRIGGER = register_trigger(
         key="pat",
         label="有人拍一拍",
         description="群里有人拍了拍机器人时自动回复。",
-        event_types=("pat",),
+        event_types=("pat", "system"),
         match=_match_pat,
         fields=(
             RuleField(

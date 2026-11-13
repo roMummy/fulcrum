@@ -16,6 +16,7 @@ from app.services.inbound_media import create_wechat_media_attachment
 from app.services.message_state import refresh_conversation_last_message_at
 from app.services.open_webhooks import dispatch_open_message_event
 from app.services.chatroom_registry import is_collection_off
+from app.services.self_sent import is_self_sent
 from app.services.task_queue import INBOUND_MEDIA_FETCH_JOB, PLUGIN_DISPATCH_JOB, WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
 from app.services.workwechat_cloud_poll import is_cloud_poll_enabled, notify_cloud_job_enqueued
 from app.services.wechat_ipad.cache import has_chatroom as wechat_cache_has_chatroom
@@ -365,6 +366,33 @@ def ingest_normalized_event(
 
     quiet_hours_state = _resolve_quiet_hours_state(normalized)
     details = normalized.get("details") if isinstance(normalized.get("details"), dict) else {}
+    if is_self_sent(normalized):
+        # 全局约定:自己发出的消息只存档,不进入插件、群功能、触发规则和 AI 的内容检测。
+        dispatch_payload = {
+            "mode": "storage_only",
+            "queued": False,
+            "job_id": None,
+            "job_type": None,
+            "raw_event_id": raw_event.id,
+            "conversation_id": conversation.id,
+            "message_id": message_id,
+            "status": "skipped",
+            "reason": "self_sent",
+        }
+        raw_event.dispatch_summary_json = json.dumps(dispatch_payload, ensure_ascii=False)
+        db.commit()
+        logger.info(
+            "self sent event stored without dispatch",
+            extra={"channel_id": channel.id, "raw_event_id": raw_event.id, "conversation_id": conversation.id, "message_id": message_id or 0},
+        )
+        return {
+            "ok": True,
+            "deduplicated": False,
+            "raw_event_id": raw_event.id,
+            "mapped": mapped,
+            "normalized": normalized,
+            "dispatch": dispatch_payload,
+        }
     if bool(details.get("skip_plugin_dispatch")):
         dispatch_payload = {
             "mode": "storage_only",

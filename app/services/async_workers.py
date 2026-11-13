@@ -25,6 +25,7 @@ from app.services.open_webhooks import dispatch_open_message_event, process_open
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
 from app.services.plugin_scopes import plugin_group_conversation_enabled
+from app.services.self_sent import is_self_sent
 from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
 from app.services.task_queue import (
     INBOUND_MEDIA_FETCH_JOB,
@@ -239,6 +240,9 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     raw_event_id = _coerce_int(payload.get("raw_event_id"))
     conversation_id = _coerce_int(payload.get("conversation_id"))
     message_id = _coerce_int(payload.get("message_id"))
+    if is_self_sent(normalized_event):
+        # 兜底:入站时已经拦过,这里再拦一次——队列里已经排着的任务、重试和任何绕过入站总闸的入队都不能让自己发的消息进入检测。
+        return {"dispatch": {"mode": "storage_only", "status": "skipped", "reason": "self_sent"}, "raw_event_id": raw_event_id, "executed_plugins": [], "executed_group_features": []}
     # 群功能(成员变更提醒、潜水排行、自动抢红包、自动收款等)只看群自己的开关,先于插件调度执行;
     # 命令被群功能处理后不再交给 AI 兜底。
     executed_features = dispatch_group_features(db, channel, normalized_event, conversation_id=conversation_id)
