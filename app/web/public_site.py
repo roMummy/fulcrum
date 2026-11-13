@@ -220,6 +220,15 @@ async def register_action(
                 contact_name=contact_name,
             )
         except RegistrationError as exc:
+            if str(exc).startswith("trial_plan_"):
+                # 平台没有可用的试用套餐:访客只看到统一提示,管理员靠这条日志知道具体差在哪一步
+                record_auth_event(
+                    request,
+                    event="registration trial plan unavailable",
+                    auth_scope="registration",
+                    reason=str(exc),
+                    identity=mobile,
+                )
             error_messages = {
                 "mobile_invalid": "请输入有效的手机号",
                 "mobile_already_registered": "该手机号已注册，请直接登录",
@@ -227,6 +236,7 @@ async def register_action(
                 "password_too_long": "密码长度不能超过 128 位",
                 "enterprise_name_invalid": "请输入有效的企业名称",
                 "contact_name_invalid": "请输入联系人姓名",
+                # 三种情况对访客的话术相同(不暴露平台内部配置),具体原因由 RegistrationError 的编码在日志/排查时区分
                 "trial_plan_not_found": "免费试用暂不可用，请稍后再试",
                 "trial_plan_disabled": "免费试用暂不可用，请稍后再试",
                 "trial_plan_invalid": "免费试用暂不可用，请稍后再试",

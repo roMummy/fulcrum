@@ -18,6 +18,7 @@ from app.core.tenant_context import require_tenant_id
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.saas import BotBinding, DeviceTrialClaim, PlatformAuditLog, PlatformUser
 from app.services.billing import get_current_subscription
+from app.services.trial_plans import is_trial_plan
 
 
 ADAPTER_TYPE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
@@ -112,10 +113,7 @@ def get_bot_quota(db: Session) -> BotQuota:
         )
         or 0
     )
-    is_trial = bool(
-        plan.code == "trial"
-        or (plan.trial_days > 0 and plan.monthly_price_cents == 0 and plan.yearly_price_cents == 0)
-    )
+    is_trial = is_trial_plan(plan)  # 与注册开通共用同一个定义,不再按编码 trial 判断
     return BotQuota(
         total=total,
         used=used,

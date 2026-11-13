@@ -12,8 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
-from app.models.saas import PlatformAuditLog, SaasPlan, Tenant, TenantSubscription, TenantUser
+from app.models.saas import PlatformAuditLog, Tenant, TenantSubscription, TenantUser
 from app.services.saas_auth import hash_password
+from app.services.trial_plans import pick_registration_trial_plan, trial_plan_problem
 
 
 MOBILE_PATTERN = re.compile(r"^1[3-9]\d{9}$")
@@ -89,13 +90,10 @@ def register_trial_tenant(
     if db.scalar(select(TenantUser.id).where(TenantUser.mobile == normalized_mobile)) is not None:
         raise RegistrationError("mobile_already_registered")
 
-    trial_plan = db.scalar(select(SaasPlan).where(SaasPlan.code == "trial"))
+    # 按套餐属性(有试用天数且免费)找试用套餐,不再要求编码必须叫 trial;找不到时说明具体原因
+    trial_plan = pick_registration_trial_plan(db)
     if trial_plan is None:
-        raise RegistrationError("trial_plan_not_found")
-    if trial_plan.status != "active":
-        raise RegistrationError("trial_plan_disabled")
-    if trial_plan.trial_days <= 0 or trial_plan.bot_limit <= 0:
-        raise RegistrationError("trial_plan_invalid")
+        raise RegistrationError(trial_plan_problem(db))
 
     current_time = now_shanghai()
     try:

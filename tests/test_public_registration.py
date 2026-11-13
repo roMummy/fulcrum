@@ -25,17 +25,17 @@ def db(tmp_path):
     engine.dispose()
 
 
-def _create_trial_plan(db: Session, *, status: str = "active") -> SaasPlan:
-    """创建注册服务所需的七天试用套餐。"""
+def _create_trial_plan(db: Session, *, status: str = "active", code: str = "trial", trial_days: int = 7, bot_limit: int = 1, monthly_price_cents: int = 0) -> SaasPlan:
+    """创建注册服务所需的试用套餐(默认七天、免费;编码可任意)。"""
 
     plan = SaasPlan(
-        code="trial",
+        code=code,
         name="免费试用",
         provider_node_limit=1,
-        bot_limit=1,
-        monthly_price_cents=0,
+        bot_limit=bot_limit,
+        monthly_price_cents=monthly_price_cents,
         yearly_price_cents=0,
-        trial_days=7,
+        trial_days=trial_days,
         is_public=False,
         status=status,
     )
@@ -147,3 +147,38 @@ def test_registration_rejects_missing_or_disabled_trial_plan(
             enterprise_name="无套餐企业",
             contact_name="所有者",
         )
+
+
+def _register(db: Session, mobile: str = "13600136000"):
+    return registration.register_trial_tenant(db, mobile=mobile, password="Owner-secret-123", enterprise_name="某企业", contact_name="所有者")
+
+
+def test_the_trial_plan_is_found_by_its_properties_not_by_the_code_trial(db: Session) -> None:
+    """平台管理员自己建的免费试用套餐(编码随意)也要能用于注册:此前只认编码 trial,别的部署会一直提示"暂不可用"。"""
+
+    plan = _create_trial_plan(db, code="free-14d", trial_days=14)
+    created = _register(db)
+    subscription = db.get(TenantSubscription, created.subscription_id)
+    assert subscription.plan_id == plan.id
+    assert (subscription.expires_at - subscription.starts_at).days == 14  # 用的是这个套餐自己的试用天数
+
+
+def test_paid_plans_and_unusable_plans_are_never_picked_for_registration(db: Session) -> None:
+    _create_trial_plan(db, code="paid-with-trial", monthly_price_cents=100)  # 收费套餐即使带试用天数也不是免费试用
+    _create_trial_plan(db, code="stopped", status="disabled")
+    _create_trial_plan(db, code="no-bots", bot_limit=0)
+    good = _create_trial_plan(db, code="the-good-one")
+    assert db.get(TenantSubscription, _register(db).subscription_id).plan_id == good.id  # 只有最后这个满足全部条件
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error_code"),
+    [({"monthly_price_cents": 100}, "trial_plan_not_found"), ({"trial_days": 0}, "trial_plan_not_found"),
+     ({"status": "disabled"}, "trial_plan_disabled"), ({"bot_limit": 0}, "trial_plan_invalid")],
+)
+def test_each_way_a_trial_plan_can_be_unusable_reports_its_own_reason(db: Session, kwargs: dict, error_code: str) -> None:
+    """管理员排查时要能分清:没建 / 被停用 / 机器人数量是 0。"""
+
+    _create_trial_plan(db, **kwargs)
+    with pytest.raises(registration.RegistrationError, match=error_code):
+        _register(db)
