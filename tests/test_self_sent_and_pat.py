@@ -27,11 +27,10 @@ from app.services.channel_events import ingest_inbound_event
 from app.services.group_features import dispatch as dispatch_module
 from app.services.group_features.dispatch import dispatch_group_features
 from app.services.group_features.store import save_state
-from app.services.group_features.trigger_reply import bot_names
+from app.services.channel_adapters.wechat_webridge import WechatWeBridgeAdapter
 from app.services.self_sent import is_self_sent
 from app.services.task_queue import PLUGIN_DISPATCH_JOB
 from app.services.trigger_rules import engine
-from app.services.trigger_rules.catalog import EventView, get_trigger, parse_pat
 from tests.test_webridge_member_directory import IDENTITY, ROOM, env  # noqa: F401  (含 fixture)
 
 
@@ -126,68 +125,75 @@ def _draft(trigger_type: str, params: dict, text: str):
     return engine.RuleDraft(name="规则", trigger_type=trigger_type, trigger_params=params, actions=[{"type": "text", "content": text}])
 
 
-def _pat_event(text: str, message_type: str = "pat") -> dict:
-    return {"conversation": {"chat_type": "group", "external_id": "g@chatroom"},
-            "message": {"message_type": message_type, "content": text, "sender_id": "wxid_main", "sender_name": "水牛"}, "details": {}}
+def _pat_payload(*, patted: str, sender: str = "wxid_main", content: str = "文案随便写,不参与匹配", msg_type: str = "pat", envelope_account: str = "") -> dict:
+    """协议文档 4.3.3 的拍一拍入站事件:event_name=message、msg_type=pat,拍的人/被拍的人是 wxid。"""
+
+    body = {"message_id": "m-pat", "chat_id": "g@chatroom", "room_id": "g@chatroom", "is_group": True, "sender_id": sender,
+            "msg_type": msg_type, "content": content, "create_time": DAYTIME, "pat_from_user": sender, "pat_patted_user": patted, "pat_template": content}
+    return {"event_id": "msg:m-pat", "event_name": "message", **({"account_id": envelope_account} if envelope_account else {}), "body": body}
 
 
-# ---------- 拍一拍 ----------
+def _normalize(channel, payload: dict) -> dict:
+    return WechatWeBridgeAdapter().normalize_inbound_payload(channel, payload)
 
-def test_the_bots_own_names_are_collected_from_every_place_the_platform_keeps_them(rule_env) -> None:
-    db, channel, _conversation, room = rule_env
-    db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_bot", display_name="机器人群昵称", nickname="机器人微信昵称", status="active"))
+
+def _know_main(db, channel, room) -> None:
+    db.add(ChatroomMember(tenant_id=1, chatroom_id=room.id, bot_id=1, channel_id=channel.id, member_external_id="wxid_main", display_name="水牛", status="active"))
     db.flush()
-    names = bot_names(db, channel, room)
-    assert {"水牛@rCodex", "机器人群昵称", "机器人微信昵称", "wxid_bot"} <= set(names)
 
 
-@pytest.mark.parametrize("message_type", ["pat", "system"])
-def test_patting_the_bot_triggers_the_rule_with_the_real_world_text(rule_env, sent, message_type) -> None:
-    """线上实测的文案:被拍的人显示为机器人的昵称。pat 事件和 system 消息两种到达形态都要认。"""
+# ---------- 拍一拍:按协议的结构化字段判断,不看文案 ----------
 
+def test_patting_the_bot_triggers_the_rule_using_only_the_ids(rule_env, sent) -> None:
     db, channel, conversation, room = rule_env
+    _know_main(db, channel, room)
     engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "me"}, "别拍啦,{sender_name}"))
-    executed = dispatch_group_features(db, channel, _pat_event('"水牛" 拍了拍 "水牛@rCodex"', message_type), conversation_id=conversation.id)
-    assert executed == ["trigger_reply"] and sent == [[{"type": "text", "content": "别拍啦,水牛"}]]
+    # 文案故意写成和"拍了拍"毫不相干的内容:能触发就证明用的是 ID,不是文本匹配
+    event = _normalize(channel, _pat_payload(patted="wxid_bot", content="完全不同的一段文字"))
+    assert event["details"]["pat"] == {"from_id": "wxid_main", "patted_id": "wxid_bot", "patted_is_me": True}
+    assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == ["trigger_reply"]
+    assert sent == [[{"type": "text", "content": "别拍啦,水牛"}]]  # 名字按 ID 查群成员表得到
 
 
 def test_patting_someone_else_does_not_trigger_a_bot_only_rule(rule_env, sent) -> None:
     db, channel, conversation, room = rule_env
     engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "me"}, "别拍啦"))
-    assert dispatch_group_features(db, channel, _pat_event('"水牛" 拍了拍 "小牛"'), conversation_id=conversation.id) == [] and sent == []
-    # "拍任何人"的规则则会回应
-    engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "any"}, "拍得好"))
-    assert dispatch_group_features(db, channel, _pat_event('"水牛" 拍了拍 "小牛"'), conversation_id=conversation.id) == ["trigger_reply"]
+    event = _normalize(channel, _pat_payload(patted="wxid_someone"))
+    assert event["details"]["pat"]["patted_is_me"] is False
+    assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == [] and sent == []
+    engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "any"}, "拍得好"))  # "拍任何人"的规则则会回应
+    assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == ["trigger_reply"]
 
 
-def test_a_pat_with_a_suffix_is_split_so_the_name_is_clean() -> None:
-    """线上另一种形态:`"水牛" 拍了拍 "学习使我快乐" 的棺材板说:挤一下`。后缀不能混进被拍的人的名字里。"""
+def test_the_account_id_falls_back_to_the_event_envelope_when_the_phone_never_registered(rule_env, sent) -> None:
+    """协议事件信封里本来就带 account_id;手机注册快照缺失时用它,同样能认出被拍的是机器人。"""
 
-    view = EventView(message_type="pat", text='"水牛" 拍了拍 "学习使我快乐" 的棺材板说：挤一下', sender_id="x", sender_name="n", group_name="g", self_names=("水牛@rCodex",))
-    info = parse_pat(view)
-    assert (info.from_name, info.patted_name, info.patted_is_me) == ("水牛", "学习使我快乐", False)
-    # 一个叫"我是谁"的人被拍,不能被当成"拍的是我"(第一人称只出现在不带引号的文案里)
-    assert parse_pat(EventView(message_type="pat", text='"水牛" 拍了拍 "我是谁"', sender_id="x", sender_name="n", group_name="g", self_names=("水牛@rCodex",))).patted_is_me is False
-    assert parse_pat(EventView(message_type="pat", text='"水牛" 拍了拍 我', sender_id="x", sender_name="n", group_name="g")).patted_is_me is True  # 旧写法仍认
+    db, channel, conversation, room = rule_env
+    channel.runtime_info_json = json.dumps({})  # 没有登记的账号
+    engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "me"}, "别拍啦"))
+    assert dispatch_group_features(db, channel, _normalize(channel, _pat_payload(patted="wxid_bot", envelope_account="wxid_bot")), conversation_id=conversation.id) == ["trigger_reply"]
 
 
-def test_names_are_compared_loosely_but_not_by_substring() -> None:
-    pat = get_trigger("pat")
-    view = lambda target: EventView(message_type="pat", text=f'"水牛" 拍了拍 "{target}"', sender_id="x", sender_name="n", group_name="g", self_names=("水牛@rCodex",))
-    assert pat.match({"scope": "me"}, view("水牛@rCodex")) is not None
-    assert pat.match({"scope": "me"}, view(" 水牛@RCODEX ")) is not None   # 大小写、首尾空白不影响
-    assert pat.match({"scope": "me"}, view("水牛")) is None                 # 只是名字的一部分:不是机器人(用户本人也叫"水牛")
+def test_when_the_bots_own_id_is_unknown_the_bot_only_rule_stays_quiet(rule_env, sent) -> None:
+    db, channel, conversation, room = rule_env
+    channel.runtime_info_json = json.dumps({})
+    engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "me"}, "别拍啦"))
+    event = _normalize(channel, _pat_payload(patted="wxid_bot"))  # 没有登记账号,信封里也没有 account_id
+    assert "patted_is_me" not in event["details"]["pat"]
+    assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == [] and sent == []  # 判断不了就不回,不乱回
 
 
-def test_when_the_bots_names_are_unknown_it_stays_quiet_instead_of_guessing() -> None:
-    pat = get_trigger("pat")
-    view = EventView(message_type="pat", text='"水牛" 拍了拍 "水牛@rCodex"', sender_id="x", sender_name="n", group_name="g")  # 没有任何称呼可比对
-    # 没有任何称呼可比对时,被拍的是不是机器人无从判断:"只回应拍机器人"的规则不触发,宁可不回也不乱回
-    assert pat.match({"scope": "me"}, view) is None
-    assert pat.match({"scope": "any"}, view) is not None  # "拍任何人"的规则不依赖这个判断,照常触发
+def test_the_bot_patting_someone_is_a_self_sent_event_and_never_dispatched(rule_env) -> None:
+    _db, channel, _conversation, _room = rule_env
+    event = _normalize(channel, _pat_payload(patted="wxid_main", sender="wxid_bot"))
+    assert event["details"]["from_self"] is True and is_self_sent(event) is True  # 机器人自己拍别人:不会再触发规则、形成循环
 
 
-def test_plain_text_that_merely_mentions_the_phrase_is_not_a_pat(rule_env, sent) -> None:
+def test_text_that_looks_like_a_pat_is_not_a_pat(rule_env, sent) -> None:
+    """只有协议标注 msg_type=pat 的事件才是拍一拍;有人发一句长得像拍一拍的话,不能触发。"""
+
     db, channel, conversation, room = rule_env
     engine.create_rule(db, tenant_id=1, chatroom_id=room.id, draft=_draft("pat", {"scope": "any"}, "拍得好"))
-    assert dispatch_group_features(db, channel, _pat_event('我觉得 "水牛" 拍了拍 "小牛" 很可爱', "text"), conversation_id=conversation.id) == []
+    event = _normalize(channel, _pat_payload(patted="wxid_bot", msg_type="text", content='"水牛" 拍了拍 "水牛@rCodex"'))
+    assert "pat" not in event["details"]
+    assert dispatch_group_features(db, channel, event, conversation_id=conversation.id) == [] and sent == []

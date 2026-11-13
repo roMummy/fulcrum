@@ -21,7 +21,7 @@ from app.core.settings import settings
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, Conversation
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation
 from app.models.plugin_business import GroupTriggerRule
 from app.services.group_features import dispatch as dispatch_module
 from app.services.group_features.dispatch import dispatch_group_features
@@ -48,38 +48,55 @@ def media_dir(tmp_path, monkeypatch):
 
 
 def _view(message_type: str = "pat", text: str = "", **kwargs) -> EventView:
-    return EventView(message_type=message_type, text=text, sender_id=kwargs.pop("sender_id", "wxid_a"), sender_name=kwargs.pop("sender_name", "小明"), group_name="测试群", details=kwargs.pop("details", {}))
+    return EventView(message_type=message_type, text=text, sender_id=kwargs.pop("sender_id", "wxid_a"), sender_name=kwargs.pop("sender_name", "小明"), group_name="测试群",
+                     details=kwargs.pop("details", {}), names=kwargs.pop("names", {}))
+
+
+# 适配器按协议 4.3.3 的结构化字段整理出的拍一拍(拍的人/被拍的人是 wxid),触发器不看文案
+PAT_BOT = {"pat": {"from_id": "wxid_red", "patted_id": "wxid_bot", "patted_is_me": True}}
+PAT_OTHER = {"pat": {"from_id": "wxid_red", "patted_id": "wxid_other", "patted_is_me": False}}
+NAMES = {"wxid_red": "小红", "wxid_other": "小刚"}
+
+
+def _pat_me() -> EventView:
+    return _view(details=PAT_BOT, names=NAMES)
+
+
+def _pat_other() -> EventView:
+    return _view(details=PAT_OTHER, names=NAMES)
 
 
 # ---------- 拍一拍解析:谁拍了谁 ----------
 
-def test_pat_on_the_bot_is_recognised_from_the_template_text() -> None:
-    mine = parse_pat(_view(text='"小红" 拍了拍 我'))
-    assert (mine.from_name, mine.patted_is_me) == ("小红", True)
-    other = parse_pat(_view(text='"小红" 拍了拍 "小刚"'))
-    assert (other.from_name, other.patted_name, other.patted_is_me) == ("小红", "小刚", False)
-    placeholder = parse_pat(_view(text='"${小红}" 拍了拍 "${小刚}"'))
-    assert (placeholder.from_name, placeholder.patted_name) == ("小红", "小刚")
-
-
-def test_pat_fields_given_by_the_adapter_win_and_sysmsg_xml_is_understood() -> None:
-    flagged = parse_pat(_view(details={"pat": {"template": '"A" 拍了拍 "B"', "patted_is_me": True}}))
-    assert flagged.patted_is_me is True
-    xml = '<sysmsg type="pat"><pat><fromusername>u1</fromusername><template><![CDATA["小红" 拍了拍 我]]></template></pat></sysmsg>'
-    assert parse_pat(_view(text=xml)).patted_is_me is True
-    unknown = parse_pat(_view(text=""))
-    assert unknown is not None and unknown.patted_is_me is None  # 判断不了谁被拍:不当作拍机器人
-    assert parse_pat(_view("text", "今天天气不错")) is None
+def test_pat_is_read_from_the_structured_ids_and_never_from_the_text() -> None:
+    mine, other = parse_pat(_pat_me()), parse_pat(_pat_other())
+    assert (mine.from_id, mine.patted_id, mine.patted_is_me) == ("wxid_red", "wxid_bot", True)
+    assert (other.from_id, other.patted_id, other.patted_is_me) == ("wxid_red", "wxid_other", False)
+    # 适配器没有给出结构化字段:不是拍一拍,哪怕文案长得一模一样
+    assert parse_pat(_view(text='"小红" 拍了拍 我')) is None
+    assert parse_pat(_view(text='"小红" 拍了拍 "水牛@rCodex"', details={})) is None
+    # 不是 pat 事件:即使带了 details.pat 也不当拍一拍
+    assert parse_pat(_view("text", details=PAT_BOT)) is None
 
 
 def test_pat_trigger_scope_me_only_reacts_when_the_bot_is_patted() -> None:
     pat = get_trigger("pat")
-    mine, other = _view(text='"小红" 拍了拍 我'), _view(text='"小红" 拍了拍 "小刚"')
-    assert pat.match({"scope": "me"}, mine) == {"sender_name": "小红", "patted_name": "我"}
-    assert pat.match({"scope": "me"}, other) is None
-    assert pat.match({"scope": "me"}, _view(text="")) is None  # 判断不了时不回
-    assert pat.match({"scope": "any"}, other) is not None
+    assert pat.match({"scope": "me"}, _pat_me()) == {"sender_name": "小红", "patted_name": "我"}
+    assert pat.match({"scope": "me"}, _pat_other()) is None
+    assert pat.match({"scope": "any"}, _pat_other()) == {"sender_name": "小红", "patted_name": "小刚"}
+    # 缺 ID 或本账号 ID 未知(适配器没给 patted_is_me):判断不了,"只回应拍机器人"不触发,宁可不回也不乱回
+    unknown = _view(details={"pat": {"from_id": "wxid_red", "patted_id": "wxid_bot"}}, names=NAMES)
+    assert pat.match({"scope": "me"}, unknown) is None and pat.match({"scope": "any"}, unknown) is not None
     assert pat.match({"scope": "me"}, _view("text", '"小红" 拍了拍 我')) is None  # 普通文字不算拍一拍事件
+
+
+def test_names_only_fill_the_variables_and_fall_back_without_leaking_wxids() -> None:
+    pat = get_trigger("pat")
+    nameless = _view(details=PAT_BOT)  # 群成员表里一个名字都没有
+    result = pat.match({"scope": "me"}, nameless)
+    assert result["patted_name"] == "我"            # 机器人自己没有昵称时用"我",不把 wxid 发到群里
+    assert result["sender_name"] == "wxid_red"      # 拍的人查不到名字时只能退回 ID(这是已知的取舍)
+    assert pat.match({"scope": "me"}, _view(details=PAT_BOT, names={"wxid_bot": "水牛@rCodex", "wxid_red": "小红"}))["patted_name"] == "水牛@rCodex"
 
 
 def test_keyword_trigger_modes() -> None:
@@ -152,7 +169,7 @@ def test_incomplete_rules_get_a_readable_message(overrides, expected) -> None:
 @pytest.fixture()
 def env():
     engine_ = create_engine("sqlite://")
-    for table in (Channel, Conversation, Chatroom, GroupTriggerRule):
+    for table in (Channel, Conversation, Chatroom, ChatroomMember, GroupTriggerRule):
         table.__table__.create(engine_)
     factory = sessionmaker(bind=engine_, autoflush=False, expire_on_commit=False)
     with tenant_scope(1):
@@ -173,9 +190,9 @@ def _run(env, view: EventView):
 
 def test_text_reply_fills_in_variables(env) -> None:
     engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft())
-    replies = _run(env, _view(text='"小红" 拍了拍 我'))
+    replies = _run(env, _pat_me())
     assert replies == [{"type": "text", "content": "别拍啦,小红"}]
-    assert _run(env, _view(text='"小红" 拍了拍 "小刚"')) is None  # 拍的不是机器人:没有规则命中
+    assert _run(env, _pat_other()) is None  # 拍的不是机器人:没有规则命中
 
 
 def test_every_kind_of_reply_can_be_built(env) -> None:
@@ -187,7 +204,7 @@ def test_every_kind_of_reply_can_be_built(env) -> None:
         {"type": "video", "file": video, "cover": ""},
         {"type": "card", "title": "{group} 欢迎 {sender_name}", "description": "{time}", "url": "https://example.com/x", "thumb_url": ""},
     ]))
-    text, img, aud, vid, card = _run(env, _view(text='"小红" 拍了拍 我'))
+    text, img, aud, vid, card = _run(env, _pat_me())
     assert text["type"] == "text" and img["type"] == "image" and img["image_path"].endswith(".png")
     assert aud["type"] == "voice" and base64.b64decode(aud["base64"]) == MP3
     assert vid["type"] == "video" and base64.b64decode(vid["base64"]) == MP4 and vid["image_base64"] == media.PLACEHOLDER_COVER_BASE64  # 没传封面用默认封面
@@ -199,27 +216,27 @@ def test_random_mode_sends_exactly_one_and_cooldown_stops_repeats(env) -> None:
         pick_mode="random", cooldown_seconds=60,
         actions=[{"type": "text", "content": "甲"}, {"type": "text", "content": "乙"}, {"type": "text", "content": "丙"}],
     ))
-    first = _run(env, _view(text='"小红" 拍了拍 我'))
+    first = _run(env, _pat_me())
     assert len(first) == 1 and first[0]["content"] in {"甲", "乙", "丙"}
-    assert _run(env, _view(text='"小红" 拍了拍 我')) == []  # 冷却中:命中但不回复
+    assert _run(env, _pat_me()) == []  # 冷却中:命中但不回复
     rule = env.db.scalar(select(GroupTriggerRule))
     rule.last_triggered_at = now_shanghai().replace(year=2020)
-    assert len(_run(env, _view(text='"小红" 拍了拍 我'))) == 1  # 冷却过了又能触发
+    assert len(_run(env, _pat_me())) == 1  # 冷却过了又能触发
 
 
 def test_disabled_rules_are_skipped_and_the_first_matching_rule_wins(env) -> None:
     first = engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="甲", actions=[{"type": "text", "content": "甲规则"}]))
     engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(name="乙", actions=[{"type": "text", "content": "乙规则"}]))
-    assert _run(env, _view(text='"小红" 拍了拍 我'))[0]["content"] == "甲规则"  # 同一件事只回一次
+    assert _run(env, _pat_me())[0]["content"] == "甲规则"  # 同一件事只回一次
     first.is_enabled = False
-    assert _run(env, _view(text='"小红" 拍了拍 我'))[0]["content"] == "乙规则"
+    assert _run(env, _pat_me())[0]["content"] == "乙规则"
 
 
 def test_a_missing_media_file_skips_only_that_reply(env) -> None:
     image = media.save_upload(1, "image", "a.png", _png())
     engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft(actions=[{"type": "image", "file": image}, {"type": "text", "content": "还在"}]))
     media.delete(1, image)  # 文件被人删了
-    assert _run(env, _view(text='"小红" 拍了拍 我')) == [{"type": "text", "content": "还在"}]
+    assert _run(env, _pat_me()) == [{"type": "text", "content": "还在"}]
 
 
 def test_editing_and_deleting_a_rule_cleans_up_unused_files(env) -> None:
@@ -304,33 +321,45 @@ def sent(monkeypatch):
     return calls
 
 
-def _pat_event(text: str) -> dict:
+def _pat_event(patted: str = "wxid_bot", is_me: bool | None = True) -> dict:
+    """按协议 4.3.3 整理后的拍一拍入站事件(content 只是展示用文案,触发器不看它)。"""
+
+    pat = {"from_id": "wxid_red", "patted_id": patted}
+    if is_me is not None:
+        pat["patted_is_me"] = is_me
     return {
         "conversation": {"chat_type": "group", "external_id": "g@chatroom"},
-        "message": {"message_type": "pat", "content": text, "sender_id": "wxid_a"},
-        "details": {"pat": {"template": text}},
+        "message": {"message_type": "pat", "content": "文案随便写,不参与匹配", "sender_id": "wxid_red"},
+        "details": {"pat": pat},
     }
 
 
 def test_a_pat_event_flows_through_the_group_feature_and_respects_its_switch(env, sent) -> None:
     engine.create_rule(env.db, tenant_id=1, chatroom_id=env.room.id, draft=_draft())
-    event = _pat_event('"小红" 拍了拍 我')
+    # 名字按 ID 查群成员表:拍的人在本群的群昵称是"小红"
+    env.db.add(ChatroomMember(tenant_id=1, chatroom_id=env.room.id, bot_id=1, channel_id=env.channel.id, member_external_id="wxid_red", display_name="小红", status="active"))
+    env.db.flush()
+    event = _pat_event()
     assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == []  # 功能默认关闭
     save_state(env.room, "trigger_reply", enabled=True)
     assert dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id) == ["trigger_reply"]
     assert sent[-1]["replies"] == [{"type": "text", "content": "别拍啦,小红"}]
     # 不相关的消息:没有规则命中,不计入已执行
-    assert dispatch_group_features(env.db, env.channel, _pat_event('"小红" 拍了拍 "小刚"'), conversation_id=env.conversation.id) == []
+    assert dispatch_group_features(env.db, env.channel, _pat_event('wxid_other', False), conversation_id=env.conversation.id) == []
     plain = {"conversation": {"chat_type": "group", "external_id": "g@chatroom"}, "message": {"message_type": "text", "content": "你好", "sender_id": "x"}}
     assert dispatch_group_features(env.db, env.channel, plain, conversation_id=env.conversation.id) == []
 
 
-def test_the_webridge_adapter_hands_pat_details_to_the_rules() -> None:
+def test_the_webridge_adapter_builds_pat_details_from_the_protocol_fields() -> None:
     from app.services.channel_adapters.wechat_webridge import _build_pat_info
 
-    info = _build_pat_info({"pat_template": '"小红" 拍了拍 我', "sender_name": "小红", "patted_is_self": True})
-    assert info["template"] == '"小红" 拍了拍 我' and info["from_name"] == "小红" and info["patted_is_me"] is True
-    assert "patted_is_me" not in _build_pat_info({"pat_template": "x"})  # 微桥没说就不猜
+    body = {"pat_from_user": "wxid_red", "pat_patted_user": "wxid_bot", "pat_template": "文案", "content": "文案"}
+    assert _build_pat_info(body, "wxid_bot") == {"from_id": "wxid_red", "patted_id": "wxid_bot", "patted_is_me": True}
+    assert _build_pat_info({**body, "pat_patted_user": "wxid_other"}, "wxid_bot")["patted_is_me"] is False
+    assert "patted_is_me" not in _build_pat_info(body, "")                         # 本账号 ID 未知:不猜
+    assert "patted_is_me" not in _build_pat_info({"pat_from_user": "wxid_red"}, "wxid_bot")  # 缺被拍的人:不猜
+    # 文案和旧版猜测的字段名一律不读
+    assert _build_pat_info({"pat_template": '"小红" 拍了拍 我', "patted_is_self": True, "pat_patted": "wxid_bot"}, "wxid_bot") == {"from_id": "", "patted_id": ""}
 
 
 # ---------- 管理页面 ----------
