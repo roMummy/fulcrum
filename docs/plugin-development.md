@@ -219,7 +219,8 @@ return PluginExecutionResult(
 平台会把 `output` 自动转成出站消息：
 
 - 文字：`reply_text`（也识别 `answer` / `summary` / `text` / `message`，按此顺序取第一个非空值）；
-- 多条或多媒体：`replies` 列表，用 `replies.py` 里的 `text_reply`、`image_reply`、`file_reply`、`link_reply`、`video_reply` 构造；
+- 多条或多媒体：`replies` 列表，用 `replies.py` 里的 `text_reply`、`image_reply`、`file_reply`、`link_reply`、`video_reply`、`music_reply` 构造；
+- 音乐：`music_reply(title=..., url=歌曲页面, data_url=播放地址, desc=歌手, song_album_url=封面, song_lyric=歌词)`；微桥发送原生音乐卡片，其他渠道转成文本链接。可选 `app_id` / `app_name` 指定卡片来源。歌词最多 5000 字符；播放地址应临时获取，不保存进选歌状态；
 - 其他：`outbound_messages`、各类卡片 XML 字段。
 
 ## 4. 配置与密钥

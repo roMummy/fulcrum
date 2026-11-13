@@ -213,7 +213,7 @@
 
   function enhance(root) {
     root.querySelectorAll("select:not([multiple]):not([size]):not(.ui-select-native):not([data-native-select])").forEach((select) => {
-      if (select.closest(".ui-select")) return;
+      if (select.closest(".ui-select, [data-config-suggestions]")) return;
       new UiSelect(select);
     });
   }

@@ -416,14 +416,15 @@ def test_weather_subscription_uses_trusted_context_and_unified_daily_push(weathe
 
 
 def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
-    """点歌删除固定内网地址和微信 XML，改用租户服务与标准文件回复。"""
+    """点歌直接使用 QQMusicApi 0.9.0，并保留显式文件回复模式。"""
 
     discovered = get_discovered_plugin("music", force=True)
     assert discovered is not None
-    assert discovered.matcher.commands == ("点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌")
+    assert discovered.matcher.commands == ("点歌", "音乐", "音乐点播", "点播音乐", "音乐点歌", "搜歌", "选歌", "歌词")
     assert "telegram" in discovered.capability.channel_types
     assert discovered.runtime_config["api_base"] == ""
-    assert discovered.runtime_config["quality"] == "exhigh"
+    assert discovered.runtime_config["file_type"] == "mp3_128"
+    assert "quality" not in discovered.runtime_config
     assert "music_api_url" not in discovered.runtime_config
     assert "song_api_url" not in discovered.runtime_config
 
@@ -435,30 +436,29 @@ def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
     class FakeHttpClient:
         def request(self, method, url, **kwargs):  # noqa: ANN001
             captured.append({"method": method, "url": url, "kwargs": kwargs})
-            if "/Search?" in url:
+            if "/search/search_by_type?" in url:
                 payload = {
-                    "success": True,
-                    "status": 200,
-                    "data": [
+                    "code": 0,
+                    "data": {"song": [
                         {
-                            "id": "song-001",
-                            "name": "夜空中最亮的星",
-                            "artist_string": "逃跑计划",
+                            "mid": "song-001",
+                            "title": "夜空中最亮的星",
+                            "singer": [{"name": "逃跑计划"}],
+                            "file": {"media_mid": "media-001"},
                             "provider_trace": "must-not-persist",
                         }
-                    ],
+                    ]},
                 }
             else:
                 payload = {
-                    "success": True,
-                    "status": 200,
-                    "data": {
-                        "name": "夜空中最亮的星",
-                        "ar_name": "逃跑计划",
-                        "url": "https://media.example.test/song-001",
-                        "pic": "https://media.example.test/song-001.jpg",
+                    "code": 0,
+                    "data": {"data": [{
+                        "mid": "song-001",
+                        "result": 0,
+                        "purl": "https://media.example.test/song-001",
+                        "filename": "F000media-001.flac",
                         "provider_trace": "must-not-persist",
-                    },
+                    }]},
                 }
             return PluginHttpResponse(
                 status_code=200,
@@ -473,7 +473,8 @@ def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
             "enabled": True,
             "api_base": "https://music.example.test",
             "api_key": "tenant-music-key",
-            "quality": "lossless",
+            "file_type": "flac",
+            "output_mode": "file",
         },
         payload={"content": "/点歌 夜空中最亮的星", "command_args": "夜空中最亮的星"},
     )
@@ -482,13 +483,14 @@ def test_music_uses_tenant_service_and_cross_channel_file_replies() -> None:
 
     assert result.ok is True
     assert len(captured) == 2
-    assert "/Search?" in str(captured[0]["url"])
-    assert "/Song_V1?" in str(captured[1]["url"])
+    assert "/search/search_by_type?" in str(captured[0]["url"])
+    assert "search_type=0" in str(captured[0]["url"])
+    assert "/song/song-001/url?file_type=7" in str(captured[1]["url"])
     assert captured[0]["kwargs"]["headers"]["Authorization"] == "Bearer tenant-music-key"
     assert result.output["replies"][0]["type"] == "text"
     assert result.output["replies"][1] == {
         "type": "file",
-        "file_name": "逃跑计划 - 夜空中最亮的星.mp3",
+        "file_name": "逃跑计划 - 夜空中最亮的星.flac",
         "file_url": "https://media.example.test/song-001",
     }
     serialized = json.dumps(result.output, ensure_ascii=False)

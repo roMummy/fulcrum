@@ -20,6 +20,7 @@ from sqlalchemy import select
 from app.core.time import now_shanghai
 from app.models.entities import Conversation, Message, TaskJob
 from app.services import plugin_directory
+from app.services.plugin_runtime.replies import music_reply
 from app.services.wechat_webridge import service
 from tests.test_ai_chat import _session
 from tests.test_ai_dispatch import _seed
@@ -130,3 +131,37 @@ def test_read_commands_without_a_message_do_not_touch_any_message(env) -> None:
         service.accept_command_result(db, channel, {**IDENTITY, "request_id": request_id, "ok": True, "result": {"ok": True, "members": []}})
     assert db.get(Message, pending["message_id"]).external_status == "pending"
     assert db.scalars(select(Message).where(Message.direction == "out")).all().__len__() == 1
+
+
+@pytest.mark.parametrize("sent", [True, False])
+def test_music_card_is_queued_once_and_settled_by_phone_result(env, sent) -> None:
+    db, channel, conversation = env
+    context = SimpleNamespace(
+        plugin_code="music", conversation_id=conversation.id, conversation_external_id=conversation.external_id,
+        chat_type="direct", normalized_event={}, channel_type="wechat_webridge", message_type="text",
+        binding_config={}, sender_id="wxid_a",
+    )
+    card = music_reply(
+        title="晴天", desc="歌手", url="https://y.qq.com/n/ryqq/songDetail/song001",
+        data_url="https://media.example.test/audio.mp3?vkey=temporary", song_lyric="[00:01.00]歌词",
+        song_album_url="https://media.example.test/cover.jpg", app_id="test-app", app_name="音乐来源",
+    )
+    results = plugin_directory._dispatch_auto_outbound_messages(
+        db, SimpleNamespace(channel_id=channel.id), context, {"replies": [card]},
+    )
+    assert len(results) == 1 and results[0]["queued"] is True
+    job = _job_of(db, results[0])
+    command = json.loads(job.payload_json)["command"]
+    assert command["type"] == "send_music_card"
+    assert command["params"] == {"receiver": conversation.external_id, **{key: value for key, value in card.items() if key != "type"}}
+    message = db.get(Message, results[0]["message_id"])
+    assert (message.message_type, message.external_status) == ("music", "pending")
+    job.status = "running"
+    db.commit()
+    with patch.object(service, "_enqueue_account_status"), patch.object(service, "_enqueue_device_status"):
+        service.accept_command_result(db, channel, {
+            **IDENTITY, "request_id": command["request_id"], "ok": sent,
+            "result": {"ok": sent, **({} if sent else {"error": "phone_send_failed"})},
+        })
+    assert (message.status, message.external_status) == (("sent", "sent") if sent else ("failed", "failed"))
+    assert len(db.scalars(select(TaskJob).where(TaskJob.job_type == service.JOB_TYPE)).all()) == 1

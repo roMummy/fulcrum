@@ -17,11 +17,13 @@
 <label class="{% if field.field_type in ('textarea', 'list') %}full-row{% endif %}"{% if field.depends_on %} data-gf-depends="schema__{{ field.depends_on }}"{% endif %}>
   <span>{{ field.label }}{% if field.required and not field.sensitive %}<em class="field-required" title="必填">*</em>{% endif %}</span>
   {% if field.field_type == 'select' %}
+  {% if field.options|length > 12 %}<span class="config-suggestions" data-config-suggestions data-placeholder="{{ field.placeholder }}">{% endif %}
   <select name="schema__{{ field.name }}">
     {% for option in field.options %}
     <option value="{{ option.value }}" {% if field.value == option.value %}selected{% endif %}>{{ option.label }}</option>
     {% endfor %}
   </select>
+  {% if field.options|length > 12 %}</span>{% endif %}
   {% elif field.field_type == 'textarea' %}
   <textarea name="schema__{{ field.name }}" rows="4" placeholder="{{ field.placeholder }}">{{ field.render_value }}</textarea>
   {% else %}

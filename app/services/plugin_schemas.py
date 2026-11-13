@@ -193,6 +193,9 @@ def merge_schema_config(
             continue
 
         normalized = "" if raw_value is None else str(raw_value).strip()
+        if item.field_type == "select" and normalized not in {option.value for option in item.options}:
+            # 下拉只能保存已声明的值；搜索文字或伪造的表单值不能变成配置。
+            normalized = str(item.default)
         parsed_value = _parse_field_value(item.field_type, normalized, item.default, item.minimum, item.maximum)
         if parsed_value in (None, "", []):
             merged.pop(item.name, None)

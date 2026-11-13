@@ -1660,8 +1660,24 @@ def _normalize_reply_item(item: Mapping[str, Any], *, channel_type: str = "") ->
         file_name = str(item.get("file_name") or "").strip()
         file_url = str(item.get("file_url") or item.get("download_url") or item.get("url") or "").strip()
         if file_name and file_url:
+            if str(channel_type or "").strip().lower() == "telegram":
+                return {"message_type": "text", "content": f"{file_name}\n{file_url}"}
             return {"message_type": "file", "file_name": file_name, "file_url": file_url}
         return None
+    if reply_type == "music":
+        from app.services.plugin_runtime.replies import music_reply
+
+        reply = music_reply(**{
+            key: str(item.get(key) or "")
+            for key in ("title", "url", "data_url", "desc", "song_album_url", "song_lyric", "app_id", "app_name")
+        })
+        if str(channel_type or "").strip().lower() == "wechat_webridge":
+            return {"message_type": "music", "content": reply["title"],
+                    **{key: value for key, value in reply.items() if key != "type"}}
+        # Only WeBridge currently implements native music cards. All other advertised
+        # channels can deliver text, including Telegram's text/image-only adapter.
+        parts = [reply["title"], reply["desc"], f"歌曲页面：{reply['url']}", f"播放地址：{reply['data_url']}"]
+        return {"message_type": "text", "content": "\n".join(part for part in parts if part)}
     if reply_type == "image":
         base64_data = str(item.get("base64") or item.get("image_base64") or "").strip()
         if base64_data:

@@ -5150,6 +5150,56 @@ code {
   opacity: 0.55;
 }
 
+/* 有内置候选的文本配置：按名称或 ID 搜索，列表高度不撑开表单。 */
+.config-suggestions {
+  display: block;
+  position: relative;
+  min-width: 0;
+}
+
+.config-suggestions > input[type="text"] {
+  width: 100%;
+}
+
+.config-suggestions-panel {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.config-suggestions-up .config-suggestions-panel {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.config-suggestions-panel .ui-select-option {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.config-suggestions-panel .ui-select-option > span,
+.config-suggestions-panel .ui-select-option > small {
+  display: block;
+}
+
+.config-suggestions-panel .ui-select-option > small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.config-suggestions-count {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.config-suggestions-summary {
+  overflow-wrap: anywhere;
+}
+
 /* 筛选栏里的紧凑下拉:与 compact-filter-field 的输入框同高同圆角。 */
 .compact-filter-field .ui-select-trigger {
   min-height: 36px;

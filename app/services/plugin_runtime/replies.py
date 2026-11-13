@@ -13,7 +13,7 @@ MAX_VIDEO_BASE64_LENGTH = 40 * 1024 * 1024
 MAX_FILE_NAME_LENGTH = 255
 MAX_LINK_TITLE_LENGTH = 200
 MAX_LINK_DESCRIPTION_LENGTH = 1_000
-ALLOWED_REPLY_TYPES = {"text", "image", "file", "video", "link"}
+ALLOWED_REPLY_TYPES = {"text", "image", "file", "video", "link", "music"}
 
 
 class PluginReplyError(ValueError):
@@ -101,6 +101,39 @@ def link_reply(
     return reply
 
 
+def music_reply(
+    *,
+    title: str,
+    url: str,
+    data_url: str,
+    desc: str = "",
+    song_album_url: str = "",
+    song_lyric: str = "",
+    app_id: str = "",
+    app_name: str = "",
+) -> dict[str, str]:
+    """标准音乐回复；原生卡片或文本降级由渠道层决定。"""
+
+    title = str(title or "").strip()
+    if not title or len(title) > MAX_LINK_TITLE_LENGTH:
+        raise PluginReplyError("音乐标题为空或超过平台限制")
+    reply = {"type": "music", "title": title}
+    for name, value, limit in (
+        ("url", url, 4096), ("data_url", data_url, 4096),
+        ("song_album_url", song_album_url, 4096),
+        ("desc", desc, MAX_LINK_DESCRIPTION_LENGTH), ("song_lyric", song_lyric, 5000),
+        ("app_id", app_id, 200), ("app_name", app_name, 200),
+    ):
+        normalized = str(value or "").strip()
+        if len(normalized) > limit:
+            raise PluginReplyError("音乐字段超过平台限制")
+        if name in {"url", "data_url", "song_album_url"} and (normalized or name != "song_album_url"):
+            normalized = _validate_public_resource_url(normalized)
+        # Preserve optional fields consistently when passing the card to channel adapters.
+        reply[name] = normalized
+    return reply
+
+
 def video_reply(
     *,
     video_base64: str,
@@ -169,6 +202,11 @@ def standard_replies(
                     file_url=str(item.get("file_url") or item.get("url") or ""),
                 )
             )
+        elif reply_type == "music":
+            normalized.append(music_reply(**{
+                key: str(item.get(key) or "")
+                for key in ("title", "url", "data_url", "desc", "song_album_url", "song_lyric", "app_id", "app_name")
+            }))
         elif reply_type == "video":
             normalized.append(
                 video_reply(

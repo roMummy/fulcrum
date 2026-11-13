@@ -2018,7 +2018,8 @@ consume_policy = "shared"
             binding.config_json = json.dumps(
                 {
                     "api_base": "https://music.example.test",
-                    "quality": "exhigh",
+                    "file_type": "mp3_128",
+                    "output_mode": "file",
                     "timeout_seconds": 15,
                 }
             )
