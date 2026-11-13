@@ -25,9 +25,9 @@
           <option value="external_contact">外部联系人</option>
           <option value="internal_member">内部成员</option>
         </select>
-        <button class="btn btn-secondary" type="submit">同步联系人</button>
+        <button class="btn btn-secondary" type="submit"><span class="i i-refresh" aria-hidden="true"></span><span>同步联系人</span></button>
       </form>
-      <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
+      <a class="btn btn-secondary" href="/chatrooms?channel_id={{ channel.id }}"><span class="i i-users" aria-hidden="true"></span><span>群管理</span></a>
     </div>
   </div>
   <div class="stats-grid compact-grid">
@@ -63,8 +63,8 @@
         <option value="unknown" {% if list_view.filters.sync_status == 'unknown' %}selected{% endif %}>未知</option>
       </select></label>
       <div class="compact-filter-actions">
-        <button class="btn" type="submit">筛选</button>
-        <a class="btn btn-secondary" href="/channels/{{ channel.id }}/workwechat/contacts">重置</a>
+        <button class="btn btn-icon" type="submit" title="筛选" aria-label="筛选"><span class="i i-filter" aria-hidden="true"></span></button>
+        <a class="btn btn-secondary btn-icon" href="/channels/{{ channel.id }}/workwechat/contacts" title="重置" aria-label="重置"><span class="i i-x" aria-hidden="true"></span></a>
       </div>
     </form>
   </details>

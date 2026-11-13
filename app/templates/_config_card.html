@@ -67,7 +67,7 @@
     {# 只有设置区里有文本/数字/密钥输入时才需要保存按钮;开关点一下就已保存。 #}
     {% if card.has_inputs %}
     <footer class="gf-foot">
-      <button class="btn" type="submit">保存</button>
+      <button class="btn" type="submit"><span class="i i-save" aria-hidden="true"></span><span>保存</span></button>
     </footer>
     {% endif %}
     </div>

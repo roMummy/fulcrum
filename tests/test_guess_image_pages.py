@@ -39,9 +39,10 @@ def test_generic_second_button_tenant_navigation_and_readonly_permissions(pages)
     client, ids = pages
     _login(client, "readonly")
     html = client.get("/plugins").text
-    rows = html.split('<article class="plugin-catalog-row">')[1:]
+    rows = html.split('<article class="plugin-card')[1:]
     guess = next(row.split("</article>")[0] for row in rows if "管理题库" in row.split("</article>")[0])
-    assert ">配置</a>" in guess and f'href="{BASE}"' in guess
+    # 配置与"管理题库"都是只有图标的按钮,文字在 aria-label 里
+    assert 'aria-label="配置 ' in guess and f'href="{BASE}"' in guess
     weather = next(row.split("</article>")[0] for row in rows if "天气" in row.split("</article>")[0])
     assert "管理题库" not in weather
     response = client.get(BASE)

@@ -208,7 +208,13 @@
               submitter.dataset.originalText = submitter.textContent || "";
               submitter.disabled = true;
               if (submitter.tagName === "BUTTON") {
-                submitter.textContent = "处理中…";
+                // 只有图标的按钮不能把内容换成文字(会丢图标),改为转圈提示忙碌
+                if (submitter.classList.contains("btn-icon")) {
+                  submitter.classList.add("is-busy");
+                  submitter.setAttribute("aria-busy", "true");
+                } else {
+                  submitter.textContent = "处理中…";
+                }
               }
             });
           }, 0);

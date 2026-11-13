@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users">员工管理</a>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users"><span class="i i-users" aria-hidden="true"></span><span>员工管理</span></a>{% endblock %}
 {% block content %}
 <section class="work-surface">
   <div class="section-head"><div><h2>{{ tenant.name }}</h2></div><span class="chip {% if current_user.tenant_status == 'active' %}chip-success{% else %}chip-muted{% endif %}">{{ current_user.tenant_status }}</span></div>

@@ -1,6 +1,6 @@
 {% extends 'platform_base.html' %}
 {# 服务器配置、数据库使用情况、表条目数与接口响应性能;只读页面。 #}
-{% block hero_actions %}<a class="btn btn-secondary" href="/platform/system">刷新</a>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary btn-icon" href="/platform/system" title="刷新" aria-label="刷新"><span class="i i-refresh" aria-hidden="true"></span></a>{% endblock %}
 {% block content %}
 {% macro pct_chip(value) %}<span class="chip {% if value >= 85 %}chip-danger{% elif value >= 70 %}chip-outline{% else %}chip-success{% endif %}">{{ value }}%</span>{% endmacro %}
 <section class="work-surface">

@@ -13,7 +13,7 @@
   // form.elements 包含通过 form="…" 关联的外部按钮，插件页隐藏表单也要同步忙碌状态。
   const controls = forms.flatMap((form) => Array.from(form.elements)
     .filter((button) => ['BUTTON', 'INPUT'].includes(button.tagName) && button.type === 'submit')
-    .map((button) => ({button, form, disabled: button.disabled, text: button.textContent})));
+    .map((button) => ({button, form, disabled: button.disabled, html: button.innerHTML})));  // 保存 innerHTML:按钮里可能有图标
   let active = false, leaving = false, run = 0, controller = null;
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -43,9 +43,19 @@
   }
   function setBusy(value, form) {
     active = value;
-    controls.forEach(({button, form: owner, disabled, text}) => {
+    controls.forEach(({button, form: owner, disabled, html}) => {
       button.disabled = value || disabled;
-      if (button.tagName === 'BUTTON') button.textContent = value && owner === form ? '处理中…' : text;
+      if (button.tagName !== 'BUTTON') return;
+      const busy = value && owner === form;
+      if (button.classList.contains('btn-icon')) {
+        // 只有图标的按钮保持图标不变,用转圈表示忙碌
+        button.classList.toggle('is-busy', busy);
+        button.setAttribute('aria-busy', String(busy));
+      } else if (busy) {
+        button.textContent = '处理中…';
+      } else {
+        button.innerHTML = html;
+      }
     });
     monitor.setAttribute('aria-busy', String(value));
   }

@@ -103,7 +103,7 @@
             </span>
             <form method="post" action="/plugins/{{ item.id }}/reload" data-action-feedback>
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-              <button class="btn btn-small btn-secondary" type="submit">重载</button>
+              <button class="btn btn-small btn-secondary btn-icon" type="submit" title="重载" aria-label="重载"><span class="i i-refresh" aria-hidden="true"></span></button>
             </form>
           </div>
         </td>

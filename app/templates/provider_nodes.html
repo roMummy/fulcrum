@@ -46,7 +46,7 @@
           <td>{{ format_time(node.last_heartbeat_at) if node.last_heartbeat_at else '-' }}</td>
           <td>{{ node.accounts|length }}</td>
           <td>{{ bound_counts.get(node.id, 0) }}</td>
-          <td class="col-action"><a class="btn btn-small" href="/provider-nodes/{{ node.id }}">详情</a></td>
+          <td class="col-action"><a class="btn btn-small btn-icon" href="/provider-nodes/{{ node.id }}" title="详情" aria-label="详情"><span class="i i-chevron-right" aria-hidden="true"></span></a></td>
         </tr>
         {% else %}
         <tr><td colspan="7"><span class="muted-text">当前还没有连接企业微信客户端。</span></td></tr>
@@ -72,8 +72,8 @@
       <label class="full-row"><span>备注</span><textarea name="notes" rows="3" autocomplete="off" placeholder="例如：二楼客服区…"></textarea></label>
       <p class="muted-text full-row" style="margin:0;">创建后会立即生成一次性激活码，仅在成功页面显示一次。</p>
       <div class="full-row form-actions-inline">
-        <button class="btn" type="submit">创建并生成激活码</button>
-        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+        <button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>创建并生成激活码</span></button>
+        <button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button>
       </div>
     </form>
   </div>

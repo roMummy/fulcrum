@@ -4,7 +4,7 @@
 {% block hero_actions %}
 <div class="chip-row">
   {% include '_directory_sync.html' %}
-  <a class="btn btn-secondary" href="/chatrooms/plugin-scopes">群插件批量管理</a>
+  <a class="btn btn-secondary" href="/chatrooms/plugin-scopes"><span class="i i-puzzle" aria-hidden="true"></span><span>群插件批量管理</span></a>
   <span class="chip chip-outline">共 {{ directory.summary.total }} 个群</span>
   <span class="chip chip-success">已启用 {{ directory.summary.enabled }}</span>
   {% if directory.summary.pending %}<span class="chip chip-muted">待启用 {{ directory.summary.pending }}</span>{% endif %}
@@ -33,8 +33,8 @@
       </select>
     </label>
     <div class="compact-filter-actions">
-      <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword or directory.channel_id or directory.status %}<a class="btn btn-secondary" href="/chatrooms">清除</a>{% endif %}
+      <button class="btn btn-icon" type="submit" title="搜索" aria-label="搜索"><span class="i i-search" aria-hidden="true"></span></button>
+      {% if directory.keyword or directory.channel_id or directory.status %}<a class="btn btn-secondary btn-icon" href="/chatrooms" title="清除" aria-label="清除"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}
     </div>
   </form>
 
@@ -65,7 +65,7 @@
             <span class="ui-switch-track"></span>
           </span>
           {% endif %}
-          <a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}">设置</a>
+          <a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}"><span class="i i-settings" aria-hidden="true"></span><span>设置</span></a>
           </div>
         </td>
       </tr>
@@ -76,7 +76,7 @@
   {% include '_pager.html' %}
   {% else %}
   <p class="muted-text">{{ '没有匹配的群。' if directory.keyword or directory.status or directory.channel_id else '还没有群。接入账号并同步后,群会出现在这里。' }}</p>
-  {% if not (directory.keyword or directory.status or directory.channel_id) %}<a class="btn" href="/channels">去接入账号</a>{% endif %}
+  {% if not (directory.keyword or directory.status or directory.channel_id) %}<a class="btn" href="/channels"><span class="i i-plus" aria-hidden="true"></span><span>去接入账号</span></a>{% endif %}
   {% endif %}
 </section>
 
@@ -89,7 +89,7 @@
     <label><span>账号</span><select name="channel_id">{% for item in channels %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
     <label><span>群 ID</span><input name="external_id" placeholder="例如:123456@chatroom" required /></label>
     <label><span>群名称</span><input name="name" placeholder="例如:运营群" /></label>
-    <div class="full-row"><button class="btn" type="submit">登记</button></div>
+    <div class="full-row"><button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>登记</span></button></div>
   </form>
 </details>
 {% endif %}

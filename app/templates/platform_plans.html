@@ -20,7 +20,7 @@
     <label><span>公开展示</span><select name="is_public"><option value="false">否</option><option value="true">是</option></select></label>
     <label><span>推荐套餐</span><select name="is_featured"><option value="false">否</option><option value="true">是</option></select></label>
     <label class="full-row"><span>说明</span><textarea name="description" rows="3"></textarea></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建套餐</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>创建套餐</span></button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
   </form>
   </div>
 </dialog>
@@ -79,7 +79,7 @@
       <label><span>公开展示</span><select name="is_public"><option value="false"{% if not plan.is_public %} selected{% endif %}>否</option><option value="true"{% if plan.is_public %} selected{% endif %}>是</option></select></label>
       <label><span>推荐套餐</span><select name="is_featured"><option value="false"{% if not plan.is_featured %} selected{% endif %}>否</option><option value="true"{% if plan.is_featured %} selected{% endif %}>是</option></select></label>
       <label class="full-row"><span>说明</span><textarea name="description" rows="2">{{ plan.description or '' }}</textarea></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存套餐</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存套餐</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>

@@ -35,7 +35,7 @@
         <option value="overridden"{% if directory.source == 'overridden' %} selected{% endif %}>单独设置</option>
       </select>
     </label>
-    <div class="compact-filter-actions"><button class="btn" type="submit">查看群设置</button>{% if directory.plugin %}<a class="btn btn-secondary" href="/chatrooms/plugin-scopes?plugin_id={{ directory.plugin.id }}">重置筛选</a>{% endif %}</div>
+    <div class="compact-filter-actions"><button class="btn" type="submit"><span class="i i-settings" aria-hidden="true"></span><span>查看群设置</span></button>{% if directory.plugin %}<a class="btn btn-secondary btn-icon" href="/chatrooms/plugin-scopes?plugin_id={{ directory.plugin.id }}" title="重置筛选" aria-label="重置筛选"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}</div>
   </form>
 </section>
 
@@ -49,9 +49,9 @@
     <input type="hidden" name="next" value="{{ pager_base }}&page={{ directory.paging.page }}" />
     <div class="form-actions-inline">
       <button class="btn btn-secondary" type="button" data-select-matching data-room-ids='{{ directory.matching_room_ids|tojson }}'{% if not directory.matching_room_ids or directory.matching_room_ids|length > 1000 %} disabled{% endif %}>全选筛选结果（{% if directory.matching_room_ids|length > 1000 %}超过 1000{% else %}{{ directory.matching_room_ids|length }}{% endif %} 个群）</button>
-      <button class="btn" type="submit" name="mode" value="enabled" data-batch-submit>批量启用</button>
-      <button class="btn btn-secondary" type="submit" name="mode" value="disabled" data-batch-submit>批量禁用</button>
-      <button class="btn btn-secondary" type="button" data-clear-selection>清空选择</button>
+      <button class="btn" type="submit" name="mode" value="enabled" data-batch-submit><span class="i i-check" aria-hidden="true"></span><span>批量启用</span></button>
+      <button class="btn btn-secondary" type="submit" name="mode" value="disabled" data-batch-submit><span class="i i-power" aria-hidden="true"></span><span>批量禁用</span></button>
+      <button class="btn btn-secondary btn-icon" type="button" data-clear-selection title="清空选择" aria-label="清空选择"><span class="i i-x" aria-hidden="true"></span></button>
       <span class="muted-text" data-selection-count aria-live="polite">勾选下方群聊后提交</span>
     </div>
     <span data-cross-page-inputs hidden></span>
@@ -72,7 +72,7 @@
           <td><span class="chip {{ 'chip-success' if item.enabled else 'chip-muted' }}">{{ '已启用' if item.enabled else '已禁用' }}</span><div class="muted-text">{{ '单独设置' if item.source == 'overridden' else '继承默认' }}</div></td>
           <td><span class="chip {{ 'chip-success' if item.group_running else 'chip-muted' }}">{{ item.group_label }}</span>{% if not item.group_running %}<div class="muted-text">本群当前不运行插件</div>{% endif %}</td>
           <td><span class="chip {{ 'chip-success' if item.binding_enabled else 'chip-muted' }}">{{ '已开启' if item.binding_enabled else '已关闭' }}</span>{% if not item.binding_enabled %}<div class="muted-text">群设置保留，插件暂不运行</div>{% endif %}</td>
-          <td><a class="btn btn-small btn-secondary" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}?tab=plugins">详情</a></td>
+          <td><a class="btn btn-small btn-secondary btn-icon" href="/channels/{{ item.channel_id }}/chatrooms/{{ item.id }}?tab=plugins" title="详情" aria-label="详情"><span class="i i-chevron-right" aria-hidden="true"></span></a></td>
         </tr>
       {% endfor %}
       </tbody>
@@ -84,7 +84,7 @@
 {% elif directory.plugin_options %}
 <section class="work-surface"><p class="muted-text">请先选择一个插件并点击「查看群设置」，查看每个群的当前状态，再跨页勾选并批量操作。</p></section>
 {% else %}
-<section class="work-surface"><p class="muted-text">还没有绑定到微信账号的可用插件，请先在插件页面绑定机器人。</p><a class="btn" href="/plugins">去绑定插件</a></section>
+<section class="work-surface"><p class="muted-text">还没有绑定到微信账号的可用插件，请先在插件页面绑定机器人。</p><a class="btn" href="/plugins"><span class="i i-puzzle" aria-hidden="true"></span><span>去绑定插件</span></a></section>
 {% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/js/chatroom-plugin-scopes.js" defer></script>{% endblock %}

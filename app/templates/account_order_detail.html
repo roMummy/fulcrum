@@ -25,11 +25,11 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label class="full-row"><span>交易流水号</span><input name="payment_reference" maxlength="255" required /></label>
     <label class="full-row"><span>付款凭证</span><input name="payment_proof" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" required /></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">提交付款凭证</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-upload" aria-hidden="true"></span><span>提交付款凭证</span></button></div>
   </form>
   <form method="post" action="/account/orders/{{ order.id }}/cancel" data-confirm-mode="confirm" data-confirm-title="取消订单" data-confirm-message="取消后该订单不再进入审核。">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <button class="btn btn-secondary" type="submit">取消订单</button>
+    <button class="btn btn-secondary" type="submit"><span class="i i-x" aria-hidden="true"></span><span>取消订单</span></button>
   </form>
 </section>
 {% elif order.status == 'payment_submitted' %}

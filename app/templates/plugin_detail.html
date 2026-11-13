@@ -88,9 +88,9 @@
         </div>
       </div>
       <footer class="gf-foot">
-        <button class="btn" type="submit">保存</button>
+        <button class="btn" type="submit"><span class="i i-save" aria-hidden="true"></span><span>保存</span></button>
         {# 重载是另一个表单(HTML 不允许表单嵌套),用 form 属性让这个按钮提交它。 #}
-        <button class="btn btn-secondary" type="submit" form="reload-binding-{{ item.id }}">重载</button>
+        <button class="btn btn-secondary btn-icon" type="submit" form="reload-binding-{{ item.id }}" title="重载" aria-label="重载"><span class="i i-refresh" aria-hidden="true"></span></button>
         <button class="btn btn-danger" type="submit" form="unbind-binding-{{ item.id }}">解绑机器人</button>
       </footer>
     </div>
@@ -128,7 +128,7 @@
       {% endwith %}
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">保存绑定</button>
-        <button class="btn btn-ghost" type="button" data-modal-close>取消</button>
+        <button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button>
       </div>
     </form>
   </div>

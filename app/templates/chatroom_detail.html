@@ -68,7 +68,7 @@
     </div>
   </form>
   {% for item in features %}
-  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% if item.key == 'trigger_reply' %}<div class="gf-body"><a class="btn btn-secondary" href="{{ base_url }}/triggers">管理触发规则</a></div>{% endif %}{% endcall %}
+  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% if item.key == 'trigger_reply' %}<div class="gf-body"><a class="btn btn-secondary" href="{{ base_url }}/triggers"><span class="i i-sliders" aria-hidden="true"></span><span>管理触发规则</span></a></div>{% endif %}{% endcall %}
   {% endfor %}
   </div>
 
@@ -126,7 +126,7 @@
         <td>{{ item.display_name }}</td>
         <td>{{ item.role_label }}</td>
         <td>{{ item.status_label }}</td>
-        {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}">调整</a></td>{% endif %}
+        {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}"><span class="i i-sliders" aria-hidden="true"></span><span>调整</span></a></td>{% endif %}
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}{% if item.last_active_label %}<div class="muted-text">{{ item.last_active_label }}</div>{% endif %}</td>
       </tr>
       {% endfor %}

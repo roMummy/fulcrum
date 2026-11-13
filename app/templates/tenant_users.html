@@ -16,7 +16,7 @@
     <label><span>登录手机号</span><input name="mobile" type="tel" inputmode="tel" autocomplete="tel" required /></label>
     <label><span>显示名</span><input name="display_name" required /></label>
     <label><span>角色</span><select name="role"><option value="readonly">只读</option><option value="operator">运营</option><option value="tenant_admin">租户管理员</option></select></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建员工</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建员工</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
   </form>
   </div>
 </dialog>
@@ -72,7 +72,7 @@
       <label><span>显示名</span><input name="display_name" value="{{ user.display_name }}" required /></label>
       <label><span>角色</span><select name="role"><option value="readonly" {% if user.role == 'readonly' %}selected{% endif %}>只读</option><option value="operator" {% if user.role == 'operator' %}selected{% endif %}>运营</option><option value="tenant_admin" {% if user.role == 'tenant_admin' %}selected{% endif %}>租户管理员</option></select></label>
       <label class="gf-row switch-field"><span class="gf-row-label">启用该账号</span><span class="ui-switch"><input name="is_enabled" type="checkbox" value="true" role="switch" {% if user.is_enabled %}checked{% endif %} /><span class="ui-switch-track"></span></span></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存员工</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-save" aria-hidden="true"></span><span>保存员工</span></button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>

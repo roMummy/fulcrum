@@ -73,7 +73,7 @@
       <span aria-hidden="true">&#8250;</span>
     </a>
   </div>
-  <div class="form-actions-inline top-gap"><a class="btn btn-secondary" href="/channels/connect">上一步</a></div>
+  <div class="form-actions-inline top-gap"><a class="btn btn-secondary" href="/channels/connect"><span class="i i-arrow-left" aria-hidden="true"></span><span>上一步</span></a></div>
 </section>
 {% elif stage == 'configure' %}
 <section class="work-surface connection-surface">
@@ -133,8 +133,8 @@
     {% endif %}
     <div class="full-row form-actions-inline">
       <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type in ['wechat_webridge', 'wechat_gugatool'] %}生成接入地址{% else %}验证账号{% endif %}</button>
-      <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}">上一步</a>
-      {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes">连接新客户端</a>{% endif %}
+      <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}"><span class="i i-arrow-left" aria-hidden="true"></span><span>上一步</span></a>
+      {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes"><span class="i i-plus" aria-hidden="true"></span><span>连接新客户端</span></a>{% endif %}
     </div>
   </form>
 </section>
@@ -147,7 +147,7 @@
   <label for="webridge-connection-url"><strong>专属 Agent 地址</strong></label>
   <div class="webridge-connection-address top-gap">
     <textarea id="webridge-connection-url" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="webridge-address-help">{{ guga_url }}</textarea>
-    <button class="btn btn-secondary" type="button" data-copy-address>复制地址</button>
+    <button class="btn btn-secondary btn-icon" type="button" data-copy-address title="复制地址" aria-label="复制地址"><span class="i i-copy" aria-hidden="true"></span></button>
   </div>
   <p id="webridge-copy-status" role="status" aria-live="polite"></p>
   <p class="muted-text" id="webridge-address-help">在手机咕嘎助手设置页把完整地址填入「服务器地址」，连接方式选 HTTP 或 WebSocket，然后打开总开关。地址内含这个账号的专属 Token，请勿用于其他账号。</p>
@@ -168,12 +168,12 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="expected_account_id" value="{{ guga_account.account_id }}" />
       <input type="hidden" name="display_name" value="{{ channel.name }}" />
-      <button class="btn" type="submit">确认信息并接入</button>
+      <button class="btn" type="submit"><span class="i i-check" aria-hidden="true"></span><span>确认信息并接入</span></button>
     </form>
-    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}>进入账号管理</a>
+    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}><span class="i i-chevron-right" aria-hidden="true"></span><span>进入账号管理</span></a>
   </div>
   <p class="muted-text" data-connection-error role="status" aria-live="polite"></p>
-  <a class="btn btn-ghost top-gap" href="/channels">稍后继续</a>
+  <a class="btn btn-ghost top-gap" href="/channels"><span class="i i-clock" aria-hidden="true"></span><span>稍后继续</span></a>
 </section>
 <script src="/static/js/webridge-connect.js" defer></script>
 {% elif stage == 'webridge' and channel %}
@@ -191,7 +191,7 @@
   <label for="webridge-connection-url"><strong>专属接入地址</strong></label>
   <div class="webridge-connection-address top-gap">
     <textarea id="webridge-connection-url" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="webridge-address-help">{{ webridge_url }}</textarea>
-    <button class="btn btn-secondary" type="button" data-copy-address>复制地址</button>
+    <button class="btn btn-secondary btn-icon" type="button" data-copy-address title="复制地址" aria-label="复制地址"><span class="i i-copy" aria-hidden="true"></span></button>
   </div>
   <p id="webridge-copy-status" role="status" aria-live="polite"></p>
   <p class="muted-text" id="webridge-address-help">在手机微桥设置中选择「长轮询」，将完整地址粘贴到「服务端地址」，并打开总开关。手机需要能访问本服务。地址内含专属 Token，请只用于这个账号。</p>
@@ -212,12 +212,12 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="expected_account_id" value="{{ webridge_account.account_id }}" />
       <input type="hidden" name="display_name" value="{{ channel.name }}" />
-      <button class="btn" type="submit">确认信息并接入</button>
+      <button class="btn" type="submit"><span class="i i-check" aria-hidden="true"></span><span>确认信息并接入</span></button>
     </form>
-    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}>进入账号管理</a>
+    <a class="btn top-gap" href="/channels/{{ channel.id }}" data-connection-manage{% if connection.state != 'active' %} hidden{% endif %}><span class="i i-chevron-right" aria-hidden="true"></span><span>进入账号管理</span></a>
   </div>
   <p class="muted-text" data-connection-error role="status" aria-live="polite"></p>
-  <a class="btn btn-ghost top-gap" href="/channels">稍后继续</a>
+  <a class="btn btn-ghost top-gap" href="/channels"><span class="i i-clock" aria-hidden="true"></span><span>稍后继续</span></a>
 </section>
 <script src="/static/js/webridge-connect.js" defer></script>
 {% elif stage == 'progress' and channel %}
@@ -243,16 +243,16 @@
       <p class="muted-text" id="connection-progress-message" aria-live="polite">正在准备安全登录二维码</p>
       <p class="connection-network-label">登录网络：<strong id="connection-network-label">{{ login_network.network_label or '正在分配' }}</strong></p>
       <div class="form-actions-inline connection-login-actions">
-        <button class="btn btn-secondary" type="button" id="connection-ipad-restart">重新开始</button>
-        <a class="btn btn-ghost" href="/channels">稍后处理</a>
+        <button class="btn btn-secondary" type="button" id="connection-ipad-restart"><span class="i i-refresh" aria-hidden="true"></span><span>重新开始</span></button>
+        <a class="btn btn-ghost" href="/channels"><span class="i i-clock" aria-hidden="true"></span><span>稍后处理</span></a>
       </div>
     </div>
     {% else %}
     <p aria-live="polite">{{ connection.message or '正在检查账号连接状态' }}</p>
     <form method="post" action="/channels/{{ channel.id }}/connect/verify" class="form-actions-inline top-gap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <button class="btn" type="submit">重新验证</button>
-      <a class="btn btn-secondary" href="/channels">稍后继续</a>
+      <button class="btn" type="submit"><span class="i i-refresh" aria-hidden="true"></span><span>重新验证</span></button>
+      <a class="btn btn-secondary" href="/channels"><span class="i i-clock" aria-hidden="true"></span><span>稍后继续</span></a>
     </form>
     {% endif %}
     {% if channel.channel_type == 'wechat_ipad' and not is_relogin %}
@@ -277,8 +277,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label class="full-row"><span>显示名称</span><input name="display_name" maxlength="100" value="{{ connection.display_name }}" autocomplete="off" required /></label>
     <div class="full-row form-actions-inline">
-      <button class="btn" type="submit">确认并启用</button>
-      <a class="btn btn-secondary" href="/channels">取消</a>
+      <button class="btn" type="submit"><span class="i i-check" aria-hidden="true"></span><span>确认并启用</span></button>
+      <a class="btn btn-secondary" href="/channels"><span class="i i-x" aria-hidden="true"></span><span>取消</span></a>
     </div>
   </form>
 </section>

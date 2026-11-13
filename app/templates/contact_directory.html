@@ -21,8 +21,8 @@
     </label>
     {% endif %}
     <div class="compact-filter-actions">
-      <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword or directory.channel_id %}<a class="btn btn-secondary" href="/contacts">清除</a>{% endif %}
+      <button class="btn btn-icon" type="submit" title="搜索" aria-label="搜索"><span class="i i-search" aria-hidden="true"></span></button>
+      {% if directory.keyword or directory.channel_id %}<a class="btn btn-secondary btn-icon" href="/contacts" title="清除" aria-label="清除"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}
     </div>
   </form>
 
@@ -38,7 +38,7 @@
         {% if channels|length > 1 %}<td class="muted-text">{{ item.channel_name }}</td>{% endif %}
         <td class="col-compact">{{ item.group_count or '-' }}</td>
         <td class="col-compact">{{ item.points or '-' }}</td>
-        <td class="col-action">{% if item.conversation_id %}<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ item.channel_id }}">聊天记录</a>{% endif %}</td>
+        <td class="col-action">{% if item.conversation_id %}<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ item.channel_id }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

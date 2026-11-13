@@ -16,9 +16,9 @@
         <input id="contact-check-interval" type="number" min="0" max="60" step="0.5" value="1" inputmode="decimal" />
       </label>
       <div class="compact-filter-actions">
-        <button class="btn" id="contact-check-start" type="button" disabled>开始检测</button>
+        <button class="btn" id="contact-check-start" type="button" disabled><span class="i i-play" aria-hidden="true"></span><span>开始检测</span></button>
         <button class="btn btn-secondary" id="contact-check-stop" type="button" disabled>停止检测</button>
-        <button class="btn btn-ghost" id="contact-check-restart" type="button" hidden>重新开始</button>
+        <button class="btn btn-ghost" id="contact-check-restart" type="button" hidden><span class="i i-refresh" aria-hidden="true"></span><span>重新开始</span></button>
       </div>
     </div>
     {% if not can_edit %}<p class="muted-text">当前账号只有查看权限，请联系企业管理员或运营人员发起检测。</p>{% endif %}
@@ -43,7 +43,7 @@
     <div class="contact-check-batch">
       <span class="muted-text" data-selection-count="{{ category }}">已选 0 位</span>
       <button class="btn btn-ghost" type="button" data-select-all="{{ category }}">选择本分类全部</button>
-      <button class="btn btn-ghost" type="button" data-clear-selection="{{ category }}" disabled>清空选择</button>
+      <button class="btn btn-ghost btn-icon" type="button" data-clear-selection="{{ category }}" disabled title="清空选择" aria-label="清空选择"><span class="i i-x" aria-hidden="true"></span></button>
       <div class="contact-check-batch-actions">
         <button class="btn btn-secondary" type="button" data-batch-action="recheck" data-category="{{ category }}" disabled>重新检查</button>
         <button class="btn btn-secondary" type="button" data-batch-action="remark" data-category="{{ category }}" disabled>备注后缀</button>
@@ -60,7 +60,7 @@
     <p class="muted-text" data-result-empty="{{ category }}">暂无结果</p>
     <nav class="list-pagination contact-check-pagination" aria-label="{{ title }}分页" data-pagination="{{ category }}" hidden>
       <div class="list-pagination-summary"><span data-page-summary="{{ category }}"></span><label>每页 <select data-page-size="{{ category }}" aria-label="{{ title }}每页条数"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select> 位</label></div>
-      <div class="list-pagination-actions"><button class="btn btn-secondary" type="button" data-page-prev="{{ category }}">上一页</button><span data-page-label="{{ category }}"></span><button class="btn btn-secondary" type="button" data-page-next="{{ category }}">下一页</button></div>
+      <div class="list-pagination-actions"><button class="btn btn-secondary btn-icon" type="button" data-page-prev="{{ category }}" title="上一页" aria-label="上一页"><span class="i i-chevron-left" aria-hidden="true"></span></button><span data-page-label="{{ category }}"></span><button class="btn btn-secondary btn-icon" type="button" data-page-next="{{ category }}" title="下一页" aria-label="下一页"><span class="i i-chevron-right" aria-hidden="true"></span></button></div>
     </nav>
   </section>
   {% endfor %}
@@ -71,7 +71,7 @@
         <p id="contact-check-remark-count" class="muted-text"></p>
         <label class="compact-filter-field"><span>备注后缀</span><input id="contact-check-remark-suffix" type="text" value="- 单删" required maxlength="255" autocomplete="off" /></label>
         <p class="muted-text contact-check-remark-preview">预览：<span id="contact-check-remark-preview"></span></p>
-        <div class="form-actions-inline"><button class="btn" type="submit">确认添加</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+        <div class="form-actions-inline"><button class="btn" type="submit">确认添加</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
       </form>
     </div>
   </dialog>

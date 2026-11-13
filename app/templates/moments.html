@@ -4,7 +4,7 @@
 {% if channel and can_refresh %}
 <div class="hero-action-cluster">
   <button class="btn btn-secondary" type="button" id="moments-older" data-direction="tail"{% if not summary.has_older %} disabled{% endif %}>加载更早</button>
-  <button class="btn" type="button" id="moments-refresh" data-direction="head">刷新</button>
+  <button class="btn btn-icon" type="button" id="moments-refresh" data-direction="head" title="刷新" aria-label="刷新"><span class="i i-refresh" aria-hidden="true"></span></button>
 </div>
 {% endif %}
 {% endblock %}
@@ -12,7 +12,7 @@
 {% if not channel %}
 <section class="work-surface">
   <div class="wechat-empty">还没有接入个人微信账号。接入后，可以在这里查看账号可见的朋友圈。</div>
-  <p class="muted-text" style="text-align:center;"><a class="btn" href="/channels/connect">去接入账号</a></p>
+  <p class="muted-text" style="text-align:center;"><a class="btn" href="/channels/connect"><span class="i i-plus" aria-hidden="true"></span><span>去接入账号</span></a></p>
 </section>
 {% else %}
 <section class="moments-page" id="moments-page" data-channel-id="{{ channel.id }}" data-has-more="{{ 1 if feed.has_more else 0 }}" data-can-refresh="{{ 1 if can_refresh else 0 }}">

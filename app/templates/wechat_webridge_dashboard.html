@@ -69,19 +69,19 @@
       <input type="search" name="sender" value="{{ dashboard.sender }}" placeholder="发送者昵称或微信 ID" maxlength="100" />
       {% endif %}
       <input type="search" name="keyword" value="{{ dashboard.keyword }}" placeholder="搜索昵称、备注、微信 ID 或内容" maxlength="100" />
-      <button class="btn btn-secondary" type="submit">搜索</button>
-      {% if dashboard.keyword or dashboard.sender or dashboard.conversation_id %}<a class="btn btn-secondary" href="{{ base }}?tab={{ dashboard.tab }}">清除</a>{% endif %}
+      <button class="btn btn-secondary btn-icon" type="submit" title="搜索" aria-label="搜索"><span class="i i-search" aria-hidden="true"></span></button>
+      {% if dashboard.keyword or dashboard.sender or dashboard.conversation_id %}<a class="btn btn-secondary btn-icon" href="{{ base }}?tab={{ dashboard.tab }}" title="清除" aria-label="清除"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}
     </form>
   </div>
 
   {% if dashboard.tab == 'contacts' %}
     {% if dashboard.rows %}<table class="table"><thead><tr><th>好友</th><th>备注</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
-    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.remark or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a>{% else %}<span class="muted-text">暂无会话</span>{% endif %}</td></tr>{% endfor %}
+    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.remark or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a>{% else %}<span class="muted-text">暂无会话</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的好友' if dashboard.keyword else '暂无好友资料，点击右上角“同步好友”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'groups' %}
     {% if dashboard.rows %}<table class="table"><thead><tr><th>群组</th><th>成员数</th><th class="col-time">最近同步</th><th class="col-action">操作</th></tr></thead><tbody>
-    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.member_count or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}">聊天记录</a> {% endif %}<a class="btn btn-small" href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">群详情</a></td></tr>{% endfor %}
+    {% for item in dashboard.rows %}<tr><td>{{ identity(item.identity, 'lg') }}</td><td>{{ item.member_count or '-' }}</td><td class="col-time">{{ item.last_synced_at|bj_time if item.last_synced_at else '-' }}</td><td class="col-action">{% if item.conversation_id %}<a class="btn btn-small" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ channel.id }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a> {% endif %}<a class="btn btn-small" href="/channels/{{ channel.id }}/chatrooms/{{ item.room_id }}">群详情</a></td></tr>{% endfor %}
     </tbody></table>{% else %}<p class="muted-text">{{ '没有匹配的群组' if dashboard.keyword else '暂无群组资料，点击右上角“同步群组”。' }}</p>{% endif %}
 
   {% elif dashboard.tab == 'members' %}
@@ -107,8 +107,8 @@
       {% if pg.has_next %}<a class="btn btn-secondary" href="{{ base }}?tab=messages&page={{ pg.next_page }}{{ qs }}">更早</a>{% endif %}
       {% if pg.has_prev %}<a class="btn btn-secondary" href="{{ base }}?tab=messages&page={{ pg.prev_page }}{{ qs }}">更新</a>{% endif %}
     {% else %}
-      {% if pg.has_prev %}<a class="btn btn-secondary" href="{{ base }}?tab={{ dashboard.tab }}&page={{ pg.prev_page }}{{ qs }}">上一页</a>{% endif %}
-      {% if pg.has_next %}<a class="btn btn-secondary" href="{{ base }}?tab={{ dashboard.tab }}&page={{ pg.next_page }}{{ qs }}">下一页</a>{% endif %}
+      {% if pg.has_prev %}<a class="btn btn-secondary btn-icon" href="{{ base }}?tab={{ dashboard.tab }}&page={{ pg.prev_page }}{{ qs }}" title="上一页" aria-label="上一页"><span class="i i-chevron-left" aria-hidden="true"></span></a>{% endif %}
+      {% if pg.has_next %}<a class="btn btn-secondary btn-icon" href="{{ base }}?tab={{ dashboard.tab }}&page={{ pg.next_page }}{{ qs }}" title="下一页" aria-label="下一页"><span class="i i-chevron-right" aria-hidden="true"></span></a>{% endif %}
     {% endif %}
   </div></div>
   {% endif %}

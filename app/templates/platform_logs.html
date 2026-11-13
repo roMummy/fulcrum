@@ -30,7 +30,7 @@
       <label class="compact-filter-field"><span>日志文件</span><select name="source_file">{% for file_name in available_log_files %}<option value="{{ file_name }}" {% if file_name == source_file %}selected{% endif %}>{{ file_name }}</option>{% endfor %}</select></label>
       <label class="compact-filter-field"><span>级别</span><select name="level"><option value="">全部</option><option value="WARNING" {% if level == 'WARNING' %}selected{% endif %}>警告及以上</option><option value="ERROR" {% if level == 'ERROR' %}selected{% endif %}>仅错误</option></select></label>
       <label class="compact-filter-field compact-filter-field-query"><span>关键字</span><input name="keyword" value="{{ keyword or '' }}" placeholder="群名 / 插件 / 昵称 / 任务号" /></label>
-      <div class="compact-filter-actions"><button class="btn" type="submit">筛选</button><a class="btn btn-secondary" href="/platform/logs?tab={{ active_tab }}">重置</a></div>
+      <div class="compact-filter-actions"><button class="btn btn-icon" type="submit" title="筛选" aria-label="筛选"><span class="i i-filter" aria-hidden="true"></span></button><a class="btn btn-secondary btn-icon" href="/platform/logs?tab={{ active_tab }}" title="重置" aria-label="重置"><span class="i i-x" aria-hidden="true"></span></a></div>
     </form>
   </details>
   <div class="log-tab-row"><a class="log-tab{% if active_tab == 'error' %} is-active{% endif %}" href="{{ error_query }}">Error</a><a class="log-tab{% if active_tab == 'info' %} is-active{% endif %}" href="{{ info_query }}">Info</a></div>

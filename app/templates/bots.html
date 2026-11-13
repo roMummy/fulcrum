@@ -22,8 +22,8 @@
   <form method="post" action="/bots/batch-toggle" id="batch-toggle-bots-form">
     <div class="toolbar">
       <div class="actions">
-        <button class="btn btn-secondary" type="submit" name="action" value="enable">批量启用</button>
-        <button class="btn btn-secondary" type="submit" name="action" value="disable">批量停用</button>
+        <button class="btn btn-secondary" type="submit" name="action" value="enable"><span class="i i-check" aria-hidden="true"></span><span>批量启用</span></button>
+        <button class="btn btn-secondary" type="submit" name="action" value="disable"><span class="i i-power" aria-hidden="true"></span><span>批量停用</span></button>
       </div>
       <p class="muted-text">勾选机器人后执行批量操作。</p>
     </div>
@@ -51,8 +51,8 @@
             <td class="col-count">{{ row.binding_count }}</td>
             <td class="col-bool"><span class="chip {% if row.bot.is_enabled %}chip-success{% else %}chip-muted{% endif %}">{{ '已启用' if row.bot.is_enabled else '已停用' }}</span></td>
             <td class="actions table-actions">
-              <a class="btn btn-small" href="/bots/{{ row.bot.id }}">详情</a>
-              <button class="btn btn-small btn-danger" type="submit" form="delete-bot-{{ row.bot.id }}">删除</button>
+              <a class="btn btn-small btn-icon" href="/bots/{{ row.bot.id }}" title="详情" aria-label="详情"><span class="i i-chevron-right" aria-hidden="true"></span></a>
+              <button class="btn btn-small btn-danger" type="submit" form="delete-bot-{{ row.bot.id }}"><span class="i i-trash" aria-hidden="true"></span><span>删除</span></button>
             </td>
           </tr>
           {% endfor %}

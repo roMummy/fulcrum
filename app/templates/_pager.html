@@ -4,8 +4,8 @@
 <div class="list-pagination">
   <div class="list-pagination-summary">第 {{ p.page }} / {{ p.total_pages }} 页,共 {{ p.total }} 条</div>
   <div class="list-pagination-actions">
-    {% if p.has_prev %}<a class="btn btn-secondary" href="{{ pager_base }}&page={{ p.page - 1 }}">上一页</a>{% endif %}
-    {% if p.has_next %}<a class="btn btn-secondary" href="{{ pager_base }}&page={{ p.page + 1 }}">下一页</a>{% endif %}
+    {% if p.has_prev %}<a class="btn btn-secondary btn-icon" href="{{ pager_base }}&page={{ p.page - 1 }}" title="上一页" aria-label="上一页"><span class="i i-chevron-left" aria-hidden="true"></span></a>{% endif %}
+    {% if p.has_next %}<a class="btn btn-secondary btn-icon" href="{{ pager_base }}&page={{ p.page + 1 }}" title="下一页" aria-label="下一页"><span class="i i-chevron-right" aria-hidden="true"></span></a>{% endif %}
   </div>
 </div>
 {% endif %}

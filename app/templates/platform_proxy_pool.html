@@ -74,7 +74,7 @@
       <label><span>端口</span><input name="port" type="number" min="1" max="65535" inputmode="numeric" required /></label>
       <label><span>用户名</span><input name="username" maxlength="191" autocomplete="off" /></label>
       <label class="full-row"><span>密码</span><input name="password" type="password" maxlength="500" autocomplete="new-password" /></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存代理</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存代理</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>
@@ -88,7 +88,7 @@
     <form method="post" action="/platform/proxy-pool/import" enctype="multipart/form-data" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label class="full-row"><span>CSV 文件</span><input name="csv_file" type="file" accept=".csv,text/csv" required /></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">开始导入</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">开始导入</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>
@@ -111,7 +111,7 @@
       <label><span>端口</span><input name="port" type="number" min="1" max="65535" inputmode="numeric" value="{{ proxy.port }}" required /></label>
       <label><span>用户名</span><input name="username" maxlength="191" autocomplete="off" value="{{ proxy.username }}" /></label>
       <label class="full-row"><span>密码</span><input name="password" type="password" maxlength="500" autocomplete="new-password" placeholder="留空保持当前密码" /></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">保存修改</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-save" aria-hidden="true"></span><span>保存修改</span></button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>

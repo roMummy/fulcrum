@@ -20,6 +20,10 @@
 }
 .btn-icon.btn-small { min-width: 32px; font-size: 15px; }
 .btn-icon .i { margin: 0; }
+/* 忙碌中的图标按钮:图标转圈(只有图标的按钮不换成"处理中…"文字) */
+@keyframes i-spin { to { transform: rotate(360deg); } }
+.btn.is-busy .i { animation: i-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .btn.is-busy .i { animation: none; opacity: 0.55; } }
 
 /* 页头左侧返回按钮:所有二级页面统一放在标题左边,只显示箭头(文字用 aria-label/title 提示)。 */
 .page-back {
@@ -85,3 +89,4 @@
 .i-wallet { --i: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22M3 7a2 2 0 0 1 2-2h13v4%22/%3E%3Cpath d=%22M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2Z%22/%3E%3Ccircle cx=%2216.5%22 cy=%2214.5%22 r=%221%22/%3E%3C/svg%3E"); }
 .i-bot { --i: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Crect x=%224%22 y=%228%22 width=%2216%22 height=%2212%22 rx=%223%22/%3E%3Cpath d=%22M12 8V4M9 13h.01M15 13h.01M9 17h6%22/%3E%3C/svg%3E"); }
 .i-key { --i: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Ccircle cx=%228%22 cy=%2215%22 r=%224%22/%3E%3Cpath d=%22m11 12 9-9M16 7l3 3%22/%3E%3C/svg%3E"); }
+.i-chevron-left { --i: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%221.8%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22m15 6-6 6 6 6%22/%3E%3C/svg%3E"); }

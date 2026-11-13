@@ -5,7 +5,7 @@
 <div class="chip-row">
   <span class="chip chip-outline">{{ directory.summary.accounts }} 个账户</span>
   <span class="chip chip-outline">合计 {{ directory.summary.points }} 积分</span>
-  <a class="btn btn-small btn-secondary" href="/points/ledger{% if directory.group_id %}?group_id={{ directory.group_id|urlencode }}{% endif %}">账单</a>
+  <a class="btn btn-small btn-secondary" href="/points/ledger{% if directory.group_id %}?group_id={{ directory.group_id|urlencode }}{% endif %}"><span class="i i-wallet" aria-hidden="true"></span><span>账单</span></a>
 </div>
 {% endblock %}
 {% block content %}
@@ -18,8 +18,8 @@
     </label>
     <label><span>搜索成员</span><input type="search" name="q" value="{{ directory.keyword }}" placeholder="昵称" /></label>
     <div class="form-actions-inline">
-      <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword %}<a class="btn btn-ghost" href="/points?group_id={{ directory.group_id|urlencode }}">清除</a>{% endif %}
+      <button class="btn btn-icon" type="submit" title="搜索" aria-label="搜索"><span class="i i-search" aria-hidden="true"></span></button>
+      {% if directory.keyword %}<a class="btn btn-ghost btn-icon" href="/points?group_id={{ directory.group_id|urlencode }}" title="清除" aria-label="清除"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}
     </div>
   </form>
 
@@ -40,7 +40,7 @@
             data-name="{{ item.identity.name }}" data-wxid="{{ item.identity.external_id if item.identity.show_id else '' }}"
             data-avatar="{{ item.identity.avatar_url }}" data-initial="{{ item.identity.initial }}"
             data-group-name="{{ item.group.name }}" data-points="{{ item.points }}">调整积分</button>
-          <a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}">账单</a>
+          <a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}"><span class="i i-wallet" aria-hidden="true"></span><span>账单</span></a>
         </td>
       </tr>
       {% endfor %}
@@ -77,7 +77,7 @@
       </div>
       <label class="full-row"><span>积分数量</span><input type="number" name="amount" id="pa-amount" min="1" max="1000000" inputmode="numeric" required placeholder="请输入大于 0 的整数" /></label>
       <label class="full-row"><span>备注(选填,会记在账单里)</span><input name="note" maxlength="200" placeholder="例如:活动奖励" /></label>
-      <div class="full-row form-actions-inline"><button class="btn" type="submit">确认</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      <div class="full-row form-actions-inline"><button class="btn" type="submit">确认</button><button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button></div>
     </form>
   </div>
 </dialog>

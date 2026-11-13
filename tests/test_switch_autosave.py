@@ -230,7 +230,7 @@ def test_group_page_has_one_switch_style_and_save_buttons_only_where_there_are_i
     # 有文本/数字/密钥输入的功能:只有底部一个保存按钮
     for key in ("ai_chat", "red_packet", "inactive_rank", "member_change"):
         card = _card(html, key)
-        assert card.count(">保存</button>") == 1 and "gf-foot" in card and f'data-gf-save-url' in html, key
+        assert card.count("<span>保存</span></button>") == 1 and "gf-foot" in card and f'data-gf-save-url' in html, key
     # 设置区里的开关也是点击即保存
     ai = _card(html, "ai_chat")
     assert 'data-autosave-json=\'{"field":"web_search"}\'' in ai and 'data-autosave-json=\'{"field":"memory_enabled"}\'' in ai

@@ -22,8 +22,8 @@
       </select>
     </label>
     <div class="form-actions-inline">
-      <button class="btn" type="submit">搜索</button>
-      {% if directory.keyword or directory.group_id or directory.source %}<a class="btn btn-ghost" href="/points/ledger">清除</a>{% endif %}
+      <button class="btn btn-icon" type="submit" title="搜索" aria-label="搜索"><span class="i i-search" aria-hidden="true"></span></button>
+      {% if directory.keyword or directory.group_id or directory.source %}<a class="btn btn-ghost btn-icon" href="/points/ledger" title="清除" aria-label="清除"><span class="i i-x" aria-hidden="true"></span></a>{% endif %}
     </div>
   </form>
 

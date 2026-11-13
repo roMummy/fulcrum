@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users">员工管理</a>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/tenant/users"><span class="i i-users" aria-hidden="true"></span><span>员工管理</span></a>{% endblock %}
 {% block content %}
 {% if activation_code %}
 <section class="notice-card"><strong>一次性激活码</strong><p><code>{{ activation_code }}</code></p><p class="muted-text">请复制到 Windows 本地代理连接器。离开本页后不再显示。</p></section>
@@ -10,7 +10,7 @@
   <form method="post" action="/tenant/connectors" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label class="full-row"><span>连接器名称</span><input name="name" maxlength="100" placeholder="办公室 Windows 电脑" required /></label>
-    <div class="full-row form-actions-inline"><button class="btn" type="submit">创建并生成激活码</button></div>
+    <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>创建并生成激活码</span></button></div>
   </form>
 </section>
 

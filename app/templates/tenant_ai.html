@@ -34,7 +34,7 @@
     <label class="full-row"><span>人格设定</span><textarea name="persona" rows="5" maxlength="2000" placeholder="{{ default_persona }}">{{ setting.persona if setting else '' }}</textarea></label>
     {% if can_manage_users %}
     <div class="full-row form-actions-inline">
-      <button class="btn" type="submit" name="action" value="save">保存</button>
+      <button class="btn" type="submit" name="action" value="save"><span class="i i-save" aria-hidden="true"></span><span>保存</span></button>
       <button class="btn btn-secondary" type="submit" name="action" value="test">保存并测试连接</button>
       {% if memory_count is none %}
       <span class="muted-text">长期记忆：记忆服务未配置或暂时连不上</span>

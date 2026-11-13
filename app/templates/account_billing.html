@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block hero_actions %}<a class="btn btn-secondary" href="/account/orders">订单记录</a>{% endblock %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/account/orders"><span class="i i-list" aria-hidden="true"></span><span>订单记录</span></a>{% endblock %}
 {% block content %}
 <section class="work-surface">
   <div class="section-head"><div><h2>当前套餐</h2></div></div>
@@ -28,7 +28,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <input type="hidden" name="plan_id" value="{{ plan.id }}" />
         <label class="full-row"><span>计费周期</span><select name="billing_cycle"><option value="monthly">月付</option><option value="yearly">年付</option></select></label>
-        <div class="full-row form-actions-inline"><button class="btn" type="submit">创建订单</button></div>
+        <div class="full-row form-actions-inline"><button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>创建订单</span></button></div>
       </form>
       {% else %}<p class="muted-text">仅企业管理员可以创建订单。</p>{% endif %}
     </article>
