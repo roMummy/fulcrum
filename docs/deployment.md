@@ -7,7 +7,7 @@
 
 ## Overview
 
-Fulcrum 对外提供营销、注册、试用、人工付款和通用机器人额度，部分历史部署标识（Docker 容器名、数据库名、数据卷名）沿用 `multi-bot-saas` / `multi_bot_saas`。支持两种部署模式：
+Fulcrum 支持两种部署模式：
 
 - Local process deployment with Python virtualenv
 - Container deployment with Docker Compose

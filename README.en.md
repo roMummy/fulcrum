@@ -7,9 +7,10 @@
 [![CI](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml/badge.svg)](https://github.com/liu-x-x-lab/fulcrum/actions/workflows/ci.yml)
 [![Contributors](https://img.shields.io/github/contributors/liu-x-x-lab/fulcrum)](https://github.com/liu-x-x-lab/fulcrum/graphs/contributors)
 
-Fulcrum is a multi-tenant SaaS for operating chat bots across channels from a single back office:
-WeChat, WeCom (WeChat Work), Telegram and more. It handles tenants, teams, bot quotas, a plugin runtime,
-group management, a message center and an Open API/Webhook gateway for your own business systems.
+Fulcrum is an open-source, multi-tenant bot operations platform. One back office connects WeChat, WeCom
+(WeChat Work), Telegram and more, so a team can run many bot accounts and groups and extend them with plugins and
+APIs. It handles tenants, teams, bot quotas, a plugin runtime, group management, a message center and an
+Open API/Webhook gateway for your own business systems.
 
 > **Fulcrum itself is free and open source ([Apache-2.0](LICENSE))** — use, modify and run it commercially at no
 > cost; there is no license fee or subscription. The "plans / trials / payment orders" mentioned below are a built-in
