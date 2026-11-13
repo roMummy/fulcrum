@@ -4,7 +4,7 @@ import asyncio
 import os
 import time
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
@@ -42,6 +42,20 @@ logger = get_logger(__name__)
 # 长轮询挂起时长需小于手机插件的 HTTP 超时；队列检查间隔决定新命令的最大下发延迟。
 POLL_HOLD_SECONDS = 15
 POLL_CHECK_INTERVAL_SECONDS = 1
+
+
+@router.websocket("/{channel_id}/{connection_token}/ws")
+async def websocket_agent(websocket: WebSocket, channel_id: int, connection_token: str):
+    # 插件没有 Authorization/hello.token；使用完整路径里的渠道专属凭据。
+    try:
+        await run_in_threadpool(_require_device_token, channel_id, connection_token)
+        tenant_id, _ = await run_in_threadpool(_channel_tenant, channel_id)
+    except HTTPException:
+        await websocket.close(code=1008, reason="invalid_connection_address")
+        return
+    from app.services.wechat_webridge.ws import serve
+
+    await serve(websocket, channel_id=channel_id, tenant_id=tenant_id, connection_token=connection_token)
 
 
 def _payload_summary(payload: dict) -> dict[str, object]:
@@ -317,7 +331,7 @@ async def moments_upload(channel_id: int, media_id: int, request: Request):
 
 @router.post("/{channel_id}/commands")
 async def enqueue_generic_command(channel_id: int, request: Request):
-    """供已登录租户操作员提交 WeBridge 全量命令；手机侧仍只通过 poll 收取。"""
+    """供已登录租户操作员提交 WeBridge 命令，由当前手机连接领取。"""
 
     user = getattr(request.state, "current_user", None)
     if user is None or not has_tenant_role(user, "operator"):

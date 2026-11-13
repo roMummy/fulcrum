@@ -37,6 +37,16 @@ def connection_url(channel: Channel) -> str:
     return f"{base}/{token}" if base and token else ""
 
 
+def websocket_url(channel: Channel) -> str:
+    """WS 端点不用 /agent 后缀，避免被插件的地址规范化规则剥掉。"""
+
+    address = connection_url(channel)
+    if not address:
+        return ""
+    parsed = urlsplit(address)
+    return parsed._replace(scheme="wss" if parsed.scheme == "https" else "ws", path=parsed.path + "/ws").geturl()
+
+
 def verify_connection_token(channel: Channel, token: str) -> bool:
     expected = _connection_token(channel)
     return bool(expected and token and hmac.compare_digest(expected.encode("utf-8"), token.encode("utf-8")))

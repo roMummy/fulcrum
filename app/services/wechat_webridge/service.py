@@ -966,7 +966,9 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             return _complete_payment_command(db, channel, job, data, payload, result)
         if text(as_object(data.get("command")).get("type")) in {"moments_list", "moments_operation"}:
             return _complete_moments_command(db, channel, job, data, payload, result)
-        if bool(payload.get("ok")) or bool(result.get("ok")):
+        # 8080 外层 ok 是执行结果；明确失败不能被业务诊断中的 ok 覆盖。
+        succeeded = bool(payload["ok"]) if "ok" in payload else bool(result.get("ok"))
+        if succeeded:
             command = as_object(data.get("command"))
             command_type = text(command.get("type") or command.get("command_name"))
             from app.services.wechat_webridge import group_sync

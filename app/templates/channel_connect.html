@@ -45,7 +45,7 @@
     </a>
     <a class="connection-choice" href="/channels/connect?channel_type=wechat_webridge">
       <span class="connection-choice-mark">桥</span>
-      <span><strong>微桥 WeBridge</strong><small>通过手机长轮询接入个人微信并管理好友、群组和消息</small></span>
+      <span><strong>微桥 WeBridge</strong><small>通过手机长轮询或 WebSocket 接入个人微信并管理好友、群组和消息</small></span>
       <span aria-hidden="true">&#8250;</span>
     </a>
   </div>
@@ -68,7 +68,7 @@
     </a>
     <a class="connection-choice" href="/channels/connect?channel_type=wechat_webridge">
       <span class="connection-choice-mark">桥</span>
-      <span><strong>微桥 WeBridge</strong><small>服务端长轮询，适合手机微信渠道</small></span>
+      <span><strong>微桥 WeBridge</strong><small>服务端长轮询或 WebSocket，适合手机微信渠道</small></span>
       <span aria-hidden="true">&#8250;</span>
     </a>
   </div>
@@ -128,10 +128,10 @@
     {% elif requested_type == 'wechat_gugatool' %}
     <p class="muted-text full-row">保存后会生成这个账号专属的 Agent 地址。把地址填到手机咕嘎助手的「服务器地址」，连接方式可选 HTTP 长轮询或 WebSocket；手机注册后在这里核对微信账号并确认接入。</p>
     {% elif requested_type == 'wechat_webridge' %}
-    <p class="muted-text full-row">下一步自动生成专属长轮询地址，复制到手机微桥插件后，在这里核对微信账号并确认接入。</p>
+    <p class="muted-text full-row">下一步自动生成专属接入地址，可选长轮询或 WebSocket。复制到手机微桥插件后，在这里核对微信账号并确认接入。</p>
     {% endif %}
     <div class="full-row form-actions-inline">
-      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type == 'wechat_webridge' %}生成长轮询地址{% elif requested_type == 'wechat_gugatool' %}生成接入地址{% else %}验证账号{% endif %}</button>
+      <button class="btn" type="submit">{% if requested_type == 'wechat_ipad' %}开始登录{% elif requested_type in ['wechat_webridge', 'wechat_gugatool'] %}生成接入地址{% else %}验证账号{% endif %}</button>
       <a class="btn btn-secondary" href="{% if requested_type in ['wechat_ipad', 'wechat_winauto'] %}/channels/connect?platform=wechat{% else %}/channels/connect{% endif %}">上一步</a>
       {% if requested_type == 'workwechat' %}<a class="btn btn-ghost" href="/provider-nodes">连接新客户端</a>{% endif %}
     </div>
@@ -181,13 +181,20 @@
     <div><h2>连接微桥 WeBridge</h2><p>复制地址 → 手机连接 → 核对并确认</p></div>
     <span class="chip{% if connection.state == 'active' %} chip-success{% else %} chip-muted{% endif %}" data-connection-state>{{ connection.label }}</span>
   </div>
-  <label for="webridge-connection-url"><strong>专属长轮询地址</strong></label>
+  <label for="webridge-transport"><strong>通信模式</strong></label>
+  <select id="webridge-transport" class="top-gap" data-webridge-transport>
+    <option value="poll" data-address="{{ webridge_url }}">长轮询</option>
+    <option value="ws" data-address="{{ webridge_ws_url }}">WebSocket</option>
+  </select>
+  <p class="muted-text">请与手机插件选择的模式保持一致，同一时刻只使用一种模式。</p>
+  <label for="webridge-connection-url"><strong>专属接入地址</strong></label>
   <div class="webridge-connection-address top-gap">
     <textarea id="webridge-connection-url" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="webridge-address-help">{{ webridge_url }}</textarea>
     <button class="btn btn-secondary" type="button" data-copy-address>复制地址</button>
   </div>
   <p id="webridge-copy-status" role="status" aria-live="polite"></p>
   <p class="muted-text" id="webridge-address-help">在手机微桥设置中选择「长轮询」，将完整地址粘贴到「服务端地址」，并打开总开关。手机需要能访问本服务。地址内含专属 Token，请只用于这个账号。</p>
+  <noscript><p>WebSocket 地址：<code>{{ webridge_ws_url }}</code>，请填入手机插件的「WebSocket 服务端地址」。</p></noscript>
   <p class="notice-card top-gap" data-connection-waiting{% if webridge_account.account_id %} hidden{% endif %} role="status">等待手机连接，连接后会自动显示微信账号信息。</p>
   <div class="top-gap" data-connection-account{% if not webridge_account.account_id %} hidden{% endif %}>
     <div class="webridge-account-heading">

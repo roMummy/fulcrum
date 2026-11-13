@@ -3,6 +3,16 @@
   if (!panel) return;
   const address = document.getElementById("webridge-connection-url");
   const copyStatus = document.getElementById("webridge-copy-status");
+  const transport = panel.querySelector("[data-webridge-transport]");
+  if (transport) {
+    transport.addEventListener("change", () => {
+      address.value = transport.selectedOptions[0].dataset.address;
+      copyStatus.textContent = "";
+      document.getElementById("webridge-address-help").textContent = transport.value === "ws"
+        ? "在手机微桥设置中选择「WebSocket」，将完整地址粘贴到「WebSocket 服务端地址」，并打开总开关。请保留 /ws 路径，不要追加 /agent 或查询参数。地址内含专属 Token，请只用于这个账号。"
+        : "在手机微桥设置中选择「长轮询」，将完整地址粘贴到「服务端地址」，并打开总开关。手机需要能访问本服务。地址内含专属 Token，请只用于这个账号。";
+    });
+  }
   panel.querySelector("[data-copy-address]").addEventListener("click", async () => {
     try {
       if (navigator.clipboard && window.isSecureContext) {

@@ -16,7 +16,7 @@ class WechatWeBridgeAccountConnector:
     def verify(self, db: Session, channel: Channel) -> AccountConnectionResult:
         snapshot = _runtime(channel).get("webridge")
         if not isinstance(snapshot, dict) or not snapshot.get("device_id") or not snapshot.get("account_id"):
-            return AccountConnectionResult.connecting("等待手机连接，请将长轮询地址复制到微桥插件", next_action="configure")
+            return AccountConnectionResult.connecting("等待手机连接，请将所选通信模式的地址复制到微桥插件", next_action="configure")
         profile = _runtime(channel).get("account_profile")
         profile = profile if isinstance(profile, dict) else {}
         identity = VerifiedAccountIdentity(

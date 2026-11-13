@@ -99,6 +99,7 @@ tests/test_tenant_security_matrix.py
 tests/test_tenant_web_isolation.py
 tests/test_webridge_account_profile.py
 tests/test_webridge_connection_flow.py
+tests/test_webridge_websocket.py
 tests/test_webridge_group_health.py
 tests/test_webridge_group_left_pages.py
 tests/test_webridge_group_sync.py

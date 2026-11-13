@@ -109,7 +109,7 @@ def test_generates_stable_private_address_and_copy_control(bridge_context):
     assert page.status_code == 200
     assert 'name="api_base"' not in page.text
     assert 'name="adapter_config_json"' not in page.text
-    assert "生成长轮询地址" in page.text
+    assert "生成接入地址" in page.text
     channel_id, address = _start(bridge_context)
     with ids["factory"]() as db:
         channel = db.get(Channel, channel_id)

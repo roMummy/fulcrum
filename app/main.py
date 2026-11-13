@@ -177,7 +177,7 @@ from app.services.wechat_webridge.dashboard import build_webridge_dashboard, bui
 from app.services.identity_directory import IdentityDirectory
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
-from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, initialize_connection as initialize_webridge_connection
+from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, websocket_url as webridge_websocket_url, initialize_connection as initialize_webridge_connection
 from app.services.guga_agent.access import account_info as guga_account_info, connection_url as guga_connection_url, initialize_connection as initialize_guga_connection
 from app.services.outbound_files import build_public_base_url
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
@@ -1910,6 +1910,7 @@ async def channel_connect_page(request: Request):
             channel=channel,
             connection=connection,
             webridge_url=webridge_connection_url(channel) if channel and channel.channel_type == "wechat_webridge" else "",
+            webridge_ws_url=webridge_websocket_url(channel) if channel and channel.channel_type == "wechat_webridge" else "",
             webridge_account=webridge_account_info(channel) if channel and channel.channel_type == "wechat_webridge" else {},
             guga_url=guga_connection_url(channel) if channel and channel.channel_type == "wechat_gugatool" else "",
             guga_account=guga_account_info(channel) if channel and channel.channel_type == "wechat_gugatool" else {},
