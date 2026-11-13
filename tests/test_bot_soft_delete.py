@@ -120,7 +120,7 @@ def test_deleted_bots_disappear_from_lists_plugins_and_messages(pages) -> None:
     bots = client.get("/bots").text
     assert "在用机器人XYZ" in bots and "已删机器人XYZ" not in bots
     plugins = client.get("/plugins").text
-    assert "在用机器人XYZ" in plugins and "已删机器人XYZ" not in plugins
+    assert "已删机器人XYZ" not in plugins  # 插件页不再列出机器人(启停在插件详情页),已删除的机器人当然也不会出现
     runtime = client.get("/plugins/runtime").text
     assert "已删机器人XYZ" not in runtime
     messages = client.get("/messages").text

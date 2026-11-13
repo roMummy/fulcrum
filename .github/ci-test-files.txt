@@ -155,3 +155,4 @@ tests/test_plugin_catalog_performance.py
 tests/test_webridge_all_mention_permission.py
 tests/test_webridge_message_echo.py
 tests/test_page_navigation.py
+tests/test_message_kinds.py

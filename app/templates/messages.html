@@ -1,7 +1,13 @@
 {% extends 'base.html' %}
 {% from '_message_rows.html' import message_rows %}
 {% block hero_actions %}
-{% if selected_total is not none %}<div class="hero-action-cluster"><span class="chip chip-outline">消息 {{ selected_total }}</span></div>{% endif %}
+<div class="hero-action-cluster">
+  {# 会话类型切换:全部 / 群聊 / 私聊 / 公众号。公众号单独成类,不再混在私聊里。 #}
+  <nav class="msg-kind-tabs" aria-label="会话类型">
+    {% for tab in kind_tabs %}<a class="msg-kind-tab{% if tab.active %} active{% endif %}" href="{{ tab.href }}"{% if tab.active %} aria-current="page"{% endif %} title="{{ tab.label }}"><span class="i i-{{ tab.icon }}" aria-hidden="true"></span><span>{{ tab.label }}</span></a>{% endfor %}
+  </nav>
+  {% if selected_total is not none %}<span class="chip chip-outline">消息 {{ selected_total }}</span>{% endif %}
+</div>
 {% endblock %}
 {% block content %}
 {# 整页撑满窗口高度:左侧会话列表、右侧对话各自在内部滚动(高度由 messages.js 按窗口计算,样式里有兜底值)。 #}
@@ -12,7 +18,7 @@
       <span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span>
       <span class="wechat-conversation-copy">
         <span class="wechat-conversation-head">
-          <strong class="wechat-conversation-name">{{ item.display_name }}</strong>
+          <strong class="wechat-conversation-name">{% if item.kind == 'official' %}<span class="i i-newspaper msg-kind-badge" title="公众号" aria-label="公众号"></span>{% endif %}{{ item.display_name }}</strong>
           <time class="wechat-conversation-time">{{ item.latest.created_at|bj_time if item.latest and item.latest.created_at else '-' }}</time>
         </span>
         <span class="wechat-conversation-preview">{{ ('你撤回了一条消息' if item.latest.status == 'revoked' else item.latest.content|message_display(item.latest.message_type)) if item.latest else '暂无消息' }}</span>
@@ -27,7 +33,7 @@
     {% if selected.item %}
     <header class="wechat-thread-head">
       <h2>{{ selected.item.display_name }}</h2>
-      <p class="muted-text">{{ '群聊' if selected.item.conversation.chat_type == 'group' else '私聊' }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p>
+      <p class="muted-text">{{ kind_labels[selected.item.kind] }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p>
     </header>
     {% endif %}
 

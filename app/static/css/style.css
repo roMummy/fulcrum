@@ -7927,3 +7927,50 @@ textarea.tr-input {
     flex: 1 1 45%;
   }
 }
+
+/* ---- 消息中心:会话类型切换(全部 / 群聊 / 私聊 / 公众号)与公众号标识 ---- */
+.msg-kind-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-muted);
+  border-radius: 12px;
+}
+
+.msg-kind-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 11px;
+  color: var(--text-soft);
+  border-radius: 9px;
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.msg-kind-tab:hover {
+  color: var(--primary-strong);
+}
+
+.msg-kind-tab.active {
+  color: var(--primary-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-weight: 600;
+}
+
+/* 窄屏只留图标,文字用 title 提示 */
+@media (max-width: 720px) {
+  .msg-kind-tab span:not(.i) {
+    display: none;
+  }
+}
+
+.msg-kind-badge {
+  margin-right: 4px;
+  color: var(--warning);
+  font-size: 13px;
+  vertical-align: -0.15em;
+}

@@ -96,6 +96,7 @@ from app.services.group_features.registry import get_feature as get_group_featur
 from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form, toggle_flag as toggle_group_feature_flag
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
 from app.services.plugin_governance import blocked_plugin_codes, tenant_visible_plugins
+from app.services.conversation_kinds import KIND_LABELS, apply_kind_filter, conversation_kind, normalize_kind
 from app.services.plugin_schemas import (
     build_plugin_config_view,
     deep_merge_config,
@@ -5204,9 +5205,8 @@ async def revoke_manual_message(request: Request, conversation_id: int = Form(..
 def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id: int = 0, chat_type: str = "") -> list[dict[str, Any]]:
     """整页和自动刷新共用会话筛选、身份解析及摘要。"""
 
-    normalized_chat_type = chat_type.strip().lower()
-    if normalized_chat_type not in {"group", "direct"}:
-        normalized_chat_type = ""
+    # 会话类型三分:群聊 / 私聊 / 公众号(公众号不再混在私聊里),判断规则见 conversation_kinds
+    normalized_chat_type = normalize_kind(chat_type)
 
     # 已删除的账号/机器人(逻辑删除)的会话不再出现在列表里,聊天数据本身保留。
     conversations_stmt = select(Conversation).where(
@@ -5217,8 +5217,7 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
         conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
     if channel_id:
         conversations_stmt = conversations_stmt.where(Conversation.channel_id == channel_id)
-    if normalized_chat_type:
-        conversations_stmt = conversations_stmt.where(Conversation.chat_type == normalized_chat_type)
+    conversations_stmt = apply_kind_filter(conversations_stmt, normalized_chat_type)
     conversations = db.scalars(
         conversations_stmt.order_by(
             Conversation.last_message_at.is_(None),
@@ -5246,9 +5245,23 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
                 "display_name": display_name,
                 "initial": display_name[:1].upper(),
                 "identity": identity,
+                "kind": conversation_kind(item.chat_type, item.external_id),
             }
         )
     return conversation_summaries
+
+
+def _message_kind_tabs(*, bot_id: int, channel_id: int, current: str) -> list[dict[str, Any]]:
+    """消息页顶部的类型切换:全部 / 群聊 / 私聊 / 公众号。切换时保留当前的机器人、账号筛选。"""
+
+    tabs = []
+    for value, icon in (("", "grid"), ("group", "users"), ("direct", "message"), ("official", "newspaper")):
+        query = {key: val for key, val in (("bot_id", bot_id), ("channel_id", channel_id), ("chat_type", value)) if val}
+        tabs.append({
+            "value": value, "label": KIND_LABELS.get(value, "全部"), "icon": icon,
+            "href": "/messages" + (("?" + urlencode(query)) if query else ""), "active": value == current,
+        })
+    return tabs
 
 
 @app.get("/messages/conversations")
@@ -5265,6 +5278,7 @@ async def message_conversations(request: Request, bot_id: int = 0, channel_id: i
                 "preview": ("你撤回了一条消息" if latest.status == "revoked" else message_view.preview(latest.content, latest.message_type, limit=80)) if latest else "暂无消息",
                 "time": format_beijing_time(latest.created_at) if latest and latest.created_at else "-",
                 "avatar_url": row["identity"].get("avatar_url") or "", "initial": row["initial"],
+                "kind": row["kind"],
             })
         return JSONResponse({"ok": True, "conversations": items})
     finally:
@@ -5311,7 +5325,10 @@ async def messages_page(
             selected_chatroom=selected_chatroom,
             bot_id=bot_id,
             channel_id=channel_id,
-            chat_type=chat_type.strip().lower() if chat_type.strip().lower() in {"group", "direct"} else "",
+            chat_type=normalize_kind(chat_type),
+            kind_labels=KIND_LABELS,
+            kind_tabs=_message_kind_tabs(bot_id=bot_id, channel_id=channel_id, current=normalize_kind(chat_type)),
+            selected_kind=selected_summary["kind"] if selected_summary else "",
         )
     finally:
         db.close()

@@ -49,7 +49,16 @@
         query.set("conversation_id", id);
         link.href = "/messages?" + query.toString();
         link.classList.toggle("active", id === conversationId);
-        link.querySelector(".wechat-conversation-name").textContent = item.display_name;
+        var nameEl = link.querySelector(".wechat-conversation-name");
+        nameEl.textContent = item.display_name;
+        if (item.kind === "official") {
+          // 公众号在名称前带一个小图标,和服务端渲染的列表一致
+          var badge = document.createElement("span");
+          badge.className = "i i-newspaper msg-kind-badge";
+          badge.title = "公众号";
+          badge.setAttribute("aria-label", "公众号");
+          nameEl.prepend(badge);
+        }
         link.querySelector(".wechat-conversation-time").textContent = item.time || "-";
         link.querySelector(".wechat-conversation-preview").textContent = item.preview;
         var avatar = link.querySelector(".wechat-avatar");
