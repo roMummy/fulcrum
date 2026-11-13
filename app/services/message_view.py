@@ -90,6 +90,28 @@ def strip_sender(content: str) -> str:
     return _SENDER_PREFIX.sub("", content.strip(), count=1)
 
 
+def recall_info(content: object) -> dict[str, Any] | None:
+    """只识别顶层撤回通知，避免把引用内容或普通系统模板当成撤回事件。"""
+
+    root = _xml(strip_sender(str(content or "")))
+    if root is None or root.tag != "sysmsg":
+        return None
+    kind = str(root.get("type") or "").lower()
+    if kind not in {"revokemsg", "revokemsgcontent"}:
+        return None
+    node = root.find(kind)
+    if node is None:
+        return None
+    # 新微桥只给服务器编号，旧协议还会给本地 msgid；都按字符串保留，不能转浮点数。
+    identifiers = list(dict.fromkeys(value for value in (
+        _find(node, "reEditReferMsgSvrId"), _find(node, "newmsgid"), _find(node, "msgid"),
+    ) if value and value != "0"))
+    notification = _find(node, "replacemsg") or _find(node, "stringContent") or _find(node, "text")
+    # reEditStringContent 是被撤回的原文，只能用通知文字，不能把原文重新展示出来。
+    shown = _text(_TAG.sub(" ", html.unescape(notification)))
+    return {"message_ids": identifiers, "session": _find(node, "session"), "text": shown or "一条消息已被撤回"}
+
+
 def _quote(root: ElementTree.Element) -> dict[str, Any]:
     refer_type = _int(_find(root, ".//refermsg/type"))
     refer_text = _find(root, ".//refermsg/content")
@@ -137,6 +159,10 @@ def describe(content: object, message_type: object = "text") -> dict[str, Any]:
     kind_hint = str(message_type or "text").strip().lower()
     body = strip_sender(raw)
     root = _xml(body)
+
+    recalled = recall_info(raw)
+    if recalled is not None:
+        return {"kind": "system", "text": recalled["text"], "raw": raw[:2000]}
 
     if kind_hint in MEDIA_LABELS and kind_hint != "file":
         return _media_view(kind_hint, root)

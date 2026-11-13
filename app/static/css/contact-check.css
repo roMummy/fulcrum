@@ -1,0 +1,46 @@
+.contact-check-controls { align-items: flex-end; }
+.contact-check-interval { flex: 0 0 145px; }
+.contact-check-progress { margin-top: 20px; }
+.contact-check-progress-heading, .contact-check-result-heading {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+}
+.contact-check-progress-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.contact-check-progress progress { display: block; width: 100%; height: 12px; margin: 12px 0; accent-color: var(--primary); border-radius: 12px; overflow: hidden; }
+.contact-check-progress progress::-webkit-progress-bar { background: var(--surface-soft, #edf0f4); border-radius: 12px; }
+.contact-check-progress progress::-webkit-progress-value { background: var(--primary); border-radius: 12px; transition: width .2s; }
+.contact-check-timing { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 13px; }
+.contact-check-result-heading h2 { margin: 0; }
+.contact-check-batch { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }
+.contact-check-batch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.contact-check-batch .btn, .contact-check-row-actions .btn { padding: 6px 9px; font-size: 13px; min-height: 34px; }
+.contact-check-table { table-layout: fixed; min-width: 760px; }
+.contact-check-table-actions { min-width: 1120px; }
+.contact-check-table th, .contact-check-table td { white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
+.contact-check-table .contact-check-name-col { width: 23%; }
+.contact-check-table-actions .contact-check-name-col { width: 19%; }
+.contact-check-table .contact-check-select-col { width: 42px; }
+.contact-check-table .contact-check-actions-col { width: 264px; }
+.contact-check-table-actions th:nth-child(5) { width: 86px; }
+.contact-check-table input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer; }
+.contact-check-row-actions { display: flex; align-items: center; gap: 4px; }
+.contact-check-row-actions .btn { white-space: nowrap; flex: 0 0 auto; }
+.contact-check-row-note { display: block; margin-top: 6px; font-size: 12px; }
+.contact-check-changed { color: var(--primary); }
+.contact-check-removed td { color: var(--muted, #6b7280); }
+.contact-check-pagination { margin-top: 16px; }
+.contact-check-pagination .list-pagination-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.contact-check-pagination label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.contact-check-pagination label .ui-select { width: 76px; flex: 0 0 76px; }
+.contact-check-pagination select { width: 76px; padding: 6px 10px; min-height: 34px; }
+.contact-check-action-status { overflow-wrap: anywhere; margin-bottom: 8px; }
+.contact-check-remark-modal { width: min(460px, calc(100vw - 32px)); }
+.contact-check-remark-preview { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .contact-check-controls > .compact-filter-field { flex: 1 1 100%; }
+  .contact-check-controls .compact-filter-actions { width: 100%; flex-wrap: wrap; }
+  .contact-check-controls .compact-filter-actions .btn { flex: 1 1 auto; }
+  .contact-check-batch-actions { width: 100%; margin-left: 0; }
+  .contact-check-batch-actions .btn { flex: 1; }
+  .contact-check-pagination .list-pagination-actions { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) { .contact-check-progress progress::-webkit-progress-value { transition: none; } }

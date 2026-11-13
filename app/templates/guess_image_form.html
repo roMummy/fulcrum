@@ -13,6 +13,6 @@
 <label>授权说明<input type="text" name="license" value="{{ draft.get('license', '') }}" maxlength="500" placeholder="许可名称、授权依据或使用范围" /></label>
 <label>状态<select name="status">{% for value, label in [('draft','草稿'),('enabled','启用'),('disabled','停用')] %}<option value="{{ value }}" {% if draft.get('status', 'draft') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><small>启用需要填写来源和授权说明。</small></label>
 <div class="gi-actions"><button class="btn" type="submit">保存题目</button><a class="btn btn-secondary" href="{{ base }}">取消</a></div></form>
-{% if question %}<details class="gi-import"><summary>删除题目</summary><p>此操作删除题目记录。进行中的游戏继续使用开局时的题目快照，原图片保留。</p><form action="{{ base }}/questions/{{ question.question_id }}/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">确认删除这道题</button></form></details>{% endif %}
+{% if question %}<details class="gi-import disclosure"><summary>删除题目</summary><p>此操作删除题目记录。进行中的游戏继续使用开局时的题目快照，原图片保留。</p><form action="{{ base }}/questions/{{ question.question_id }}/delete" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-secondary" type="submit">确认删除这道题</button></form></details>{% endif %}
 </section>
 {% endblock %}

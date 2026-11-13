@@ -100,6 +100,8 @@ Windows:
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8280
 ```
 
+Windows 完成上述 `.venv` 安装后，也可以双击根目录的 `run-silent.vbs` 静默启动，不显示命令行窗口。日志保存在 `.run/uvicorn-silent.log`；8280 端口已有服务时不会重复启动。
+
 开发模式可加 `--reload`。
 
 访问：

@@ -94,7 +94,7 @@
       </footer>
     </div>
   </form>
-  <form id="reload-binding-{{ item.id }}" method="post" action="/plugins/{{ item.id }}/reload" hidden>
+  <form id="reload-binding-{{ item.id }}" method="post" action="/plugins/{{ item.id }}/reload" hidden data-action-feedback>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <input type="hidden" name="next" value="/plugins/{{ plugin.id }}" />
   </form>

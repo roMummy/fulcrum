@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from app.services.plugin_directory import (
     DiscoveredPlugin,
     discover_plugins,
     get_discovered_plugin,
-    load_directory_plugin,
+    load_discovered_plugin,
 )
 from app.services.plugin_runtime.contracts import PluginExecutor
 from app.services.plugin_runtime.executors import DirectoryRuntimeExecutor
@@ -86,6 +86,19 @@ def get_plugin_schema(plugin_code: str | None) -> PluginConfigSchema | None:
 
 def get_plugin_runtime_meta(plugin_code: str | None) -> Mapping[str, Any]:
     discovered = get_discovered_plugin(plugin_code)
+    return _build_plugin_runtime_meta(plugin_code, discovered)
+
+
+def get_plugin_runtime_meta_map(plugin_codes: Iterable[str]) -> dict[str, Mapping[str, Any]]:
+    # 一次目录扫描服务整批插件；每次调用仍检查文件变化，不引入跨请求的过期缓存。
+    discovered_map = {item.manifest.code: item for item in discover_plugins()}
+    return {
+        code: _build_plugin_runtime_meta(code, discovered_map.get(code.strip()))
+        for code in plugin_codes
+    }
+
+
+def _build_plugin_runtime_meta(plugin_code: str | None, discovered: DiscoveredPlugin | None) -> Mapping[str, Any]:
     definition = _build_runtime_definition(discovered) if discovered else None
     if not discovered:
         return {
@@ -175,7 +188,7 @@ def _supports_runtime_execution(discovered: DiscoveredPlugin) -> bool:
     if not discovered.is_valid:
         return False
     try:
-        loaded = load_directory_plugin(discovered.manifest.code)
+        loaded = load_discovered_plugin(discovered)
     except Exception:
         # 模块导入错误属于插件本身无可执行入口，运行定义必须标记 invalid，
         # 不能让插件管理页面因为单个目录损坏而整体返回 500。

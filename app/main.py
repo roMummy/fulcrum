@@ -1,3 +1,5 @@
+import re
+import base64
 import json
 import subprocess
 import time as time_module
@@ -5,15 +7,15 @@ import xml.etree.ElementTree as ElementTree
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request, File, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.routing import Match
 
 from app.api import channel_inbound_router, channel_outbound_router, wechat_webridge_router, customer_operations_router, guga_agent_router, open_api_router, open_media_router, open_messages_router, open_resources_router, payment_webhook_router, provider_router, tool_api_router, workwechat_provider_cloud_router
@@ -49,7 +51,9 @@ from app.services.channel_events import ingest_inbound_event
 from app.services.request_metrics import record_request
 from app.services.channel_labels import get_channel_type_label
 from app.services.account_identity import account_identity, bot_identity
-from app.services import ai_dispatch
+from app.services.account_presence import build_account_presence
+from app.services.operation_feedback import OperationFeedbackError, build_operation_status
+from app.services import ai_dispatch, message_actions, message_mentions
 from app.services.channel_deletion import ChannelDeletionError, delete_channel_account
 from app.services.chatroom_registry import (
     GROUP_MODE_COLLECT_ONLY,
@@ -106,6 +110,7 @@ from app.services.plugin_runtime import (
     execute_binding_action,
     execute_binding_message_action,
     get_plugin_runtime_meta,
+    get_plugin_runtime_meta_map,
 )
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.wechat_ipad.login_flow import (
@@ -174,12 +179,16 @@ from app.services.wechat_ipad.chatrooms import update_group_plugin_scope_enabled
 from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
 from app.services.wechat_webridge.dashboard import build_webridge_dashboard, build_webridge_device_panel, build_webridge_live_summary
-from app.services.identity_directory import IdentityDirectory
+from app.services.identity_directory import IdentityDirectory, _avatar_from_extra
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
+from app.services.wechat_webridge import friend_check as webridge_friend_check
+from app.services.wechat_webridge import friend_actions as webridge_friend_actions
+from app.services.wechat_webridge import directory_sync as webridge_directory_sync
+from app.services.wechat_webridge import wakeup as webridge_wakeup
 from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, websocket_url as webridge_websocket_url, initialize_connection as initialize_webridge_connection
 from app.services.guga_agent.access import account_info as guga_account_info, connection_url as guga_connection_url, initialize_connection as initialize_guga_connection
-from app.services.outbound_files import build_public_base_url
+from app.services.outbound_files import build_public_base_url, redact_base64_fields, store_outbound_upload
 from app.services.wechat_webridge.service import enqueue_command, reap_stale_commands
 from app.services.workwechat_chatrooms import (
     build_workwechat_chatroom_detail,
@@ -507,7 +516,7 @@ def filtered_bindings_query(db: Session):
 def render(request: Request, template: str, **context):
     notice = str(context.get("notice", "") or "").strip()
     response_status = int(context.pop("response_status", 200) or 200)
-    notice_tone = context.get("notice_tone")
+    notice_tone = context.get("notice_tone") or request.query_params.get("tone", "")
     if not notice_tone:
         notice_tone = "danger" if response_status >= 400 else infer_notice_tone(notice)
     navigation_context = build_tenant_navigation(request.url.path)
@@ -533,10 +542,57 @@ def infer_notice_tone(notice: str) -> str:
     text = str(notice or "").strip()
     if not text:
         return "default"
-    error_keywords = ("错误", "失败", "异常", "不正确", "不一致", "不能为空", "不存在", "缺少", "无效", "至少", "请先")
+    error_keywords = ("错误", "失败", "异常", "不正确", "不一致", "不能为空", "不存在", "缺少", "无效", "至少", "请先", "未完成", "离线", "超时", "未执行", "不正常", "不可用", "无法")
     if any(keyword in text for keyword in error_keywords):
         return "danger"
+    if any(keyword in text for keyword in ("成功", "完成", "已保存", "已更新", "正常", "已启用", "已停用", "已接入")):
+        return "success"
     return "default"
+
+
+def _operation_json_requested(request: Request) -> bool:
+    return request.headers.get("X-Requested-With") == "fetch" or "application/json" in request.headers.get("accept", "")
+
+
+def _require_operation_csrf(db: Session, request: Request) -> None:
+    if _operation_json_requested(request):
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+
+
+def _completed_operation_response(request: Request, message: str, redirect_url: str, *, ok: bool = True):
+    if _operation_json_requested(request):
+        return JSONResponse({"ok": ok, "done": True, "summary": message, "successful": int(ok), "failed": int(not ok), "jobs": [], "refresh": ok})
+    separator = "&" if "?" in redirect_url else "?"
+    return RedirectResponse(url=f"{redirect_url}{separator}notice={quote(message)}&tone={'success' if ok else 'danger'}", status_code=303)
+
+
+def _queued_operation_response(request: Request, db: Session, channel: Channel, jobs: list[TaskJob], redirect_url: str):
+    result = build_operation_status(db, channel, [int(job.id) for job in jobs])
+    job_ids = ",".join(str(job.id) for job in jobs)
+    result["status_url"] = f"/channels/{channel.id}/operations/status?job_ids={job_ids}"
+    if _operation_json_requested(request):
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    separator = "&" if "?" in redirect_url else "?"
+    return RedirectResponse(url=f"{redirect_url}{separator}operation_jobs={job_ids}&operation_channel={channel.id}", status_code=303)
+
+
+@app.get("/channels/{channel_id}/operations/status")
+async def channel_operation_status(request: Request, channel_id: int, job_ids: str = ""):
+    enforce_role(request, "ops")
+    parts = job_ids.split(",")
+    if len(parts) > 200 or any(not part.isascii() or not part.isdigit() or len(part) > 18 or int(part) < 1 for part in parts):
+        raise HTTPException(status_code=400, detail="操作任务编号无效")
+    db = get_session()
+    try:
+        channel = get_channel(db, channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="未找到账号")
+        return JSONResponse(build_operation_status(db, channel, list(dict.fromkeys(int(part) for part in parts))), headers={"Cache-Control": "no-store"})
+    except OperationFeedbackError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
 
 
 def parse_json_object(raw_text: str) -> tuple[dict[str, object], str]:
@@ -1031,8 +1087,14 @@ def build_binding_schema_cards_with_dispatch(db: Session, bindings: list[BotPlug
     return cards
 
 
-def build_plugin_runtime_summary(plugins: list[Plugin], bindings: list[BotPlugin]) -> dict[str, int]:
-    runtime_map = {plugin.code: get_plugin_runtime_meta(plugin.code) for plugin in plugins}
+def build_plugin_runtime_summary(
+    plugins: list[Plugin],
+    bindings: list[BotPlugin],
+    *,
+    runtime_map: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, int]:
+    if runtime_map is None:
+        runtime_map = get_plugin_runtime_meta_map(plugin.code for plugin in plugins)
     functional_plugins = [plugin for plugin in plugins if runtime_map.get(plugin.code, {}).get("plugin_category") == "functional"]
     migrated_functional = [
         plugin for plugin in functional_plugins if runtime_map.get(plugin.code, {}).get("migration_state") == "migrated"
@@ -1678,6 +1740,7 @@ async def check_bot_status_action(request: Request, bot_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         bot = get_bot(db, bot_id)
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
@@ -1694,7 +1757,7 @@ async def check_bot_status_action(request: Request, bot_id: int):
         if status != "running":
             create_alert(db, "bot-health", f"机器人 {bot.name} 状态异常", message, related_type="bot", related_id=bot.id)
         record_audit(db, "bot.status-check", "bot", bot.id, message)
-        return RedirectResponse(url=f"/bots/{bot_id}?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/bots/{bot_id}", ok=status == "running")
     finally:
         db.close()
 
@@ -1730,6 +1793,7 @@ async def channels_page(request: Request):
         channels = db.scalars(
             select(Channel)
             .where(Channel.channel_type.in_(BUILTIN_CHANNEL_TYPES), Channel.deleted_at.is_(None))
+            .options(selectinload(Channel.provider_node), selectinload(Channel.provider_account))
             .order_by(Channel.id.desc())
         ).all()
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
@@ -1751,7 +1815,7 @@ async def channels_page(request: Request):
                 "binding": binding_by_channel_id.get(channel.id),
                 "connection": _channel_connection_state(channel),
                 "identity": account_identity(channel),
-                "last_online_at": channel.last_heartbeat_at or channel.last_message_sync_at or channel.last_login_at,
+                "presence": build_account_presence(channel),
             }
             for channel in channels
         ]
@@ -2254,7 +2318,7 @@ async def channel_detail_page(request: Request, channel_id: int):
             connection=connection,
             quota=quota,
             quota_error=quota_error,
-            last_online_at=channel.last_heartbeat_at or channel.last_message_sync_at or channel.last_login_at,
+            presence=build_account_presence(channel),
             bots=bots,
             bot_name_map=bot_name_map,
             builtin_channel_types=BUILTIN_CHANNEL_TYPES,
@@ -2338,21 +2402,21 @@ async def wechat_webridge_dashboard_command_action(
     enforce_role(request, "ops")
     db = get_session()
     try:
-        require_tenant_csrf(db, request, csrf_token)
+        require_tenant_csrf(db, request, csrf_token or _csrf_from_header(request))
         channel = get_channel(db, channel_id)
         if not channel or channel.channel_type != "wechat_webridge":
             raise HTTPException(status_code=404, detail="WeBridge channel not found")
         try:
             args = json.loads(args_json or "{}")
-        except json.JSONDecodeError as exc:
-            return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote('参数 JSON 无效')}", status_code=303)
+        except json.JSONDecodeError:
+            return _completed_operation_response(request, "参数 JSON 无效", f"/channels/{channel_id}/wechat-webridge", ok=False)
         if not isinstance(args, dict):
-            return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote('参数必须是 JSON 对象')}", status_code=303)
+            return _completed_operation_response(request, "参数必须是 JSON 对象", f"/channels/{channel_id}/wechat-webridge", ok=False)
         job = enqueue_command(db, channel, command_name=command_name, args=args)
         db.commit()
-        return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote(f'已提交 {command_name}，任务 #{job.id}')}", status_code=303)
+        return _queued_operation_response(request, db, channel, [job], f"/channels/{channel_id}/wechat-webridge")
     except ValueError as exc:
-        return RedirectResponse(url=f"/channels/{channel_id}/wechat-webridge?notice={quote(str(exc))}", status_code=303)
+        return _completed_operation_response(request, str(exc), f"/channels/{channel_id}/wechat-webridge", ok=False)
     finally:
         db.close()
 
@@ -2444,6 +2508,8 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             detail = build_wechat_gugatool_chatroom_detail(db, channel, chatroom)
         else:
             raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
+        # 群头像与列表共用已保存的群资料，避免渠道详情遗漏头像后退回首字占位。
+        detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
         return render(
             request,
             "chatroom_detail.html",
@@ -2480,6 +2546,73 @@ def _directory_pager_base(path: str, **params: Any) -> str:
     return f"{path}?{query}" if query else f"{path}?"
 
 
+def _webridge_directory_sync_channels(db: Session) -> list[Channel]:
+    return list(db.scalars(select(Channel).where(
+        Channel.channel_type == "wechat_webridge", Channel.deleted_at.is_(None), Channel.is_enabled.is_(True),
+    ).order_by(Channel.id)).all())
+
+
+@app.post("/contacts/sync")
+@app.post("/chatrooms/sync")
+async def sync_webridge_directory_action(
+    request: Request,
+    channel_id: int = Form(0),
+    csrf_token: str = Form(""),
+    next: str = Form(""),
+):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        channels = _webridge_directory_sync_channels(db)
+        if channel_id:
+            channels = [channel for channel in channels if channel.id == channel_id]
+            if not channels:
+                raise HTTPException(status_code=404, detail="未找到已启用的微桥账号")
+        if not channels:
+            raise HTTPException(status_code=400, detail="请先接入并启用微桥账号")
+        base = "/contacts" if request.url.path == "/contacts/sync" else "/chatrooms"
+        command_name, label = ("friends_all", "好友") if base == "/contacts" else ("groups_all", "群聊")
+        jobs = []
+        for channel in channels:
+            job = enqueue_command(db, channel, command_name=command_name, args={})
+            jobs.append({"id": int(job.id), "channel_id": int(channel.id), "channel_name": channel.name})
+        db.commit()
+        for channel in channels:
+            webridge_wakeup.notify(int(channel.id))
+        job_ids = ",".join(str(job["id"]) for job in jobs)
+        if request.headers.get("X-Requested-With") == "fetch":
+            return JSONResponse({"ok": True, "jobs": jobs, "status_url": f"{base}/sync/status?job_ids={job_ids}"}, headers={"Cache-Control": "no-store"})
+        # 返回地址只接受当前列表，避免把同步表单变成外部跳转入口。
+        try:
+            target = urlsplit(next)
+        except ValueError:
+            target = urlsplit(base)
+        query = parse_qsl(target.query, keep_blank_values=True) if target.path == base and not target.scheme and not target.netloc else []
+        query = [(key, value) for key, value in query if key not in {"notice", "sync_jobs"}]
+        query.append(("sync_jobs", job_ids))
+        query.append(("notice", f"正在同步 {len(channels)} 个账号的{label}"))
+        return RedirectResponse(url=f"{base}?{urlencode(query)}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.get("/contacts/sync/status")
+@app.get("/chatrooms/sync/status")
+async def webridge_directory_sync_status(request: Request, job_ids: str = ""):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        kind = "contacts" if request.url.path == "/contacts/sync/status" else "chatrooms"
+        result = webridge_directory_sync.sync_status(db, webridge_directory_sync.parse_job_ids(job_ids), kind)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except webridge_directory_sync.DirectorySyncError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
+
+
 @app.get("/chatrooms", response_class=HTMLResponse)
 async def chatroom_directory_page(request: Request, q: str = "", channel_id: int = 0, status: str = "", page: int = 1):
     """群管理唯一入口:所有账号的群合并展示,支持搜索、账号与状态筛选。"""
@@ -2495,6 +2628,10 @@ async def chatroom_directory_page(request: Request, q: str = "", channel_id: int
             channels=channel_options(db),
             pager_base=_directory_pager_base("/chatrooms", q=directory["keyword"], channel_id=channel_id, status=directory["status"]),
             notice=request.query_params.get("notice", ""),
+            can_edit=has_tenant_role(require_user(request), "operator"),
+            sync_channels=_webridge_directory_sync_channels(db),
+            sync_action="/chatrooms/sync",
+            sync_label="同步群聊",
         )
     finally:
         db.close()
@@ -2610,9 +2747,128 @@ async def contact_directory_page(request: Request, q: str = "", channel_id: int 
             directory=directory,
             channels=channel_options(db),
             pager_base=_directory_pager_base("/contacts", q=directory["keyword"], channel_id=channel_id),
+            can_edit=has_tenant_role(require_user(request), "operator"),
+            sync_channels=_webridge_directory_sync_channels(db),
+            sync_action="/contacts/sync",
+            sync_label="同步好友",
+            notice=request.query_params.get("notice", ""),
         )
     finally:
         db.close()
+
+
+@app.get("/contacts/check", response_class=HTMLResponse)
+async def contact_check_page(request: Request, channel_id: int = 0):
+    user = enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        channels = webridge_friend_check.list_check_channels(db)
+        selected = next((item["id"] for item in channels if item["id"] == channel_id), 0)
+        if not selected and channels:
+            selected = channels[0]["id"]
+        response = render(
+            request, "contact_check.html", page_title="好友检测",
+            channels=channels, selected_channel_id=selected,
+            can_edit=has_tenant_role(user, "operator"),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    finally:
+        db.close()
+
+
+def _friend_check_channel(db: Session, channel_id: int) -> Channel:
+    channel = get_channel(db, channel_id)
+    if channel is None or channel.channel_type != "wechat_webridge":
+        raise HTTPException(status_code=404, detail="未找到可检测的微桥账号")
+    return channel
+
+
+@app.get("/contacts/check/{channel_id}/friends")
+async def contact_check_friends(request: Request, channel_id: int):
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        contacts = webridge_friend_check.list_check_contacts(db, _friend_check_channel(db, channel_id))
+        return JSONResponse({"contacts": contacts, "total": len(contacts)}, headers={"Cache-Control": "no-store"})
+    finally:
+        db.close()
+
+
+@app.post("/contacts/check/{channel_id}/friends/{contact_id}")
+async def contact_check_start(request: Request, channel_id: int, contact_id: int):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        job = webridge_friend_check.start_check(db, _friend_check_channel(db, channel_id), contact_id)
+        return JSONResponse({"job_id": int(job.id)}, headers={"Cache-Control": "no-store"})
+    except webridge_friend_check.FriendCheckError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
+
+@app.post("/contacts/check/{channel_id}/jobs/{job_id}/poll")
+async def contact_check_poll(request: Request, channel_id: int, job_id: int):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        # 轮询会终止超时任务，使用带 CSRF 的 POST，避免查询链接触发状态变更。
+        result = webridge_friend_check.poll_check(db, _friend_check_channel(db, channel_id), job_id)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except webridge_friend_check.FriendCheckError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
+
+@app.post("/contacts/check/{channel_id}/friends/{contact_id}/remark")
+@app.post("/contacts/check/{channel_id}/friends/{contact_id}/delete")
+async def contact_check_action_start(request: Request, channel_id: int, contact_id: int):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="操作参数格式不正确") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="操作参数格式不正确")
+        action = "remark" if request.url.path.endswith("/remark") else "delete"
+        suffix = body.get("suffix", "- 单删")
+        if action == "delete" and body.get("confirmed") is not True:
+            raise HTTPException(status_code=400, detail="请先确认删除好友")
+        if action == "remark" and not isinstance(suffix, str):
+            raise HTTPException(status_code=400, detail="备注后缀格式不正确")
+        job = webridge_friend_actions.start_action(db, _friend_check_channel(db, channel_id), contact_id, action=action, suffix=suffix)
+        return JSONResponse({"job_id": int(job.id)}, headers={"Cache-Control": "no-store"})
+    except webridge_friend_check.FriendCheckError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
+
+
+@app.post("/contacts/check/{channel_id}/actions/{job_id}/poll")
+async def contact_check_action_poll(request: Request, channel_id: int, job_id: int):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, _csrf_from_header(request))
+        result = webridge_friend_actions.poll_action(db, _friend_check_channel(db, channel_id), job_id)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+    except webridge_friend_check.FriendCheckError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    finally:
+        db.close()
+
 
 
 @app.get("/points", response_class=HTMLResponse)
@@ -3020,6 +3276,7 @@ async def check_channel_health_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3056,7 +3313,7 @@ async def check_channel_health_action(request: Request, channel_id: int):
         if status != "online":
             create_alert(db, "channel-health", f"渠道 {channel.name} 健康异常", message, related_type="channel", related_id=channel.id)
         record_audit(db, "channel.health-check", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/channels/{channel_id}", ok=status == "online")
     finally:
         db.close()
 
@@ -3066,6 +3323,7 @@ async def pull_wechat_ipad_messages_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3074,7 +3332,7 @@ async def pull_wechat_ipad_messages_action(request: Request, channel_id: int):
         overview = pull_wechat_ipad_messages(db, channel)
         message = str(overview.get("last_sync_summary") or "已执行微信 iPad 消息拉取")
         record_audit(db, "channel.wechat-ipad.pull-messages", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/channels/{channel_id}", ok=not bool(overview.get("runtime_info", {}).get("last_error")))
     finally:
         db.close()
 
@@ -3084,6 +3342,7 @@ async def sync_wechat_ipad_chatrooms_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3092,7 +3351,8 @@ async def sync_wechat_ipad_chatrooms_action(request: Request, channel_id: int):
         overview = sync_wechat_ipad_chatrooms(db, channel)
         message = str(overview.get("last_status_summary") or "已触发群资料同步")
         record_audit(db, "channel.wechat-ipad.sync-chatrooms", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
+        runtime = overview.get("runtime_info", {})
+        return _completed_operation_response(request, message, f"/channels/{channel_id}", ok=not bool(runtime.get("last_error") or runtime.get("last_chatroom_sync_failed_targets")))
     finally:
         db.close()
 
@@ -3102,6 +3362,7 @@ async def sync_wechat_ipad_contacts_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3110,7 +3371,7 @@ async def sync_wechat_ipad_contacts_action(request: Request, channel_id: int):
         overview = sync_wechat_ipad_contacts(db, channel)
         message = str(overview.get("last_contact_sync_summary") or overview.get("last_status_summary") or "已执行联系人同步")
         record_audit(db, "channel.wechat-ipad.sync-contacts", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/channels/{channel_id}", ok=not bool(overview.get("runtime_info", {}).get("last_error")))
     finally:
         db.close()
 
@@ -3454,6 +3715,7 @@ async def sync_workwechat_contacts_action(request: Request, channel_id: int, con
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3477,14 +3739,14 @@ async def sync_workwechat_contacts_action(request: Request, channel_id: int, con
             )
             db.commit()
             notify_cloud_job_enqueued(channel, job)
-            message = "已下发企微云端联系人同步任务，请等待客户端执行后刷新联系人列表。"
+            message = "企微联系人同步已排队，正在等待客户端执行。"
             record_audit(db, "channel.workwechat.sync-contacts", "channel", channel.id, message)
-            return RedirectResponse(url=f"/channels/{channel_id}/workwechat/contacts?notice={quote(message)}", status_code=303)
+            return _queued_operation_response(request, db, channel, [job], f"/channels/{channel_id}/workwechat/contacts")
         overview = sync_workwechat_contacts(db, channel, contact_kind=contact_kind)
         db.commit()
         message = str(overview.get("last_status_summary") or "已同步企微联系人")
         record_audit(db, "channel.workwechat.sync-contacts", "channel", channel.id, message)
-        return RedirectResponse(url=f"/channels/{channel_id}/workwechat/contacts?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/channels/{channel_id}/workwechat/contacts", ok=bool(overview.get("ok")))
     finally:
         db.close()
 
@@ -3516,6 +3778,7 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3531,7 +3794,7 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             db.commit()
             message = str(overview.get("last_status_summary") or "已刷新当前群样本")
             record_audit(db, f"channel.{channel.channel_type}.sync-chatroom", "chatroom", chatroom.id, message)
-            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+            return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}")
         elif channel.channel_type == "workwechat":
             if is_cloud_poll_enabled(channel):
                 # 云端模式下服务端不能直连客服电脑；先下发群列表任务补中文群名，再下发成员任务补成员快照。
@@ -3567,9 +3830,9 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
                 db.commit()
                 notify_cloud_job_enqueued(channel, profile_job)
                 notify_cloud_job_enqueued(channel, member_job)
-                message = "已下发企微云端群资料和成员同步任务，请等待客户端执行后刷新当前群。"
+                message = "企微群资料和成员同步已排队，正在等待客户端执行。"
                 record_audit(db, "channel.workwechat.sync-chatroom", "chatroom", chatroom.id, message)
-                return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+                return _queued_operation_response(request, db, channel, [profile_job, member_job], f"/channels/{channel_id}/chatrooms/{chatroom_id}")
             # workwechat 没有单群资料详情接口；这里先用全量群列表只更新当前群，再用 Hook 11040 刷新成员。
             profile_overview = sync_workwechat_chatroom_profile_from_list(db, channel, chatroom)
             member_overview = sync_workwechat_chatroom_members(db, channel, chatroom)
@@ -3578,17 +3841,18 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             member_summary = str(member_overview.get("last_status_summary") or "").strip()
             message = "；".join(part for part in (profile_summary, member_summary) if part) or "已刷新当前企微群资料和成员"
             record_audit(db, "channel.workwechat.sync-chatroom", "chatroom", chatroom.id, message)
-            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+            return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}", ok=bool(profile_overview.get("ok") and member_overview.get("ok")))
         elif channel.channel_type == "wechat_webridge":
             # 微桥由手机插件执行：入队 room_members 命令，结果回传后由目录持久化写入成员快照。
             job = enqueue_command(db, channel, command_name="room_members", args={"room_id": chatroom.external_id})
             db.commit()
-            message = f"已下发群成员同步，任务 #{job.id}，稍后刷新本页查看"
+            message = "群成员同步已排队，正在等待手机执行。"
             record_audit(db, "channel.wechat-webridge.sync-chatroom", "chatroom", chatroom.id, message)
-            return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+            return _queued_operation_response(request, db, channel, [job], f"/channels/{channel_id}/chatrooms/{chatroom_id}")
         else:
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat / wechat_webridge")
-        return RedirectResponse(url=f"/channels/{channel_id}/chatrooms/{chatroom_id}?notice={quote(message)}", status_code=303)
+        runtime = overview.get("runtime_info", {})
+        return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}", ok=not bool(runtime.get("last_error") or runtime.get("last_chatroom_sync_failed_targets")))
     finally:
         db.close()
 
@@ -3679,6 +3943,7 @@ async def sync_wechat_winauto_chatrooms_action(request: Request, channel_id: int
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3688,7 +3953,7 @@ async def sync_wechat_winauto_chatrooms_action(request: Request, channel_id: int
         db.commit()
         message = str(overview.get("last_status_summary") or "已刷新 wxauto 群列表")
         record_audit(db, f"channel.{channel.channel_type}.sync-chatrooms", "channel", channel.id, message)
-        return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/chatrooms?channel_id={channel_id}")
     finally:
         db.close()
 
@@ -3698,6 +3963,7 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         channel = get_channel(db, channel_id)
         if not channel:
             raise HTTPException(status_code=404, detail="Channel not found")
@@ -3717,15 +3983,15 @@ async def sync_workwechat_chatrooms_action(request: Request, channel_id: int):
             )
             db.commit()
             notify_cloud_job_enqueued(channel, job)
-            message = "已下发企微云端群列表同步任务，请等待客户端执行后刷新群管理。"
+            message = "企微群列表同步已排队，正在等待客户端执行。"
             record_audit(db, "channel.workwechat.sync-chatrooms", "channel", channel.id, message)
-            return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
+            return _queued_operation_response(request, db, channel, [job], f"/chatrooms?channel_id={channel_id}")
         # workwechat 群列表同步走 provider 的 11038，失败时服务层会保留本地消息样本视图。
         overview = sync_workwechat_chatrooms(db, channel)
         db.commit()
         message = str(overview.get("last_status_summary") or "已同步企微群列表")
         record_audit(db, "channel.workwechat.sync-chatrooms", "channel", channel.id, message)
-        return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, f"/chatrooms?channel_id={channel_id}", ok=bool((overview.get("provider_response") or {}).get("ok")))
     finally:
         db.close()
 
@@ -4181,7 +4447,7 @@ async def plugins_page(request: Request):
             if item.plugin_id in visible_plugin_ids
         ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
-        plugin_runtime_map = {plugin.code: get_plugin_runtime_meta(plugin.code) for plugin in plugins}
+        plugin_runtime_map = get_plugin_runtime_meta_map(plugin.code for plugin in plugins)
         search_query = request.query_params.get("q", "").strip()
         plugin_type_filter = request.query_params.get("plugin_type", "").strip()
         category_filter = request.query_params.get("category", "").strip()
@@ -4216,11 +4482,10 @@ async def plugins_page(request: Request):
             plugins=filtered_plugins,
             all_plugins=plugins,
             bindings=bindings,
-            binding_cards=build_binding_schema_cards_with_dispatch(db, bindings),
             bots=bots,
             plugin_runtime_map=plugin_runtime_map,
             plugin_toggle_matrix=build_plugin_toggle_matrix(bots, filtered_plugins, bindings, plugin_runtime_map),
-            runtime_summary=build_plugin_runtime_summary(plugins, bindings),
+            runtime_summary=build_plugin_runtime_summary(plugins, bindings, runtime_map=plugin_runtime_map),
             plugin_filters={
                 "q": search_query,
                 "plugin_type": plugin_type_filter,
@@ -4244,9 +4509,10 @@ async def refresh_plugins_action(request: Request):
     enforce_role(request, "ops")
     db = get_session()
     try:
+        _require_operation_csrf(db, request)
         rows = sync_plugins_from_directory(db, force=True)
         record_audit(db, "plugin.refresh-directory", "plugin", None, f"count={len(rows)}")
-        return RedirectResponse(url="/plugins?notice=" + quote(f"已刷新插件目录，共发现 {len(rows)} 个插件"), status_code=303)
+        return _completed_operation_response(request, f"已刷新插件目录，共发现 {len(rows)} 个插件", "/plugins")
     finally:
         db.close()
 
@@ -4265,6 +4531,7 @@ async def plugin_runtime_page(request: Request):
         ]
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
+        plugin_runtime_map = get_plugin_runtime_meta_map(plugin.code for plugin in plugins)
         for binding in bindings:
             binding.runtime_status = compute_binding_runtime(binding)
         return render(
@@ -4275,8 +4542,8 @@ async def plugin_runtime_page(request: Request):
             binding_cards=build_binding_schema_cards_with_dispatch(db, bindings),
             bot_name_map=bot_name_map,
             plugins=plugins,
-            plugin_runtime_map={plugin.code: get_plugin_runtime_meta(plugin.code) for plugin in plugins},
-            runtime_summary=build_plugin_runtime_summary(plugins, bindings),
+            plugin_runtime_map=plugin_runtime_map,
+            runtime_summary=build_plugin_runtime_summary(plugins, bindings, runtime_map=plugin_runtime_map),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -4292,6 +4559,7 @@ async def plugin_detail_page(request: Request, plugin_id: int):
         bindings = db.scalars(select(BotPlugin).where(BotPlugin.status != "unbound", BotPlugin.plugin_id == plugin_id, BotPlugin.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None)))).order_by(BotPlugin.id.desc())).all()
         bots = db.scalars(select(Bot).where(Bot.deleted_at.is_(None)).order_by(Bot.id.desc())).all()
         bot_name_map = build_bot_name_map(bots)
+        plugin_runtime_info = get_plugin_runtime_meta(plugin.code)
         for binding in bindings:
             binding.runtime_status = compute_binding_runtime(binding)
         return render(
@@ -4302,11 +4570,11 @@ async def plugin_detail_page(request: Request, plugin_id: int):
             bindings=bindings,
             binding_cards=build_binding_schema_cards_with_dispatch(db, bindings),
             plugin_config_view=build_plugin_config_view(plugin.code, None),
-            plugin_runtime_info=get_plugin_runtime_meta(plugin.code),
+            plugin_runtime_info=plugin_runtime_info,
             bots=bots,
             bindable_bots=[bot for bot in bots if bot.id not in {binding.bot_id for binding in bindings}],
             bot_name_map=bot_name_map,
-            runtime_summary=build_plugin_runtime_summary([plugin], bindings),
+            runtime_summary=build_plugin_runtime_summary([plugin], bindings, runtime_map={plugin.code: plugin_runtime_info}),
             notice=request.query_params.get("notice", ""),
         )
     finally:
@@ -4533,9 +4801,9 @@ async def reload_plugin_binding_action(request: Request, binding_id: int, csrf_t
         binding = get_binding(db, binding_id)
         if not binding:
             raise HTTPException(status_code=404, detail="Binding not found")
-        _, message = reload_binding(db, binding)
+        status, message = reload_binding(db, binding)
         record_audit(db, "plugin.reload", "bot_plugin", binding.id, message)
-        return RedirectResponse(url=f"{_safe_plugin_next(next, '/plugins/runtime')}?notice={quote(message)}", status_code=303)
+        return _completed_operation_response(request, message, _safe_plugin_next(next, "/plugins/runtime"), ok=status == "running")
     finally:
         db.close()
 
@@ -4610,7 +4878,11 @@ MANUAL_MESSAGE_MAX_CHARS = 2000
 
 
 @app.post("/messages/send")
-async def send_manual_message_action(request: Request, conversation_id: int = Form(...), content: str = Form(...), csrf_token: str = Form("")):
+async def send_manual_message_action(
+    request: Request, conversation_id: int = Form(...), content: str = Form(""), csrf_token: str = Form(""),
+    message_type: str = Form("text"), file: UploadFile | None = File(None),
+    reply_to_id: int = Form(0), mention_ids: str = Form("[]"),
+):
     """消息中心发送框提交的消息;由页面脚本 fetch 调用,返回 JSON,页面不刷新。
 
     无论发送成败,经渠道适配器出站都会留下一条消息记录(失败的标记为 failed),前端据此把它拉进对话里。
@@ -4624,23 +4896,103 @@ async def send_manual_message_action(request: Request, conversation_id: int = Fo
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         text_content = content.strip()
-        if not text_content:
-            return JSONResponse({"ok": False, "notice": "消息内容不能为空"}, status_code=400)
         if len(text_content) > MANUAL_MESSAGE_MAX_CHARS:
             return JSONResponse({"ok": False, "notice": f"消息太长了，最多 {MANUAL_MESSAGE_MAX_CHARS} 字"}, status_code=400)
         channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
         if channel is None:
             return JSONResponse({"ok": False, "notice": "会话未绑定渠道，无法发送"}, status_code=400)
+        normalized_type = message_type.strip().lower()
+        supported = message_actions.capabilities(channel, conversation)
+        if normalized_type != "text" and (normalized_type not in message_actions.MEDIA_TYPES or not supported.get(normalized_type)):
+            label = message_actions.MEDIA_LABELS.get(normalized_type, "此类型消息")
+            return JSONResponse({"ok": False, "notice": f"当前渠道不支持发送{label}"}, status_code=400)
+        if normalized_type == "text" and not text_content:
+            return JSONResponse({"ok": False, "notice": "消息内容不能为空"}, status_code=400)
+        payload: dict[str, Any] = {"message_type": normalized_type, "content": text_content}
+        reply = None
+        try:
+            mentions = json.loads(mention_ids)
+        except (TypeError, ValueError):
+            mentions = None
+        if not isinstance(mentions, list) or len(mentions) > 20 or any(not isinstance(value, str) or not value.strip() or len(value) > 128 for value in mentions):
+            return JSONResponse({"ok": False, "notice": "@ 成员列表无效，最多选择 20 人"}, status_code=400)
+        mentions = list(dict.fromkeys(value.strip() for value in mentions))
+        selected_mentions = []
+        placeholders = re.findall(r"\{\{mention:([^}]+)\}\}", text_content)
+        if any(value not in mentions for value in placeholders):
+            return JSONResponse({"ok": False, "notice": "@ 对象无效，请重新选择群成员"}, status_code=400)
+        if reply_to_id:
+            reply = db.get(Message, reply_to_id)
+            if reply is None or reply.conversation_id != conversation.id:
+                return JSONResponse({"ok": False, "notice": "引用的消息不属于当前会话"}, status_code=400)
+            if not supported["quote"] or normalized_type != "text":
+                return JSONResponse({"ok": False, "notice": "当前渠道不支持此类型的引用回复"}, status_code=400)
+            if not reply.external_message_id or reply.status in {"failed", "revoked"} or reply.external_status == "pending":
+                return JSONResponse({"ok": False, "notice": "这条消息尚未确认发送、已撤回或缺少渠道消息编号，无法引用"}, status_code=400)
+            payload["quote_message_id"] = reply.external_message_id
+        if mentions:
+            if not supported["mention"] or normalized_type != "text":
+                return JSONResponse({"ok": False, "notice": "当前渠道不支持此类型的 @ 发送"}, status_code=400)
+            try:
+                selected_mentions = message_mentions.validate_members(db, channel, conversation, mentions)
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "notice": str(exc)}, status_code=400)
+            labels = {person["id"]: person["name"] for person in selected_mentions}
+            visible_content = re.sub(r"\{\{mention:([^}]+)\}\}", lambda match: "@" + labels[match[1]] + "\u2005", text_content)
+            missing = [person for person in selected_mentions if person["id"] not in placeholders]
+            visible_content = "".join("@" + person["name"] + "\u2005" for person in missing) + visible_content
+            if len(visible_content) > MANUAL_MESSAGE_MAX_CHARS:
+                return JSONResponse({"ok": False, "notice": f"消息太长了，最多 {MANUAL_MESSAGE_MAX_CHARS} 字"}, status_code=400)
+            # 展示正文从首次入库就保留 @，手机协议仍使用能在原位置替换昵称的占位符。
+            payload["display_content"] = visible_content
+            if channel.channel_type == "wechat_ipad":
+                payload["at"] = ",".join(mentions)
+                payload["content"] = visible_content
+            else:
+                payload["mention_user_list"] = mentions
+                payload["content"] = text_content.replace("{{mention:notify@all}}", "@所有人\u2005")
+                if "notify@all" in mentions and "notify@all" not in placeholders:
+                    payload["content"] = "@所有人\u2005" + payload["content"]
+        stored = None
+        if normalized_type in message_actions.MEDIA_TYPES:
+            if file is None or not file.filename:
+                return JSONResponse({"ok": False, "notice": "请先选择要发送的文件"}, status_code=400)
+            if channel.channel_type == "wechat_ipad" and normalized_type == "voice" and Path(file.filename).suffix.lower() not in {".silk", ".slik", ".amr", ".wav", ".mp3"}:
+                return JSONResponse({"ok": False, "notice": "当前渠道不支持此语音格式，请选择 SILK、AMR、WAV 或 MP3 文件"}, status_code=400)
+            binary = await file.read(message_actions.MAX_UPLOAD_BYTES + 1)
+            if not binary or len(binary) > message_actions.MAX_UPLOAD_BYTES:
+                return JSONResponse({"ok": False, "notice": "文件不能为空，且不能超过 25 MB"}, status_code=400)
+            stored = store_outbound_upload(tenant_id=int(channel.tenant_id), channel_id=int(channel.id), file_name=file.filename, content=binary, content_type=file.content_type, message_type=normalized_type)
+            download_url = f"{build_public_base_url(request)}/outbound-files/{channel.id}/{stored['share_id']}/{quote(stored['file_name'])}"
+            payload["file_name"] = stored["file_name"]
+            if channel.channel_type in {"wechat_ipad", "telegram"} and normalized_type == "image":
+                payload["image_base64"] = base64.b64encode(binary).decode("ascii")
+            elif channel.channel_type == "wechat_ipad" and normalized_type == "voice":
+                payload["voice_path"] = str(stored["target_path"])
+            else:
+                payload[{"image": "image_url", "voice": "voice_url", "video": "video_url", "emoji": "emoji", "file": "file_url"}[normalized_type]] = download_url
         # 必须经过渠道适配器统一出站：微桥会在这里创建手机 poll 要领取的命令任务，
         # 之前只写消息表不入队，所以手机永远收不到后台发出的消息。
         message, adapter_result = dispatch_outbound_message(
-            db, channel, conversation, {"message_type": "text", "content": text_content}
+            db, channel, conversation, payload
         )
+        raw_request = message_actions.object_json(message.raw_request_json)
+        if selected_mentions:
+            raw_request["mentions"] = selected_mentions
+        if reply is not None:
+            who = IdentityDirectory(db).for_messages([reply]).get(int(reply.id), {})
+            raw_request["reply_to"] = {"id": int(reply.id), "name": who.get("name") or "联系人", "text": message_view.preview(reply.content, reply.message_type, limit=200)}
+        if raw_request:
+            message.raw_request_json = json.dumps(redact_base64_fields(raw_request), ensure_ascii=False)
+        if stored is not None:
+            db.add(MessageAttachment(tenant_id=channel.tenant_id, message_id=message.id, channel_id=channel.id, conversation_id=conversation.id, direction="out", attachment_type=normalized_type, provider=channel.channel_type, status="downloaded", storage_path=str(stored["target_path"]), mime_type=stored["content_type"], file_size=stored["file_size"], metadata_json=json.dumps(stored["metadata"], ensure_ascii=False)))
+        db.commit()
         record_audit(db, "message.manual-send", "message", message.id, f"conversation={conversation.id}")
         if not adapter_result.get("ok"):
             notice = f"发送失败：{adapter_result.get('error_message') or adapter_result.get('error_code') or '未知错误'}"
             return JSONResponse({"ok": False, "notice": notice, "message_id": int(message.id)})
-        return JSONResponse({"ok": True, "notice": "消息已提交，等待手机执行", "message_id": int(message.id)})
+        notice = "消息已提交，等待渠道执行" if adapter_result.get("external_status") == "pending" else "消息已发送"
+        return JSONResponse({"ok": True, "notice": notice, "message_id": int(message.id)})
     finally:
         db.close()
 
@@ -4667,7 +5019,7 @@ async def message_attachment_media(request: Request, attachment_id: int):
 MESSAGE_PAGE_SIZE = 30
 
 
-def load_conversation_messages(db: Session, conversation_id: int, *, before_id: int = 0, after_id: int = 0, limit: int = MESSAGE_PAGE_SIZE) -> dict[str, object]:
+def load_conversation_messages(db: Session, conversation_id: int, *, before_id: int = 0, after_id: int = 0, limit: int = MESSAGE_PAGE_SIZE, message_ids: list[int] | None = None) -> dict[str, object]:
     """读取会话里的一段消息,按时间从早到晚返回,并附带显示所需的身份和附件。
 
     - 不带参数:最新的 limit 条(首屏);
@@ -4676,8 +5028,11 @@ def load_conversation_messages(db: Session, conversation_id: int, *, before_id: 
     多取一条用来判断两个方向上是否还有更多。
     """
 
-    base = select(Message).where(Message.conversation_id == conversation_id)
-    if after_id:
+    base = select(Message).where(Message.conversation_id == conversation_id, Message.status != "echo")
+    if message_ids is not None:
+        rows = list(db.scalars(base.where(Message.id.in_(message_ids)).order_by(Message.id.asc())).all())
+        has_more = False
+    elif after_id:
         rows = list(db.scalars(base.where(Message.id > after_id).order_by(Message.id.asc()).limit(limit + 1)).all())
         has_more = len(rows) > limit
         rows = rows[:limit]
@@ -4696,7 +5051,28 @@ def load_conversation_messages(db: Session, conversation_id: int, *, before_id: 
             if attachment.message_id is not None:
                 attachments.setdefault(int(attachment.message_id), []).append(attachment)
     # 每条消息解析成展示结构(文字/引用/卡片/媒体占位…),媒体类再补上附件状态(已下载/未下载)
-    views = {int(item.id): message_view.attach_media(message_view.describe(item.content, item.message_type), attachments.get(int(item.id), [])) for item in rows}
+    conversation = db.get(Conversation, conversation_id)
+    channel = db.get(Channel, conversation.channel_id) if conversation and conversation.channel_id else None
+    views = {}
+    for item in rows:
+        raw = message_actions.object_json(item.raw_request_json)
+        view = message_view.describe(item.content, item.message_type)
+        if attachments.get(int(item.id)) and item.message_type in message_actions.MEDIA_TYPES and view["kind"] != "media":
+            view = {"kind": "media", "media_type": item.message_type, "label": message_actions.MEDIA_LABELS[item.message_type]}
+        view = message_view.attach_media(view, attachments.get(int(item.id), []))
+        reply = raw.get("reply_to")
+        if view["kind"] == "text" and isinstance(reply, dict):
+            view = {"kind": "quote", "title": item.content, "refer_name": str(reply.get("name") or ""), "refer_text": str(reply.get("text") or "")}
+        if view["kind"] == "media" and attachments.get(int(item.id)):
+            meta = message_actions.object_json(attachments[int(item.id)][-1].metadata_json)
+            if not view.get("title"):
+                view["title"] = str(meta.get("file_name") or "")
+        view.update(message_actions.revoke_info(item, channel))
+        if item.status == "revoked":
+            view.update(kind="system", text="你撤回了一条消息")
+        # 客户端只替换状态改变的行，避免轮询打断正在播放的音视频。
+        view["version"] = ":".join(str(value or "") for value in (item.updated_at, item.status, item.external_status, item.external_message_id, view["revoke_state"], identities.get(int(item.id), {}).get("is_own")))
+        views[int(item.id)] = view
     return {"messages": rows, "has_more": has_more, "identities": identities, "attachments": attachments, "views": views}
 
 
@@ -4741,7 +5117,7 @@ async def message_media_status(request: Request, message_id: int):
 
 
 @app.get("/messages/history")
-async def message_history(request: Request, conversation_id: int, before_id: int = 0, after_id: int = 0):
+async def message_history(request: Request, conversation_id: int, before_id: int = 0, after_id: int = 0, sync_ids: str = ""):
     """消息中心的增量加载接口:返回渲染好的消息行 HTML,前端直接插入到对话里。"""
 
     enforce_role(request, "readonly")
@@ -4752,7 +5128,18 @@ async def message_history(request: Request, conversation_id: int, before_id: int
         page = load_conversation_messages(db, conversation_id, before_id=max(before_id, 0), after_id=max(after_id, 0))
         macro = templates.env.get_template("_message_rows.html").module.message_rows
         html = str(macro(page["messages"], page["identities"], page["views"])) if page["messages"] else ""
-        return JSONResponse({"html": html, "has_more": page["has_more"], "count": len(page["messages"])})
+        result = {"html": html, "has_more": page["has_more"], "count": len(page["messages"])}
+        if sync_ids:
+            try:
+                identifiers = list(dict.fromkeys(int(value) for value in sync_ids.split(",") if value))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="消息编号无效")
+            if len(identifiers) > 100 or any(value <= 0 for value in identifiers):
+                raise HTTPException(status_code=400, detail="一次最多同步 100 条消息")
+            updates = load_conversation_messages(db, conversation_id, message_ids=identifiers)
+            result["updates_html"] = str(macro(updates["messages"], updates["identities"], updates["views"])) if updates["messages"] else ""
+            result["removed_ids"] = list(db.scalars(select(Message.id).where(Message.conversation_id == conversation_id, Message.id.in_(identifiers), Message.status == "echo")).all())
+        return JSONResponse(result)
     finally:
         db.close()
 
@@ -4902,6 +5289,132 @@ async def moments_refresh(request: Request, channel_id: int = Form(...), directi
         db.close()
 
 
+@app.get("/messages/capabilities")
+async def message_capabilities(request: Request, conversation_id: int):
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        conversation = db.get(Conversation, conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
+        return JSONResponse({"ok": True, "capabilities": message_actions.capabilities(channel, conversation)})
+    finally:
+        db.close()
+
+
+@app.get("/messages/mention-members")
+async def message_mention_members(request: Request, conversation_id: int, q: str = ""):
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        conversation = db.get(Conversation, conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
+        if channel is None or not message_actions.capabilities(channel, conversation)["mention"]:
+            return JSONResponse({"ok": False, "notice": "当前渠道不支持 @ 群成员"}, status_code=400)
+        return JSONResponse({"ok": True, **message_mentions.members(db, channel, conversation, query=q[:100])})
+    finally:
+        db.close()
+
+
+
+@app.post("/messages/revoke")
+async def revoke_manual_message(request: Request, conversation_id: int = Form(...), message_id: int = Form(...), csrf_token: str = Form("")):
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, csrf_token)
+        conversation = db.get(Conversation, conversation_id)
+        message = db.get(Message, message_id)
+        if conversation is None or message is None or message.conversation_id != conversation.id:
+            raise HTTPException(status_code=404, detail="消息不存在")
+        channel = get_channel(db, int(conversation.channel_id or 0)) if conversation.channel_id else None
+        if channel is None:
+            return JSONResponse({"ok": False, "notice": "会话未绑定渠道，无法撤回"}, status_code=400)
+        try:
+            result = message_actions.request_revoke(db, channel, conversation, message)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "notice": str(exc)}, status_code=400)
+        record_audit(db, "message.manual-revoke", "message", message.id, f"conversation={conversation.id}")
+        db.commit()
+        return JSONResponse(result)
+    finally:
+        db.close()
+
+
+def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id: int = 0, chat_type: str = "") -> list[dict[str, Any]]:
+    """整页和自动刷新共用会话筛选、身份解析及摘要。"""
+
+    normalized_chat_type = chat_type.strip().lower()
+    if normalized_chat_type not in {"group", "direct"}:
+        normalized_chat_type = ""
+
+    # 已删除的账号/机器人(逻辑删除)的会话不再出现在列表里,聊天数据本身保留。
+    conversations_stmt = select(Conversation).where(
+        Conversation.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))),
+        or_(Conversation.channel_id.is_(None), Conversation.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None)))),
+    )
+    if bot_id:
+        conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
+    if channel_id:
+        conversations_stmt = conversations_stmt.where(Conversation.channel_id == channel_id)
+    if normalized_chat_type:
+        conversations_stmt = conversations_stmt.where(Conversation.chat_type == normalized_chat_type)
+    conversations = db.scalars(
+        conversations_stmt.order_by(
+            Conversation.last_message_at.is_(None),
+            Conversation.last_message_at.desc(),
+            Conversation.id.desc(),
+        ).limit(100)
+    ).all()
+    conversation_summaries = []
+    summary_directory = IdentityDirectory(db)
+    summary_identities = summary_directory.for_conversations(conversations)
+    latest_messages = {
+        int(item.conversation_id): item
+        for item in db.scalars(select(Message).where(Message.id.in_(
+            select(func.max(Message.id)).where(Message.conversation_id.in_([int(row.id) for row in conversations]), Message.status != "echo").group_by(Message.conversation_id)
+        ))).all()
+    } if conversations else {}
+    for item in conversations:
+        latest = latest_messages.get(int(item.id))
+        identity = summary_identities[int(item.id)]
+        display_name = identity["name"] or item.title or item.external_id or f"会话 #{item.id}"
+        conversation_summaries.append(
+            {
+                "conversation": item,
+                "latest": latest,
+                "display_name": display_name,
+                "initial": display_name[:1].upper(),
+                "identity": identity,
+            }
+        )
+    return conversation_summaries
+
+
+@app.get("/messages/conversations")
+async def message_conversations(request: Request, bot_id: int = 0, channel_id: int = 0, chat_type: str = ""):
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        summaries = _message_conversation_summaries(db, bot_id=bot_id, channel_id=channel_id, chat_type=chat_type)
+        items = []
+        for row in summaries:
+            latest = row["latest"]
+            items.append({
+                "id": int(row["conversation"].id), "display_name": row["display_name"],
+                "preview": ("你撤回了一条消息" if latest.status == "revoked" else message_view.preview(latest.content, latest.message_type, limit=80)) if latest else "暂无消息",
+                "time": format_beijing_time(latest.created_at) if latest and latest.created_at else "-",
+                "avatar_url": row["identity"].get("avatar_url") or "", "initial": row["initial"],
+            })
+        return JSONResponse({"ok": True, "conversations": items})
+    finally:
+        db.close()
+
+
+
 @app.get("/messages", response_class=HTMLResponse)
 async def messages_page(
     request: Request,
@@ -4912,50 +5425,11 @@ async def messages_page(
 ):
     db = get_session()
     try:
-        normalized_chat_type = chat_type.strip().lower()
-        if normalized_chat_type not in {"group", "direct"}:
-            normalized_chat_type = ""
-
-        # 已删除的账号/机器人(逻辑删除)的会话不再出现在列表里,聊天数据本身保留。
-        conversations_stmt = select(Conversation).where(
-            Conversation.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))),
-            or_(Conversation.channel_id.is_(None), Conversation.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None)))),
-        )
-        if bot_id:
-            conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
-        if channel_id:
-            conversations_stmt = conversations_stmt.where(Conversation.channel_id == channel_id)
-        if normalized_chat_type:
-            conversations_stmt = conversations_stmt.where(Conversation.chat_type == normalized_chat_type)
-        conversations = db.scalars(
-            conversations_stmt.order_by(
-                Conversation.last_message_at.is_(None),
-                Conversation.last_message_at.desc(),
-                Conversation.id.desc(),
-            ).limit(100)
-        ).all()
-        conversation_summaries = []
-        summary_directory = IdentityDirectory(db)
-        summary_identities = summary_directory.for_conversations(conversations)
-        for item in conversations:
-            latest = db.scalar(
-                select(Message).where(Message.conversation_id == item.id).order_by(Message.id.desc()).limit(1)
-            )
-            identity = summary_identities[int(item.id)]
-            display_name = identity["name"] or item.title or item.external_id or f"会话 #{item.id}"
-            conversation_summaries.append(
-                {
-                    "conversation": item,
-                    "latest": latest,
-                    "display_name": display_name,
-                    "initial": display_name[:1].upper(),
-                    "identity": identity,
-                }
-            )
+        conversation_summaries = _message_conversation_summaries(db, bot_id=bot_id, channel_id=channel_id, chat_type=chat_type)
 
         # 只有选中了会话才读消息;没有分页,更早的消息由页面向上滚动时通过 /messages/history 继续加载。
         page = load_conversation_messages(db, conversation_id) if conversation_id else {"messages": [], "has_more": False, "identities": {}, "attachments": {}, "views": {}}
-        selected_total = int(db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id)) or 0) if conversation_id else None
+        selected_total = int(db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id, Message.status != "echo")) or 0) if conversation_id else None
         # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
         selected_chatroom = None
         selected_summary = next((row for row in conversation_summaries if int(row["conversation"].id) == conversation_id), None)
@@ -4978,7 +5452,9 @@ async def messages_page(
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,
             selected_chatroom=selected_chatroom,
+            bot_id=bot_id,
             channel_id=channel_id,
+            chat_type=chat_type.strip().lower() if chat_type.strip().lower() in {"group", "direct"} else "",
         )
     finally:
         db.close()

@@ -1,12 +1,42 @@
 from __future__ import annotations
 
+import json
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy import select
 
+from app.core.time import now_shanghai
 from app.models.entities import Bot, Channel
 from app.models.saas import BotBinding, LoginProxySession
 from test_provider_node_pages import _login, provider_page_context
+
+
+def test_account_list_and_detail_show_actual_phone_presence(provider_page_context) -> None:
+    client, ids = provider_page_context
+    with ids["factory"]() as db:
+        channels = [
+            Channel(
+                tenant_id=ids["alpha"], bot_id=ids["bot"], name=name,
+                channel_type="wechat_webridge", is_enabled=enabled, status="online",
+                runtime_info_json=json.dumps({"webridge": {"online": True, "last_seen_at": (now_shanghai() - timedelta(seconds=age)).isoformat()}}),
+            )
+            for name, enabled, age in (("在线手机", True, 10), ("离线手机", True, 300), ("停用手机", False, 10))
+        ]
+        db.add_all(channels)
+        db.commit()
+        online_id = channels[0].id
+    _login(client, "readonly")
+    page = client.get("/channels")
+    assert page.status_code == 200
+    assert "当前在线</span>\n    <strong>1</strong>" in page.text
+    for state in ("online", "offline", "disabled", "unknown"):
+        assert f'data-presence="{state}"' in page.text
+    assert "刚刚活跃" in page.text and "5 分钟前活跃" in page.text
+    assert "最近在线" not in page.text
+    detail = client.get(f"/channels/{online_id}")
+    assert detail.status_code == 200
+    assert 'data-presence="online"' in detail.text and "刚刚活跃" in detail.text
 
 
 def test_account_connection_platform_and_wechat_method_pages(provider_page_context) -> None:

@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
+{% from '_account_presence.html' import account_presence %}
 {% macro tone_chip(label, tone) -%}
 <span class="chip {% if tone == 'muted' %}chip-muted{% elif tone == 'success' %}chip-success{% else %}chip-outline{% endif %}">{{ label }}</span>
 {%- endmacro %}
@@ -29,7 +30,7 @@
     <div class="actions">
       {# iPad 登录状态由扫码业务流维护，租户详情页不再提供协议级健康检查。 #}
       {% if channel.channel_type != 'wechat_ipad' %}
-      <form method="post" action="/channels/{{ channel.id }}/health-check">
+      <form method="post" action="/channels/{{ channel.id }}/health-check" data-action-feedback>
         <button class="btn btn-secondary" type="submit">检查连接</button>
       </form>
       {% endif %}
@@ -47,7 +48,7 @@
     <span class="chip chip-outline">{{ channel.channel_type|channel_type_label }}</span>
     <span class="chip chip-outline">机器人 {{ bot_name_map.get(channel.bot_id, '机器人') }}</span>
     <span class="chip chip-outline">额度 {{ '已占用' if binding and binding.status == 'active' else '未占用' }} · 余额 {{ quota.remaining if quota else '-' }}</span>
-    <span class="chip chip-muted">最近在线 {{ last_online_at|bj_time if last_online_at else '-' }}</span>
+    {{ account_presence(presence) }}
   </div>
   {% if quota_error %}<p class="notice-card notice-card-danger" aria-live="polite">{{ quota_error }}</p>{% endif %}
 </section>
@@ -68,10 +69,10 @@
     <div class="metric-item"><span>绑定手机</span><strong>{{ wechat_ipad_overview.bind_mobile or '-' }}</strong></div>
   </div>
   <div class="form-actions-inline top-gap">
-    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts">
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-contacts" data-action-feedback>
       <button class="btn btn-secondary" type="submit">同步联系人</button>
     </form>
-    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms">
+    <form method="post" action="/channels/{{ channel.id }}/wechat-ipad/sync-chatrooms" data-action-feedback>
       <button class="btn btn-secondary" type="submit">同步群聊</button>
     </form>
     <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
@@ -84,8 +85,8 @@
   <div class="toolbar">
     <div><h2>企业微信账号</h2></div>
     <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts"><button class="btn btn-secondary" type="submit">同步联系人</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-chatrooms" data-action-feedback><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts" data-action-feedback><button class="btn btn-secondary" type="submit">同步联系人</button></form>
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
       <a class="btn btn-ghost" href="/channels/{{ channel.id }}/workwechat/contacts">联系人</a>
     </div>
@@ -100,7 +101,7 @@
   <div class="toolbar">
     <div><h2>微信客户端</h2></div>
     <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms"><button class="btn btn-secondary" type="submit">同步群聊</button></form>
+      <form method="post" action="/channels/{{ channel.id }}/wechat-winauto/sync-chatrooms" data-action-feedback><button class="btn btn-secondary" type="submit">同步群聊</button></form>
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">群管理</a>
     </div>
   </div>
@@ -159,7 +160,7 @@
   <div class="toolbar">
     <div><h2>群聊</h2></div>
     <div class="actions">
-      {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}"><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
+      {% if channel_chatroom_summary.sync_action %}<form method="post" action="{{ channel_chatroom_summary.sync_action }}" data-action-feedback><button class="btn btn-secondary" type="submit">{{ channel_chatroom_summary.sync_button_label }}</button></form>{% endif %}
       <a class="btn btn-ghost" href="/chatrooms?channel_id={{ channel.id }}">查看全部</a>
     </div>
   </div>

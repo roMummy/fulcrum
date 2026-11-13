@@ -2,7 +2,11 @@
 {% from '_identity.html' import identity %}
 {# 好友:所有账号的好友合在一起,一行一个好友,可直接去聊天记录。 #}
 {% block hero_actions %}
-<div class="chip-row"><span class="chip chip-outline">共 {{ directory.paging.total }} 位好友</span></div>
+<div class="chip-row">
+  {% include '_directory_sync.html' %}
+  {% if can_edit %}<a class="btn btn-secondary" href="/contacts/check?channel_id={{ directory.channel_id or 0 }}">好友检测</a>{% endif %}
+  <span class="chip chip-outline">共 {{ directory.paging.total }} 位好友</span>
+</div>
 {% endblock %}
 {% block content %}
 <section class="work-surface">
@@ -42,7 +46,7 @@
   </div>
   {% include '_pager.html' %}
   {% else %}
-  <p class="muted-text">{{ '没有匹配的好友。' if directory.keyword or directory.channel_id else '还没有好友资料。到「账号接入」里同步好友后会出现在这里。' }}</p>
+  <p class="muted-text">{{ '没有匹配的好友。' if directory.keyword or directory.channel_id else '暂无好友，点击「同步好友」获取。' if sync_channels else '还没有好友资料，请先接入账号。' }}</p>
   {% endif %}
 </section>
 {% endblock %}

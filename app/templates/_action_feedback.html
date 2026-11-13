@@ -1,0 +1,20 @@
+{% set feedback_state = 'error' if notice_tone in ['danger', 'error'] else 'success' if notice_tone == 'success' else 'info' %}
+<section class="directory-sync-monitor action-feedback" data-action-monitor data-state="{{ feedback_state }}"{% if not notice %} hidden{% endif %} aria-label="操作结果" aria-busy="false">
+  <div class="directory-sync-heading">
+    <span class="directory-sync-icon" aria-hidden="true">
+      <svg class="directory-sync-icon-working" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
+      <svg class="directory-sync-icon-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+      <svg class="directory-sync-icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v9m0 4v.1"/></svg>
+      <svg class="action-feedback-icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 11v7m0-12v.1"/><circle cx="12" cy="12" r="9"/></svg>
+    </span>
+    <div class="directory-sync-title">
+      <strong data-action-summary role="status" aria-live="polite">{{ notice or '' }}</strong>
+      <span class="directory-sync-counter" data-action-counter></span>
+    </div>
+    <button class="btn btn-small btn-secondary" type="button" data-action-dismiss>收起</button>
+  </div>
+  <div class="directory-sync-track" data-action-track hidden>
+    <progress data-action-progress max="1" value="0" aria-label="已完成操作"></progress>
+  </div>
+  <div class="directory-sync-jobs" data-action-jobs></div>
+</section>

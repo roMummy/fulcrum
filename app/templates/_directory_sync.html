@@ -1,0 +1,39 @@
+{% if can_edit and sync_channels %}
+<link rel="stylesheet" href="/static/css/directory-sync.css" />
+<div data-directory-sync-root style="display:contents;">
+<form method="post" action="{{ sync_action }}" class="chip-row" style="flex-wrap:nowrap;" data-directory-sync>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" />
+  {% if sync_channels|length > 1 %}
+  <label class="compact-filter-field">
+  <select name="channel_id" aria-label="同步账号">
+    <option value="0">全部微桥账号</option>
+    {% for channel in sync_channels %}<option value="{{ channel.id }}"{% if directory.channel_id == channel.id %} selected{% endif %}>{{ channel.name }}</option>{% endfor %}
+  </select>
+  </label>
+  {% else %}
+  <input type="hidden" name="channel_id" value="{{ sync_channels[0].id }}" />
+  {% endif %}
+  <button class="btn" type="submit" style="white-space:nowrap;">{{ sync_label }}</button>
+</form>
+<section class="directory-sync-monitor" data-directory-sync-monitor data-state="running" hidden aria-label="{{ sync_label }}进度">
+  <div class="directory-sync-heading">
+    <span class="directory-sync-icon" aria-hidden="true">
+      <svg class="directory-sync-icon-working" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
+      <svg class="directory-sync-icon-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+      <svg class="directory-sync-icon-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v9m0 4v.1"/></svg>
+    </span>
+    <div class="directory-sync-title">
+      <strong data-directory-sync-summary role="status" aria-live="polite"></strong>
+      <span class="directory-sync-counter" data-directory-sync-counter></span>
+    </div>
+    <button class="btn btn-small btn-secondary" type="button" data-directory-sync-dismiss hidden>收起</button>
+  </div>
+  <div class="directory-sync-track" data-directory-sync-track>
+    <progress data-directory-sync-progress max="1" value="0" aria-label="已完成同步的账号"></progress>
+  </div>
+  <div class="directory-sync-jobs" data-directory-sync-jobs></div>
+</section>
+</div>
+<script src="/static/js/directory-sync.js" defer></script>
+{% endif %}

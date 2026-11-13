@@ -269,6 +269,44 @@ def test_connected_channel_cannot_be_replaced_by_another_account_or_device(bridg
         assert runtime["webridge"]["device_id"] == IDENTITY["device_id"]
 
 
+def test_deleted_connected_account_can_be_confirmed_again_without_duplicate_binding(bridge_context):
+    """删除账号应释放历史绑定，同企业重新接入复用原行，旧账号保持删除状态。"""
+
+    client, ids, csrf = bridge_context
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        used_before = get_bot_quota(db).used
+    old_id, old_address = _start(bridge_context)
+    _register(client, old_address)
+    assert urlsplit(_confirm(bridge_context, old_id).headers["location"]).path == f"/channels/{old_id}"
+    with ids["factory"]() as db:
+        old_bot_id = db.get(Channel, old_id).bot_id
+        binding_id = db.scalar(select(BotBinding.id).where(BotBinding.channel_id == old_id))
+
+    assert client.post(f"/channels/{old_id}/toggle", data={"csrf_token": csrf}).status_code == 303
+    assert client.post(f"/channels/{old_id}/delete", data={"csrf_token": csrf}).status_code == 303
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        assert db.get(BotBinding, binding_id).status == "released"
+        assert get_bot_quota(db).used == used_before
+
+    new_id, new_address = _start(bridge_context)
+    _register(client, new_address)
+    confirmed = _confirm(bridge_context, new_id)
+    assert confirmed.status_code == 303
+    assert urlsplit(confirmed.headers["location"]).path == f"/channels/{new_id}"
+    assert new_id != old_id
+    with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
+        binding = db.get(BotBinding, binding_id)
+        channel = db.get(Channel, new_id)
+        assert channel.is_enabled and db.get(Bot, channel.bot_id).is_enabled
+        assert binding.status == "active" and binding.channel_id == new_id and binding.bot_id == channel.bot_id
+        assert binding.released_at is None and binding.release_reason is None
+        assert db.get(Channel, old_id).deleted_at is not None
+        assert db.get(Bot, old_bot_id).deleted_at is not None
+        assert get_bot_quota(db).used == used_before + 1
+        assert len(db.scalars(select(BotBinding).where(BotBinding.adapter_type == "wechat_webridge", BotBinding.bot_account_id == IDENTITY["account_id"])).all()) == 1
+    assert client.post(old_address + "/agent/register", json=IDENTITY).status_code == 404
+
+
 def test_deleted_registered_draft_cannot_be_confirmed_from_old_page(bridge_context):
     """网页删除已注册草稿后，旧确认页提交不能复活账号或占用额度。"""
 

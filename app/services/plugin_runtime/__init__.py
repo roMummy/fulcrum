@@ -5,6 +5,7 @@ from app.services.plugin_runtime.registry import (
     PluginRuntimeDefinition,
     get_plugin_runtime_definition,
     get_plugin_runtime_meta,
+    get_plugin_runtime_meta_map,
     get_plugin_schema,
     list_plugin_runtime_definitions,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "file_reply",
     "get_plugin_runtime_definition",
     "get_plugin_runtime_meta",
+    "get_plugin_runtime_meta_map",
     "get_plugin_schema",
     "image_reply",
     "link_reply",

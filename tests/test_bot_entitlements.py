@@ -164,7 +164,8 @@ def test_released_binding_can_rebind_same_account(db: Session) -> None:
         assert second.device_fingerprint_hash == hash_device_fingerprint("rebind-device-b")
 
 
-def test_bot_account_and_device_cannot_cross_tenants(db: Session) -> None:
+@pytest.mark.parametrize("released", [False, True])
+def test_bot_account_and_device_cannot_cross_tenants(db: Session, released: bool) -> None:
     """机器人账号与设备归属均为全局边界，不能通过换企业重复绑定。"""
 
     seeded = _seed_entitlements(db)
@@ -172,12 +173,15 @@ def test_bot_account_and_device_cannot_cross_tenants(db: Session) -> None:
     other = seeded["other_tenant"]
     fingerprint = "shared-device-ownership"
     with tenant_scope(paid.id):
-        bind_bot_account(
+        binding = bind_bot_account(
             db,
             adapter_type="generic-api",
             bot_account_id="global-bot-account",
             device_fingerprint=fingerprint,
         )
+        if released:
+            binding.status = "released"
+            db.commit()
 
     with tenant_scope(other.id):
         with pytest.raises(BotEntitlementError, match="bot_account_already_bound"):

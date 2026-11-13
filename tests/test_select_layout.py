@@ -40,6 +40,27 @@ def _serve_page(route, html):
     route.fulfill(status=200, content_type="text/html", body=html)
 
 
+@pytest.mark.parametrize("field_class", ["compact-filter-field", "form-grid"])
+def test_disabled_native_select_remains_invisible_under_custom_control(browser, field_class):
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    try:
+        page.set_content(f'<label class="{field_class}"><select><option>测试账号（2585 位好友）</option></select></label>')
+        page.add_style_tag(path=str(ROOT / "app/static/css/style.css"))
+        page.add_script_tag(path=str(ROOT / "app/static/js/select.js"))
+        native, trigger = page.locator('select'), page.locator('.ui-select-trigger')
+        assert native.evaluate('node => getComputedStyle(node).opacity') == "0"
+        native.evaluate('node => {node.disabled = true}')
+        playwright.expect(trigger).to_be_disabled()
+        # 原生控件禁用后仍应透明，否则会与自绘文字、箭头叠在一起。
+        assert native.evaluate('node => getComputedStyle(node).opacity') == "0"
+        native.evaluate('node => {node.disabled = false}')
+        playwright.expect(trigger).to_be_enabled()
+        assert native.evaluate('node => getComputedStyle(node).opacity') == "0"
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize("size", [(1440, 900), (1280, 600), (390, 844)])
 def test_binding_dropdown_keeps_long_modal_layout_and_scroll_position(pages, browser, size):
     client, ids, _plugin_id, _binding_id = pages

@@ -18,7 +18,7 @@
       <p class="muted-text">{{ list_view.intro_summary }}</p>
     </div>
     <div class="actions">
-      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts">
+      <form method="post" action="/channels/{{ channel.id }}/workwechat/sync-contacts" data-action-feedback>
         <select name="contact_kind">
           <option value="all">全部</option>
           <option value="external_contact">外部联系人</option>

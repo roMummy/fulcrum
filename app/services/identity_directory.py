@@ -13,7 +13,8 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Chatroom, ChatroomMember, Conversation, Message, WorkWechatContact
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, Message, WorkWechatContact
+from app.services.message_actions import is_own_message, object_json
 
 # 形如 wxid_xxx、xxx@chatroom、gh_xxx 的字符串属于内部 ID，不适合作为昵称展示。
 _RAW_ID_PATTERN = re.compile(r"^(wxid_[0-9a-z]+|gh_[0-9a-z]+|[0-9a-z_\-]+@chatroom|[0-9]+@im\.wxwork)$", re.IGNORECASE)
@@ -72,6 +73,7 @@ class IdentityDirectory:
     def __init__(self, db: Session):
         self.db = db
         self._cache: dict[tuple[int, str, str], dict] = {}
+        self._own_cache: dict[int, dict] = {}
 
     def preload(self, channel_id: int | None, external_ids: Iterable[object], *, group_external_id: str = "") -> None:
         """批量加载一个渠道下的好友、群成员和群档案，避免逐条查询。"""
@@ -121,6 +123,34 @@ class IdentityDirectory:
             return make_identity(ext, _readable_name(ext, hit["name"], fallback_name), hit["avatar_url"])
         return make_identity(ext, fallback_name, "")
 
+    def _own_identity(self, channel: Channel | None) -> dict:
+        """自己的身份只取渠道账号资料，不随发送占位记录或手机回显变化。"""
+
+        if channel is None:
+            return {**make_identity("", "我方"), "show_id": False, "is_own": True}
+        cid = int(channel.id)
+        if cid not in self._own_cache:
+            # account_identity 也引用本模块的 make_identity，延迟导入避免循环依赖。
+            from app.services.account_identity import account_identity
+
+            account = account_identity(channel)
+            own_id = account["external_id"]
+            if not own_id and channel.channel_type == "wechat_ipad":
+                own_id = str(object_json(channel.adapter_config_json).get("wxid") or "").strip()
+            if not own_id and channel.provider_account_id and channel._sa_instance_state.session is not None:
+                bound = channel.provider_account
+                own_id = str(bound.external_user_id or "").strip() if bound is not None else ""
+            # 只允许用已确认的本账号 ID 补资料，不能从当前会话的对方或临时 sender_name 取头像昵称。
+            directory = self.get(cid, own_id) if own_id else {}
+            name = account["name"]
+            if not name or name == own_id or looks_like_raw_id(name) or is_system_sender(name):
+                name = directory.get("name") or ""
+            if not name or name == own_id or looks_like_raw_id(name) or is_system_sender(name):
+                name = "我方"
+            avatar = account["avatar_url"] or directory.get("avatar_url") or ""
+            self._own_cache[cid] = {**make_identity(own_id, name, avatar), "show_id": False, "is_own": True}
+        return self._own_cache[cid]
+
     def for_messages(self, messages: Iterable[Message]) -> dict[int, dict]:
         """返回 message.id -> 发送者身份；一次性按渠道批量预加载。"""
 
@@ -131,6 +161,11 @@ class IdentityDirectory:
             for c in (self.db.scalars(select(Conversation).where(Conversation.id.in_(conv_ids))).all() if conv_ids else [])
         }
         by_context: dict[tuple[int, str], set[str]] = {}
+        channel_ids = {context[0] for context in conv_context.values()} - {0}
+        channels = {
+            int(channel.id): channel
+            for channel in (self.db.scalars(select(Channel).where(Channel.id.in_(channel_ids))).all() if channel_ids else [])
+        }
         for item in rows:
             if item.sender_id:
                 by_context.setdefault(conv_context.get(int(item.conversation_id), (0, "")), set()).add(item.sender_id)
@@ -139,11 +174,16 @@ class IdentityDirectory:
         result: dict[int, dict] = {}
         for item in rows:
             cid, group_id = conv_context.get(int(item.conversation_id), (0, ""))
+            own = is_own_message(item, channels.get(cid))
+            if own:
+                result[int(item.id)] = self._own_identity(channels.get(cid))
+                continue
             if is_system_sender(item.sender_id) or (item.direction == "out" and not item.sender_id):
                 # 出站消息展示为“我方”，不暴露 outbound-adapter 之类的内部标识。
-                result[int(item.id)] = {**make_identity("", "我方", ""), "show_id": False}
+                result[int(item.id)] = {**make_identity("", "我方", ""), "show_id": False, "is_own": own}
                 continue
-            result[int(item.id)] = self.get(cid, item.sender_id, item.sender_name, group_external_id=group_id)
+            # 手机回传的本账号消息可能仍存为入站，显示时按渠道账号识别，兼容已有记录。
+            result[int(item.id)] = {**self.get(cid, item.sender_id, item.sender_name, group_external_id=group_id), "is_own": own}
         return result
 
     def for_conversations(self, conversations: Iterable[Conversation]) -> dict[int, dict]:

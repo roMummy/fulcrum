@@ -1,0 +1,67 @@
+.directory-sync-monitor {
+  --sync-color: var(--primary);
+  --sync-soft: var(--primary-soft);
+  min-width: 0;
+  margin-bottom: 16px;
+  padding: 16px 20px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.directory-sync-monitor[data-state="success"] { --sync-color: var(--success); --sync-soft: var(--success-soft); }
+.directory-sync-monitor[data-state="error"] { --sync-color: var(--danger); --sync-soft: var(--danger-soft); }
+.directory-sync-heading { display: flex; align-items: center; gap: 12px; }
+.directory-sync-icon {
+  display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px;
+  color: var(--sync-color); background: var(--sync-soft); border-radius: 10px;
+}
+.directory-sync-icon svg { width: 18px; height: 18px; }
+.directory-sync-icon-success, .directory-sync-icon-error { display: none; }
+.directory-sync-monitor[data-state="success"] .directory-sync-icon-working,
+.directory-sync-monitor[data-state="error"] .directory-sync-icon-working { display: none; }
+.directory-sync-monitor[data-state="success"] .directory-sync-icon-success,
+.directory-sync-monitor[data-state="error"] .directory-sync-icon-error { display: block; }
+.directory-sync-title { display: flex; align-items: baseline; flex: 1; gap: 12px; min-width: 0; }
+.directory-sync-title strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.directory-sync-counter, .directory-sync-elapsed { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.directory-sync-counter { white-space: nowrap; }
+.directory-sync-track { position: relative; height: 4px; margin-top: 12px; overflow: hidden; border-radius: 4px; }
+.directory-sync-track progress {
+  display: block; appearance: none; width: 100%; height: 100%; border: 0;
+  background: var(--surface-muted); color: var(--sync-color); border-radius: inherit;
+}
+.directory-sync-track progress::-webkit-progress-bar { background: var(--surface-muted); border-radius: 4px; }
+.directory-sync-track progress::-webkit-progress-value { background: var(--sync-color); border-radius: 4px; transition: width .25s; }
+.directory-sync-track progress::-moz-progress-bar { background: var(--sync-color); border-radius: 4px; }
+/* 手机未回报条目进度时只显示活动光带，不伪造好友同步百分比。 */
+.directory-sync-track.is-indeterminate::after {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  animation: directory-sync-activity 1.8s ease-in-out infinite;
+}
+.directory-sync-jobs:empty { display: none; }
+.directory-sync-jobs { margin-top: 12px; }
+.directory-sync-job { display: grid; grid-template-columns: minmax(100px, 180px) minmax(0, 1fr) auto; align-items: baseline; gap: 8px 20px; font-size: 13px; }
+.directory-sync-job + .directory-sync-job { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.directory-sync-account { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.directory-sync-account::before { content: "账号"; margin-right: 8px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.directory-sync-status { min-width: 0; color: var(--primary-strong); overflow-wrap: anywhere; }
+.directory-sync-status::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: currentColor; vertical-align: 2px; }
+.directory-sync-job[data-state="completed"] .directory-sync-status { color: var(--success); }
+.directory-sync-job[data-state="failed"] .directory-sync-status,
+.directory-sync-job[data-state="timeout"] .directory-sync-status { color: var(--danger); }
+.directory-sync-elapsed { white-space: nowrap; }
+@keyframes directory-sync-activity { from { transform: translateX(-100%); } to { transform: translateX(385%); } }
+@media (max-width: 640px) {
+  .directory-sync-monitor { padding: 14px 16px; border-radius: var(--radius-md); }
+  .directory-sync-title { display: grid; gap: 3px; }
+  .directory-sync-heading { gap: 10px; }
+  .directory-sync-job { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+  .directory-sync-status { grid-column: 1; grid-row: 2; }
+  .directory-sync-elapsed { grid-column: 2; grid-row: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .directory-sync-track.is-indeterminate::after { animation: none; left: 32.5%; }
+  .directory-sync-track progress::-webkit-progress-value { transition: none; }
+}

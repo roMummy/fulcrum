@@ -44,7 +44,8 @@ def dispatch_outbound_message(
         },
     )
     message_type = str(normalized_payload.get("message_type") or "text").strip().lower() or "text"
-    content = str(normalized_payload.get("content") or "").strip()
+    # 网页内联 @ 使用原生占位符下发，但首次保存的卡片应直接显示可读昵称。
+    content = str(normalized_payload.get("display_content") or normalized_payload.get("content") or "").strip()
     sender_id, sender_name = _build_outbound_sender(channel)
     message = Message(
         conversation_id=conversation.id,

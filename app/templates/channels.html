@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% from '_identity.html' import identity %}
+{% from '_account_presence.html' import account_presence %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
   <a class="btn" href="/channels/connect">接入账号</a>
@@ -7,14 +8,14 @@
 </div>
 {% endblock %}
 {% block content %}
-{% set online_total = account_rows | selectattr('channel.is_enabled') | list | length %}
+{% set online_total = account_rows | selectattr('presence.state', 'equalto', 'online') | list | length %}
 <section class="metric-band account-metric-band" aria-label="账号接入概览">
   <div class="metric-item">
     <span>账号总数</span>
     <strong>{{ account_rows|length }}</strong>
   </div>
   <div class="metric-item">
-    <span>已启用</span>
+    <span>当前在线</span>
     <strong>{{ online_total }}</strong>
   </div>
   <div class="metric-item">
@@ -32,7 +33,9 @@
     <div>
 
       <h2>账号清单</h2>
+      <p class="muted-text">在线状态根据最近活动判断</p>
     </div>
+    <a class="btn btn-small btn-secondary" href="/channels">刷新状态</a>
   </div>
   {% if account_rows %}
   {# 账号清单使用连续记录行，移动端重新排版，不依赖固定宽表产生横向页面滚动。 #}
@@ -45,7 +48,7 @@
       </div>
       <dl class="record-meta">
         <div>
-          <dt>连接状态</dt>
+          <dt>接入状态</dt>
           <dd><span class="chip {% if row.channel.is_enabled %}chip-success{% elif row.connection.state == 'failed' %}badge-error{% else %}chip-muted{% endif %}">{{ row.connection.label }}</span></dd>
         </div>
         <div>
@@ -53,8 +56,8 @@
           <dd>{{ row.bot_name }}</dd>
         </div>
         <div>
-          <dt>最近在线</dt>
-          <dd>{{ row.last_online_at|bj_time if row.last_online_at else '-' }}</dd>
+          <dt>机器人在线</dt>
+          <dd>{{ account_presence(row.presence) }}</dd>
         </div>
         <div>
           <dt>额度</dt>

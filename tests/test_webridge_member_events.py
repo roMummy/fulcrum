@@ -16,7 +16,7 @@ from app.services.group_features.member_change import apply_member_change, build
 def _normalize(event_name: str, **body):
     adapter = WechatWeBridgeAdapter()
     base = {"room_id": "g@chatroom", "is_group": True, "member_id": "wxid_a", "member_display_name": "小明", "snapshot_after_count": 24}
-    return adapter.normalize_inbound_payload(SimpleNamespace(id=2), {"event_name": event_name, "body": {**base, **body}})
+    return adapter.normalize_inbound_payload(SimpleNamespace(id=2, runtime_info_json="{}"), {"event_name": event_name, "body": {**base, **body}})
 
 
 def test_leave_event_becomes_structured_change():

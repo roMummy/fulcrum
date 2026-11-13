@@ -4,22 +4,21 @@
 {% if selected_total is not none %}<div class="hero-action-cluster"><span class="chip chip-outline">消息 {{ selected_total }}</span></div>{% endif %}
 {% endblock %}
 {% block content %}
-{% if conversation_summaries %}
 {# 整页撑满窗口高度:左侧会话列表、右侧对话各自在内部滚动(高度由 messages.js 按窗口计算,样式里有兜底值)。 #}
-<section class="msg-center" id="msg-center" data-conversation-id="{{ selected_conversation_id or '' }}" data-has-more="{{ 1 if has_more_messages else 0 }}">
+<section class="msg-center" id="msg-center" data-conversation-id="{{ selected_conversation_id or '' }}" data-has-more="{{ 1 if has_more_messages else 0 }}" data-bot-id="{{ bot_id or '' }}" data-channel-id="{{ channel_id or '' }}" data-filter-chat-type="{{ chat_type or '' }}" data-chat-type="{% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{{ item.conversation.chat_type }}{% endif %}{% endfor %}">
   <aside class="wechat-conversation-list" aria-label="会话列表">
     {% for item in conversation_summaries %}
-    <a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}">
+    <a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" data-conversation-id="{{ item.conversation.id }}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}{% if bot_id %}&bot_id={{ bot_id }}{% endif %}{% if chat_type %}&chat_type={{ chat_type }}{% endif %}">
       <span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span>
       <span class="wechat-conversation-copy">
         <span class="wechat-conversation-head">
           <strong class="wechat-conversation-name">{{ item.display_name }}</strong>
           <time class="wechat-conversation-time">{{ item.latest.created_at|bj_time if item.latest and item.latest.created_at else '-' }}</time>
         </span>
-        <span class="wechat-conversation-preview">{{ item.latest.content|message_display(item.latest.message_type) if item.latest else '暂无消息' }}</span>
+        <span class="wechat-conversation-preview">{{ ('你撤回了一条消息' if item.latest.status == 'revoked' else item.latest.content|message_display(item.latest.message_type)) if item.latest else '暂无消息' }}</span>
       </span>
     </a>
-    {% endfor %}
+    {% else %}<div class="wechat-empty">暂无会话消息</div>{% endfor %}
   </aside>
 
   <section class="wechat-thread">
@@ -32,7 +31,7 @@
     </header>
     {% endif %}
 
-    <div class="wechat-thread-body" id="wechat-thread-body">
+    <div class="wechat-thread-body" id="wechat-thread-body" aria-label="聊天消息">
       {% if not selected_conversation_id %}
       <div class="wechat-empty">从左侧选择一个联系人或群聊</div>
       {% else %}
@@ -46,21 +45,45 @@
     <form class="wechat-composer" id="wechat-composer" autocomplete="off">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="conversation_id" value="{{ selected_conversation_id }}" />
+      <div class="wechat-mention-picker" id="wechat-mention-picker" role="listbox" aria-label="选择群成员" hidden></div>
       <div class="wechat-composer-box">
-        <textarea name="content" rows="1" maxlength="2000" placeholder="输入消息…" aria-label="消息内容"></textarea>
-        <button class="wechat-send" type="submit" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>
-          <span>发送</span>
-        </button>
+        <div class="wechat-composer-context" id="wechat-reply" hidden><span data-reply-preview></span><button type="button" data-clear-reply aria-label="取消引用">×</button></div>
+        <div class="wechat-mentions" id="wechat-mentions" hidden aria-label="已选择的提及对象"></div>
+        <div class="wechat-composer-context wechat-attachment" id="wechat-attachment" hidden>
+          <img id="wechat-attachment-image" hidden alt="待发送图片" />
+          <span data-file-preview></span>
+          <select id="wechat-attachment-type" data-native-select aria-label="附件发送类型"></select>
+          <button type="button" data-clear-file aria-label="取消文件">×</button>
+        </div>
+        <textarea name="content" rows="3" maxlength="2000" placeholder="输入消息，或粘贴附件…" aria-label="消息内容" aria-controls="wechat-mention-picker" aria-haspopup="listbox" aria-expanded="false"></textarea>
+        <div class="wechat-composer-footer">
+          <div class="wechat-composer-tools" role="group" aria-label="发送媒体">
+            {% for kind, label in [('emoji', '表情'), ('image', '图片'), ('file', '文件'), ('video', '视频'), ('voice', '语音')] %}
+            <button type="button" class="wechat-tool" data-send-media="{{ kind }}" title="发送{{ label }}" aria-label="发送{{ label }}">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                {% if kind == 'emoji' %}<circle cx="12" cy="12" r="9"/><path d="M8 14a4.5 4.5 0 0 0 8 0M8.5 9h.01M15.5 9h.01"/>
+                {% elif kind == 'image' %}<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>
+                {% elif kind == 'file' %}<path d="M3 7V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+                {% elif kind == 'video' %}<rect x="3" y="5" width="12" height="14" rx="2"/><path d="m15 10 6-4v12l-6-4"/>
+                {% elif kind == 'voice' %}<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>{% endif %}
+              </svg>
+            </button>
+            {% endfor %}
+            <input type="file" id="wechat-media-input" hidden aria-label="选择要发送的文件" />
+          </div>
+          <button class="wechat-send" type="submit" disabled>发送</button>
+        </div>
       </div>
       <p class="wechat-composer-hint" id="wechat-composer-hint" role="status">Enter 发送，Shift + Enter 换行</p>
     </form>
     {% endif %}
   </section>
 </section>
+<div class="wechat-context-menu" id="wechat-context-menu" role="menu" aria-label="消息操作" hidden>
+  <button type="button" role="menuitem" data-message-action="quote">引用回复</button>
+  <button type="button" role="menuitem" data-message-action="mention">@ TA</button>
+  <button type="button" role="menuitem" data-message-action="revoke">撤回（2 分钟内）</button>
+</div>
 <script src="/static/js/messages.js" defer></script>
 <script src="/static/js/message-media.js" defer></script>
-{% else %}
-<div class="work-surface"><div class="wechat-empty">暂无会话消息</div></div>
-{% endif %}
 {% endblock %}

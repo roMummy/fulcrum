@@ -47,7 +47,10 @@ class WechatIpadAdapter(BaseChannelAdapter):
         if not to_wxid:
             return self._error_result(conversation, message_type, "missing_target", "缺少接收方 ID")
 
-        request_spec = self._build_request(message_type, wxid, to_wxid, payload)
+        try:
+            request_spec = self._build_request(message_type, wxid, to_wxid, payload)
+        except (ValueError, OSError, RuntimeError) as exc:
+            return self._error_result(conversation, message_type, "invalid_payload", f"消息文件无法发送：{exc}")
         if not request_spec:
             return self._error_result(
                 conversation,

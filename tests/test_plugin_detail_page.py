@@ -82,8 +82,15 @@ def test_each_binding_is_a_card_with_the_group_feature_interaction(pages) -> Non
 
 def test_the_plugin_list_shows_problems_only_and_a_plain_config_button(pages, monkeypatch) -> None:
     client, _ids, weather_id, _binding_id = pages
-    real = main_module.get_plugin_runtime_meta
-    monkeypatch.setattr(main_module, "get_plugin_runtime_meta", lambda code: {**real(code), "manifest_errors": ["缺少 plugin.code。"]} if code == "weather" else real(code))
+    real = main_module.get_plugin_runtime_meta_map
+
+    def runtime_with_manifest_error(codes):
+        return {
+            code: {**meta, "manifest_errors": ["缺少 plugin.code。"]} if code == "weather" else meta
+            for code, meta in real(codes).items()
+        }
+
+    monkeypatch.setattr(main_module, "get_plugin_runtime_meta_map", runtime_with_manifest_error)
     _login(client, "admin")
     html = client.get("/plugins").text
     rows = html.split('<article class="plugin-catalog-row">')[1:]

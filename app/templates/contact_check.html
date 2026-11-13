@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+{% block hero_actions %}<a class="btn btn-secondary" href="/contacts">返回好友列表</a>{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/css/contact-check.css" />
+<div id="contact-check" data-can-edit="{{ 'true' if can_edit else 'false' }}">
+  <section class="work-surface">
+    <div class="compact-filter-form contact-check-controls">
+      <label class="compact-filter-field"><span>微桥账号</span>
+        <select id="contact-check-channel"{% if not channels %} disabled{% endif %}>
+          {% for channel in channels %}<option value="{{ channel.id }}" data-total="{{ channel.total }}"{% if channel.id == selected_channel_id %} selected{% endif %}>{{ channel.name }}（{{ channel.total }} 位好友）</option>{% endfor %}
+          {% if not channels %}<option value="">暂无微桥账号</option>{% endif %}
+        </select>
+      </label>
+      <label class="compact-filter-field contact-check-interval"><span>检测间隔（秒）</span>
+        <input id="contact-check-interval" type="number" min="0" max="60" step="0.5" value="1" inputmode="decimal" />
+      </label>
+      <div class="compact-filter-actions">
+        <button class="btn" id="contact-check-start" type="button" disabled>开始检测</button>
+        <button class="btn btn-secondary" id="contact-check-stop" type="button" disabled>停止检测</button>
+        <button class="btn btn-ghost" id="contact-check-restart" type="button" hidden>重新开始</button>
+      </div>
+    </div>
+    {% if not can_edit %}<p class="muted-text">当前账号只有查看权限，请联系企业管理员或运营人员发起检测。</p>{% endif %}
+    {% if not channels %}<p class="muted-text">请先<a href="/channels/connect">接入微桥账号</a>，并同步好友资料。</p>{% endif %}
+    <noscript><p class="notice-card">请启用浏览器 JavaScript 后使用好友检测。</p></noscript>
+    <div class="contact-check-progress">
+      <div class="contact-check-progress-heading"><strong id="contact-check-status" role="status" aria-live="polite">尚未开始检测</strong><span class="muted-text" id="contact-check-count">已检测 0 位</span></div>
+      <progress id="contact-check-progress" max="1" value="0" aria-label="好友检测进度"></progress>
+      <div class="contact-check-timing muted-text"><span id="contact-check-elapsed">已用时 0 秒</span><span id="contact-check-estimate"></span><span id="contact-check-remaining"></span></div>
+    </div>
+    <p id="contact-check-action-status" class="contact-check-action-status muted-text" role="status" aria-live="polite" hidden></p>
+    <button id="contact-check-action-resume" class="btn btn-secondary" type="button" hidden>继续查询操作结果</button>
+  </section>
+
+  {% for category, title in [('friend', '互相是好友'), ('deleted', '可能已被删除'), ('unknown', '状态未知')] %}
+  <section class="work-surface contact-check-result" data-result-category="{{ category }}" aria-labelledby="contact-check-title-{{ category }}">
+    <div class="contact-check-result-heading">
+      <h2 id="contact-check-title-{{ category }}">{{ title }}{% if category == 'friend' %} <span class="chip chip-outline">推测</span>{% endif %}</h2>
+      <span class="chip chip-outline"><span data-result-count="{{ category }}">0</span> 位</span>
+    </div>
+    {% if category != 'friend' %}
+    <div class="contact-check-batch">
+      <span class="muted-text" data-selection-count="{{ category }}">已选 0 位</span>
+      <button class="btn btn-ghost" type="button" data-select-all="{{ category }}">选择本分类全部</button>
+      <button class="btn btn-ghost" type="button" data-clear-selection="{{ category }}" disabled>清空选择</button>
+      <div class="contact-check-batch-actions">
+        <button class="btn btn-secondary" type="button" data-batch-action="recheck" data-category="{{ category }}" disabled>重新检查</button>
+        <button class="btn btn-secondary" type="button" data-batch-action="remark" data-category="{{ category }}" disabled>备注后缀</button>
+        <button class="btn btn-danger-soft" type="button" data-batch-action="delete" data-category="{{ category }}" disabled>删除好友</button>
+      </div>
+    </div>
+    {% endif %}
+    <div class="table-scroll">
+      <table class="table contact-check-table{% if category != 'friend' %} contact-check-table-actions{% endif %}">
+        <thead><tr>{% if category != 'friend' %}<th scope="col" class="contact-check-select-col"><input type="checkbox" data-select-page="{{ category }}" aria-label="选择{{ title }}本页全部好友" disabled /></th>{% endif %}<th scope="col" class="contact-check-name-col">好友</th><th scope="col">备注</th><th scope="col">微信号</th><th scope="col">姓名末字</th><th scope="col">检测结果</th>{% if category != 'friend' %}<th scope="col" class="contact-check-actions-col">操作</th>{% endif %}</tr></thead>
+        <tbody data-result-body="{{ category }}"></tbody>
+      </table>
+    </div>
+    <p class="muted-text" data-result-empty="{{ category }}">暂无结果</p>
+    <nav class="list-pagination contact-check-pagination" aria-label="{{ title }}分页" data-pagination="{{ category }}" hidden>
+      <div class="list-pagination-summary"><span data-page-summary="{{ category }}"></span><label>每页 <select data-page-size="{{ category }}" aria-label="{{ title }}每页条数"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select> 位</label></div>
+      <div class="list-pagination-actions"><button class="btn btn-secondary" type="button" data-page-prev="{{ category }}">上一页</button><span data-page-label="{{ category }}"></span><button class="btn btn-secondary" type="button" data-page-next="{{ category }}">下一页</button></div>
+    </nav>
+  </section>
+  {% endfor %}
+  <dialog class="app-modal contact-check-remark-modal" id="contact-check-remark-modal" aria-labelledby="contact-check-remark-title">
+    <div class="app-modal-card">
+      <div class="app-modal-head"><h2 id="contact-check-remark-title">添加备注后缀</h2><button class="btn btn-secondary app-modal-close" type="button" data-modal-close aria-label="关闭">×</button></div>
+      <form id="contact-check-remark-form">
+        <p id="contact-check-remark-count" class="muted-text"></p>
+        <label class="compact-filter-field"><span>备注后缀</span><input id="contact-check-remark-suffix" type="text" value="- 单删" required maxlength="255" autocomplete="off" /></label>
+        <p class="muted-text contact-check-remark-preview">预览：<span id="contact-check-remark-preview"></span></p>
+        <div class="form-actions-inline"><button class="btn" type="submit">确认添加</button><button class="btn btn-ghost" type="button" data-modal-close>取消</button></div>
+      </form>
+    </div>
+  </dialog>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/js/contact-check.js" defer></script>{% endblock %}

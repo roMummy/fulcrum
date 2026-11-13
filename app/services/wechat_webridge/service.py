@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
@@ -99,7 +100,7 @@ def record_device_sample(db: Session, channel: Channel, device: dict[str, Any] |
     db.execute(delete(WebridgeDeviceSample).where(WebridgeDeviceSample.channel_id == cid, WebridgeDeviceSample.bucket_start < now - timedelta(days=SAMPLE_RETENTION_DAYS)).execution_options(synchronize_session=False))
 
 
-def settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str = "") -> None:
+def settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str = "", result: dict[str, Any] | None = None) -> None:
     """命令结束后更新对应的出站消息记录:手机执行成功标记已发出,失败或超时标记发送失败。
 
     出站消息在入队时就已落库(状态为待执行),并把命令的 request_id 记在 raw_request_json 里;
@@ -107,6 +108,10 @@ def settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str =
     调用方负责提交。
     """
 
+    from app.services.message_actions import object_json, settle_revoke
+
+    if settle_revoke(db, job, ok=ok, error=error):
+        return
     data = parse_job_payload(job)
     request_id = text(as_object(data.get("command")).get("request_id"))
     conversation_id = int(data.get("conversation_id") or 0)
@@ -119,9 +124,14 @@ def settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str =
         .limit(50)
     ).all()
     for message in pending:
-        if request_id in (message.raw_request_json or ""):
+        if text(object_json(message.raw_request_json).get("request_id")) == request_id:
             message.status = "sent" if ok else "failed"
             message.external_status = "sent" if ok else "failed"
+            if ok and result:
+                inner = as_object(result.get("result")) or as_object(result.get("data")) or result
+                external_id = text(inner.get("message_id") or inner.get("msg_id") or inner.get("new_msg_id") or inner.get("newMsgId"))
+                if external_id:
+                    message.external_message_id = external_id
             if error:
                 message.raw_response_json = json.dumps({"error": error}, ensure_ascii=False)
             return
@@ -352,6 +362,8 @@ def _compact_result_for_storage(payload: dict[str, Any], counts: dict[str, int])
     summary = {key: value for key, value in result.items() if not isinstance(value, (list, dict))}
     summary["truncated"] = True
     summary["persisted_counts"] = counts
+    # 保留目录结构标记，监控可区分有效空目录与无法识别的大回报。
+    summary["directory_result_keys"] = [key for key in ("items", "friends", "contacts", "groups", "rooms") if isinstance(result.get(key), list)]
     return {**{key: value for key, value in payload.items() if key != "result"}, "result": summary}
 
 
@@ -481,6 +493,12 @@ def enqueue_message_command(db: Session, channel: Channel, conversation: Convers
         if quote_message_id:
             params["quote_message_id"] = quote_message_id
         mention_user_list = [text(item) for item in payload.get("mention_user_list") or [] if text(item)]
+        if "notify@all" in mention_user_list or re.search(r"\{\{mention:\s*notify@all\s*\}\}", params["content"]):
+            from app.services.message_mentions import can_mention_all
+
+            # 在原生命令入队处再确认权限，其他出站入口也不能绕过网页成员校验。
+            if receiver != conversation.external_id or not can_mention_all(db, channel, conversation):
+                raise ValueError("只有群主或管理员才能 @所有人")
         if mention_user_list:
             params["mention_user_list"] = mention_user_list
     elif message_type == "image":
@@ -599,6 +617,16 @@ def enqueue_command(
         raise ValueError("invalid_webridge_command_name")
     if not isinstance(args, dict):
         raise ValueError("webridge_command_args_must_be_object")
+    if normalized_name == "send_message" and (
+        "notify@all" in [text(item) for item in args.get("mention_user_list") or []]
+        or re.search(r"\{\{mention:\s*notify@all\s*\}\}", str(args.get("content") or ""))
+    ):
+        from app.services.message_mentions import can_mention_all
+
+        target = Conversation(tenant_id=channel.tenant_id, bot_id=channel.bot_id, channel_id=channel.id,
+                              channel_type=channel.channel_type, external_id=text(args.get("receiver")), chat_type="group")
+        if not can_mention_all(db, channel, target):
+            raise ValueError("只有群主或管理员才能 @所有人")
     normalized_request_id = text(request_id) or f"cmd_{uuid.uuid4().hex}"
     payload = {
         "channel_id": int(channel.id),
@@ -790,10 +818,31 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
             continue
         if cancel_disallowed_plugin_outbound_job(db, channel=channel, job=job, payload=data):
             continue
-        job.status = "running"
-        job.attempts = int(job.attempts or 0) + 1
-        job.started_at = current
-        job.locked_at = current
+        # 排队期间也可能跨过两分钟，过期撤回不再发给手机执行。
+        if data.get("revoke_message_id") and int(data.get("revoke_expires_at") or 0) <= int(current.timestamp() * 1000):
+            settle_outbound_message(db, job, ok=False, error="消息已超过 2 分钟，无法撤回")
+            fail_job_terminal(db, job, error_message="消息已超过 2 分钟，无法撤回", result={})
+            continue
+        if job.related_type in {"webridge_friend_check", "webridge_friend_action"}:
+            # 好友任务可能在读取候选后超时，原子领取防止将终态复活或重复执行删除、备注。
+            claimed = db.execute(update(TaskJob).where(
+                TaskJob.id == job.id,
+                TaskJob.tenant_id == channel.tenant_id,
+                TaskJob.job_type == JOB_TYPE,
+                TaskJob.related_type == job.related_type,
+                TaskJob.status == "pending",
+            ).values(
+                status="running", attempts=TaskJob.attempts + 1,
+                started_at=current, locked_at=current,
+            ), execution_options={"synchronize_session": False}).rowcount
+            db.refresh(job)
+            if not claimed:
+                continue
+        else:
+            job.status = "running"
+            job.attempts = int(job.attempts or 0) + 1
+            job.started_at = current
+            job.locked_at = current
         # 现有统一出站入口把内容放在 payload 字段；这里在协议边界转换成 WeBridge 命令。
         command = as_object(data.get("command"))
         if command:
@@ -960,14 +1009,21 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         if job_id <= 0 and stored_request_id != request_id:
             continue
         if job.status in {"completed", "failed"}:
+            if job.status == "completed" and job.related_type == "webridge_friend_action":
+                from app.services.wechat_webridge import friend_actions
+
+                friend_actions.poll_action(db, channel, int(job.id))
             return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
         result = as_object(payload.get("result"))
         if text(as_object(data.get("command")).get("type")) in PAYMENT_COMMANDS:
             return _complete_payment_command(db, channel, job, data, payload, result)
         if text(as_object(data.get("command")).get("type")) in {"moments_list", "moments_operation"}:
             return _complete_moments_command(db, channel, job, data, payload, result)
+        inner_result = as_object(result.get("result")) or result
         # 8080 外层 ok 是执行结果；明确失败不能被业务诊断中的 ok 覆盖。
         succeeded = bool(payload["ok"]) if "ok" in payload else bool(result.get("ok"))
+        if data.get("revoke_message_id") and inner_result.get("ok") is False:
+            succeeded = False
         if succeeded:
             command = as_object(data.get("command"))
             command_type = text(command.get("type") or command.get("command_name"))
@@ -994,8 +1050,13 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
                     db, channel, text(as_object(command.get("params")).get("room_id")),
                     complete=bool(counts.get("members_complete")), stale=bool(counts.get("stale_snapshot")),
                 )
-            settle_outbound_message(db, job, ok=True)
+            settle_outbound_message(db, job, ok=True, result=result)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
+            if job.related_type == "webridge_friend_action":
+                from app.services.wechat_webridge import friend_actions
+
+                # 页面关闭后仍按确认回报更新资料；重复回报由动作模块的原子标记防止反复覆盖。
+                friend_actions.poll_action(db, channel, int(job.id))
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
         failed_command = as_object(data.get("command"))
@@ -1005,7 +1066,7 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             job.status = "failed"
             db.flush()
             member_directory.after_result(db, channel, text(as_object(failed_command.get("params")).get("room_id")), complete=False)
-        settle_outbound_message(db, job, ok=False, error=text(result.get("error") or payload.get("error") or "webridge_command_failed"))
+        settle_outbound_message(db, job, ok=False, error=text(inner_result.get("error") or result.get("error") or payload.get("error") or "webridge_command_failed"))
         fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
         logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}

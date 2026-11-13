@@ -117,7 +117,7 @@ def build_webridge_chatroom_detail(db: Session, channel: Channel, chatroom: Chat
             # 同步按钮走通用单群同步入口，该入口会为微桥渠道入队 room_members 命令。
             "sync_action": f"/channels/{channel.id}/chatrooms/{chatroom.id}/sync",
             "sync_button_label": "同步群成员",
-            "member_section_hint": "成员来自手机插件的群成员同步；为空时点击右上角“同步群成员”，稍后刷新本页。",
+            "member_section_hint": "成员来自手机插件；点击右上角“同步群成员”后，会自动显示进度并更新成员列表。",
             # 默认关闭:手机端回传媒体会占用串行通道、拖慢消息上报,需要时再按群开启。
         }
     )

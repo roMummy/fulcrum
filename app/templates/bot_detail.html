@@ -14,7 +14,7 @@
       <p class="muted-text">{{ bot.description or '暂无说明' }}</p>
     </div>
     <div class="actions">
-      <form method="post" action="/bots/{{ bot.id }}/status-check">
+      <form method="post" action="/bots/{{ bot.id }}/status-check" data-action-feedback>
         <button class="btn btn-secondary" type="submit">状态检查</button>
       </form>
       <form method="post" action="/bots/{{ bot.id }}/toggle">

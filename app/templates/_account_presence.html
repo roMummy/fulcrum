@@ -1,0 +1,8 @@
+{% macro account_presence(presence) -%}
+<span class="account-presence" data-presence="{{ presence.state }}">
+  <span class="chip account-presence-badge {% if presence.tone == 'success' %}chip-success{% elif presence.tone == 'error' %}badge-error{% elif presence.tone == 'warning' %}badge-warning{% else %}chip-muted{% endif %}" title="{{ presence.hint }}">
+    <span class="account-presence-dot" aria-hidden="true"></span>{{ presence.label }}
+  </span>
+  <small class="account-presence-time"{% if presence.last_active_at %} title="最近活跃：{{ presence.last_active_at|bj_time }}"{% endif %}>{{ presence.activity_text if presence.last_active_at else presence.hint }}</small>
+</span>
+{%- endmacro %}

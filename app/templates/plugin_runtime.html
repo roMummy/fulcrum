@@ -100,7 +100,7 @@
               <input type="checkbox" role="switch" aria-label="启用 {{ item.plugin.display_name }}" data-autosave-url="/plugins/{{ item.id }}/toggle" data-autosave-key="enabled" data-autosave-form="{}" data-binding-status{% if item.status == 'enabled' %} checked{% endif %} />
               <span class="ui-switch-track"></span>
             </span>
-            <form method="post" action="/plugins/{{ item.id }}/reload">
+            <form method="post" action="/plugins/{{ item.id }}/reload" data-action-feedback>
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
               <button class="btn btn-small btn-secondary" type="submit">重载</button>
             </form>

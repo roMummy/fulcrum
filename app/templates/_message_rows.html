@@ -48,19 +48,20 @@
 {% macro message_rows(messages, identities, views) %}
 {% for item in messages %}
 {% set who = identities.get(item.id) %}
-{% set is_out = item.direction == 'out' %}
+{% set is_out = item.direction == 'out' or (who and who.is_own) %}
 {% set view = views.get(item.id) or {'kind': 'text', 'text': item.content or ''} %}
-<div class="wechat-message-row {{ 'out' if is_out else 'in' }}" data-id="{{ item.id }}">
-  <span class="wechat-avatar">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if is_out else '?') }}{% endif %}</span>
+<div class="wechat-message-row {{ 'out' if is_out else 'in' }}" data-id="{{ item.id }}" data-own="{{ 1 if is_out else 0 }}" data-sender-id="{{ item.sender_id or '' }}" data-sender-name="{{ who.name if who and who.name else ('我方' if is_out else '联系人') }}" data-preview="{{ item.content|message_display(item.message_type) }}" data-status="{{ item.status }}" data-revoke-until="{{ view.revoke_until or 0 }}" data-revoke-state="{{ view.revoke_state or '' }}" data-version="{{ view.version or '' }}">
+  <span class="wechat-avatar" tabindex="0" aria-label="{{ who.name if who and who.name else ('我方' if is_out else '联系人') }}的头像">{% if who and who.avatar_url %}<img src="{{ who.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ who.initial if who and who.initial else ('我' if is_out else '?') }}{% endif %}</span>
   <div class="wechat-message-main">
     <div class="wechat-message-meta">
       {{ who.name if who and who.name else ('我方' if is_out else '联系人') }}
       {% if who and who.show_id and not is_out %}<small class="identity-id">{{ who.external_id }}</small>{% endif %}
       · {{ item.created_at|bj_time if item.created_at else '-' }}
-      {% if is_out and item.status == 'failed' %}<span class="wechat-msg-status">发送失败</span>{% endif %}
+      {% if view.revoke_state == 'pending' %}<span class="wechat-msg-status">撤回中</span>{% elif view.revoke_state == 'failed' %}<span class="wechat-msg-status">撤回失败</span>{% endif %}
     </div>
-    <article class="wechat-message-bubble {{ 'out' if is_out else 'in' }}{% if view.kind not in ['text', 'quote', 'system'] %} is-card{% endif %}">
-      {{ message_body(view, item) }}
+    <article tabindex="0" aria-label="消息，右键或按 Shift + F10 打开操作菜单" class="wechat-message-bubble {{ 'out' if is_out else 'in' }}{% if view.kind not in ['text', 'quote', 'system'] %} is-card{% endif %}">
+      {% if is_out and item.status == 'failed' %}<span class="wechat-send-error" role="img" title="发送失败，请检查渠道后重试" aria-label="发送失败">!</span>{% endif %}
+      {% if item.status == 'revoked' or view.revoke_state == 'revoked' %}<div class="msg-system">{{ '你撤回了一条消息' if is_out else '对方撤回了一条消息' }}</div>{% else %}{{ message_body(view, item) }}{% endif %}
     </article>
   </div>
 </div>

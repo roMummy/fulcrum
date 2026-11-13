@@ -325,6 +325,11 @@ def load_directory_plugin(plugin_code: str | None, *, force: bool = False) -> Lo
     if not discovered:
         logger.warning("plugin load skipped because plugin was not discovered", extra={"plugin_code": plugin_code or ""})
         return None
+    return load_discovered_plugin(discovered, force=force)
+
+
+def load_discovered_plugin(discovered: DiscoveredPlugin, *, force: bool = False) -> LoadedDirectoryPlugin | None:
+    # 调用方已经完成目录发现时直接复用结果，避免加载每个插件都重新扫描整个目录。
     if not discovered.is_valid:
         logger.warning("plugin load skipped because manifest is invalid", extra={"plugin_code": discovered.manifest.code})
         return None

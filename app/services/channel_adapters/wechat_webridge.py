@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.entities import Channel, Conversation
+from app.services.message_view import recall_info
 
 from .base import BaseChannelAdapter
 
@@ -24,19 +25,19 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
     adapter_type = "wechat_webridge"
 
     def health_check(self, channel: Channel) -> dict[str, Any]:
-        """根据最近注册快照报告手机是否在线，避免云端反向探测手机地址。"""
+        """复用账号清单的在线判定，让过期快照和停用状态及时生效。"""
 
-        from app.services.wechat_webridge.service import _runtime
+        from app.services.account_presence import build_account_presence
 
-        snapshot = _runtime(channel).get("webridge")
-        if not isinstance(snapshot, dict):
-            return {"ok": False, "adapter_type": self.adapter_type, "status": "offline", "summary": "WeBridge 尚未注册"}
+        presence = build_account_presence(channel)
+        online = presence["state"] == "online"
+        last_active_at = presence["last_active_at"]
         return {
-            "ok": bool(snapshot.get("online")),
+            "ok": online,
             "adapter_type": self.adapter_type,
-            "status": "online" if snapshot.get("online") else "offline",
-            "summary": "WeBridge 最近一次状态已登记" if snapshot.get("online") else "WeBridge 没有在线状态",
-            "details": {"device_id": snapshot.get("device_id"), "account_id": snapshot.get("account_id"), "last_seen_at": snapshot.get("last_seen_at")},
+            "status": "online" if online else "offline",
+            "summary": "设备在线，连接正常" if online else presence["hint"],
+            "details": {"last_seen_at": last_active_at.isoformat() if last_active_at is not None else None},
         }
 
     def send_message(self, channel: Channel, conversation: Conversation, payload: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +107,9 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
             # 微桥 is_at 表示本条消息是否 @ 了当前登录账号，插件匹配与 AI 调度据此判断是否被呼叫。
             "mentioned_self": bool(body.get("is_at")),
             "content_xml": body.get("content_xml"),
+            "create_time": body.get("create_time"),
+            "mention_user_list": body.get("at_user_list") if isinstance(body.get("at_user_list"), list) else [],
+            "quote_message_id": body.get("quote_msg_id"),
             "media": {key: body.get(key) for key in ("image_md5", "image_aes_key", "image_thumb_url", "image_mid_url", "voice_url", "voice_aes_key", "emoji_cdn_url", "app_msg_url", "app_thumb_url") if body.get(key)},
             "payment": {key: body.get(key) for key in ("red_packet_id", "transfer_id", "message_id", "from_user", "to_user", "payer_username", "receiver_username", "amount_fen", "amount_text", "control_transaction_id") if body.get(key) is not None},
             "contact": {key: body.get(key) for key in ("contact_id", "contact_ref", "encrypt_username", "ticket", "nickname") if body.get(key) is not None},
@@ -123,6 +127,7 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         if own_account and sender_for_self.strip() == own_account:
             # 本账号自己发出的消息(手机上亲自发的、机器人回复后回流的都算):标记出来,全局不进入内容检测
             details["from_self"] = True
+            details["direction"] = "out"
         member_change = _build_member_change(event_name, body)
         if member_change:
             # 结构化成员事件:插件直接读 details.member_change,消息内容写成中文,后台和日志可读。
@@ -132,9 +137,24 @@ class WechatWeBridgeAdapter(BaseChannelAdapter):
         timestamp = body.get("create_time", payload.get("create_time"))
         if timestamp is not None:
             details["timestamp"] = timestamp
+        is_system_event = raw_type == "system" or str(body.get("raw_message_type") or "") == "10002"
+        recalled = (recall_info(content) or recall_info(body.get("content_xml"))) if is_system_event else None
+        if recalled is not None:
+            # 撤回通知是消息状态更新，不交给插件和 AI 当成新发言处理。
+            details["recall"] = recalled
+            details["skip_plugin_dispatch"] = True
+            message_type = "system"
+            event_name = "message_recalled"
+            content = recalled["text"]
+            conversation_id = recalled["session"] or conversation_id
+            is_group = is_group or conversation_id.endswith("@chatroom")
+        event_key = str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None
+        if recalled is not None and event_key:
+            # 有的客户端用原消息编号标识通知；分开原消息与撤回回调的去重键。
+            event_key = "recall:" + event_key
         return {
             "adapter_type": self.adapter_type,
-            "event_key": str(payload.get("event_id") or body.get("event_id") or body.get("message_id") or body.get("id") or "").strip() or None,
+            "event_key": event_key,
             "event_type": event_name,
             "should_persist_message": bool(content.strip()) or message_type in {"red_packet", "transfer", "pat", "system", "friend_request", "contact", "group_member_join", "group_member_leave", "group_member_nickname_change", "moments", "favorite", "official_account"},
             "conversation": {

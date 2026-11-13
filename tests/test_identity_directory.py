@@ -116,4 +116,7 @@ def test_empty_batch_and_system_outbound_sender(directory_env):
     assert directory.for_messages([]) == {}
     messages[0].direction, messages[0].sender_id = "out", "outbound-adapter:test"
     who = directory.for_messages([messages[0]])[messages[0].id]
-    assert who["name"] == "我方" and who["show_id"] is False
+    # 自己发出的消息统一显示渠道账号资料(没有账号昵称时用渠道名),并标记 is_own;
+    # 关键性质不变:不暴露 outbound-adapter 之类的内部发送者标识,也不显示 ID 行。
+    assert who["name"] == "微桥" and who["is_own"] is True and who["show_id"] is False
+    assert "outbound-adapter" not in str(who)

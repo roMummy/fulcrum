@@ -150,6 +150,33 @@ def ingest_normalized_event(
 
         sync_wechat_gugatool_chatroom_from_message(db, channel, normalized, conversation=conversation)
 
+    details = normalized.get("details") if isinstance(normalized.get("details"), dict) else {}
+    recalled = details.get("recall")
+    if channel.channel_type == "wechat_webridge" and isinstance(recalled, dict):
+        from app.services.message_actions import apply_recall_event
+
+        originals = apply_recall_event(db, channel, conversation, recalled, raw_event_id=int(raw_event.id))
+        if originals:
+            message_id = int(originals[0].id)
+        else:
+            # 新协议有时只给服务器编号、甚至没有编号；保留可读通知，绝不误撤其他消息。
+            notification = Message(
+                conversation_id=conversation.id, direction=_resolve_message_direction(normalized),
+                sender_id=str(message_payload.get("sender_id") or "") or None,
+                sender_name=message_payload.get("sender_name"), content=str(recalled.get("text") or "一条消息已被撤回"),
+                message_type="system", status="received",
+            )
+            db.add(notification)
+            db.flush()
+            message_id = int(notification.id)
+            refresh_conversation_last_message_at(db, conversation.id)
+        raw_event.status = "mapped"
+        dispatch = {"mode": "storage_only", "queued": False, "reason": "message_recalled", "message_id": message_id, "conversation_id": conversation.id, "raw_event_id": raw_event.id, "matched": bool(originals)}
+        raw_event.dispatch_summary_json = json.dumps(dispatch, ensure_ascii=False)
+        # 撤回既不是新发言，也不是媒体回显，不触发插件、AI、开放消息通知或群资料同步。
+        db.commit()
+        return {"ok": True, "deduplicated": False, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
+
     if channel.channel_type == "wechat_ipad":
         from app.services.wechat_ipad.chatrooms import sync_wechat_ipad_chatroom_from_message
         from app.services.wechat_ipad.service import should_sync_wechat_ipad_chatroom_for_event, sync_wechat_ipad_chatrooms
@@ -257,6 +284,17 @@ def ingest_normalized_event(
     mapped = bool(normalized.get("should_persist_message") and message_content)
     message_direction = _resolve_message_direction(normalized)
     if mapped:
+        if channel.channel_type == "wechat_webridge":
+            from app.services.wechat_webridge.message_echo import reconcile_echo
+
+            original = reconcile_echo(db, channel, conversation, normalized)
+            if original is not None:
+                # 回传只补身份和微信编号，不重复统计、调度插件或创建媒体占位附件。
+                raw_event.status = "mapped"
+                dispatch = {"mode": "storage_only", "queued": False, "reason": "outbound_echo", "message_id": original.id, "conversation_id": conversation.id, "raw_event_id": raw_event.id}
+                raw_event.dispatch_summary_json = json.dumps(dispatch, ensure_ascii=False)
+                db.commit()
+                return {"ok": True, "deduplicated": True, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
         message = Message(
             conversation_id=conversation.id,
             direction=message_direction,
