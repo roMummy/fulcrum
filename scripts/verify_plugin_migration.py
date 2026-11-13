@@ -18,7 +18,7 @@ PLUGINS_ROOT = PROJECT_ROOT / "plugins"
 # 这些目录存在时不计入目录总数,也不触发"未纳入确认范围"错误。
 PRIVATE_PLUGIN_CODES = {item.strip() for item in os.environ.get("FULCRUM_PRIVATE_PLUGINS", "").split(",") if item.strip()}
 
-# 42 个目标代码来自已经确认的 A-BOT 迁移台账。交付校验固定使用完整集合，
+# 随项目发布的内置插件固定清单。交付校验固定使用完整集合，
 # 不允许因为某个插件暂时未配置第三方凭证就把目录从正式交付范围中排除。
 TARGET_PLUGIN_CODES = {
     "ai_auto_response",
@@ -57,11 +57,11 @@ TARGET_PLUGIN_CODES = {
     "xiuxian",
 }
 
-# 这两个目录是 SaaS 自有业务，不属于 A-BOT 复刻范围，但仍必须满足同一目录契约。
+# 这几个目录是面向运营方的自有业务插件，和上面的内置插件一样必须满足同一目录契约。
 SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow", "idiom_guess", "guess_image"}
 
-# 排除项和平台原生能力不能重新以目录插件形式出现。平台管理、统计、运维和群级
-# 作用域已经有唯一 SaaS 页面和服务入口，不保留 A-BOT 单机管理兼容目录。
+# 平台原生能力不能重新以目录插件形式出现。平台管理、统计、运维和群级作用域
+# 已经有唯一的页面和服务入口，不再提供同名的目录插件。
 FORBIDDEN_PLUGIN_CODES = {
     "plugin_manager",
     "stats_collector",
@@ -147,7 +147,7 @@ def _validate_secret_defaults(plugin_code: str, parsed: dict[str, Any], errors: 
 
 
 def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list[str]) -> None:
-    """使用 AST 检查真实执行入口和 A-BOT 运行时依赖，不导入插件模块。"""
+    """使用 AST 检查真实执行入口和禁止的顶层导入，不导入插件模块。"""
 
     try:
         source = entrypoint_path.read_text(encoding="utf-8")
@@ -171,7 +171,7 @@ def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             imported_roots = {node.module.split(".", 1)[0]}
         # 目录插件允许引用自身的纯业务模块和本项目共享边界工具；其他 `plugins.*`
-        # 导入仍然视为跨插件耦合，避免重新形成 A-BOT 全局插件运行时。
+        # 导入仍然视为跨插件耦合，避免插件之间互相依赖、绕开平台提供的运行时能力。
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             allowed_internal = {
                 f"plugins.{plugin_code}.service",
@@ -185,7 +185,7 @@ def _validate_python_entry(plugin_code: str, entrypoint_path: Path, errors: list
                 imported_roots.discard("plugins")
         forbidden = imported_roots & FORBIDDEN_IMPORT_ROOTS
         for root_name in sorted(forbidden):
-            errors.append(f"{plugin_code}: 禁止导入 A-BOT 运行时 {root_name}")
+            errors.append(f"{plugin_code}: 禁止导入顶层模块 {root_name}（插件只能使用平台提供的运行时能力）")
 
 
 def verify_plugin_migration() -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -241,8 +241,8 @@ def main() -> int:
 
     plugin_codes, errors = verify_plugin_migration()
     print(f"目录插件总数: {len(plugin_codes)}")
-    print(f"A-BOT 目标插件数: {len(TARGET_PLUGIN_CODES)}")
-    print(f"SaaS 自有插件数: {len(SAAS_OWN_PLUGIN_CODES)}")
+    print(f"内置插件数: {len(TARGET_PLUGIN_CODES)}")
+    print(f"运营方自有插件数: {len(SAAS_OWN_PLUGIN_CODES)}")
     print(f"插件代码: {','.join(plugin_codes)}")
     print(f"错误数量: {len(errors)}")
     for error in errors:

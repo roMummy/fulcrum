@@ -24,7 +24,7 @@ All notable changes to this project should be documented in this file.
 ### Added
 
 - 新增插件通用 HTTP、状态存储、限流、标准回复、统一调度和可信租户运行上下文
-- 完成 36 个 A-BOT 业务插件的 SaaS 原生迁移，并保留 2 个 SaaS 自有业务插件
+- 内置一批开箱可用的业务插件，并提供面向运营方的自有业务插件
 - 新增插件敏感配置 AES-GCM 密文、表单分离、明文清理和交付完整性校验脚本
 
 ### Changed
@@ -35,7 +35,7 @@ All notable changes to this project should be documented in this file.
 
 ### Removed
 
-- 删除 A-BOT 数据库、Redis、Provider、微信 XML、单机管理入口和占位执行器兼容链路
+- 删除旧的数据库、Redis、Provider、微信 XML、单机管理入口和占位执行器兼容链路
 - 删除 `plugin_manager`、`stats_collector`、`system_updater`、`trendradar_permission` 等平台原生插件目录
 - 删除部署前数据库备份命令和首次部署跳过门禁变量
 

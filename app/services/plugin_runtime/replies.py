@@ -88,7 +88,7 @@ def link_reply(
     if normalized_thumb_url:
         normalized_thumb_url = _validate_public_resource_url(normalized_thumb_url)
 
-    # 标题可以为空，渠道层会使用 URL 作为最小可读内容；这样既保持 A-BOT 规则能力，
+    # 标题可以为空，渠道层会使用 URL 作为最小可读内容；这样既保持原有规则能力，
     # 又不会为了展示文案在插件核心中加入任何微信或 Telegram 专用分支。
     reply = {
         "type": "link",

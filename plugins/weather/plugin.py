@@ -37,7 +37,7 @@ class WeatherConfig:
 
 
 def matches_event(context) -> dict[str, object]:
-    """匹配最新天气命令，以及 A-BOT 保留的“城市天气”自然查询形式。"""
+    """匹配最新天气命令，以及保留的“城市天气”自然查询形式。"""
 
     chat_type = str(getattr(context, "chat_type", "") or "").strip().lower()
     message_type = str(getattr(context, "message_type", "") or "text").strip().lower()

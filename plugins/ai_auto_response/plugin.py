@@ -50,7 +50,7 @@ class AutoResponseDecision:
 
 @dataclass(frozen=True)
 class AutoResponsePrompt:
-    """对应 A-BOT 最新 Dify 工作流的固定输入，不暴露可变字段映射。"""
+    """对应 Dify 工作流的固定输入，不暴露可变字段映射。"""
 
     persona: str
     group_profile: str
@@ -411,7 +411,7 @@ def _build_request_body(
         or ""
     ).strip()
     if config.app_mode == "workflow":
-        # 最新 A-BOT 工作流的输入变量是固定产品契约。这里直接构造全部必填字段，
+        # 工作流的输入变量是固定的产品契约。这里直接构造全部必填字段，
         # 不再让租户维护变量名映射，也不保留旧 query 单字段工作流入口。
         return {
             "inputs": {
@@ -452,7 +452,7 @@ def _extract_provider_text(payload: Any) -> str:
                 return value.strip()
         outputs = data.get("outputs")
         if isinstance(outputs, Mapping):
-            # A-BOT 最新 Dify 工作流把结构化决策固定输出到 result_json；同时保留
+            # Dify 工作流把结构化决策固定输出到 result_json；同时保留
             # Dify Chat 常见的 text/answer 字段，二者最终都进入同一决策解析函数。
             for key in ("result_json", "text", "answer", "result", "content"):
                 value = outputs.get(key)

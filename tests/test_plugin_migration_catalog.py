@@ -64,7 +64,7 @@ NEW_PLUGIN_CODES = {
 SAAS_OWN_PLUGIN_CODES = {"customer_operations", "supplier_order_flow", "idiom_guess", "guess_image"}
 
 # 这些能力已经明确排除或上移为平台原生能力。测试直接禁止同名目录出现，防止
-# 研发过程中为了快速复用又把 A-BOT 单机管理链路或不需要的内容带回 SaaS。
+# 研发过程中为了快速复用又把单机管理链路或不需要的内容带回来。
 FORBIDDEN_PLUGIN_CODES = {
     "plugin_manager",
     "stats_collector",
@@ -95,7 +95,7 @@ def test_plugin_directories_stay_inside_confirmed_migration_scope() -> None:
 
 
 def test_existing_plugin_directories_have_single_saas_entrypoint() -> None:
-    """已有插件统一使用 plugin.py，不能重新引入 A-BOT main.py 双入口。"""
+    """已有插件统一使用 plugin.py，不能重新引入 main.py 双入口。"""
 
     for plugin_code in EXISTING_PLUGIN_CODES:
         plugin_dir = PLUGINS_ROOT / plugin_code
@@ -121,6 +121,6 @@ def test_delivery_verifier_tracks_the_confirmed_catalog_during_migration() -> No
     # 校验器应对公开仓库里的完整目录返回成功;私有插件目录(FULCRUM_PRIVATE_PLUGINS)不参与统计。
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"目录插件总数: {len(VERIFIED_TARGET_PLUGIN_CODES | VERIFIED_SAAS_OWN_PLUGIN_CODES)}" in result.stdout
-    assert f"A-BOT 目标插件数: {len(VERIFIED_TARGET_PLUGIN_CODES)}" in result.stdout
-    assert f"SaaS 自有插件数: {len(VERIFIED_SAAS_OWN_PLUGIN_CODES)}" in result.stdout
+    assert f"内置插件数: {len(VERIFIED_TARGET_PLUGIN_CODES)}" in result.stdout
+    assert f"运营方自有插件数: {len(VERIFIED_SAAS_OWN_PLUGIN_CODES)}" in result.stdout
     assert "错误数量: 0" in result.stdout
