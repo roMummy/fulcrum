@@ -8,8 +8,13 @@
 [![Contributors](https://img.shields.io/github/contributors/liu-x-x-lab/fulcrum)](https://github.com/liu-x-x-lab/fulcrum/graphs/contributors)
 
 Fulcrum is a multi-tenant SaaS for operating chat bots across channels from a single back office:
-WeChat, WeCom (WeChat Work), Telegram and more. It handles tenants, teams, plans and quotas, a plugin runtime,
+WeChat, WeCom (WeChat Work), Telegram and more. It handles tenants, teams, bot quotas, a plugin runtime,
 group management, a message center and an Open API/Webhook gateway for your own business systems.
+
+> **Fulcrum itself is free and open source ([Apache-2.0](LICENSE))** — use, modify and run it commercially at no
+> cost; there is no license fee or subscription. The "plans / trials / payment orders" mentioned below are a built-in
+> feature **for operators** who host Fulcrum and want to charge *their own* customers. Names, prices and quotas are
+> whatever the operator sets in the back office; leave it unused if you don't charge anyone.
 
 > The detailed documentation is written in Chinese (see [README.md](README.md) and [docs/](docs/)).
 > This page is a short English overview.
@@ -22,7 +27,7 @@ group management, a message center and an Open API/Webhook gateway for your own 
   encrypted per-binding secrets and scheduled actions.
 - **Group features** — AI chat with long-term memory and web search, red-packet/transfer handling, points, and more.
 - **Message center & Moments** — a WeChat-style message center and a Moments viewer with on-demand media loading.
-- **Commercial loop** — plans, quotas, manual payment orders, review and subscription fulfilment.
+- **Optional billing for operators** — operator-defined plans, quotas, manual payment orders, review and subscription fulfilment, for charging your own customers.
 - **Open API / Webhook** — send messages and files, query conversations and groups, receive signed webhooks.
 - **Operations** — database lifecycle checks (`/readyz` stays 503 until migrations match), alerts and dashboards.
 
