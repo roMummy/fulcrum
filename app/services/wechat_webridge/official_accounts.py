@@ -1,17 +1,25 @@
-"""公众号身份补齐：只使用账号匹配的发布者名称与手机返回的真实资料。"""
+"""通过公众号专用列表接口补齐消息页的名称与头像,独立于普通好友目录。"""
+
 from __future__ import annotations
 
+import json
 from typing import Any
 from xml.etree import ElementTree
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Conversation, TaskJob, WorkWechatContact
 from app.services.identity_directory import looks_like_raw_id
+from app.services.task_queue import parse_job_payload
+from app.services.wechat_webridge import service
 
-PROFILE_RETRY_SECONDS = 600
+SYNC_PRIORITY = 18
+PAGE_SIZE = 100
+REFRESH_SECONDS = 3600
+RETRY_SECONDS = 300
+STATE_KEY = "official_account_directory"
 
 
 def publisher_name(external_id: str, content: Any) -> str:
@@ -67,36 +75,82 @@ def observe_message(db: Session, channel: Channel, normalized: dict[str, Any], c
         message['sender_name'] = name
 
 
-def refresh_missing_profiles(db: Session, channel: Channel) -> None:
-    """手机在线时补查已存在公众号会话；十分钟节流、在途合并，不在页面 GET 下发任务。"""
-    from app.services.wechat_webridge import service
-
+def _save_state(channel: Channel, **updates: Any) -> None:
     runtime = service._runtime(channel)
-    bridge = service.as_object(runtime.get('webridge'))
-    if channel.is_enabled is False or 'official_accounts' not in bridge.get('capabilities', []):
-        return
-    state = service.as_object(runtime.get('official_account_profiles'))
-    age = service._seconds_since(state.get('requested_at'))
-    if age is not None and age < PROFILE_RETRY_SECONDS:
-        return
-    missing = db.scalar(select(Conversation.id).outerjoin(WorkWechatContact, and_(
-        WorkWechatContact.channel_id == Conversation.channel_id,
-        WorkWechatContact.contact_external_id == Conversation.external_id,
-    )).where(
-        Conversation.channel_id == channel.id, Conversation.chat_type == 'direct',
-        Conversation.external_id.istartswith('gh_', autoescape=True),
-        or_(WorkWechatContact.id.is_(None), WorkWechatContact.name.is_(None), WorkWechatContact.name == '',
-            WorkWechatContact.name == Conversation.external_id, WorkWechatContact.avatar_url.is_(None),
-            WorkWechatContact.avatar_url == ''),
-    ).limit(1))
-    if missing is None:
-        return
-    for job in db.scalars(select(TaskJob).where(TaskJob.job_type == service.JOB_TYPE,
-                                               TaskJob.status.in_(('pending', 'running')))).all():
-        payload = service.parse_job_payload(job)
-        if (payload.get('channel_id') == channel.id
-                and service.as_object(payload.get('command')).get('type') == 'official_accounts'):
-            return
-    service.enqueue_command(db, channel, command_name='official_accounts', args={}, priority=30)
-    runtime['official_account_profiles'] = {**state, 'requested_at': now_shanghai().isoformat()}
+    runtime[STATE_KEY] = {**service.as_object(runtime.get(STATE_KEY)), **updates}
     service._save_runtime(channel, runtime)
+
+
+def _enqueue_page(db: Session, channel: Channel, offset: int) -> TaskJob:
+    job = service.enqueue_command(
+        db, channel, command_name="official_accounts",
+        args={"type": "all", "limit": PAGE_SIZE, "offset": offset}, priority=SYNC_PRIORITY,
+    )
+    data = parse_job_payload(job)
+    # 只为内部完整同步续页;通用命令桥的关键词/类型筛选仍是单次查询。
+    data[STATE_KEY] = True
+    job.payload_json = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    _save_state(channel, requested_at=now_shanghai().isoformat())
+    db.flush()
+    return job
+
+
+def request_sync(db: Session, channel: Channel, *, force: bool = False) -> TaskJob | None:
+    """手机轮询时自动补齐;失败退避,未完成的同渠道任务合并。调用方负责提交。"""
+
+    if channel.is_enabled is False or channel.deleted_at is not None:
+        return None
+    db.flush()
+    jobs = db.scalars(select(TaskJob).where(
+        TaskJob.job_type == service.JOB_TYPE, TaskJob.status.in_(("pending", "running")),
+        TaskJob.priority == SYNC_PRIORITY,
+    )).all()
+    for job in jobs:
+        data = parse_job_payload(job)
+        if int(data.get("channel_id") or 0) == int(channel.id) and data.get(STATE_KEY):
+            return job
+    state = service.as_object(service._runtime(channel).get(STATE_KEY))
+    if not force:
+        age = service._seconds_since(state.get("synced_at"))
+        since_request = service._seconds_since(state.get("requested_at"))
+        if (age is not None and age < REFRESH_SECONDS) or (since_request is not None and since_request < RETRY_SECONDS):
+            return None
+    return _enqueue_page(db, channel, 0)
+
+
+def successful_result(payload: dict[str, Any], result: dict[str, Any]) -> bool:
+    """登录/联系人未就绪及异常响应不能当作成功的空目录。"""
+
+    wrapper = service.as_object(payload.get("result"))
+    # 任一执行层明确失败都必须保留；不能解包后只读取最内层的成功诊断。
+    return (
+        payload.get("ok", wrapper.get("ok", result.get("ok"))) is True
+        and wrapper.get("ok") is not False
+        and result.get("ok") is not False
+        and result.get("status", "ok") == "ok"
+        and isinstance(result.get("items"), list)
+        and all(isinstance(item, dict) for item in result["items"])
+    )
+
+
+def after_result(db: Session, channel: Channel, data: dict[str, Any], result: dict[str, Any]) -> None:
+    """按返回的实际条数续取下一页,最后一页才标记完整同步成功。"""
+
+    if not data.get(STATE_KEY):
+        return
+    args = service.as_object(service.as_object(data.get("command")).get("params"))
+    offset = args.get("offset", 0)
+    if result.get("offset", offset) != offset:
+        return
+    # 部分真机版本把布尔值序列化为 0/1,只接受明确的布尔或这两个整数。
+    has_more = result.get("has_more")
+    if type(has_more) not in (bool, int) or has_more not in (0, 1):
+        return
+    if has_more:
+        items = result["items"]
+        # 空页不能推进游标;异常响应留待退避后重试,不无限下发相同分页。
+        next_offset = offset + len(items)
+        if items and next_offset <= 4294967295:
+            _enqueue_page(db, channel, next_offset)
+    else:
+        _save_state(channel, synced_at=now_shanghai().isoformat())

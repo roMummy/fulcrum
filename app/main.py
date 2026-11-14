@@ -2320,7 +2320,7 @@ async def wechat_webridge_dashboard_command_action(
     args_json: str = Form("{}"),
     csrf_token: str = Form(""),
 ):
-    """从后台直接发起好友、群组和成员同步命令。"""
+    """从后台直接发起好友、公众号、群组和成员同步命令。"""
 
     enforce_role(request, "ops")
     db = get_session()
@@ -2335,7 +2335,15 @@ async def wechat_webridge_dashboard_command_action(
             return _completed_operation_response(request, "参数 JSON 无效", f"/channels/{channel_id}/wechat-webridge", ok=False)
         if not isinstance(args, dict):
             return _completed_operation_response(request, "参数必须是 JSON 对象", f"/channels/{channel_id}/wechat-webridge", ok=False)
-        job = enqueue_command(db, channel, command_name=command_name, args=args)
+        # 无筛选的公众号同步走完整分页入口，通用命令桥仍保留用户指定的查询范围。
+        if command_name == "official_accounts" and not args:
+            from app.services.wechat_webridge import official_accounts
+
+            job = official_accounts.request_sync(db, channel, force=True)
+            if job is None:
+                raise ValueError("请先完成账号接入并启用渠道")
+        else:
+            job = enqueue_command(db, channel, command_name=command_name, args=args)
         db.commit()
         return _queued_operation_response(request, db, channel, [job], f"/channels/{channel_id}/wechat-webridge")
     except ValueError as exc:
@@ -5233,6 +5241,10 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
             Conversation.id.desc(),
         ).limit(100)
     ).all()
+    # 专用目录确认的非 gh_ 公众号也需要显示类型徽标；按当前页批量查询，避免逐条读取联系人。
+    official_ids = set(db.scalars(apply_kind_filter(
+        select(Conversation.id).where(Conversation.id.in_([item.id for item in conversations])), "official",
+    )).all()) if conversations else set()
     conversation_summaries = []
     summary_directory = IdentityDirectory(db)
     summary_identities = summary_directory.for_conversations(conversations)
@@ -5253,7 +5265,7 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
                 "display_name": display_name,
                 "initial": display_name[:1].upper(),
                 "identity": identity,
-                "kind": conversation_kind(item.chat_type, item.external_id),
+                "kind": "official" if item.id in official_ids else conversation_kind(item.chat_type, item.external_id),
             }
         )
     return conversation_summaries

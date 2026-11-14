@@ -204,13 +204,15 @@ def persist_directory_result(
 
         for item in _result_items(result, "items", "friends", "contacts", "official_accounts"):
             external_id = _directory_id(item, "account_id", "user_name", "wxid", "username", "id")
-            if not external_id or command_name == "official_accounts" and not is_official_account(external_id):
+            if not external_id:
                 continue
             contact = db.scalar(select(WorkWechatContact).where(WorkWechatContact.channel_id == channel.id, WorkWechatContact.contact_external_id == external_id))
             if contact is None:
                 contact = WorkWechatContact(channel_id=channel.id, contact_external_id=external_id, first_seen_at=now)
                 db.add(contact)
-            contact.contact_kind = "official" if is_official_account(external_id) else "friend"
+            # 专用公众号接口能返回不带 gh_ 前缀的账号；已确认类型不被普通好友回报降级。
+            contact.contact_kind = "official" if (command_name == "official_accounts"
+                or is_official_account(external_id) or contact.contact_kind == "official") else "friend"
             name = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or item.get("remark") or "")[:255]
             display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or "")[:255]
             avatar = str(item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "")
@@ -738,10 +740,10 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     record_device_sample(db, channel)
     _enqueue_device_status(db, channel)
     _enqueue_account_status(db, channel)
-    # 公众号目录与好友分开读取，补齐现有会话的真实头像；手机未准备好时按间隔重试。
-    from app.services.wechat_webridge.official_accounts import refresh_missing_profiles
+    # 完整公众号目录独立于好友读取；分页、在途合并与失败退避共用唯一入口。
+    from app.services.wechat_webridge import official_accounts
 
-    refresh_missing_profiles(db, channel)
+    official_accounts.request_sync(db, channel)
     # bot 被拉进新群后自动同步群资料和成员:定期对账(其余触发见 group_sync)。
     from app.services.wechat_webridge import group_sync
 
@@ -1047,9 +1049,14 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             if notice_error:
                 succeeded = False
                 command_error = notice_error
+        command = saved_command
+        command_type = text(command.get("type") or command.get("command_name"))
+        if command_type == "official_accounts":
+            from app.services.wechat_webridge import official_accounts
+
+            result = inner_result
+            succeeded = official_accounts.successful_result(payload, result)
         if succeeded:
-            command = as_object(data.get("command"))
-            command_type = text(command.get("type") or command.get("command_name"))
             from app.services.wechat_webridge import group_sync
 
             # 群列表同步:先记下已有的群,结果写入后对"新发现的群"继续下发成员同步。
@@ -1073,6 +1080,11 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
                     db, channel, text(as_object(command.get("params")).get("room_id")),
                     complete=bool(counts.get("members_complete")), stale=bool(counts.get("stale_snapshot")),
                 )
+            elif command_type == "official_accounts":
+                # 先释放当前页的在途标记，续页才可生成下一条完整同步任务。
+                job.status = "completed"
+                db.flush()
+                official_accounts.after_result(db, channel, data, result)
             settle_outbound_message(db, job, ok=True, result=result)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
             if job.related_type == "webridge_friend_action":

@@ -1,16 +1,16 @@
 """会话类型:群聊 / 公众号 / 私聊。消息列表的筛选与标识统一用这里的判断。
 
 微信公众号在通讯里是一个特殊的"联系人",账号 ID 以 `gh_` 开头(例如 gh_1a2b3c4d5e6f);
-"服务通知"(notifymessage)汇集的也是公众号推送。它们不是真人私聊,混在私聊里会淹没真正的客户消息,
+专用目录也可能返回不带该前缀的公众号；"服务通知"(notifymessage)汇集的也是公众号推送。它们不是真人私聊,混在私聊里会淹没真正的客户消息,
 所以单独成一类,列表里可以按类型筛选,并带明显的标识。
 """
 
 from __future__ import annotations
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, select
 from sqlalchemy.sql import Select
 
-from app.models.entities import Conversation
+from app.models.entities import Conversation, WorkWechatContact
 
 KIND_GROUP = "group"
 KIND_OFFICIAL = "official"
@@ -45,7 +45,15 @@ def normalize_kind(value: object) -> str:
 
 
 def _official_clause():
+    # 用同租户、同渠道的目录记录确认非 gh_ 公众号，防止其他账号的同名 ID 污染分类。
+    directory_official = select(WorkWechatContact.id).where(
+        WorkWechatContact.tenant_id == Conversation.tenant_id,
+        WorkWechatContact.channel_id == Conversation.channel_id,
+        WorkWechatContact.contact_external_id == Conversation.external_id,
+        WorkWechatContact.contact_kind == KIND_OFFICIAL,
+    ).exists()
     return or_(
+        directory_official,
         Conversation.external_id.istartswith(_OFFICIAL_PREFIX, autoescape=True),  # autoescape:gh_ 里的下划线不是通配符
         Conversation.external_id.in_(_OFFICIAL_EXACT),
     )
