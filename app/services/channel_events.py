@@ -16,6 +16,7 @@ from app.services.inbound_media import create_wechat_media_attachment
 from app.services.message_state import refresh_conversation_last_message_at
 from app.services.open_webhooks import dispatch_open_message_event
 from app.services.chatroom_registry import is_collection_off
+from app.services.chatroom_invitations import record_invitation_event
 from app.services.self_sent import is_self_sent
 from app.services.task_queue import INBOUND_MEDIA_FETCH_JOB, PLUGIN_DISPATCH_JOB, WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
 from app.services.workwechat_cloud_poll import is_cloud_poll_enabled, notify_cloud_job_enqueued
@@ -278,6 +279,9 @@ def ingest_normalized_event(
             normalized,
             conversation=conversation,
         )
+
+    # 邀请关系属于成员基础资料；在插件及通知开关前记录，群关闭采集仍由入口统一拦截。
+    record_invitation_event(db, channel, conversation, normalized, recorded_at=_resolve_event_time(normalized))
 
     message_content = str(message_payload.get("content") or "")
     message_id: int | None = None

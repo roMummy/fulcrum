@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Bot, Channel, Chatroom, ChatroomMember, Conversation, Message, TaskJob, WebridgeDeviceSample, WorkWechatContact
 from app.services import payment_ledger
+from app.services.chatroom_profile import save_webridge_group_notice
 from app.services.identity_directory import looks_like_raw_id
 from app.services.plugin_scopes import cancel_disallowed_plugin_outbound_job
 from app.services.task_queue import complete_job, enqueue_job, fail_job_terminal, parse_job_payload
@@ -1024,6 +1025,18 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
         succeeded = bool(payload["ok"]) if "ok" in payload else bool(result.get("ok"))
         if data.get("revoke_message_id") and inner_result.get("ok") is False:
             succeeded = False
+        # 公告属于已保存命令的目标群；失败或非法回报只记录读取状态，保留上次正文。
+        # 继续走下面唯一的任务终态路径，让手机收到正常 ACK，避免无效内容引发反复回报。
+        saved_command = as_object(data.get("command"))
+        command_error = text(inner_result.get("error") or result.get("error") or payload.get("error") or "webridge_command_failed")
+        if saved_command.get("type") == "get_group_notice":
+            notice_error = save_webridge_group_notice(
+                db, channel, saved_command, inner_result, ok=succeeded,
+                requested_at=job.created_at, error=command_error,
+            )
+            if notice_error:
+                succeeded = False
+                command_error = notice_error
         if succeeded:
             command = as_object(data.get("command"))
             command_type = text(command.get("type") or command.get("command_name"))
@@ -1066,9 +1079,9 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             job.status = "failed"
             db.flush()
             member_directory.after_result(db, channel, text(as_object(failed_command.get("params")).get("room_id")), complete=False)
-        settle_outbound_message(db, job, ok=False, error=text(inner_result.get("error") or result.get("error") or payload.get("error") or "webridge_command_failed"))
-        fail_job_terminal(db, job, error_message=text(result.get("error") or payload.get("error") or "webridge_command_failed"), result={"webridge": payload})
-        logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": text(result.get("error") or payload.get("error") or "webridge_command_failed")})
+        settle_outbound_message(db, job, ok=False, error=command_error)
+        fail_job_terminal(db, job, error_message=command_error, result={"webridge": payload})
+        logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": command_error})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}
     raise ValueError("webridge_request_not_found")
 

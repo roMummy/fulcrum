@@ -92,7 +92,7 @@ def _build_health(db: Session, channel: Channel, chatroom: Chatroom, members: li
 
 
 def build_webridge_chatroom_detail(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
-    """返回微桥群详情；成员同步通过 room_members 命令下发给手机插件。"""
+    """返回微桥群详情；沿用统一成员顺序，资料同步由手机分别读取成员与公告。"""
 
     detail = build_workwechat_chatroom_detail(db, channel, chatroom)
     # 成员积分:本群账户余额,与插件消费/赚取使用同一份账户。
@@ -103,21 +103,14 @@ def build_webridge_chatroom_detail(db: Session, channel: Channel, chatroom: Chat
     for member in detail.get("members", []):
         member["points"] = balances.get(str(member.get("member_external_id")), 0)
         member["last_active_label"] = _relative_days_label(last_map.get(member.get("member_external_id")), current)
-    # 成员按最后发言倒序,没有记录的排最后,方便一眼看到最近活跃和沉默的人。
-    detail["members"].sort(
-        key=lambda m: ensure_shanghai_datetime(last_map[m["member_external_id"]]).timestamp()
-        if last_map.get(m["member_external_id"])
-        else 0,
-        reverse=True,
-    )
     detail["health"] = _build_health(db, channel, chatroom, rows)
     detail.update(
         {
             "show_points": True,
-            # 同步按钮走通用单群同步入口，该入口会为微桥渠道入队 room_members 命令。
+            # 单群同步同时查询成员和本机公告缓存，复用现有的多任务进度反馈。
             "sync_action": f"/channels/{channel.id}/chatrooms/{chatroom.id}/sync",
-            "sync_button_label": "同步群成员",
-            "member_section_hint": "成员来自手机插件；点击右上角“同步群成员”后，会自动显示进度并更新成员列表。",
+            "sync_button_label": "同步群资料",
+            "member_section_hint": "还没有成员信息，点击右上角“同步群资料”获取成员和公告。",
             # 默认关闭:手机端回传媒体会占用串行通道、拖慢消息上报,需要时再按群开启。
         }
     )

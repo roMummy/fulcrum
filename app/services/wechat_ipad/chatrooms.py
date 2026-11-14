@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.time import now_shanghai
 from app.services.plugin_scopes import binding_group_default_enabled
 from app.services.chatroom_directory import get_or_create_chatroom
+from app.services.chatroom_invitations import save_member_invitation
+from app.services.plugin_schemas import parse_config_json
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope
 from app.services.chatroom_registry import mark_chatroom_discovered
 from app.services.wechat_ipad.cache import remember_chatroom, remember_chatroom_members, remember_member
@@ -96,6 +98,8 @@ def sync_wechat_ipad_chatroom_from_message(
     member.last_active_at = synced_at
     member.extra_json = json.dumps(
         {
+            # 发言观测必须保留已同步的成员资料，尤其不能清空邀请关系。
+            **parse_config_json(member.extra_json),
             "source": "wechat_ipad_message_ingest",
             "last_event_key": normalized.get("event_key"),
             "observed_via": "group_message",
@@ -567,8 +571,10 @@ def _replace_chatroom_members(
     synced_at: datetime,
     source: str,
 ) -> None:
+    # 先落本事务更新再锁定成员，完整资料同步与入群消息不会互相抹掉邀请证据。
+    db.flush()
     existing_members = db.scalars(
-        select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id)
+        select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id).with_for_update().execution_options(populate_existing=True)
     ).all()
     existing_map = {item.member_external_id: item for item in existing_members}
     incoming_ids = {item["member_external_id"] for item in members}
@@ -582,6 +588,7 @@ def _replace_chatroom_members(
         member = existing_map.get(item["member_external_id"])
         if not member:
             member = ChatroomMember(
+                tenant_id=channel.tenant_id,
                 chatroom_id=chatroom.id,
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
@@ -593,12 +600,14 @@ def _replace_chatroom_members(
         member.role = item["role"] or "member"
         member.status = "active"
         member.last_synced_at = synced_at
+        member_extra = parse_config_json(member.extra_json)
+        member_extra.pop("inviter_user_name", None)
         member.extra_json = json.dumps(
             {
+                **member_extra,
                 "source": source,
                 "observed_via": "chatroom_member_detail",
                 "member_flag": item.get("member_flag") or "",
-                "inviter_user_name": item.get("inviter_user_name") or "",
                 "alias": item.get("alias") or "",
                 "remark": item.get("remark") or "",
                 "province": item.get("province") or "",
@@ -608,4 +617,5 @@ def _replace_chatroom_members(
             ensure_ascii=False,
             sort_keys=True,
         )
+        save_member_invitation(member, item.get("inviter_user_name"), source="member_profile", recorded_at=synced_at)
     remember_chatroom_members(channel.id, chatroom.external_id, [item["member_external_id"] for item in members])

@@ -281,6 +281,8 @@ def _upsert_member(
     member.last_active_at = seen_at
     member.extra_json = json.dumps(
         {
+            # 名册及后续发言只更新当前资料，保留从系统入群消息取得的邀请关系。
+            **_parse_json(member.extra_json),
             "source": "wechat_gugatool_group_roster",
             "alias": str(profile.get("alias") or "") or None,
             "remark": str(profile.get("remark") or "") or None,

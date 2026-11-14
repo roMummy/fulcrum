@@ -15,6 +15,8 @@ from app.services.plugin_scopes import binding_group_default_enabled, group_plug
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, GroupPluginScope, Plugin
 from app.services.channel_events import ingest_inbound_event
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone
+from app.services.chatroom_profile import effective_member_role, sort_chatroom_members
+from app.services.chatroom_invitations import member_invitation
 from app.services.plugin_runtime.registry import get_plugin_schema
 from app.services.plugin_schemas import deep_merge_config, dump_config_json, parse_config_json
 from app.services.wechat_ipad.client import WechatIpadApiClient
@@ -1492,11 +1494,11 @@ def build_wechat_ipad_chatroom_list(db: Session, channel: Channel) -> dict[str, 
 
 
 def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: Chatroom) -> dict[str, Any]:
-    members = db.scalars(
-        select(ChatroomMember)
-        .where(ChatroomMember.chatroom_id == chatroom.id)
-        .order_by(ChatroomMember.role.asc(), ChatroomMember.display_name.asc(), ChatroomMember.nickname.asc(), ChatroomMember.id.asc())
-    ).all()
+    # 与其他群详情保持相同顺序，不能按角色英文字母或昵称把管理员排在群主前面。
+    members = sort_chatroom_members(
+        db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id)).all(),
+        owner_external_id=chatroom.owner_external_id,
+    )
     bindings = db.scalars(
         select(BotPlugin)
         .where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound")
@@ -1516,15 +1518,15 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
     role_counts: dict[str, int] = {}
     member_items: list[dict[str, Any]] = []
     for member in members:
-        role_key = str(member.role or "").strip() or "member"
-        role_counts[role_key] = role_counts.get(role_key, 0) + 1
+        role_key = effective_member_role(member, chatroom.owner_external_id)
+        role_label = _format_chatroom_member_role(role_key)
+        role_counts[role_label] = role_counts.get(role_label, 0) + 1
         member_extra = _parse_json(member.extra_json)
         province = str(member_extra.get("province") or "").strip()
         city = str(member_extra.get("city") or "").strip()
         member_flag = str(member_extra.get("member_flag") or "").strip()
         alias = str(member_extra.get("alias") or "").strip() or "-"
         remark = str(member_extra.get("remark") or "").strip() or "-"
-        inviter_user_name = str(member_extra.get("inviter_user_name") or "").strip() or "-"
         avatar_url = str(member_extra.get("small_head_img_url") or "").strip()
         region_parts = [item for item in (province, city) if item]
         member_items.append(
@@ -1534,14 +1536,14 @@ def build_wechat_ipad_chatroom_detail(db: Session, channel: Channel, chatroom: C
                 "nickname": member.nickname or "-",
                 "display_name": member.display_name or "-",
                 "role": role_key,
-                "role_label": _format_chatroom_member_role(role_key),
+                "role_label": role_label,
                 "status": member.status or "active",
                 "status_label": _format_chatroom_member_status(member.status),
                 "member_flag": member_flag or "-",
                 "member_flag_label": _format_chatroom_member_flag(member_flag),
                 "alias": alias,
                 "remark": remark,
-                "inviter_user_name": inviter_user_name,
+                "invitation": member_invitation(member),
                 "province": province or "-",
                 "city": city or "-",
                 "region_label": " / ".join(region_parts) if region_parts else "-",

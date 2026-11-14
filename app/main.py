@@ -172,6 +172,8 @@ from app.services.wechat_winauto_chatrooms import (
     update_wechat_winauto_chatroom_scope_enabled,
 )
 from app.services.directory_pages import build_chatroom_directory, build_chatroom_plugin_directory, build_contact_directory, channel_options, chatroom_plugin_options
+from app.services.chatroom_profile import build_chatroom_profile
+from app.services.chatroom_invitations import backfill_chatroom_invitations, build_invitation_tree
 from app.services.wechat_ipad.chatrooms import update_group_plugin_scope_enabled
 from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
@@ -2431,6 +2433,10 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
         # 群头像与列表共用已保存的群资料，避免渠道详情遗漏头像后退回首字占位。
         detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
+        # 资料标签只读取本群已保存的快照；打开页面不自动向设备下发命令。
+        detail["profile"] = build_chatroom_profile(channel, chatroom, detail["members"])
+        # 成员列表和邀请树共用相同的 ID 关系；构建视图不写数据库或猜测未知邀请人。
+        detail["invitations"] = build_invitation_tree(detail["members"])
         # 群消息只在消息中心里有一份:这里给出直达这个群会话的入口,不再自带一张最近 30 条的表
         group_conversation_id = db.scalar(
             select(Conversation.id).where(Conversation.channel_id == channel.id, Conversation.external_id == chatroom.external_id)
@@ -3699,8 +3705,32 @@ async def issue_workwechat_cloud_poll_authorization_code_action(request: Request
         db.close()
 
 
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/backfill")
+async def backfill_chatroom_invitations_action(request: Request, channel_id: int, chatroom_id: int):
+    """按用户操作补查本群已有系统消息，所有写入沿用运营权限、CSRF 和租户会话。"""
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        await _require_operation_csrf(db, request)
+        channel = get_channel(db, channel_id)
+        if not channel or channel.channel_type not in ("wechat_webridge", "wechat_ipad", "workwechat", "wechat_gugatool"):
+            raise HTTPException(status_code=404, detail="Channel not found")
+        room = db.get(Chatroom, chatroom_id)
+        if not room or room.channel_id != channel.id:
+            raise HTTPException(status_code=404, detail="Chatroom not found")
+        report = backfill_chatroom_invitations(db, channel, room)
+        db.commit()
+        message = f"已检查本群 {report['checked']} 条系统消息，补充 {report['updated']} 条邀请关系。"
+        if report["limited"]:
+            message += "本次检查最近 2000 条系统消息。"
+        record_audit(db, f"channel.{channel.channel_type}.chatroom.invitations.backfill", "chatroom", room.id, message)
+        return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=members")
+    finally:
+        db.close()
+
+
 @app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/sync")
-async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, chatroom_id: int):
+async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, chatroom_id: int, tab: str = Form("features")):
     enforce_role(request, "ops")
     db = get_session()
     try:
@@ -3711,6 +3741,9 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
         chatroom = db.get(Chatroom, chatroom_id)
         if not chatroom or chatroom.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
+        # 只允许既有标签作为同步后的落点，保留资料/成员页且不接受任意重定向地址。
+        return_tab = tab if tab in ("features", "plugins", "members", "profile") else "features"
+        return_url = f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab={return_tab}"
         if channel.channel_type == "wechat_ipad":
             overview = sync_wechat_ipad_chatrooms(db, channel, chatroom_ids=[chatroom.external_id])
             message = str(overview.get("last_status_summary") or "已触发单群资料同步")
@@ -3720,7 +3753,7 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             db.commit()
             message = str(overview.get("last_status_summary") or "已刷新当前群样本")
             record_audit(db, f"channel.{channel.channel_type}.sync-chatroom", "chatroom", chatroom.id, message)
-            return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}")
+            return _completed_operation_response(request, message, return_url)
         elif channel.channel_type == "workwechat":
             if is_cloud_poll_enabled(channel):
                 # 云端模式下服务端不能直连客服电脑；先下发群列表任务补中文群名，再下发成员任务补成员快照。
@@ -3758,7 +3791,7 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
                 notify_cloud_job_enqueued(channel, member_job)
                 message = "企微群资料和成员同步已排队，正在等待客户端执行。"
                 record_audit(db, "channel.workwechat.sync-chatroom", "chatroom", chatroom.id, message)
-                return _queued_operation_response(request, db, channel, [profile_job, member_job], f"/channels/{channel_id}/chatrooms/{chatroom_id}")
+                return _queued_operation_response(request, db, channel, [profile_job, member_job], return_url)
             # workwechat 没有单群资料详情接口；这里先用全量群列表只更新当前群，再用 Hook 11040 刷新成员。
             profile_overview = sync_workwechat_chatroom_profile_from_list(db, channel, chatroom)
             member_overview = sync_workwechat_chatroom_members(db, channel, chatroom)
@@ -3767,18 +3800,19 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             member_summary = str(member_overview.get("last_status_summary") or "").strip()
             message = "；".join(part for part in (profile_summary, member_summary) if part) or "已刷新当前企微群资料和成员"
             record_audit(db, "channel.workwechat.sync-chatroom", "chatroom", chatroom.id, message)
-            return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}", ok=bool(profile_overview.get("ok") and member_overview.get("ok")))
+            return _completed_operation_response(request, message, return_url, ok=bool(profile_overview.get("ok") and member_overview.get("ok")))
         elif channel.channel_type == "wechat_webridge":
-            # 微桥由手机插件执行：入队 room_members 命令，结果回传后由目录持久化写入成员快照。
-            job = enqueue_command(db, channel, command_name="room_members", args={"room_id": chatroom.external_id})
+            # 微桥一次同步读取成员与公告缓存，两个命令分别回报，沿用现有的多任务进度。
+            member_job = enqueue_command(db, channel, command_name="room_members", args={"room_id": chatroom.external_id})
+            notice_job = enqueue_command(db, channel, command_name="get_group_notice", args={"room_id": chatroom.external_id})
             db.commit()
-            message = "群成员同步已排队，正在等待手机执行。"
+            message = "群资料和成员同步已排队，正在等待手机执行。"
             record_audit(db, "channel.wechat-webridge.sync-chatroom", "chatroom", chatroom.id, message)
-            return _queued_operation_response(request, db, channel, [job], f"/channels/{channel_id}/chatrooms/{chatroom_id}")
+            return _queued_operation_response(request, db, channel, [member_job, notice_job], return_url)
         else:
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat / wechat_webridge")
         runtime = overview.get("runtime_info", {})
-        return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}", ok=not bool(runtime.get("last_error") or runtime.get("last_chatroom_sync_failed_targets")))
+        return _completed_operation_response(request, message, return_url, ok=not bool(runtime.get("last_error") or runtime.get("last_chatroom_sync_failed_targets")))
     finally:
         db.close()
 

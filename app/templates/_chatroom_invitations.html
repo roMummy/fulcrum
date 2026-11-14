@@ -1,0 +1,48 @@
+{# 邀请树使用迭代生成的扁平节点；不递归渲染深层成员链，所有身份始终以成员 ID 关联。 #}
+{% from '_identity.html' import identity %}
+<details class="disclosure invitation-panel" data-invitation-tree>
+  <summary>
+    <strong>邀请关系树</strong>
+    <span class="muted-text">已知 {{ detail.invitations.known_count }} / {{ detail.invitations.total }} 人</span>
+  </summary>
+  <div class="invitation-panel-body">
+    <div class="invitation-toolbar">
+      <div class="row-controls">
+        <button type="button" class="btn btn-secondary btn-small" data-invitation-expand>展开全部</button>
+        <button type="button" class="btn btn-secondary btn-small" data-invitation-collapse>收起分支</button>
+      </div>
+      {% if channel.channel_type in ('wechat_webridge', 'wechat_ipad', 'workwechat', 'wechat_gugatool') and current_user.role in ('tenant_admin', 'operator') %}
+      <form method="post" action="{{ base_url }}/invitations/backfill" data-action-feedback>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button type="submit" class="btn btn-secondary btn-small">补查历史邀请</button>
+      </form>
+      {% endif %}
+    </div>
+    <p class="muted-text">按成员资料和已记录的入群系统消息关联；未知 {{ detail.invitations.unknown_count }} 人。历史补查仅检查本群已保存的最近 2000 条系统消息。</p>
+    {% if detail.invitations.cycle_count %}<p class="chatroom-notice-error">有 {{ detail.invitations.cycle_count }} 组关系存在循环，已分开展示，原始邀请人仍保留在成员列表。</p>{% endif %}
+    <ul class="invitation-tree-list" aria-label="群成员邀请关系">
+      {% for node in detail.invitations.nodes %}
+      {# 默认 HTML 展示全部节点，即使脚本不可用也能阅读；脚本就绪后再启用分支收起。 #}
+      <li class="invitation-node" data-invitation-node="{{ node.key }}" data-parent="{{ node.parent_key }}" style="--invitation-depth: {{ [node.depth, 6]|min }};">
+        {% if node.child_count %}
+        <button type="button" class="btn btn-ghost btn-icon btn-small invitation-node-toggle" data-invitation-toggle aria-expanded="true" aria-label="收起 {{ node.name }} 的邀请成员"><span class="i i-chevron-right" aria-hidden="true"></span></button>
+        {% else %}<span class="invitation-node-spacer" aria-hidden="true"></span>{% endif %}
+        <div class="invitation-node-main">
+          <div class="invitation-node-person">
+            {{ identity({'name': node.name, 'external_id': node.external_id, 'avatar_url': node.avatar_url, 'initial': (node.name or '?')[:1], 'show_id': node.name != node.external_id}, 'sm') }}
+            <div class="invitation-node-note muted-text">
+              {% if node.placeholder %}暂无该邀请人的成员资料{% elif node.inviter.known %}{{ node.inviter.source_label }}{% else %}邀请人未知{% endif %}
+              {% if node.cycle %} · 关系存在循环{% endif %}
+            </div>
+          </div>
+          <div class="invitation-node-facts">
+            {% if node.role in ('owner', 'admin') %}<span class="chip chip-outline">{{ '群主' if node.role == 'owner' else '管理员' }}</span>{% endif %}
+            {% if node.status == 'left' %}<span class="chip chip-muted">已退群</span>{% endif %}
+            {% if node.direct_invites %}<span class="invitation-count">直接邀请 {{ node.direct_invites }} 人</span>{% endif %}
+          </div>
+        </div>
+      </li>
+      {% else %}<li class="muted-text">暂无成员信息，请先同步群资料。</li>{% endfor %}
+    </ul>
+  </div>
+</details>

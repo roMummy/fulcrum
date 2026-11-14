@@ -47,7 +47,7 @@
 | 32 | 会话详情 `conversation_detail.html` | 消息阅读层次、精简眉题 | D/M；`conversation` |
 | 33 | 消息记录 `messages.html` | 结果优先、移动筛选折叠 | D/M/T；手机筛选开合、主导航键盘开合；`messages` |
 | 34 | 群清单 `chatroom_list.html` | 紧凑指标、搜索和状态 | D/M；`chatrooms` |
-| 35 | 群详情 `chatroom_detail.html` | 文字指标收小、嵌套表格局部滚动 | D/M；实测根宽由 754px 修正为 390px；`chatroom-detail` |
+| 35 | 群详情 `chatroom_detail.html` | 资料展示公告与获取状态、置顶能力提示；成员按角色和发言排序，增加邀请人、可展开邀请树与历史补查；手机表格局部滚动 | 原 D/M；2026-11-14 补查真实临时应用 1440×900、1024×768、390×844，11 项浏览器检查通过；截图 `.run/chatroom-profile-preview/`，未验证真实设备 |
 | 36 | 联系人 `workwechat_contact_list.html` | 结果优先、统一指标与筛选 | D/M；`contacts` |
 | 37 | 联系人详情 `workwechat_contact_detail.html` | 主次信息分组 | D/M；`contact-detail` |
 | 38 | 套餐与额度 `account_billing.html` | 额度、金额与套餐选择层次 | D/M；`billing` |
@@ -61,6 +61,18 @@
 共享壳：`base.html`、`platform_base.html`、`marketing_base.html`、`auth_base.html`。保留顶部导航、品牌命名、平台/企业身份与请求路径，不新增旧入口或第二套主题。未被当前路由使用的模板不因本轮调整新增入口。
 
 ## 实际验证记录
+
+### 2026-11-14 群资料、成员顺序与邀请关系
+
+- `tests/test_chatroom_profile.py`、`tests/test_chatroom_invitations.py` 最终执行结果合计 `22 passed`：群主身份优先与退群置底、公告正文提取和转义、缓存/摘要/失败状态、旧回报保护、TEXT 字节容量、邀请来源优先、明确成员 ID、扫码来源、空快照保留、重复和乱序邀请、历史过滤、同名与退群、循环关系及 1500 层邀请链。另直接验证 iPad、企微和咕嘎的普通成员发言不会清空邀请关系。
+- `tests/test_chatroom_profile_pages.py` 最终执行结果 `16 passed`：四个渠道的成员顺序和邀请视图、公告状态及置顶提示、打开资料页不下发任务、同步成员和公告两条任务及当前标签保留、真实设备回报处理入口的幂等与失败 ACK、历史补查、只读权限、CSRF、跨租户隔离，以及关闭成员通知后仍记录邀请关系。
+- `tests/test_operation_feedback_routes.py` 执行结果 `22 passed`：同步进度必须等待成员和公告两个任务结束，部分成功、失败及普通表单跳转均按真实任务状态反馈。`tests/test_group_features.py`、`tests/test_chatroom_tab_redirects.py` 执行结果合计 `13 passed`。
+- 相关回归分组 `tests/test_wechat_gugatool_chatrooms.py`、`tests/test_webridge_group_health.py`、`tests/test_webridge_member_directory.py`、`tests/test_wechat_webridge_capabilities.py`、`tests/test_operation_feedback.py` 执行结果合计 `126 passed, 2 failed`。两项失败为设备面板和实时摘要的旧测试夹具没有创建 `raw_webhook_events` 表；已核对测试文件和 `wechat_webridge/dashboard.py` 均与 HEAD 相同，本轮未修改。另一次包含 `tests/test_workwechat_chatrooms.py` 的定向分组结果为 `32 passed, 6 failed`，六项均在创建缺少租户 ID 的 `Bot` 夹具时失败，尚未进入业务代码；该测试及模型也未被本轮修改。按研发阶段策略记录这些历史夹具问题，不扩大修改范围。
+- 上述 Python 测试使用项目 `.venv/bin/python`。TestClient 在沙箱内挂起的运行已中止，页面、任务反馈及包含 TestClient 的相关分组在沙箱外完成；所有数据库均为隔离测试数据，没有连接生产库。
+- 使用真实群详情路由、认证、临时数据库、Jinja 模板和工作区 CSS/JS，在 Chrome 的 1440×900、1024×768、390×844 完成 11 项浏览器检查。资料页单一 h1，长公告与长 URL 自然换行，脚本字符安全显示，根节点和邀请树没有横向溢出；成员表保留自身横向滚动与角色列宽。
+- 实际点击邀请树逐支展开、展开全部、收起分支，执行 Enter/Space 键盘操作；手机提交历史补查后出现新增关系并保留成员标签。实际点击同步后向两条任务提交构造的手机回报，确认公告更新且仍停留资料标签。浏览器没有 JavaScript 错误；12 层长昵称链仅在树容器内滚动。样例成员、公告和设备回报均为明确构造数据，没有将其当作生产结果。
+- 14 个本轮 Python 文件通过 AST 检查，`base.html`、`chatroom_detail.html`、`_chatroom_invitations.html` 通过 Jinja 加载检查，`node --check app/static/js/chatroom-invitations.js` 和 `git diff --check` 通过。截图及 `report.json` 保存在本机忽略目录 `.run/chatroom-profile-preview/`。
+- 公告来自手机已有缓存，不能据此保证微信当前公告已更新；缺少明确邀请证据时显示「未知」，历史补查只检查本群已保存的最近 2000 条系统消息。未执行真实设备验证、全量测试、完整端到端回归、推送或远程部署。
 
 ### 2026-11-14 猜图片题库整合
 

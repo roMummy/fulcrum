@@ -11,6 +11,8 @@ from app.core.logging import get_logger
 from app.core.time import ensure_shanghai_datetime, format_shanghai_time, now_shanghai
 from app.services.plugin_scopes import binding_group_default_enabled, group_plugin_scope_enabled
 from app.services.chatroom_directory import get_or_create_chatroom
+from app.services.chatroom_profile import effective_member_role, sort_chatroom_members
+from app.services.chatroom_invitations import member_invitation, save_member_invitation
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, Message, TaskJob
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
 from app.services.chatroom_registry import format_chatroom_management_status, management_tone, mark_chatroom_discovered
@@ -97,6 +99,8 @@ def sync_workwechat_chatroom_from_message(
         member.last_active_at = synced_at
         member.extra_json = json.dumps(
             {
+                # 普通发言只补观测字段，不清空成员资料中的邀请关系和头像。
+                **_parse_json(member.extra_json),
                 "source": "workwechat_message_ingest",
                 "observed_via": "group_message",
                 "last_event_key": normalized.get("event_key"),
@@ -410,11 +414,11 @@ def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Ch
     # 详情页组合群资料、成员快照、群消息流水和群级插件作用域，保持和 wechat 渠道页面结构一致。
     _materialize_chatrooms_from_conversations(db, channel)
     bindings = db.scalars(select(BotPlugin).where(BotPlugin.bot_id == channel.bot_id, BotPlugin.status != "unbound").order_by(BotPlugin.id.asc())).all()
-    members = db.scalars(
-        select(ChatroomMember)
-        .where(ChatroomMember.chatroom_id == chatroom.id)
-        .order_by(ChatroomMember.status.asc(), ChatroomMember.role.asc(), ChatroomMember.display_name.asc(), ChatroomMember.nickname.asc(), ChatroomMember.id.asc())
-    ).all()
+    # 群主身份以群资料为准；角色优先、同角色按最近发言，退群快照统一放到末尾。
+    members = sort_chatroom_members(
+        db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id)).all(),
+        owner_external_id=chatroom.owner_external_id,
+    )
     scope_rows = db.scalars(
         select(GroupPluginScope)
         .where(GroupPluginScope.channel_id == channel.id, GroupPluginScope.chatroom_id == chatroom.id)
@@ -429,8 +433,8 @@ def build_workwechat_chatroom_detail(db: Session, channel: Channel, chatroom: Ch
         )
 
     binding_items, binding_summary = _build_binding_items(bindings, scope_rows)
-    member_items = [_format_member_item(member) for member in members]
-    role_counts = _build_role_counts(members)
+    member_items = [_format_member_item(member, owner_external_id=chatroom.owner_external_id) for member in members]
+    role_counts = _build_role_counts(members, owner_external_id=chatroom.owner_external_id)
     return {
         "chatroom_id": chatroom.id,
         "chatroom_external_id": chatroom.external_id,
@@ -711,7 +715,9 @@ def _replace_chatroom_members(
     synced_at: datetime,
     source: str,
 ) -> None:
-    existing_members = db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id)).all()
+    # 成员快照与邀请事件共用行锁，合并资料前先保留本事务更新，避免覆盖并发取得的邀请关系。
+    db.flush()
+    existing_members = db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == chatroom.id).with_for_update().execution_options(populate_existing=True)).all()
     existing_map = {item.member_external_id: item for item in existing_members}
     incoming_ids = {item["member_external_id"] for item in members}
     for existing in existing_members:
@@ -721,15 +727,19 @@ def _replace_chatroom_members(
     for item in members:
         member = existing_map.get(item["member_external_id"])
         if not member:
-            member = ChatroomMember(chatroom_id=chatroom.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=item["member_external_id"])
+            member = ChatroomMember(tenant_id=channel.tenant_id, chatroom_id=chatroom.id, bot_id=channel.bot_id, channel_id=channel.id, member_external_id=item["member_external_id"])
             db.add(member)
         member.nickname = item["nickname"] or item["member_external_id"]
         member.display_name = item["display_name"] or member.nickname
         member.role = item["role"] or "member"
         member.status = "active"
         member.last_synced_at = synced_at
+        member_extra = _parse_json(member.extra_json)
+        # 当前资料同步后只维护 invitation 这一份邀请快照，删除原来重复的字段。
+        member_extra.pop("invite_user_id", None)
         member.extra_json = json.dumps(
             {
+                **member_extra,
                 "source": source,
                 "observed_via": "hook_11040_member_list",
                 "avatar": item.get("avatar") or "",
@@ -748,7 +758,6 @@ def _replace_chatroom_members(
                 "position": item.get("position") or "",
                 "department": item.get("department") or "",
                 "remark": item.get("remark") or "",
-                "invite_user_id": item.get("invite_user_id") or "",
                 "join_scene": item.get("join_scene") or "",
                 "join_time": item.get("join_time") or "",
                 "sex": item.get("sex") or "",
@@ -758,6 +767,7 @@ def _replace_chatroom_members(
             ensure_ascii=False,
             sort_keys=True,
         )
+        save_member_invitation(member, item.get("invite_user_id"), source="member_profile", recorded_at=synced_at)
 
 
 def _normalize_room_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -798,7 +808,8 @@ def _normalize_member_item(item: dict[str, Any]) -> dict[str, Any]:
         "position": _first_text(item, "position", "job", "title"),
         "department": _first_text(item, "department", "department_name", "dept_name"),
         "remark": _first_text(item, "remark", "remarks"),
-        "invite_user_id": _first_text(item, "invite_user_id", "inviter_user_id", "inviter"),
+        # 邀请树只消费明确的 ID 字段，泛化 inviter 可能是昵称，不能据此猜测成员关系。
+        "invite_user_id": _first_text(item, "invite_user_id", "inviter_user_id"),
         "join_scene": item.get("join_scene") or item.get("joinScene"),
         "join_time": item.get("join_time") or item.get("joinTime"),
         "sex": item.get("sex") or item.get("gender"),
@@ -874,7 +885,7 @@ def _build_binding_items(bindings: list[BotPlugin], scope_rows: list[GroupPlugin
     return binding_items, summary
 
 
-def _format_member_item(member: ChatroomMember) -> dict[str, Any]:
+def _format_member_item(member: ChatroomMember, *, owner_external_id: str | None) -> dict[str, Any]:
     extra = _parse_json(member.extra_json)
     avatar_url = str(
         extra.get("avatar_url")
@@ -885,18 +896,22 @@ def _format_member_item(member: ChatroomMember) -> dict[str, Any]:
         or ""
     ).strip()
     corp_label = " / ".join(part for part in (extra.get("corp_name"), extra.get("corp_id"), extra.get("position")) if part)
+    # 列表徽标、角色统计与排序共用有效身份，避免已换群主时仍显示旧群主标记。
+    role = effective_member_role(member, owner_external_id)
     return {
         "member_external_id": member.member_external_id,
         "nickname": member.nickname or member.member_external_id,
         "display_name": member.display_name or "-",
-        "role_label": _format_member_role(member.role),
+        "role": role,
+        "role_label": _format_member_role(role),
         "member_flag_label": _format_member_status(member.status),
         "member_flag": str(extra.get("is_admin") or extra.get("member_flag") or "-"),
+        "status": member.status or "active",
         "status_label": _format_member_status(member.status),
         "region_label": corp_label or extra.get("department") or "-",
         "alias": extra.get("acctid") or extra.get("user_id") or "-",
         "remark": extra.get("remark") or "-",
-        "inviter_user_name": extra.get("invite_user_id") or "-",
+        "invitation": member_invitation(member),
         "has_avatar": bool(avatar_url),
         "avatar_url": avatar_url,
         "mobile": extra.get("mobile") or "-",
@@ -907,10 +922,10 @@ def _format_member_item(member: ChatroomMember) -> dict[str, Any]:
     }
 
 
-def _build_role_counts(members: list[ChatroomMember]) -> dict[str, int]:
+def _build_role_counts(members: list[ChatroomMember], *, owner_external_id: str | None) -> dict[str, int]:
     counts: dict[str, int] = {}
     for member in members:
-        label = _format_member_role(member.role)
+        label = _format_member_role(effective_member_role(member, owner_external_id))
         counts[label] = counts.get(label, 0) + 1
     return counts
 

@@ -1366,6 +1366,219 @@ code {
   padding: 10px 8px;
 }
 
+/* 群资料在既有工作表面内分组，长公告保留段落并自然换行，不叠加卡片或固定正文高度。 */
+.chatroom-profile {
+  display: grid;
+  gap: 20px;
+}
+
+.chatroom-profile-section {
+  min-width: 0;
+}
+
+.chatroom-profile-section .section-head {
+  align-items: center;
+  justify-content: flex-start;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chatroom-profile-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+
+.chatroom-profile-facts > div {
+  min-width: 0;
+}
+
+.chatroom-profile-facts dt {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chatroom-profile-facts dd {
+  margin: 0;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.chatroom-notice-body {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chatroom-notice-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.chatroom-notice-meta {
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chatroom-profile-technical {
+  margin-top: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* 邀请树沿用群详情单一表面；只有节点列表局部滚动，层级缩进限制宽度避免深链撑开手机。 */
+.invitation-panel {
+  margin-bottom: 16px;
+}
+
+.invitation-panel > summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-height: 44px;
+  padding: 10px 32px 10px 0;
+}
+
+.invitation-panel > summary .muted-text {
+  margin: 0;
+}
+
+.invitation-panel-body {
+  padding: 8px 0;
+}
+
+.invitation-toolbar,
+.invitation-node-main,
+.invitation-node-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.invitation-toolbar {
+  justify-content: space-between;
+}
+
+.invitation-tree-list {
+  max-height: 560px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.invitation-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0 10px calc(var(--invitation-depth, 0) * 20px);
+  border-bottom: 1px solid var(--border);
+}
+
+.invitation-node[hidden] {
+  display: none;
+}
+
+.invitation-node-main {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+}
+
+.invitation-node-person {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.invitation-node .identity-id,
+.invitation-node .identity-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.invitation-node-toggle,
+.invitation-node-spacer {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+}
+
+.invitation-node-toggle .i {
+  transition: transform 150ms ease;
+}
+
+.invitation-node-toggle[aria-expanded="true"] .i {
+  transform: rotate(90deg);
+}
+
+.invitation-node-note {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.invitation-count {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+/* 多列名册保留可读列宽；长名字在身份列内换行，角色和状态不被挤成逐字竖排。 */
+.chatroom-members-table {
+  min-width: 880px;
+}
+
+.chatroom-members-table td:first-child {
+  min-width: 210px;
+  max-width: 280px;
+}
+
+.chatroom-members-table td:nth-child(2) {
+  min-width: 100px;
+  max-width: 180px;
+  overflow-wrap: anywhere;
+}
+
+.chatroom-members-table .identity-name,
+.chatroom-members-table .identity-id {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.chatroom-members-table .member-inviter {
+  min-width: 140px;
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  /* 手机基本资料单列展示，让长群名与公告始终在当前视口内换行。 */
+  .chatroom-profile-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .invitation-node {
+    padding-inline-start: calc(var(--invitation-depth, 0) * 12px);
+  }
+
+  .invitation-node-toggle,
+  .invitation-node-spacer {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .col-id,
 .col-count,
 .col-bool,

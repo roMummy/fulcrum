@@ -31,7 +31,8 @@ def _submit_members_sync(client, channel_id: int, room_id: int, csrf: str):
     queued = response.json()
     assert queued["ok"] is True and queued["done"] is False
     assert queued["successful"] == queued["failed"] == 0
-    assert len(queued["jobs"]) == 1 and queued["jobs"][0]["state"] == "pending"
+    # 单群同步同时读取成员和公告，只有两份设备回报均结束后才算整个操作结束。
+    assert len(queued["jobs"]) == 2 and all(row["state"] == "pending" for row in queued["jobs"])
     assert queued["status_url"].startswith(f"/channels/{channel_id}/operations/status?job_ids=")
     return queued
 
@@ -41,9 +42,12 @@ def _finish_job(ids, job_id: int, *, status: str = "completed", successful: bool
         job = db.get(TaskJob, job_id)
         command = json.loads(job.payload_json)["command"]
         # accept_command_result 的真实落库格式保留回报信封，目录列表在 result 内。
+        detail = {"ok": successful, "members": [{"account_id": "member-a"}, {"account_id": "member-b"}]}
+        if command["type"] == "get_group_notice":
+            detail = {"room_id": command["params"]["room_id"], "cached_notice_found": False, "html_cached": False, "summary": None, "html": None}
         job.result_json = json.dumps({"webridge": {
             "request_id": command["request_id"], "ok": successful,
-            "result": {"ok": successful, "members": [{"account_id": "member-a"}, {"account_id": "member-b"}]},
+            "result": detail,
         }})
         job.status = status
         job.finished_at = now_shanghai()
@@ -65,10 +69,13 @@ def test_members_sync_waits_for_a_real_device_result(webridge_group) -> None:
         assert job.status == "pending" and job.result_json is None
 
     _finish_job(ids, queued["jobs"][0]["id"])
+    partial = client.get(queued["status_url"]).json()
+    assert partial["done"] is False and partial["successful"] == 1
+    _finish_job(ids, queued["jobs"][1]["id"])
     completed = client.get(queued["status_url"]).json()
-    assert completed["done"] is True and completed["successful"] == 1 and completed["failed"] == 0
+    assert completed["done"] is True and completed["successful"] == 2 and completed["failed"] == 0
     assert completed["jobs"][0]["state"] == "completed"
-    assert "群成员同步完成" in completed["summary"] and "2 位成员" in completed["summary"]
+    assert "群成员同步完成" in completed["jobs"][0]["message"] and "2 位成员" in completed["jobs"][0]["message"]
 
 
 @pytest.mark.parametrize("status", ["failed", "completed"])
@@ -76,8 +83,9 @@ def test_members_sync_reports_failure_even_if_the_queue_marks_it_completed(webri
     client, ids, channel_id, room_id = webridge_group
     queued = _submit_members_sync(client, channel_id, room_id, _login(client, "admin"))
     _finish_job(ids, queued["jobs"][0]["id"], status=status, successful=False)
+    _finish_job(ids, queued["jobs"][1]["id"])
     failed = client.get(queued["status_url"]).json()
-    assert failed["done"] is True and failed["successful"] == 0 and failed["failed"] == 1
+    assert failed["done"] is True and failed["successful"] == 1 and failed["failed"] == 1
     assert failed["jobs"][0]["state"] == "failed"
     assert "未完成" in failed["summary"] or "失败" in failed["summary"]
 
@@ -151,7 +159,8 @@ def test_normal_form_redirect_preserves_the_pending_operation(webridge_group) ->
     query = parse_qs(target.query)
     assert target.path == f"/channels/{channel_id}/chatrooms/{room_id}"
     assert query["operation_channel"] == [str(channel_id)]
-    assert query["operation_jobs"][0].isdigit()
+    assert len(query["operation_jobs"][0].split(",")) == 2
+    assert all(part.isdigit() for part in query["operation_jobs"][0].split(","))
     status = client.get(f"/channels/{channel_id}/operations/status?job_ids={query['operation_jobs'][0]}").json()
     assert status["done"] is False and status["jobs"][0]["state"] == "pending"
 

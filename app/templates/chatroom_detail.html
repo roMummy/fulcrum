@@ -9,7 +9,10 @@
 <div class="hero-action-cluster">
   
   {% if detail.sync_action or channel.channel_type == 'wechat_ipad' or channel.channel_type == 'workwechat' %}
-  <form method="post" action="{{ detail.sync_action or (base_url ~ '/sync') }}" data-action-feedback><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <form method="post" action="{{ detail.sync_action or (base_url ~ '/sync') }}" data-action-feedback>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {# 普通表单与进度反馈均停留在当前标签，避免从资料页同步后跳回群功能。 #}
+    <input type="hidden" name="tab" value="{{ tab }}" />
     <button class="btn btn-secondary" type="submit">{{ detail.sync_button_label or '同步当前群' }}</button>
   </form>
   {% endif %}
@@ -101,6 +104,7 @@
   {% endif %}
 
   {% elif tab == 'members' %}
+  {% include '_chatroom_invitations.html' %}
   {% if detail.members %}
   {% if detail.health %}
   {# 群健康度:分数 + 活跃/沉默概览,口径与 abot 一致。 #}
@@ -116,16 +120,18 @@
   <div class="chip-row" style="margin-bottom:10px;">
     {% for role, count in detail.role_counts.items() %}<span class="chip chip-outline">{{ role }} {{ count }}</span>{% endfor %}
   </div>
-  <div class="table-scroll">
-  <table class="table">
-    <thead><tr><th>成员</th><th>群内昵称</th><th>角色</th><th>状态</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后发言</th></tr></thead>
+  {# 成员字段较多时只滚动本表，保留可聚焦区域，手机和键盘均能查看右侧邀请人及时间。 #}
+  <div class="table-scroll chatroom-members-scroll" role="region" aria-label="群成员列表，可左右滚动查看" tabindex="0">
+  <table class="table chatroom-members-table">
+    <thead><tr><th>成员</th><th>群内昵称</th><th class="col-compact">角色</th><th class="col-compact">状态</th><th>邀请人</th>{% if detail.show_points %}<th class="col-compact">积分</th>{% endif %}<th class="col-time">最后发言</th></tr></thead>
     <tbody>
       {% for item in detail.members %}
       <tr>
         <td>{{ identity({'name': item.nickname, 'external_id': item.member_external_id, 'avatar_url': item.avatar_url, 'initial': (item.nickname or '?')[:1], 'show_id': item.nickname != item.member_external_id}, 'lg') }}</td>
         <td>{{ item.display_name }}</td>
-        <td>{{ item.role_label }}</td>
-        <td>{{ item.status_label }}</td>
+        <td class="col-compact">{% if item.role in ('owner', 'admin') %}<span class="chip {{ 'chip-muted' if item.status == 'left' else ('chip-success' if item.role == 'owner' else 'chip-outline') }}">{{ item.role_label }}</span>{% else %}{{ item.role_label }}{% endif %}</td>
+        <td class="col-compact">{{ item.status_label }}</td>
+        <td class="member-inviter">{% if item.inviter.known %}<span title="{{ item.inviter.external_id }}{% if item.inviter.recorded_at %} · 记录于 {{ item.inviter.recorded_at|bj_time }}{% endif %}">{{ item.inviter.name }}</span><div class="muted-text">{{ item.inviter.source_label }}</div>{% else %}<span class="muted-text">未知</span>{% endif %}</td>
         {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}"><span class="i i-sliders" aria-hidden="true"></span><span>调整</span></a></td>{% endif %}
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}{% if item.last_active_label %}<div class="muted-text">{{ item.last_active_label }}</div>{% endif %}</td>
       </tr>
@@ -138,14 +144,59 @@
   {% endif %}
 
   {% else %}
-  <table class="table table-tight">
-    <tbody>
-      <tr><th>群名</th><td>{{ detail.name }}</td></tr>
-      <tr><th>备注</th><td>{{ detail.remark }}</td></tr>
-      <tr><th>本地状态</th><td>{{ detail.status_label }}</td></tr>
-    </tbody>
-  </table>
-  <details class="disclosure" style="margin-top:16px;">
+  {# 资料沿用单一表面，公告只渲染服务端提取的纯文本，必须保留 Jinja 自动转义。 #}
+  {% set profile = detail.profile %}
+  <div class="chatroom-profile">
+    <section class="chatroom-profile-section" aria-labelledby="chatroom-basics-title">
+      <div class="section-head"><h2 id="chatroom-basics-title">基本资料</h2></div>
+      <dl class="chatroom-profile-facts">
+        <div><dt>群名</dt><dd>{{ detail.name }}</dd></div>
+        <div><dt>群主</dt><dd>{{ profile.owner_name }}</dd></div>
+        <div><dt>备注</dt><dd>{{ detail.remark }}</dd></div>
+        <div><dt>本地状态</dt><dd>{{ detail.status_label }}</dd></div>
+      </dl>
+    </section>
+
+    <section class="chatroom-profile-section" aria-labelledby="chatroom-notice-title">
+      <div class="section-head">
+        <h2 id="chatroom-notice-title">群公告</h2>
+        {% if profile.notice.supported %}<span class="chip chip-muted">{{ profile.notice.source_label }}</span>{% endif %}
+      </div>
+      {% if not profile.notice.supported %}
+      <p class="muted-text">当前渠道暂未接入公告读取</p>
+      {% else %}
+        {% if profile.notice.body %}
+        <div class="chatroom-notice-body">{{ profile.notice.body }}</div>
+        {% endif %}
+        {% if profile.notice.state == 'not_cached' %}
+        <p class="muted-text">手机暂未缓存公告。可先在微信中打开群公告，再点击“同步群资料”。</p>
+        {% elif profile.notice.state == 'not_fetched' and not profile.notice.last_error %}
+        <p class="muted-text">暂未获取群公告，点击右上角“同步群资料”读取。</p>
+        {% elif profile.notice.state == 'summary' %}
+        <p class="muted-text">当前仅获取到摘要，公告正文尚未缓存。</p>
+        {% elif profile.notice.state == 'empty' %}
+        <p class="muted-text">手机公告缓存中暂未读到文字内容，可在微信中确认后重新同步。</p>
+        {% endif %}
+        {% if profile.notice.last_error %}
+        <p class="chatroom-notice-error">本次公告读取失败{% if profile.notice.body %}，以上保留上次获取的内容{% endif %}。{{ profile.notice.last_error }}</p>
+        {% endif %}
+        {% if profile.notice.fetched_at %}
+        <p class="muted-text chatroom-notice-meta">{{ '检查时间' if profile.notice.state == 'not_cached' else '获取时间' }}：{{ profile.notice.fetched_at|bj_time }} · 来自手机缓存，可能与微信中当前内容不同。</p>
+        {% endif %}
+        {% if profile.notice.last_error and profile.notice.checked_at %}
+        <p class="muted-text chatroom-notice-meta">本次尝试：{{ profile.notice.checked_at|bj_time }}</p>
+        {% endif %}
+        {% if profile.notice.has_images %}<p class="muted-text">公告包含图片，请在微信中查看。</p>{% endif %}
+      {% endif %}
+    </section>
+
+    <section class="chatroom-profile-section" aria-labelledby="chatroom-pinned-title">
+      <div class="section-head"><h2 id="chatroom-pinned-title">群内置顶消息</h2></div>
+      {# 保留能力提示；没有可靠读取接口时不能用空列表冒充群内没有置顶消息。 #}
+      {% if not profile.pinned.supported %}<p class="muted-text">当前渠道暂不支持读取</p>{% endif %}
+    </section>
+  </div>
+  <details class="disclosure chatroom-profile-technical">
     <summary class="muted-text">技术信息</summary>
     <p class="muted-text">群 #{{ detail.chatroom_id }} · 外部 ID <code>{{ detail.chatroom_external_id }}</code> · 群主 <code>{{ detail.owner_external_id }}</code> · 来源 {{ detail.observed_source }} · 同步深度 {{ detail.sync_depth_label }}</p>
   </details>
@@ -154,6 +205,7 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/group-features.js" defer></script>
+{% if tab == 'members' %}<script src="/static/js/chatroom-invitations.js" defer></script>{% endif %}
 <script>
   (() => {
     // 群内插件开关保存成功后:启用/停用都算"本群已自定义",显示标签和"恢复默认"按钮。
