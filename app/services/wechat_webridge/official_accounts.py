@@ -15,7 +15,7 @@ PROFILE_RETRY_SECONDS = 600
 
 
 def publisher_name(external_id: str, content: Any) -> str:
-    """只读取顶层文章的 publisher，并校验其账号；转发文章不能冒充当前联系人。
+    """只读取文章阅读器的账号发布者，并校验账号；转发文章不能冒充当前联系人。
 
     文章封面 thumburl 与视频号 avatar 都不是公众号头像，不参与账号资料提取。
     XML 限长并拒绝 DTD/实体声明，异常消息仅跳过补资料，仍由原消息流程保存。
@@ -28,7 +28,9 @@ def publisher_name(external_id: str, content: Any) -> str:
         root = ElementTree.fromstring(content.strip())
     except (ElementTree.ParseError, ValueError):
         return ''
-    publisher = root.find('appmsg/publisher') if root.tag == 'msg' else None
+    # 手机真实文章将账号发布者放在 mmreader 内，与 category/item 的文章及视频资料同级。
+    # 固定完整路径，避免递归查找时把文章中的其他发布者当作当前公众号身份。
+    publisher = root.find('appmsg/mmreader/publisher') if root.tag == 'msg' else None
     if publisher is None or (publisher.findtext('username') or '').strip() != external_id:
         return ''
     name = (publisher.findtext('nickname') or '').strip()

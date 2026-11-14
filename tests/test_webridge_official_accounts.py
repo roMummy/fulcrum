@@ -19,8 +19,17 @@ OFFICIAL = 'gh_a1b2c3d4'
 
 
 def article(*, publisher=OFFICIAL, name='天然工坊'):
-    """样例保留线上确认的 publisher 结构；thumburl 是文章封面，不能当作账号头像。"""
-    return f'<msg><appmsg><type>5</type><title>文章标题</title><thumburl>https://example.test/article.jpg</thumburl><publisher><username>{publisher}</username><nickname>{name}</nickname></publisher></appmsg><fromusername>{OFFICIAL}</fromusername></msg>'
+    """按真实回报将发布者放在 mmreader 内；文章和视频号资料不属于公众号身份。"""
+    return (
+        '<msg><appmsg><type>5</type><title>文章标题</title><mmreader><category><item>'
+        '<thumburl>https://example.test/article.jpg</thumburl>'
+        '<finder_feed><nickname>视频作者</nickname>'
+        '<avatar>https://example.test/finder.jpg</avatar></finder_feed>'
+        '</item></category><publisher>'
+        f'<username>{publisher}</username><nickname>{name}</nickname>'
+        '</publisher></mmreader></appmsg>'
+        f'<fromusername>{OFFICIAL}</fromusername></msg>'
+    )
 
 
 def test_direct_publisher_enriches_conversation_and_old_message_without_rewriting_history(env):
@@ -138,7 +147,16 @@ def test_complete_profiles_and_unsupported_phone_do_not_request_extra_directorie
 
 
 @pytest.mark.parametrize('content', ['<broken>', article() * 2000,
-    '<!DOCTYPE msg [<!ENTITY name "伪造名称">]><msg><appmsg><publisher><username>gh_a1b2c3d4</username><nickname>&name;</nickname></publisher></appmsg></msg>',
+    '<!DOCTYPE msg [<!ENTITY name "伪造名称">]><msg><appmsg><mmreader><publisher><username>gh_a1b2c3d4</username><nickname>&name;</nickname></publisher></mmreader></appmsg></msg>',
 ])
 def test_invalid_or_unbounded_xml_is_not_used_as_profile(content):
     assert publisher_name(OFFICIAL, content) == ''
+
+
+@pytest.mark.parametrize('parent', ['appmsg', 'appmsg/mmreader/category/item'])
+def test_unrelated_publisher_locations_are_not_used_as_account_identity(parent):
+    """只认已确认的账号发布者位置，不能递归误取文章内部同名标签。"""
+    content = f'<publisher><username>{OFFICIAL}</username><nickname>错误位置的名称</nickname></publisher>'
+    for tag in reversed(parent.split('/')):
+        content = f'<{tag}>{content}</{tag}>'
+    assert publisher_name(OFFICIAL, f'<msg>{content}</msg>') == ''
