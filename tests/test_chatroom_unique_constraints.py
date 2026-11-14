@@ -237,12 +237,15 @@ def test_the_migration_adds_constraints_that_really_block_duplicates(tmp_path) -
 
 
 def test_the_migration_is_a_noop_without_duplicates_and_can_downgrade(tmp_path) -> None:
+    from app.services.database_lifecycle import expected_database_revision
+
     database = tmp_path / "clean.db"
     _alembic(database, "upgrade", "head")
     _alembic(database, "downgrade", "20261112_0038")
     _alembic(database, "upgrade", "head")
     with sqlite3.connect(database) as c:
-        assert c.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "20261112_0039"
+        # 本轮新增了好友检测合流迁移，重新升级后应到达当前唯一 head，而非固定在群约束版本。
+        assert c.execute("SELECT version_num FROM alembic_version").fetchall() == [(expected_database_revision(),)]
 
 
 # ---------- 防回归:加锁重读不能冲掉本事务里还没写入的修改 ----------
