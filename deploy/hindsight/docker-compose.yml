@@ -53,8 +53,18 @@ services:
       HINDSIGHT_API_WORKER_ID: hindsight-201
       # 管理界面的登录密钥;不设置时界面是公开的。
       HINDSIGHT_CP_ACCESS_KEY: ${CP_ACCESS_KEY:?请在 .env 里设置 CP_ACCESS_KEY}
-      # 201 访问不了 huggingface.co,首次启动下载重排等模型要走镜像站。
-      HF_ENDPOINT: https://hf-mirror.com
+      # 当前完整镜像已预置重排模型及分词器。201 启动时直接使用镜像内缓存，
+      # 禁止 Hugging Face/Transformers 再请求远端元数据，避免外网波动造成启动重启循环。
+      # 升级镜像后应先在无网络的隔离容器验证模型可加载，再替换线上服务。
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    # running 只表示容器进程存在；以 API 真正完成模型与数据库初始化作为就绪标准。
+    healthcheck:
+      test: ["CMD", "/app/api/.venv/bin/python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8888/health/ready', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 180s
     networks:
       default: {}
       # 与应用共用网络,app 容器可直接用服务名 hindsight 访问,不占用宿主机端口。
