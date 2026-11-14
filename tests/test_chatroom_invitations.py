@@ -14,7 +14,7 @@ from app.core.time import now_shanghai
 from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, Message
 from app.services.chatroom_invitations import (
     backfill_chatroom_invitations,
-    build_invitation_tree,
+    build_invitation_graph,
     member_invitation,
     parse_system_invitation,
     record_invitation_event,
@@ -193,23 +193,35 @@ def _view(key, inviter='', *, status='active'):
             'avatar_url': '', 'invitation': {'inviter_external_id': inviter, 'source': 'member_profile', 'method': 'invite'}}
 
 
-def test_tree_keeps_unknown_roots_and_left_or_unlisted_inviters():
-    members = [_view('a'), _view('b', 'a'), _view('c', 'b', status='left'), _view('d', 'missing')]
-    tree = build_invitation_tree(members)
-    assert tree['known_count'] == 3 and tree['unknown_count'] == 1
-    assert len(tree['nodes']) == 5
+def test_graph_separates_isolated_members_and_keeps_unknown_roots_and_unlisted_inviters():
+    """根节点上级未知仍可连接下级，真正孤立的成员才单列，缺失邀请人不能丢失。"""
+    members = [_view('a'), _view('b', 'a'), _view('c', 'b', status='left'), _view('d', 'missing'), _view('isolated')]
+    tree = build_invitation_graph(members)
+    assert tree['known_count'] == 3 and tree['unknown_count'] == 2 and tree['unlinked_count'] == 1
+    assert len(tree['nodes']) == 6
     depths = {row['external_id']: row['depth'] for row in tree['nodes']}
-    assert depths == {'a': 0, 'b': 1, 'c': 2, 'missing': 0, 'd': 1}
+    assert depths == {'a': 0, 'b': 1, 'c': 2, 'missing': 0, 'd': 1, 'isolated': 0}
+    assert {row['external_id'] for row in tree['nodes'] if not row['connected']} == {'isolated'}
     assert members[0]['direct_invites'] == 1 and members[1]['direct_invites'] == 1
     assert members[2]['inviter']['external_id'] == 'b'
     assert members[3]['inviter']['name'] == 'missing'
 
 
-def test_tree_breaks_cycles_without_changing_saved_evidence_and_handles_deep_chains():
+def test_graph_breaks_cycles_without_changing_saved_evidence_and_handles_deep_chains():
     members = [_view('a', 'b'), _view('b', 'a'), _view('c', 'b')]
-    tree = build_invitation_tree(members)
-    assert len(tree['nodes']) == 3 and tree['cycle_count'] == 1
+    tree = build_invitation_graph(members)
+    assert len(tree['nodes']) == 3 and tree['cycle_count'] == 1 and tree['unlinked_count'] == 0
     assert members[0]['inviter']['external_id'] == 'b' and members[1]['inviter']['external_id'] == 'a'
     # 使用合法个人 ID；"0" 是协议常见空占位，不能作为真实邀请人。
-    deep = build_invitation_tree([_view(f'wxid_{i}', f'wxid_{i - 1}' if i else '') for i in range(1500)])
+    deep = build_invitation_graph([_view(f'wxid_{i}', f'wxid_{i - 1}' if i else '') for i in range(1500)])
     assert len(deep['nodes']) == 1500 and deep['nodes'][-1]['depth'] == 1499
+
+
+def test_graph_with_only_unknown_members_has_no_fabricated_edges():
+    """无邀请证据时不因为群主身份生成星形关系，所有真实成员都在未关联区。"""
+    members = [_view('owner'), _view('member')]
+    members[0]['role'] = 'owner'
+    graph = build_invitation_graph(members)
+    assert graph['known_count'] == 0 and graph['unlinked_count'] == graph['total'] == 2
+    assert all(not node['connected'] and not node['parent_key'] for node in graph['nodes'])
+    assert build_invitation_graph([])['unlinked_count'] == 0

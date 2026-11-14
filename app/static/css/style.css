@@ -1434,103 +1434,472 @@ code {
   overflow-wrap: anywhere;
 }
 
-/* 邀请树沿用群详情单一表面；只有节点列表局部滚动，层级缩进限制宽度避免深链撑开手机。 */
+/* 邀请图谱沿用群详情单一表面。画布单独承载平移缩放，关系与成员资料不撑开整页。 */
 .invitation-panel {
-  margin-bottom: 16px;
+  min-width: 0;
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
 }
 
-.invitation-panel > summary {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  min-height: 44px;
-  padding: 10px 32px 10px 0;
+.invitation-panel [hidden] {
+  display: none !important;
 }
 
-.invitation-panel > summary .muted-text {
-  margin: 0;
-}
-
-.invitation-panel-body {
-  padding: 8px 0;
-}
-
+.invitation-panel-head,
+.invitation-summary,
 .invitation-toolbar,
-.invitation-node-main,
-.invitation-node-facts {
+.invitation-controls,
+.invitation-caption,
+.invitation-inspector-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 12px;
 }
 
-.invitation-toolbar {
+.invitation-panel-head,
+.invitation-toolbar,
+.invitation-caption,
+.invitation-inspector-head {
   justify-content: space-between;
 }
 
-.invitation-tree-list {
-  max-height: 560px;
-  margin: 12px 0 0;
-  padding: 0;
+.invitation-panel-head h3,
+.invitation-inspector-head h4 {
+  margin: 0;
+}
+
+.invitation-summary {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.invitation-summary > span:first-child {
+  color: var(--primary-strong);
+  font-weight: 600;
+}
+
+.invitation-toolbar {
+  align-items: flex-end;
+  margin: 16px 0 12px;
+}
+
+.invitation-search {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.invitation-search label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.invitation-search input {
+  /* 独立搜索框沿用后台输入材质，避免脱离表单容器后退回浏览器默认的直角边框。 */
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.invitation-search input:focus-visible {
+  outline: none;
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+
+.invitation-controls {
+  gap: 6px;
+}
+
+.invitation-controls .btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.invitation-scale {
+  min-width: 40px;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.invitation-search-results {
+  position: absolute;
+  z-index: 12;
+  top: 100%;
+  right: 0;
+  left: 0;
+  max-height: 280px;
+  margin: 6px 0 0;
+  padding: 6px;
   overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(72, 82, 140, .12);
   list-style: none;
 }
 
-.invitation-node {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 10px 0 10px calc(var(--invitation-depth, 0) * 20px);
-  border-bottom: 1px solid var(--border);
+.invitation-search-results button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
-.invitation-node[hidden] {
+.invitation-search-results button:hover {
+  background: var(--primary-soft);
+}
+
+.invitation-search-results small {
+  display: block;
+  color: var(--muted);
+}
+
+.invitation-search-status {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.invitation-search-status:empty {
   display: none;
 }
 
-.invitation-node-main {
-  flex: 1;
+.invitation-viewport {
+  position: relative;
   min-width: 0;
-  justify-content: space-between;
+  background-color: var(--surface-soft);
+  background-image: radial-gradient(var(--border-strong) .8px, transparent .8px);
+  background-size: 20px 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
 }
 
-.invitation-node-person {
-  min-width: 0;
-  flex: 1 1 160px;
+.invitation-graph-scene {
+  position: relative;
+  transform-origin: 0 0;
 }
 
-.invitation-node .identity-id,
-.invitation-node .identity-name {
+.invitation-graph-nodes,
+.invitation-unlinked-nodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(248px, 100%), 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.invitation-graph-nodes {
+  padding: 12px;
+}
+
+.invitation-graph-node {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(72, 82, 140, .045);
+}
+
+.invitation-graph-node.is-related {
+  border-color: var(--border-strong);
+}
+
+.invitation-graph-node.is-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, .14);
+}
+
+/* 卡片高度由真实内容决定，脚本按每层最高卡片留出连线间距，长昵称和成员 ID 可完整换行。 */
+.invitation-member {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 14px 14px 0 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.invitation-member:hover {
+  background: var(--surface-soft);
+}
+
+.invitation-member .identity-cell {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.invitation-member .identity-text {
+  min-width: 0;
+}
+
+.invitation-member .identity-id,
+.invitation-member .identity-name {
+  display: block;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.invitation-node-toggle,
-.invitation-node-spacer {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
+.invitation-member .identity-id {
+  margin-top: 2px;
+  font-size: 11px;
 }
 
-.invitation-node-toggle .i {
-  transition: transform 150ms ease;
-}
-
-.invitation-node-toggle[aria-expanded="true"] .i {
-  transform: rotate(90deg);
-}
-
-.invitation-node-note {
-  margin-top: 4px;
-  overflow-wrap: anywhere;
+.invitation-member-note {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.invitation-member-tags,
+.invitation-member-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.invitation-member-tags {
+  margin-top: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.invitation-member-tags:empty {
+  display: none;
+}
+
+.invitation-member-footer {
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 8px 0 12px;
+  border-top: 1px solid var(--border);
 }
 
 .invitation-count {
   color: var(--text-soft);
+  font-size: 12px;
+}
+
+.invitation-branch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 6px;
+  color: var(--primary-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.invitation-branch:hover {
+  background: var(--primary-soft);
+}
+
+.invitation-branch[aria-expanded="true"] .i {
+  transform: rotate(90deg);
+}
+
+.invitation-graph-edges {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #9ba7c5;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.invitation-graph-edges g > path {
+  fill: none;
+  stroke: #9ba7c5;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.invitation-graph-edges g > path.is-highlighted {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+
+/* 仅在交互脚本就绪后启用绝对定位；无脚本时卡片保持网格，关系文字仍然可阅读。 */
+.invitation-panel.is-ready .invitation-viewport:not(.is-empty) {
+  height: 440px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.invitation-panel.is-ready .invitation-graph-nodes {
+  display: block;
+  position: absolute;
+  inset: 0;
+  padding: 0;
+}
+
+.invitation-panel.is-ready .invitation-graph-nodes > .invitation-graph-node {
+  position: absolute;
+  width: 248px;
+}
+
+.invitation-panel.is-ready .invitation-graph-edges {
+  display: block;
+}
+
+.invitation-panel.is-ready .invitation-viewport.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.invitation-caption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.invitation-caption > span:first-child {
+  color: var(--text-soft);
+}
+
+.invitation-empty {
+  display: flex;
+  min-height: 180px;
+  padding: 24px 20px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  text-align: center;
+}
+
+.invitation-empty > .i {
+  color: var(--primary);
+  font-size: 24px;
+}
+
+.invitation-empty p {
+  max-width: 420px;
+  margin: 0;
+  color: var(--muted);
   font-size: 13px;
+}
+
+.invitation-inspector {
+  min-width: 0;
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--surface-soft);
+  border-radius: 12px;
+}
+
+.invitation-inspector-head {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+
+.invitation-inspector-head > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.invitation-inspector-head h4 {
+  font-size: 14px;
+}
+
+.invitation-inspector-head p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.invitation-inspector-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 12px 0 0;
+}
+
+.invitation-inspector-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.invitation-inspector-facts dd {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.invitation-unlinked {
+  margin-top: 12px;
+}
+
+.invitation-unlinked > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 32px 8px 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.invitation-unlinked > summary span {
+  color: var(--muted);
+}
+
+.invitation-unlinked > p {
+  margin: 4px 0 12px;
+  font-size: 12px;
+}
+
+.app-modal.invitation-graph-dialog {
+  width: min(1480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+}
+
+.invitation-graph-dialog .app-modal-card {
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+}
+
+.invitation-panel.is-ready .invitation-graph-dialog .invitation-viewport:not(.is-empty) {
+  height: min(62dvh, 700px);
 }
 
 /* 多列名册保留可读列宽；长名字在身份列内换行，角色和状态不被挤成逐字竖排。 */
@@ -1567,15 +1936,37 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .invitation-node {
-    padding-inline-start: calc(var(--invitation-depth, 0) * 12px);
+  .invitation-search {
+    flex-basis: 100%;
+    max-width: none;
   }
 
-  .invitation-node-toggle,
-  .invitation-node-spacer {
-    flex-basis: 44px;
-    width: 44px;
-    height: 44px;
+  .invitation-controls {
+    width: 100%;
+  }
+
+  .invitation-controls > .btn-small {
+    flex: 1 0 auto;
+  }
+
+  .invitation-panel.is-ready .invitation-viewport:not(.is-empty) {
+    height: 380px;
+  }
+
+  .invitation-inspector-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-modal.invitation-graph-dialog {
+    width: calc(100vw - 16px);
+  }
+
+  .invitation-graph-dialog .app-modal-card {
+    padding: 16px;
+  }
+
+  .invitation-panel.is-ready .invitation-graph-dialog .invitation-viewport:not(.is-empty) {
+    height: 54dvh;
   }
 }
 

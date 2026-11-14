@@ -47,7 +47,7 @@
 | 32 | 会话详情 `conversation_detail.html` | 消息阅读层次、精简眉题 | D/M；`conversation` |
 | 33 | 消息记录 `messages.html` | 结果优先、移动筛选折叠 | D/M/T；手机筛选开合、主导航键盘开合；`messages` |
 | 34 | 群清单 `chatroom_list.html` | 紧凑指标、搜索和状态 | D/M；`chatrooms` |
-| 35 | 群详情 `chatroom_detail.html` | 资料展示公告与获取状态、置顶能力提示；成员按角色和发言排序，增加邀请人、可展开邀请树与历史补查；手机表格局部滚动 | 原 D/M；2026-11-14 补查真实临时应用 1440×900、1024×768、390×844，11 项浏览器检查通过；截图 `.run/chatroom-profile-preview/`，未验证真实设备 |
+| 35 | 群详情 `chatroom_detail.html` | 资料展示公告与置顶能力提示；成员按角色排序，邀请关系改为头像卡片与 SVG 图谱，支持缩放、拖动、搜索定位和放大弹窗，未关联成员单列 | 原资料 11 项；图谱在真实临时应用 1440×900、1024×768、390×844 完成 24 项浏览器检查；截图 `.run/chatroom-invitation-graph-preview/`，未验证真实设备 |
 | 36 | 联系人 `workwechat_contact_list.html` | 结果优先、统一指标与筛选 | D/M；`contacts` |
 | 37 | 联系人详情 `workwechat_contact_detail.html` | 主次信息分组 | D/M；`contact-detail` |
 | 38 | 套餐与额度 `account_billing.html` | 额度、金额与套餐选择层次 | D/M；`billing` |
@@ -61,6 +61,16 @@
 共享壳：`base.html`、`platform_base.html`、`marketing_base.html`、`auth_base.html`。保留顶部导航、品牌命名、平台/企业身份与请求路径，不新增旧入口或第二套主题。未被当前路由使用的模板不因本轮调整新增入口。
 
 ## 实际验证记录
+
+### 2026-11-14 邀请关系图谱
+
+- `.venv/bin/python -m pytest -q tests/test_chatroom_invitations.py tests/test_chatroom_profile_pages.py tests/test_chatroom_detail_avatar.py --tb=short -o faulthandler_timeout=30` 独立执行结果 `39 passed`。覆盖邀请证据、未知和未关联成员分组、缺失邀请人、退群、同名、循环与 1500 层链；真实详情路由校验图谱空状态、双方入图、安全转义、只读权限及空群。
+- 页面测试使用临时数据库，在沙箱外运行。首次将浏览器与测试并行时，其夹具争用本地 9165 端口导致启动失败；浏览器随后改用系统分配端口，再独立重跑上述 39 项全部通过。未将端口占用误记为应用缺陷。
+- 使用真实 FastAPI 群详情路由、认证、Jinja 模板和工作区静态资源，Chrome 在 1440×900、1024×768、390×844 完成 24 项检查，页面均单一 h1、身份键唯一、无根节点横向溢出、无 JavaScript 错误。构造样例包含 12 层邀请链、长中文昵称、同名不同 ID、退群成员和缺失邀请人。
+- 实际验证展开全部和收起、单分支 Enter/Space、深层成员自动展开祖先、姓名和 ID 搜索及同名区分、关系来源和邀请人详情、缩放/方向键/鼠标拖动/适应画布。放大弹窗移动同一工作区，选择状态保留，Esc 关闭后焦点返回可见入口；未知成员可搜索定位，循环提示与全未知/空群状态保持可用。
+- 已查看桌面、手机和放大弹窗截图，补齐独立搜索框的 Soft UI 输入样式并重新完成全部 24 项浏览器检查。当前 Chrome 与 Playwright 的默认截图通道对简单静态页也超时，使用 `PLAYWRIGHT_LEGACY_SCREENSHOT=1` 后实际截图成功；截图与 `report.json` 位于本机忽略目录 `.run/chatroom-invitation-graph-preview/`。
+- 本次改动的 Python AST、群详情和图谱 Jinja 加载、`node --check app/static/js/chatroom-invitations.js`、`git diff --check` 通过。旧缩进树的模板标记、样式和调用已替换，不保留双入口。
+- 邀请数据全部为临时库构造数据，没有触发真实设备同步或写入线上关系，也不代表微桥已补齐邀请人。未执行全量测试、完整端到端回归或真实手机操作；201 发布后的只读验收与备份另外记录于服务器维护档案。
 
 ### 2026-11-14 群资料、成员顺序与邀请关系
 

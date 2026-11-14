@@ -1,4 +1,4 @@
-"""群资料、双任务同步与邀请树的真实路由验证，全部使用临时数据库与构造设备回报。"""
+"""群资料、双任务同步与邀请图谱的真实路由验证，全部使用临时数据库与构造设备回报。"""
 
 from __future__ import annotations
 
@@ -65,7 +65,10 @@ def test_members_share_role_first_order_and_invitation_view(profile_page_context
     body = response.text.split('<tbody>', 1)[1].split('</tbody>', 1)[0]
     names = ['安静群主', '管理员近期', '管理员较早', '普通最近', '沉默群友', '已退旧群主']
     assert [body.index(name) for name in names] == sorted(body.index(name) for name in names)
-    assert '邀请关系树' in response.text and '<th>邀请人</th>' in response.text and '未知' in body
+    assert '邀请关系图谱' in response.text and '<th>邀请人</th>' in response.text and '未知' in body
+    # 六名成员都没有邀请证据，图谱应为空而成员资料完整保留，不能因角色产生虚假连线。
+    assert '暂未记录到邀请关系' in response.text and 'data-invitation-scene' not in response.text
+    assert response.text.count('data-connected="false"') == 6
     assert '群主群昵称' in body and 'chip-success">群主' in body
     if channel_type == 'wechat_webridge':
         assert '同步群资料' in response.text
@@ -175,11 +178,34 @@ def test_invitation_backfill_is_visible_to_ops_and_uses_only_this_groups_system_
     page = client.get(f'/channels/{channel_id}/chatrooms/{room_id}?tab=members')
     assert page.status_code == 200 and '已知 1 / 6 人' in page.text
     assert '入群系统消息' in page.text and '直接邀请 1 人' in page.text and '群主群昵称' in page.text
+    # 只有邀请双方进入画布，其余四人留在未关联区；头像卡片与搜索共用唯一成员节点。
+    assert 'data-invitation-scene' in page.text
+    assert page.text.count('data-connected="true"') == 2 and page.text.count('data-connected="false"') == 4
     readonly_csrf = _login(client, 'readonly')
     readonly = client.get(f'/channels/{channel_id}/chatrooms/{room_id}?tab=members')
-    assert readonly.status_code == 200 and '邀请关系树' in readonly.text
+    assert readonly.status_code == 200 and '邀请关系图谱' in readonly.text
     assert '补查历史邀请</button>' not in readonly.text
     assert client.post(path, data={'csrf_token': readonly_csrf}).status_code == 403
+
+
+def test_invitation_graph_empty_group_and_member_text_are_safe(profile_page_context):
+    """真实模板必须保留文本转义；没有成员时返回专用空状态，不能生成图谱或补造节点。"""
+    client, ids, channel_id, room_id = profile_page_context
+    _login(client, 'readonly')
+    with ids['factory']() as db:
+        members = db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == room_id)).all()
+        members[0].nickname = '\"><script>window.invitationUnsafe=1</script>'
+        db.commit()
+    page = client.get(f'/channels/{channel_id}/chatrooms/{room_id}?tab=members')
+    assert page.status_code == 200 and '&lt;script&gt;window.invitationUnsafe=1&lt;/script&gt;' in page.text
+    assert '<script>window.invitationUnsafe=1</script>' not in page.text
+    with ids['factory']() as db:
+        for member in db.scalars(select(ChatroomMember).where(ChatroomMember.chatroom_id == room_id)):
+            db.delete(member)
+        db.commit()
+    empty = client.get(f'/channels/{channel_id}/chatrooms/{room_id}?tab=members')
+    assert empty.status_code == 200 and '暂无成员信息' in empty.text and '已知 0 / 0 人' in empty.text
+    assert 'data-invitation-node=' not in empty.text and 'data-invitation-scene' not in empty.text
 
 
 def test_incoming_invitation_is_recorded_with_member_notifications_disabled(profile_page_context):

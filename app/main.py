@@ -173,7 +173,7 @@ from app.services.wechat_winauto_chatrooms import (
 )
 from app.services.directory_pages import build_chatroom_directory, build_chatroom_plugin_directory, build_contact_directory, channel_options, chatroom_plugin_options
 from app.services.chatroom_profile import build_chatroom_profile
-from app.services.chatroom_invitations import backfill_chatroom_invitations, build_invitation_tree
+from app.services.chatroom_invitations import backfill_chatroom_invitations, build_invitation_graph
 from app.services.wechat_ipad.chatrooms import update_group_plugin_scope_enabled
 from app.services.points_admin import adjust_points, build_points_accounts, build_points_ledger, group_options
 from app.services.wechat_webridge.chatrooms import build_webridge_chatroom_detail
@@ -2435,8 +2435,8 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
         detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
         # 资料标签只读取本群已保存的快照；打开页面不自动向设备下发命令。
         detail["profile"] = build_chatroom_profile(channel, chatroom, detail["members"])
-        # 成员列表和邀请树共用相同的 ID 关系；构建视图不写数据库或猜测未知邀请人。
-        detail["invitations"] = build_invitation_tree(detail["members"])
+        # 图谱与成员表使用同一份邀请快照；未知成员只分组展示，不推断额外邀请关系。
+        detail["invitations"] = build_invitation_graph(detail["members"])
         # 群消息只在消息中心里有一份:这里给出直达这个群会话的入口,不再自带一张最近 30 条的表
         group_conversation_id = db.scalar(
             select(Conversation.id).where(Conversation.channel_id == channel.id, Conversation.external_id == chatroom.external_id)

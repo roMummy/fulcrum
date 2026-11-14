@@ -1,7 +1,7 @@
-"""群邀请关系的唯一快照、系统消息证据及无递归邀请树。
+"""群邀请关系的唯一快照、系统消息证据及无递归层级图谱。
 
 邀请边只使用明确成员 ID，昵称只作显示；成员资料优先于系统消息，空快照和旧消息
-不能清空已知关系。查看树不改数据库，历史补查也不修改成员在群状态。
+不能清空已知关系。查看图谱不改数据库，历史补查也不修改成员在群状态。
 """
 
 from __future__ import annotations
@@ -212,8 +212,12 @@ def backfill_chatroom_invitations(db: Session, channel: Channel, room: Chatroom)
     return {'checked': min(len(rows), HISTORY_LIMIT), 'updated': updated, 'limited': len(rows) > HISTORY_LIMIT}
 
 
-def build_invitation_tree(members: list[dict[str, Any]]) -> dict[str, Any]:
-    """按 ID 迭代生成森林并补充列表邀请人；环只切断视图边，不改保存的证据。"""
+def build_invitation_graph(members: list[dict[str, Any]]) -> dict[str, Any]:
+    """按 ID 生成层级图谱；孤立成员单独展示，环只切断视图边，不改邀请证据。
+
+    上级未知但确实邀请了其他人的成员仍是图谱根节点；只有既没有展示上级、也没有
+    展示下级的成员才进入未关联区。所有遍历使用显式栈，深层邀请链不消耗递归栈。
+    """
     rows = {row['member_external_id']: row for row in members}
     nodes = {key: {
         'external_id': key, 'name': row.get('display_name') if row.get('display_name') not in (None, '', '-') else row.get('nickname') or key,
@@ -275,8 +279,10 @@ def build_invitation_tree(members: list[dict[str, Any]]) -> dict[str, Any]:
             rows[key]['direct_invites'] = direct
         flat.append({**node, 'key': keys[key], 'parent_key': keys[parents[key]] if parents[key] else '',
                      'depth': depth, 'child_count': len(children[key]), 'direct_invites': direct,
+                     'connected': parents[key] is not None or bool(children[key]),
                      'cycle': key in cycle_roots,
                      'inviter': rows[key]['inviter'] if key in rows else {'known': False}})
         stack.extend((child, depth + 1) for child in reversed(children[key]))
     return {'nodes': flat, 'total': len(members), 'known_count': known_count,
-            'unknown_count': len(members) - known_count, 'cycle_count': len(cycle_roots)}
+            'unknown_count': len(members) - known_count, 'cycle_count': len(cycle_roots),
+            'unlinked_count': sum(not node['connected'] and not node['placeholder'] for node in flat)}
