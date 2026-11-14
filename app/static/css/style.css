@@ -2460,28 +2460,318 @@ code {
 
 /* 插件、群管理与运维内部控件使用浅色边界，避免每个子项重复产生浮起表面。 */
 
-.gi-heading, .gi-actions, .gi-filters, .gi-summary, .gi-card-title { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.gi-heading { justify-content: space-between; margin-bottom: 20px; }
-.gi-heading h2 { margin: 12px 0 8px; }
-.gi-summary { gap: 24px; padding: 16px 0; border-block: 1px solid var(--border); margin-bottom: 20px; }
-.gi-summary strong { margin-left: 8px; }
-.gi-filters { align-items: flex-end; }
-.gi-filters label, .gi-form label { display: grid; gap: 8px; }
-.gi-filters input, .gi-filters select { min-width: 160px; }
-.gi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 20px; }
-.gi-card { min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.gi-card img { display: block; width: 100%; height: 190px; object-fit: contain; background: var(--bg, #f5f6fa); }
-.gi-card-copy { padding: 16px; }
-.gi-card-title { justify-content: space-between; }
-.gi-card-title h3 { margin: 0; overflow-wrap: anywhere; }
-.gi-source { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
-.gi-form { max-width: 660px; display: grid; gap: 20px; }
-.gi-form small { color: var(--muted); }
-.gi-preview { max-width: 360px; max-height: 240px; object-fit: contain; }
-.gi-import { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
-.gi-import summary { cursor: pointer; font-weight: 600; }
-.gi-pagination { display: flex; gap: 12px; margin-top: 24px; }
-@media (max-width: 640px) { .gi-filters label { width: 100%; } .gi-filters input, .gi-filters select { width: 100%; } }
+/* 猜图片题库与其他后台清单共用一个业务表面；缩略图与元信息按行排列，避免面板套卡片。 */
+.gi-list-heading,
+.gi-counts,
+.gi-question-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.gi-counts {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gi-counts strong {
+  margin-left: 4px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.gi-question-list {
+  border-top: 0;
+}
+
+.gi-question-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1.1fr) minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.gi-question-row:last-child {
+  border-bottom: 0;
+}
+
+.gi-question-row.gi-readonly {
+  grid-template-columns: 76px minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+.gi-thumbnail {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 64px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.gi-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.gi-question-copy,
+.gi-attribution,
+.gi-attribution dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gi-question-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gi-question-title .chip {
+  flex-shrink: 0;
+}
+
+.gi-question-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.gi-attribution {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.gi-attribution > div {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.gi-attribution dt {
+  color: var(--muted);
+}
+
+.gi-attribution dd {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.gi-row-actions .btn,
+.gi-modal .btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* 弹窗只补充题库特有的图片与预览布局，表单控件和浮层材质继续使用全站组件。 */
+.gi-editor-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.gi-modal form,
+.gi-modal label,
+.gi-modal .form-grid > *,
+.gi-bank .compact-filter-field > .ui-select {
+  min-width: 0;
+}
+
+.gi-modal input[type="file"] {
+  max-width: 100%;
+  font-size: 12px;
+}
+
+.gi-modal input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  padding: 4px 10px;
+  color: var(--primary-strong);
+  font: inherit;
+  background: var(--primary-soft);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.gi-modal .form-grid small,
+.gi-import-help {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.gi-image-field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.gi-image-preview {
+  display: grid;
+  place-items: center;
+  height: 88px;
+  overflow: hidden;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.gi-image-preview > .i {
+  width: 28px;
+  height: 28px;
+}
+
+.gi-image-preview img {
+  width: 100%;
+  height: 88px;
+  object-fit: contain;
+}
+
+.gi-loading {
+  margin: 0 0 16px;
+}
+
+.gi-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.gi-actions-end {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.gi-import-help p {
+  margin: 0 0 8px;
+}
+
+.gi-import-help > code {
+  display: block;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.gi-import-summary {
+  margin: 0;
+  font-weight: 550;
+}
+
+.gi-import-table-wrap {
+  max-width: 100%;
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.gi-import-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.gi-import-table th,
+.gi-import-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.gi-import-table th {
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.gi-audit-results {
+  margin: 0 0 16px;
+}
+
+.gi-audit-results > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.gi-audit-results dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 680px) {
+  /* 手机先展示缩略图、答案与编辑按钮，来源授权接在文字下方，不产生横向滚动。 */
+  .gi-question-row {
+    grid-template-columns: 60px minmax(0, 1fr) 44px;
+    align-items: start;
+    gap: 8px 12px;
+  }
+
+  .gi-question-row.gi-readonly {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .gi-thumbnail {
+    width: 60px;
+    height: 60px;
+  }
+
+  .gi-attribution {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+
+  .gi-row-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .gi-bank .compact-filter-summary,
+  .gi-bank .compact-filter-actions .btn,
+  .gi-bank .compact-filter-field input,
+  .gi-bank .compact-filter-field .ui-select-trigger,
+  .gi-modal .form-grid input:not([type="hidden"]),
+  .gi-modal .ui-select-trigger {
+    min-height: 44px;
+  }
+
+  .gi-image-field {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .gi-image-preview {
+    height: 112px;
+  }
+
+  .gi-image-preview img {
+    height: 112px;
+  }
+}
 
 .action-disclosure {
   background: var(--surface);

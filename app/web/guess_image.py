@@ -1,11 +1,15 @@
-"""Question-bank administration belongs exclusively to the authenticated tenant."""
+"""猜图片题库的租户管理边界。
+
+主清单由服务端渲染，编辑、导入与资源检查通过 JSON 供同页弹窗调用。
+所有接口仍逐项检查租户身份、插件可用性和写权限，不提供独立旧表单页面。
+"""
 from __future__ import annotations
 
 import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
 from starlette.datastructures import UploadFile
@@ -40,7 +44,7 @@ def _access(request, db, *, edit=False):
 
 def _context(request, **extra):
     principal = request.state.current_user
-    return {"request": request, "page_title": "猜图片 · 管理题库", "base": BASE,
+    return {"request": request, "page_title": "猜图片题库", "base": BASE,
         "current_user": principal, "csrf_token": request.cookies.get(TENANT_CSRF_COOKIE, ""),
         "password_action": TENANT_PASSWORD_PATH, "logout_action": TENANT_LOGOUT_PATH,
         "module_links": {}, "can_edit": has_tenant_role(principal, "operator"),
@@ -56,6 +60,11 @@ def _question(db, identifier):
 
 def _redirect(notice):
     return RedirectResponse(f"{BASE}?notice={quote(notice)}", status_code=303)
+
+
+def _json(payload, *, status_code=200):
+    """题目详情、预览令牌与资源数量属于当前租户，禁止浏览器或代理缓存。"""
+    return JSONResponse(payload, status_code=status_code, headers={"Cache-Control": "private, no-store"})
 
 
 def _audit(db, principal, action, target_id=None, detail=None):
@@ -99,21 +108,15 @@ async def bank_page(request: Request, q: str = "", category: str = "", status: s
             page_query=f"q={quote(q)}&category={quote(category)}&status={quote(status)}"))
 
 
-@router.get("/new", response_class=HTMLResponse)
-async def new_page(request: Request):
-    with open_tenant_session(TenantSessionLocal) as db:
-        _access(request, db, edit=True)
-        return templates.TemplateResponse(request=request, name="guess_image_form.html", context=_context(request, question=None, draft={}, error=""))
-
-
-@router.get("/questions/{identifier}", response_class=HTMLResponse)
-async def edit_page(request: Request, identifier: str):
+@router.get("/questions/{identifier}")
+async def question_detail(request: Request, identifier: str):
+    """共享编辑弹窗按需读取详情，使用租户会话查询，不能读取其他企业的题目。"""
     with open_tenant_session(TenantSessionLocal) as db:
         _access(request, db, edit=True)
         row = _question(db, identifier)
         draft = {key: getattr(row, key) for key in ("answer", "category", "source", "license", "status")}
         draft["tags"] = "|".join(json.loads(row.tags_json))
-        return templates.TemplateResponse(request=request, name="guess_image_form.html", context=_context(request, question=row, draft=draft, error=""))
+        return _json({**draft, "question_id": row.question_id, "image_url": f"{BASE}/media/{row.asset_id}"})
 
 
 async def _save(request, identifier=None):
@@ -130,9 +133,9 @@ async def _save(request, identifier=None):
                 _audit(db, principal, "update" if identifier else "create", row.id)
             except (bank.BankError, OSError) as exc:
                 db.rollback()
-                return templates.TemplateResponse(request=request, name="guess_image_form.html", status_code=400,
-                    context=_context(request, question=row, draft=draft, error=str(exc)))
-        return _redirect("题目已保存")
+                # 校验失败只返回错误，由弹窗保留原始字段与已选文件，避免整页跳转丢失输入。
+                return _json({"detail": str(exc)}, status_code=400)
+        return _json({"notice": "题目已保存"})
 
 
 @router.post("/new")
@@ -155,7 +158,7 @@ async def delete(request: Request, identifier: str):
         row_id = row.id
         db.delete(row)
         _audit(db, principal, "delete", row_id)
-        return _redirect("题目已删除；图片保留供进行中的游戏使用")
+        return _json({"notice": "题目已删除；图片保留供进行中的游戏使用"})
 
 
 @router.get("/media/{asset_id}")
@@ -177,7 +180,7 @@ async def media(request: Request, asset_id: str, original: bool = False):
             raise HTTPException(404, "Image not found")
 
 
-@router.post("/imports/preview", response_class=HTMLResponse)
+@router.post("/imports/preview")
 async def preview(request: Request):
     with open_tenant_session(TenantSessionLocal) as db:
         principal = _access(request, db, edit=True)
@@ -191,8 +194,9 @@ async def preview(request: Request):
                 _audit(db, principal, "import-preview", detail=f"total={report['total']}")
             except (bank.BankError, OSError) as exc:
                 db.rollback()
-                return _redirect(str(exc))
-        return templates.TemplateResponse(request=request, name="guess_image_import.html", context=_context(request, token=token, report=report))
+                return _json({"detail": str(exc)}, status_code=400)
+        # 令牌仍绑定当前用户和会话，弹窗只持有预览结果，不提前写入题目。
+        return _json({"token": token, "report": report})
 
 
 @router.post("/imports/confirm")
@@ -206,8 +210,8 @@ async def confirm(request: Request):
                 _audit(db, principal, "import-confirm", detail=json.dumps(report))
             except (bank.BankError, OSError) as exc:
                 db.rollback()
-                return _redirect(str(exc))
-        return _redirect(f"导入完成：新增 {report['imported']} 题，跳过重复 ID {report['skipped']} 题")
+                return _json({"detail": str(exc)}, status_code=400)
+        return _json({"notice": f"导入完成：新增 {report['imported']} 题，跳过重复 ID {report['skipped']} 题", "report": report})
 
 
 @router.get("/export")
@@ -222,10 +226,10 @@ async def export(request: Request):
         return Response(data, media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="guess-image.zip"', "Cache-Control": "private, no-store"})
 
 
-@router.get("/audit", response_class=HTMLResponse)
+@router.get("/audit")
 async def audit(request: Request):
     with open_tenant_session(TenantSessionLocal) as db:
         principal = _access(request, db, edit=True)
         result = bank.resource_audit(db)
         _audit(db, principal, "resource-audit", detail=json.dumps(result))
-        return templates.TemplateResponse(request=request, name="guess_image_audit.html", context=_context(request, audit=result))
+        return _json(result)

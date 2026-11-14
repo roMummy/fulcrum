@@ -1,24 +1,107 @@
 {% extends "base.html" %}
-{% block content %}
-<section class="panel gi-bank">
-  <div class="gi-heading"><div><a href="/plugins">← 插件</a><h2>猜图片 · 管理题库</h2><p class="muted">本企业的机器人共用题库。每局均匀随机抽题，同一局不重复。</p></div>
-  {% if can_edit %}<div class="gi-actions"><a class="btn" href="{{ base }}/new">添加题目</a><a class="btn btn-secondary" href="{{ base }}/export">导出 ZIP</a><a class="btn btn-secondary" href="{{ base }}/audit">资源检查</a></div>{% endif %}</div>
-  <div class="gi-summary"><span>已启用 <strong>{{ counts.get('enabled', 0) }}</strong></span><span>草稿 <strong>{{ counts.get('draft', 0) }}</strong></span><span>已停用 <strong>{{ counts.get('disabled', 0) }}</strong></span></div>
-  {% if notice %}<p role="status" class="notice-card">{{ notice }}</p>{% endif %}
-  <form method="get" class="gi-filters">
-    <label>搜索答案或标签<input type="text" name="q" value="{{ q }}" maxlength="80" placeholder="输入关键词" /></label>
-    <label>分类<select name="category"><option value="">全部分类</option>{% for item in categories %}{% if item %}<option {% if item == category %}selected{% endif %}>{{ item }}</option>{% endif %}{% endfor %}</select></label>
-    <label>状态<select name="status"><option value="">全部状态</option>{% for value, label in [('enabled','已启用'),('draft','草稿'),('disabled','已停用')] %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <button class="btn btn-secondary" type="submit">筛选</button><a href="{{ base }}">重置</a>
-  </form>
-  <p class="muted">共 {{ total }} 道题 · 第 {{ page }} / {{ pages }} 页</p>
-  {% if rows %}<div class="gi-grid">{% for row in rows %}<article class="gi-card">
-    <a href="{{ base }}/media/{{ row.asset_id }}?original=true" target="_blank" rel="noopener"><img src="{{ base }}/media/{{ row.asset_id }}" alt="{{ row.answer }}的题目图片" loading="lazy" width="360" height="240" /></a>
-    <div class="gi-card-copy"><div class="gi-card-title"><h3>{{ row.answer }}</h3><span class="chip {% if row.status == 'enabled' %}badge-success{% endif %}">{{ {'draft':'草稿','enabled':'已启用','disabled':'已停用'}[row.status] }}</span></div>
-    <p class="muted">{{ row.category or '未分类' }}{% if tags(row) %} · {{ tags(row) }}{% endif %}</p><p class="gi-source" title="{{ row.source }}">来源：{{ row.source or '未填写' }}</p><p class="gi-source" title="{{ row.license }}">授权：{{ row.license or '未填写' }}</p>
-    {% if can_edit %}<div class="gi-actions"><a class="btn btn-small btn-secondary" href="{{ base }}/questions/{{ row.question_id }}">编辑题目</a></div>{% endif %}</div>
-  </article>{% endfor %}</div>{% else %}<div class="notice-card"><strong>这里还没有符合条件的题目</strong><p>添加图片和答案，或导入 ZIP 题包。填写来源及授权说明后才能启用。</p></div>{% endif %}
-  <nav class="gi-pagination" aria-label="题库分页">{% if page > 1 %}<a class="btn btn-secondary" href="{{ base }}?{{ page_query }}&page={{ page - 1 }}">上一页</a>{% endif %}{% if page < pages %}<a class="btn btn-secondary" href="{{ base }}?{{ page_query }}&page={{ page + 1 }}">下一页</a>{% endif %}</nav>
-  {% if can_edit %}<details class="gi-import disclosure"><summary>批量导入题包（ZIP + CSV）</summary><p class="muted">根目录放 questions.csv，图片放 images/。ZIP ≤ 20 MiB，最多 1000 题；只接受 PNG / JPEG。先预览，确认后入库；已有 ID 跳过。</p><p><code>id,image,answer,category,tags,source,license,status</code>；标签用 <code>|</code> 分隔，id 可空，status 可填 draft / enabled / disabled。</p><form action="{{ base }}/imports/preview" method="post" enctype="multipart/form-data" class="gi-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><label>选择题包<input type="file" name="archive" accept=".zip" required /></label><button class="btn btn-secondary" type="submit">校验并预览</button></form></details>{% endif %}
-</section>
+{% block back %}<a class="page-back" href="/plugins" title="返回插件" aria-label="返回插件"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endblock %}
+{% block page_intro %}<p>本企业的机器人共用题库，每局随机抽题，同一局不重复。</p>{% endblock %}
+{% block hero_actions %}
+{% if can_edit %}
+{# 页头统一使用图标操作，所有管理流程都在当前题库页打开弹窗。 #}
+<button class="btn btn-icon" type="button" data-modal-open="gi-question-dialog" data-gi-create title="添加题目" aria-label="添加题目"><span class="i i-plus" aria-hidden="true"></span></button>
+<button class="btn btn-secondary btn-icon" type="button" data-modal-open="gi-import-dialog" title="导入题包" aria-label="导入题包"><span class="i i-upload" aria-hidden="true"></span></button>
+<a class="btn btn-secondary btn-icon" href="{{ base }}/export" title="导出题包" aria-label="导出题包"><span class="i i-download" aria-hidden="true"></span></a>
+<button class="btn btn-secondary btn-icon" type="button" data-modal-open="gi-audit-dialog" title="图片资源检查" aria-label="图片资源检查"><span class="i i-shield" aria-hidden="true"></span></button>
+{% endif %}
 {% endblock %}
+{% block content %}
+{# 单一业务表面容纳统计、筛选和清单，题目之间仅使用行分隔，不再叠加浮起卡片。 #}
+<section class="page-section gi-bank" data-gi-bank data-base="{{ base }}" aria-labelledby="gi-list-title">
+  <div class="section-head">
+    <div class="gi-list-heading"><h2 id="gi-list-title">题目清单</h2><span class="compact-filter-count">共 {{ total }} 道题</span></div>
+    <div class="gi-counts" aria-label="题库状态统计"><span>已启用 <strong>{{ counts.get('enabled', 0) }}</strong></span><span>草稿 <strong>{{ counts.get('draft', 0) }}</strong></span><span>已停用 <strong>{{ counts.get('disabled', 0) }}</strong></span></div>
+  </div>
+  <details class="compact-filter" open data-filter-active="{{ 'true' if q or category or status else 'false' }}">
+    <summary class="compact-filter-summary"><span>筛选题目</span><span class="compact-filter-summary-text">{{ '已设置条件' if q or category or status else '搜索 / 分类 / 状态' }}</span></summary>
+    <form method="get" action="{{ base }}" class="compact-filter-form">
+      <label class="compact-filter-field compact-filter-field-query"><span>搜索答案或标签</span><input type="search" name="q" value="{{ q }}" maxlength="80" placeholder="输入答案或标签" /></label>
+      <label class="compact-filter-field"><span>分类</span><select name="category"><option value="">全部分类</option>{% for item in categories %}{% if item %}<option value="{{ item }}" {% if item == category %}selected{% endif %}>{{ item }}</option>{% endif %}{% endfor %}</select></label>
+      <label class="compact-filter-field"><span>状态</span><select name="status"><option value="">全部状态</option>{% for value, label in [('enabled','已启用'),('draft','草稿'),('disabled','已停用')] %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <div class="compact-filter-actions"><button class="btn btn-secondary btn-icon" type="submit" title="筛选题目" aria-label="筛选题目"><span class="i i-search" aria-hidden="true"></span></button><a class="btn btn-ghost btn-icon" href="{{ base }}" title="重置筛选" aria-label="重置筛选"><span class="i i-refresh" aria-hidden="true"></span></a></div>
+    </form>
+  </details>
+  <div class="record-list gi-question-list">
+    {% for row in rows %}
+    <article class="gi-question-row{% if not can_edit %} gi-readonly{% endif %}">
+      <a class="gi-thumbnail" href="{{ base }}/media/{{ row.asset_id }}?original=true" target="_blank" rel="noopener" title="查看原图" aria-label="查看 {{ row.answer }} 的原图"><img src="{{ base }}/media/{{ row.asset_id }}" alt="{{ row.answer }}的题目图片" loading="lazy" width="76" height="64" /></a>
+      <div class="gi-question-copy">
+        <div class="gi-question-title"><h3>{{ row.answer }}</h3><span class="chip {{ 'chip-success' if row.status == 'enabled' else 'chip-muted' }}">{{ {'draft':'草稿','enabled':'已启用','disabled':'已停用'}[row.status] }}</span></div>
+        <p class="gi-question-meta">{{ row.category or '未分类' }}{% if tags(row) %}<span> · {{ tags(row) }}</span>{% endif %}</p>
+      </div>
+      <dl class="gi-attribution"><div><dt>来源</dt><dd>{{ row.source or '未填写' }}</dd></div><div><dt>授权</dt><dd>{{ row.license or '未填写' }}</dd></div></dl>
+      {% if can_edit %}<div class="gi-row-actions"><button class="btn btn-secondary btn-icon" type="button" data-modal-open="gi-question-dialog" data-gi-edit="{{ row.question_id }}" title="编辑题目" aria-label="编辑题目 {{ row.answer }}"><span class="i i-edit" aria-hidden="true"></span></button></div>{% endif %}
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>{{ '没有符合条件的题目' if q or category or status else '题库还没有题目' }}</strong><p>{{ '调整筛选条件后再试。' if q or category or status else ('点击上方添加题目，或导入已有题包。' if can_edit else '管理员添加题目后会显示在这里。') }}</p></div>
+    {% endfor %}
+  </div>
+  {% if pages > 1 %}<nav class="list-pagination" aria-label="题库分页"><span class="list-pagination-summary">第 {{ page }} / {{ pages }} 页</span><div class="list-pagination-actions">{% if page > 1 %}<a class="btn btn-secondary btn-icon" href="{{ base }}?{{ page_query }}&page={{ page - 1 }}" title="上一页" aria-label="上一页"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endif %}{% if page < pages %}<a class="btn btn-secondary btn-icon" href="{{ base }}?{{ page_query }}&page={{ page + 1 }}" title="下一页" aria-label="下一页"><span class="i i-arrow-right" aria-hidden="true"></span></a>{% endif %}</div></nav>{% endif %}
+</section>
+
+{% if can_edit %}
+{# 添加和编辑共享唯一表单；详情按需加载，校验失败由页面脚本原地展示并保留文件。 #}
+<dialog class="app-modal gi-modal" id="gi-question-dialog" aria-labelledby="gi-question-title">
+  <div class="app-modal-card">
+    <div class="app-modal-head"><div><h2 id="gi-question-title">添加题目</h2><p class="muted-text">上传图片并填写答案，完善来源和授权后即可启用。</p></div><button class="btn btn-secondary btn-icon app-modal-close" type="button" data-modal-close title="关闭" aria-label="关闭"><span class="i i-x" aria-hidden="true"></span></button></div>
+    <p class="notice-card notice-danger" id="gi-question-error" role="alert" tabindex="-1" hidden></p>
+    <p class="muted-text gi-loading" id="gi-question-loading" role="status" hidden>正在加载题目…</p>
+    <form method="post" action="{{ base }}/new" enctype="multipart/form-data" id="gi-question-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <fieldset class="form-grid gi-editor-fields" id="gi-question-fields">
+        <div class="full-row gi-image-field">
+          <div class="gi-image-preview"><span class="i i-image" id="gi-image-placeholder" aria-hidden="true"></span><img id="gi-image-preview" alt="题目图片预览" hidden /></div>
+          <label><span id="gi-image-label">题目图片</span><input id="gi-image-input" type="file" name="image" accept="image/png,image/jpeg" aria-describedby="gi-image-help" required /><small id="gi-image-help">静态 PNG / JPEG，最多 5 MiB、400 万像素。</small></label>
+        </div>
+        <label class="full-row"><span>答案</span><input type="text" name="answer" maxlength="80" required aria-describedby="gi-answer-help" /><small id="gi-answer-help">完全匹配，保留空格和大小写。</small></label>
+        <label><span>分类</span><input type="text" name="category" maxlength="40" placeholder="例如：动物" /></label>
+        <label><span>状态</span><select name="status"><option value="draft">草稿</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label>
+        <label class="full-row"><span>标签</span><input type="text" name="tags" maxlength="300" placeholder="例如：动物|自然" aria-describedby="gi-tags-help" /><small id="gi-tags-help">最多 12 个，用 | 分隔，每个不超过 24 字。</small></label>
+        <label><span>来源 <small>启用时必填</small></span><input type="text" name="source" maxlength="500" placeholder="原始页面地址或作者信息" /></label>
+        <label><span>授权说明 <small>启用时必填</small></span><input type="text" name="license" maxlength="500" placeholder="许可名称或授权依据" /></label>
+      </fieldset>
+      <div class="gi-modal-footer">
+        <div><button class="btn btn-danger btn-icon" id="gi-question-delete" type="button" title="删除题目" aria-label="删除题目" hidden><span class="i i-trash" aria-hidden="true"></span></button></div>
+        <div class="form-actions-inline"><button class="btn btn-secondary btn-icon" id="gi-question-retry" type="button" title="重新加载题目" aria-label="重新加载题目" hidden><span class="i i-refresh" aria-hidden="true"></span></button><button class="btn btn-ghost btn-icon" type="button" data-modal-close title="取消" aria-label="取消"><span class="i i-x" aria-hidden="true"></span></button><button class="btn btn-icon" id="gi-question-save" type="submit" title="保存题目" aria-label="保存题目"><span class="i i-save" aria-hidden="true"></span></button></div>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+{# 导入的选择、校验和确认使用同一个弹窗，预览令牌不会出现在页面 URL 中。 #}
+<dialog class="app-modal gi-modal" id="gi-import-dialog" aria-labelledby="gi-import-title">
+  <div class="app-modal-card">
+    <div class="app-modal-head"><div><h2 id="gi-import-title">导入题包</h2><p class="muted-text">先校验并预览，确认后再添加到题库。</p></div><button class="btn btn-secondary btn-icon app-modal-close" type="button" data-modal-close title="关闭" aria-label="关闭"><span class="i i-x" aria-hidden="true"></span></button></div>
+    <p class="notice-card notice-danger" id="gi-import-error" role="alert" tabindex="-1" hidden></p>
+    <form method="post" action="{{ base }}/imports/preview" enctype="multipart/form-data" class="form-grid" id="gi-import-preview-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label class="full-row"><span>ZIP 题包</span><input type="file" name="archive" accept=".zip,application/zip" required aria-describedby="gi-import-help" /></label>
+      <div class="full-row gi-import-help" id="gi-import-help"><p>根目录放 <code>questions.csv</code>，图片放 <code>images/</code>。最多 20 MiB、1000 道题，图片仅支持 PNG / JPEG；已有 ID 自动跳过。</p><p>CSV 列名：</p><code>id,image,answer,category,tags,source,license,status</code><p>id 可留空；标签用 | 分隔；status 填 draft、enabled 或 disabled。启用题目须填写来源和授权。</p></div>
+      <div class="full-row form-actions-inline gi-actions-end"><button class="btn btn-ghost btn-icon" type="button" data-modal-close title="取消" aria-label="取消"><span class="i i-x" aria-hidden="true"></span></button><button class="btn btn-icon" type="submit" title="校验并预览" aria-label="校验并预览"><span class="i i-search" aria-hidden="true"></span></button></div>
+    </form>
+    <section id="gi-import-preview" aria-label="导入预览" hidden>
+      <p id="gi-import-summary" class="gi-import-summary" role="status"></p><p class="muted-text">预览在 10 分钟后失效，仅当前登录会话可确认。以下展示前 20 道题。</p>
+      <div class="gi-import-table-wrap"><table class="gi-import-table"><thead><tr><th scope="col">答案</th><th scope="col">分类</th><th scope="col">状态</th></tr></thead><tbody id="gi-import-samples"></tbody></table></div>
+      <form method="post" action="{{ base }}/imports/confirm" id="gi-import-confirm-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="token" />
+        <div class="gi-modal-footer"><button class="btn btn-secondary btn-icon" id="gi-import-back" type="button" title="重新选择题包" aria-label="重新选择题包"><span class="i i-arrow-left" aria-hidden="true"></span></button><div class="form-actions-inline"><button class="btn btn-ghost btn-icon" type="button" data-modal-close title="取消" aria-label="取消"><span class="i i-x" aria-hidden="true"></span></button><button class="btn btn-icon" type="submit" title="确认导入" aria-label="确认导入"><span class="i i-check" aria-hidden="true"></span></button></div></div>
+      </form>
+    </section>
+  </div>
+</dialog>
+
+<dialog class="app-modal gi-modal" id="gi-audit-dialog" aria-labelledby="gi-audit-title">
+  <div class="app-modal-card">
+    <div class="app-modal-head"><div><h2 id="gi-audit-title">图片资源检查</h2><p class="muted-text">检查当前企业的图片完整性。</p></div><button class="btn btn-secondary btn-icon app-modal-close" type="button" data-modal-close title="关闭" aria-label="关闭"><span class="i i-x" aria-hidden="true"></span></button></div>
+    <p class="notice-card notice-danger" id="gi-audit-error" role="alert" tabindex="-1" hidden></p><p class="muted-text gi-loading" id="gi-audit-loading" role="status">正在检查图片资源…</p>
+    <dl class="gi-audit-results" id="gi-audit-results" aria-live="polite" hidden><div><dt>题库引用的图片</dt><dd data-gi-audit="referenced"></dd></div><div><dt>存储的图片原件</dt><dd data-gi-audit="stored"></dd></div><div><dt>缺失、损坏或缺缩略图</dt><dd data-gi-audit="missing"></dd></div><div><dt>保留的未引用图片</dt><dd data-gi-audit="retained"></dd></div></dl>
+    <p class="muted-text">替换或删除题目后，原图片会保留给进行中的游戏使用。资源检查不会自动删除图片。</p><div class="form-actions-inline gi-actions-end"><button class="btn btn-secondary btn-icon" id="gi-audit-retry" type="button" title="重新检查" aria-label="重新检查"><span class="i i-refresh" aria-hidden="true"></span></button></div>
+  </div>
+</dialog>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if can_edit %}<script src="/static/js/guess-image.js" defer></script>{% endif %}{% endblock %}

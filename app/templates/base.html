@@ -178,6 +178,9 @@
         });
 
         dialog.addEventListener("click", (event) => {
+          // 弹窗内按钮可能在本次点击中切换步骤并改变高度，不能再用变化后的边界误判原点击。
+          // 只有直接落在 dialog 遮罩上的点击才检查坐标，卡片内的任何子元素都不触发关闭。
+          if (event.target !== dialog) return;
           const rect = dialog.getBoundingClientRect();
           const withinDialog =
             rect.top <= event.clientY &&

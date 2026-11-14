@@ -40,6 +40,7 @@
 | 26 | 节点清单 `provider_nodes.html` | 紧凑状态清单 | D/M；`nodes` |
 | 27 | 节点详情 `provider_node_detail.html` | 分组层次、时间信息不放大 | D/M；`node-detail` |
 | 28 | 插件 `plugins.html`、平台插件 `platform_plugins.html` | 2026-11-14 改为三列功能卡片，展示真实版本、完整介绍和底部操作；平板两列、手机一列 | 两页真实模板本地预览：1440×1000、1024×900、390×844；无横向溢出；截图 `.run/plugin-card-preview/`，未部署验证 |
+| 28a | 猜图片题库 `guess_image_bank.html` | 单一缩略图清单、紧凑筛选；添加/编辑、导入预览和资源检查共用后台弹窗风格，删除独立旧页面 | 页面接口 5 项、题库服务 16 项通过；真实模板本地预览 1440×900、1024×768、390×844；错误保留、编辑、导入重试、删除和焦点返回；截图 `.run/guess-image-ui-preview/`，接口模拟与服务端验证分开记录 |
 | 29 | 能力详情 `plugin_detail.html` | 共享详情、密钥字段与弹窗样式覆盖 | D/M；`plugin-detail` |
 | 30 | 运行状态 `plugin_runtime.html` | 紧凑指标和执行记录 | D/M；`plugin-runtime` |
 | 31 | 会话清单 `conversations.html` | 共享紧凑筛选与表格 | D/M；`conversations` |
@@ -60,6 +61,17 @@
 共享壳：`base.html`、`platform_base.html`、`marketing_base.html`、`auth_base.html`。保留顶部导航、品牌命名、平台/企业身份与请求路径，不新增旧入口或第二套主题。未被当前路由使用的模板不因本轮调整新增入口。
 
 ## 实际验证记录
+
+### 2026-11-14 猜图片题库整合
+
+- `tests/test_guess_image_pages.py` 最终执行结果 `5 passed`：统一清单与弹窗入口、只读权限、CSRF、跨租户详情和媒体隔离、保存错误回滚、原样保存答案、导入预览/确认、ZIP 导出、资源检查、平台停用和操作审计。
+- `tests/test_guess_image_bank.py` 执行结果 `16 passed`：图片校验、租户资源隔离、不可变图片、导入会话绑定/有效期、幂等确认和 ZIP 校验。两个测试文件使用项目 `.venv/bin/python` 分别运行；页面测试使用临时 SQLite，在已确认可运行 TestClient 的沙箱外执行。
+- 额外执行共享后台壳和账号/套餐弹窗结构两项检查，均通过。另执行的 `test_query_pages_share_compact_filter_toolbar_and_mobile_collapse` 失败：当前 `messages.html` 已不含该历史测试要求的 `compact-filter`。已核对消息模板与 HEAD 内容一致，消息模板和该测试均未被本次修改；按当前研发策略记录，不扩大修改范围。
+- 使用仓库真实 Jinja 模板、CSS 和页面脚本，以及明确标识的本地题目和模拟接口响应，在 1440×900、1024×768、390×844 检查主清单与新增弹窗。单一 h1，根节点与弹窗内部均无横向溢出，浏览器无 JavaScript 错误。
+- 实际操作验证图片预览、启用时来源/授权必填、提交锁定、保存失败保留字段与文件、答案空格原样提交、关闭后重置、详情失败/重试、编辑回填与保留原图、筛选和页码保留、删除取消/确认、导入失败留文件、样例安全转义、预览过期后重新校验、确认导入，以及资源检查失败/重试和焦点返回。
+- 浏览器检查发现并修复共享弹窗的一处误关闭：内部按钮切换步骤使弹窗高度改变后，旧坐标被当作遮罩点击。最小复现记录确认修复前返回导入选择会关闭，修复后弹窗保持打开；遮罩关闭仍使用原边界判断。
+- `node --check app/static/js/guess-image.js`、两个 Python 文件 AST、`base.html` 和 `guess_image_bank.html` 的 Jinja 加载检查、`git diff --check` 均通过。
+- 截图和浏览器结果位于本机忽略目录 `.run/guess-image-ui-preview/`。截图使用减少动态模式避免截取入场动画中间帧；预览数据和接口为构造样例，不是生产题库。未执行全量测试、完整端到端回归或远程部署。
 
 ### 2026-11-14 插件功能卡片
 
