@@ -7,7 +7,8 @@ const source = fs.readFileSync(path.join(__dirname, '../app/static/js/action-fee
 
 function element() {
   return {hidden: false, disabled: false, textContent: '', dataset: {}, handlers: {}, children: [],
-    classList: {toggle() {}}, addEventListener(name, callback) { this.handlers[name] = callback; },
+    // 这些模拟元素默认没有 CSS 类；图标按钮判断同样需要浏览器的 contains 接口。
+    classList: {toggle() {}, contains() { return false; }}, addEventListener(name, callback) { this.handlers[name] = callback; },
     setAttribute(name, value) { this[name] = value; }, replaceChildren() { this.children = []; },
     append(...children) { this.children.push(...children); }, appendChild(child) { this.children.push(child); }};
 }
