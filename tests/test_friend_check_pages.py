@@ -48,17 +48,32 @@ def friend_check_context(provider_page_context, monkeypatch):
     return client, ids
 
 
+def _state(client, ids, channel_id=None):
+    """页面与测试统一先读取持久记录，所有后续操作携带当前代次。"""
+    return client.get(f"/contacts/check/{channel_id or ids['bridge_channel']}/state").json()
+
+
 def _start(client, ids, csrf, contact_id=None):
+    state = _state(client, ids)
+    target = contact_id or ids["bridge_contacts"][0]
+    # 新检测先确认本轮间隔；已有结果只能通过复查入口再次查询，不能重置已完成进度。
+    response = client.post(
+        f"/contacts/check/{ids['bridge_channel']}/run", headers={"X-CSRF-Token": csrf},
+        json={"generation": state["generation"], "interval_seconds": 1},
+    )
+    if response.status_code != 200:
+        return response
+    scan = not any(item["contact"]["id"] == target for item in state["results"])
     return client.post(
-        f"/contacts/check/{ids['bridge_channel']}/friends/{contact_id or ids['bridge_contacts'][0]}",
-        headers={"X-CSRF-Token": csrf},
+        f"/contacts/check/{ids['bridge_channel']}/friends/{target}",
+        headers={"X-CSRF-Token": csrf}, json={"generation": state["generation"], "scan": scan},
     )
 
 
 def _poll(client, ids, csrf, job_id, channel_id=None):
     return client.post(
         f"/contacts/check/{channel_id or ids['bridge_channel']}/jobs/{job_id}/poll",
-        headers={"X-CSRF-Token": csrf},
+        headers={"X-CSRF-Token": csrf}, json={"generation": _state(client, ids, channel_id).get("generation", "unavailable")},
     )
 
 
@@ -125,7 +140,9 @@ def test_actual_command_flow_groups_fresh_results(friend_check_context, ok, stat
     response = _start(client, ids, csrf)
     assert response.status_code == 200
     job_id = response.json()["job_id"]
-    assert _poll(client, ids, csrf, job_id).json() == {"state": "pending", "result": None}
+    pending = _poll(client, ids, csrf, job_id).json()
+    assert pending["state"] == "pending" and pending["result"] is None
+    assert pending["progress"]["cursor"] == 0
     _phone_result(ids, ok=ok, status=status, last_char=last_char)
     result = _poll(client, ids, csrf, job_id).json()
     assert result["state"] == "completed" and result["result"]["category"] == category
@@ -143,7 +160,8 @@ def test_access_csrf_and_channel_boundaries(friend_check_context):
     assert _start(client, ids, "forged").status_code == 403
     assert client.get(f"/contacts/check/{ids['beta_bridge_channel']}/friends").status_code == 404
     assert client.get(f"/contacts/check/{ids['channel_id']}/friends").status_code == 404
-    assert client.post(f"/contacts/check/{ids['other_bridge_channel']}/friends/{ids['bridge_contacts'][0]}", headers={"X-CSRF-Token": csrf}).status_code == 404
+    assert client.post(f"/contacts/check/{ids['other_bridge_channel']}/friends/{ids['bridge_contacts'][0]}", headers={"X-CSRF-Token": csrf},
+                       json={"generation": _state(client, ids, ids["other_bridge_channel"])["generation"], "scan": True}).status_code == 404
     response = _start(client, ids, csrf)
     job_id = response.json()["job_id"]
     assert _poll(client, ids, "forged", job_id).status_code == 403
@@ -154,7 +172,7 @@ def test_access_csrf_and_channel_boundaries(friend_check_context):
     assert client.get("/contacts/check").status_code == 200
     assert _start(client, ids, readonly_csrf).status_code == 403
     assert _poll(client, ids, readonly_csrf, job_id).status_code == 403
-    assert "/contacts/check?" not in client.get("/contacts").text
+    assert "/contacts/check?" in client.get("/contacts").text  # 只读角色可查看已保存记录。
 
 
 def test_timeout_stops_queued_command_from_later_delivery(friend_check_context):

@@ -1,4 +1,6 @@
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+import uuid
+
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.time import now_shanghai
@@ -985,3 +987,44 @@ class AiDecision(Base, TenantOwnedMixin):
     status: Mapped[str] = mapped_column(String(30), index=True)
     reason: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=now_shanghai, index=True)
+
+
+class FriendCheckRun(Base, TenantOwnedMixin, TimestampMixin):
+    """按账号持久保存好友检测进度，仅在操作者明确清空后更换检测代次。"""
+
+    __tablename__ = "webridge_friend_check_runs"
+    __table_args__ = (UniqueConstraint("tenant_id", "channel_id", name="uq_webridge_friend_check_runs_tenant_channel"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    generation: Mapped[str] = mapped_column(String(32), default=lambda: uuid.uuid4().hex)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="paused")
+    interval_seconds: Mapped[float] = mapped_column(Float, default=1)
+    elapsed_ms: Mapped[int] = mapped_column(BigInteger, default=0)
+    cursor: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    initialized: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FriendCheckItem(Base, TenantOwnedMixin, TimestampMixin):
+    """逐项保存好友快照和检测结果，联系人删除后仍可查看已完成记录。"""
+
+    __tablename__ = "webridge_friend_check_items"
+    __table_args__ = (
+        UniqueConstraint("run_id", "contact_id", name="uq_webridge_friend_check_items_run_contact"),
+        UniqueConstraint("run_id", "position", name="uq_webridge_friend_check_items_run_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("webridge_friend_check_runs.id"), index=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), index=True)
+    # 历史快照独立于联系人和命令任务的生命周期，不对这两个编号建立外键。
+    contact_id: Mapped[int] = mapped_column(Integer)
+    position: Mapped[int] = mapped_column(Integer)
+    contact_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    completed_at: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)

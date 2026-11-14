@@ -12,6 +12,8 @@ from app.models.entities import (
     Conversation,
     CustomerOperationRequest,
     ErrorLog,
+    FriendCheckItem,
+    FriendCheckRun,
     GroupPluginScope,
     HealthCheckRecord,
     Message,
@@ -51,6 +53,9 @@ TENANT_OWNED_MODELS = {
     ChatroomMember,
     WorkWechatContact,
     WorkWechatContactRelation,
+    # 好友检测的快照与结果和联系人一样属于租户数据，必须受统一读写隔离约束。
+    FriendCheckRun,
+    FriendCheckItem,
     CustomerOperationRequest,
     OpenApiApp,
     OpenApiAppChannel,
@@ -106,6 +111,9 @@ def test_business_identity_constraints_are_tenant_local() -> None:
         "channel_id",
         "request_id",
     ) in _unique_columns(CustomerOperationRequest)
+    assert ("tenant_id", "channel_id") in _unique_columns(FriendCheckRun)
+    assert ("run_id", "contact_id") in _unique_columns(FriendCheckItem)
+    assert ("run_id", "position") in _unique_columns(FriendCheckItem)
 
 
 def test_bot_binding_links_to_actual_bot_and_channel() -> None:

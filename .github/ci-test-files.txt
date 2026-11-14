@@ -158,3 +158,6 @@ tests/test_webridge_message_echo.py
 tests/test_page_navigation.py
 tests/test_message_kinds.py
 tests/test_webridge_official_messages.py
+tests/test_friend_check_persistence.py
+tests/test_friend_check_routes.py
+tests/test_webridge_directory_performance.py

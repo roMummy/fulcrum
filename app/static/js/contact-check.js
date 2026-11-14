@@ -4,6 +4,7 @@
   const byId = (name) => document.getElementById(`contact-check-${name}`);
   const channel = byId('channel'), start = byId('start'), stop = byId('stop');
   const restart = byId('restart'), interval = byId('interval'), status = byId('status');
+  const reload = byId('reload');
   const progress = byId('progress'), actionStatus = byId('action-status'), actionResume = byId('action-resume');
   const remarkModal = byId('remark-modal'), remarkForm = byId('remark-form'), suffix = byId('remark-suffix');
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -13,13 +14,14 @@
   let queue = null, cursor = 0, total = 0, pending = null;
   let busy = '', stopRequested = false, leaving = false, wakeInterval = null;
   let elapsed = 0, activeSince = null, samples = [], actionQueue = null, remarkItems = [];
+  let runId = null, generation = null, stateReady = false, stateRequest = 0, restoreOnResume = false;
   const editable = root.dataset.canEdit === 'true';
   const base = () => `/contacts/check/${encodeURIComponent(channel.value)}`;
   const query = (key, category) => root.querySelector(`[data-${key}="${category}"]`);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const elapsedMs = () => elapsed + (activeSince === null ? 0 : performance.now() - activeSince);
   const intervalMs = () => Math.min(60, Math.max(0, Number(interval.value) || 0)) * 1000;
-  const blocked = () => Boolean(busy || actionQueue || !editable);
+  const blocked = () => Boolean(busy || actionQueue || !editable || !stateReady);
   const actionsBlocked = () => blocked() || Boolean(pending);
   const available = (item) => !item.removed;
 
@@ -46,15 +48,18 @@
 
   function renderControls() {
     const locked = Boolean(busy || actionQueue);
-    channel.disabled = locked || Boolean(pending) || !channel.value;
-    interval.disabled = locked;
-    start.disabled = locked || !channel.value || !editable || Boolean(queue && cursor >= total);
+    channel.disabled = locked || !channel.value;
+    interval.disabled = locked || !stateReady;
+    start.disabled = locked || !channel.value || !editable || !stateReady || Boolean(queue && cursor >= total);
     start.textContent = queue && cursor < total ? '继续检测' : (queue ? '检测已完成' : '开始检测');
     stop.disabled = busy !== 'scan' || stopRequested;
     stop.textContent = stopRequested && busy === 'scan' ? '等待当前检测完成…' : '停止检测';
-    restart.hidden = !queue;
-    restart.disabled = locked || Boolean(pending) || !editable;
+    restart.hidden = !runId;
+    restart.disabled = locked || Boolean(pending) || !editable || !stateReady;
+    reload.hidden = stateReady || !channel.value;
+    reload.disabled = Boolean(busy);
     actionResume.hidden = !actionQueue || Boolean(busy);
+    actionResume.disabled = !editable || !stateReady;
     root.querySelectorAll('[data-row-action], [data-batch-action]').forEach((button) => {
       const table = tables[button.dataset.category];
       const item = button.dataset.contactId ? table.lookup.get(button.dataset.contactId) : null;
@@ -92,6 +97,7 @@
       catch (_) { throw new Error('服务器未返回有效结果，请检查登录状态。'); }
       if (!response.ok) {
         const error = new Error(typeof body.detail === 'string' ? body.detail : '请求失败，请稍后重试。');
+        error.status = response.status;
         error.retryable = response.status >= 500 || response.status === 429;
         throw error;
       }
@@ -112,7 +118,7 @@
     while (!leaving) {
       let body;
       try {
-        body = await request(`${base()}/${action === 'recheck' ? 'jobs' : 'actions'}/${jobId}/poll`, 'POST');
+        body = await request(`${base()}/${action === 'recheck' ? 'jobs' : 'actions'}/${jobId}/poll`, 'POST', {generation});
         failures = 0;
       } catch (error) {
         // 只重试同一任务的轮询，不能重发创建命令，以免重复操作微信好友。
@@ -126,10 +132,10 @@
         if (!result || !result.contact || (action === 'recheck' ? !categories.includes(result.category) : typeof result.ok !== 'boolean' || result.action !== action)) {
           throw new Error('任务结果格式异常，已停止后续操作。');
         }
-        return result;
+        return body;
       }
       if (!['pending', 'running'].includes(body.state)) throw new Error('任务状态异常，已停止后续操作。');
-      await delay(1000);
+      await delay(250);
     }
     return null;
   }
@@ -211,7 +217,7 @@
       }
       fragment.appendChild(row);
     });
-    // 几千位好友保存在内存中，每个分类只创建当前页的行和头像节点。
+    // 完整记录由服务器保存；页面只缓存展示数据，每个分类只创建当前页的节点。
     if (renderRows) query('result-body', category).replaceChildren(fragment);
     query('result-count', category).textContent = String(length);
     query('result-empty', category).hidden = length > 0;
@@ -223,12 +229,93 @@
     renderControls();
   }
 
-  function resetResults() {
-    queue = null; cursor = 0; pending = null; elapsed = 0; samples = [];
-    total = Number(channel.selectedOptions[0]?.dataset.total || 0);
-    categories.forEach((key) => { tables[key].rows = []; tables[key].lookup.clear(); tables[key].page = 1; tables[key].selected.clear(); renderCategory(key); });
-    actionStatus.hidden = true;
+  function applyProgress(saved) {
+    if (!saved) throw new Error('服务器未确认检测进度，已暂停。');
+    if (saved.generation !== generation) throw Object.assign(new Error('检测记录已在其他页面更新，请重新读取。'), {status: 409});
+    if (!Number.isInteger(saved.cursor) || !Number.isInteger(saved.total) || saved.cursor < 0 || saved.cursor > saved.total) {
+      throw new Error('检测进度格式异常，已暂停。');
+    }
+    cursor = saved.cursor; total = saved.total;
+    elapsed = Math.max(0, Number(saved.elapsed_ms) || 0);
+    activeSince = busy === 'scan' ? performance.now() : null;
+  }
+
+  function applySnapshot(saved) {
+    if (!saved || typeof saved.generation !== 'string' || !saved.generation
+      || !Number.isInteger(saved.cursor) || !Number.isInteger(saved.total) || saved.cursor < 0 || saved.cursor > saved.total
+      || (saved.contacts !== null && (!Array.isArray(saved.contacts) || saved.contacts.length !== saved.total))
+      || !Array.isArray(saved.results)) throw new Error('保存的检测记录格式异常，请重新读取。');
+    const rows = Object.fromEntries(categories.map((key) => [key, []]));
+    const contacts = new Map();
+    for (const contact of saved.contacts || []) {
+      if (!contact || !Number.isInteger(contact.id)) throw new Error('保存的好友资料格式异常。');
+      contacts.set(contact.id, contact);
+    }
+    for (const item of saved.results) {
+      if (!item || !categories.includes(item.category) || !item.contact || !Number.isInteger(item.contact.id)) {
+        throw new Error('保存的检测结果格式异常。');
+      }
+      rows[item.category].push({...item, contact: {...item.contact}});
+      contacts.set(item.contact.id, item.contact);
+    }
+    const savedPending = saved.pending;
+    if (savedPending && (!Number.isInteger(savedPending.id) || savedPending.id < 1
+      || !['scan', 'recheck', 'remark', 'delete'].includes(savedPending.action)
+      || !contacts.has(savedPending.contact_id))) throw new Error('保存的待处理任务格式异常。');
+    if (savedPending && savedPending.action !== 'scan'
+      && !categories.some((key) => rows[key].some((item) => item.contact.id === savedPending.contact_id))) {
+      throw new Error('待处理操作缺少对应的保存结果，请重新读取。');
+    }
+    runId = saved.run_id; generation = saved.generation;
+    queue = saved.contacts; cursor = saved.cursor; total = saved.total;
+    elapsed = Math.max(0, Number(saved.elapsed_ms) || 0); activeSince = null; samples = [];
+    interval.value = String(saved.interval_seconds ?? 1);
+    pending = savedPending?.action === 'scan' ? {...savedPending, began: elapsed} : null;
+    actionQueue = null;
+    categories.forEach((key) => {
+      const table = tables[key];
+      table.rows = rows[key]; table.lookup = new Map(rows[key].map((item) => [String(item.contact.id), item]));
+      table.page = 1; table.selected.clear();
+    });
+    if (savedPending && savedPending.action !== 'scan') {
+      const item = categories.map((key) => tables[key].lookup.get(String(savedPending.contact_id))).find(Boolean);
+      if (item) actionQueue = {action: savedPending.action, items: [item], index: 0, job: savedPending.id, ok: 0, failed: 0, changed: 0};
+    }
+    stateReady = true; actionStatus.hidden = !actionQueue;
+    if (actionQueue) actionStatus.textContent = '已恢复未确认的操作，请继续查询原任务结果。';
+    categories.forEach((key) => renderCategory(key));
     renderProgress(); renderControls();
+  }
+
+  async function loadState(message = '') {
+    if (!channel.value) { renderControls(); return false; }
+    const requestId = ++stateRequest, selectedChannel = channel.value;
+    stateReady = false; busy = 'load'; renderControls();
+    status.textContent = '正在读取已保存的检测记录…';
+    try {
+      const saved = await request(`${base()}/state`);
+      if (requestId !== stateRequest || selectedChannel !== channel.value || leaving) return false;
+      applySnapshot(saved);
+      status.textContent = message || (queue && cursor >= total ? `检测完成，共 ${total} 位好友`
+        : (cursor || pending ? `已恢复 ${cursor} 位检测结果，可继续检测。` : '记录已读取，点击开始检测。'));
+      return true;
+    } catch (error) {
+      if (requestId === stateRequest && !leaving) {
+        stateReady = false;
+        status.textContent = `读取检测记录失败：${error.message || '网络异常'} 记录未被清空，请重新读取。`;
+      }
+      return false;
+    } finally {
+      if (requestId === stateRequest) {
+        busy = ''; renderControls();
+        if (restoreOnResume && !leaving) { restoreOnResume = false; void loadState(); }
+      }
+    }
+  }
+
+  async function recoverConflict(error) {
+    if (error.status !== 409 || leaving) return false;
+    return loadState('检测记录已更新，已重新读取；请确认后继续。');
   }
 
   async function waitInterval() {
@@ -242,29 +329,30 @@
     if (blocked() || !channel.value || (queue && cursor >= total)) return;
     if (!interval.checkValidity()) { interval.reportValidity(); return; }
     busy = 'scan'; stopRequested = false; activeSince = performance.now(); renderControls();
+    let startedGeneration = null;
     try {
-      if (!queue) {
-        status.textContent = '正在读取全部好友…';
-        const body = await request(`${base()}/friends`);
-        if (!Array.isArray(body.contacts)) throw new Error('好友列表格式异常，请稍后重试。');
-        queue = body.contacts; total = queue.length; renderProgress();
-      }
+      const saved = await request(`${base()}/run`, 'POST', {generation, interval_seconds: Number(interval.value)});
+      applySnapshot(saved);
+      if (actionQueue) return;
+      startedGeneration = generation; activeSince = performance.now();
       while (cursor < total && !stopRequested && !leaving) {
         const contact = queue[cursor];
         status.textContent = `正在检测 ${cursor + 1} / ${total}：${contact.remark || contact.name || contact.external_id}`;
         if (!pending) {
           const began = elapsedMs();
-          const job = await request(`${base()}/friends/${encodeURIComponent(contact.id)}`, 'POST');
+          const job = await request(`${base()}/friends/${encodeURIComponent(contact.id)}`, 'POST', {generation, scan: true});
           if (!Number.isInteger(job.job_id) || job.job_id < 1) throw new Error('检测任务创建结果异常。');
           pending = {id: job.job_id, began};
         }
-        const result = await waitForResult(pending.id);
-        if (leaving || !result) break;
+        const body = await waitForResult(pending.id);
+        if (leaving || !body) break;
+        const result = body.result;
         samples.push(elapsedMs() - pending.began);
         if (samples.length > 20) samples.shift();
         const table = tables[result.category], item = {...result};
-        table.rows.push(item); table.lookup.set(String(item.contact.id), item);
-        pending = null; cursor += 1;
+        if (!table.lookup.has(String(item.contact.id))) table.rows.push(item);
+        table.lookup.set(String(item.contact.id), item);
+        pending = null; applyProgress(body.progress);
         renderCategory(result.category, table.rows.length <= table.page * table.size); renderProgress();
         if (cursor < total && !stopRequested) {
           status.textContent = `已检测 ${cursor} / ${total}，等待下一位…`;
@@ -275,9 +363,25 @@
         ? (total ? `检测完成，共 ${total} 位好友` : '没有可检测的好友，请先同步好友资料。')
         : `已暂停，保留 ${cursor} 位结果，剩余 ${total - cursor} 位未检测。`;
     } catch (error) {
-      if (!leaving) status.textContent = `检测已暂停：${error.message || '网络异常'} 已完成结果已保留，可继续检测。`;
+      if (!await recoverConflict(error) && !leaving) {
+        status.textContent = `检测已暂停：${error.message || '网络异常'} 已保存结果保留，请重新读取后继续。`;
+        stateReady = false;
+      }
     } finally {
-      elapsed = elapsedMs(); activeSince = null; busy = ''; renderControls(); renderProgress();
+      activeSince = null;
+      if (startedGeneration && startedGeneration === generation && !leaving) {
+        try {
+          const saved = await request(`${base()}/pause`, 'POST', {generation});
+          applySnapshot(saved);
+        } catch (error) {
+          if (!await recoverConflict(error)) {
+            stateReady = false;
+            status.textContent = `暂停确认失败：${error.message || '网络异常'} 已保存记录保留，请重新读取。`;
+          }
+        }
+      }
+      busy = ''; renderControls(); renderProgress();
+      if (restoreOnResume) { restoreOnResume = false; void loadState(); }
     }
   }
 
@@ -287,18 +391,21 @@
     if (busy || !actionQueue) return;
     busy = 'operation'; actionStatus.hidden = false; renderControls();
     const operation = actionQueue;
+    operation.pauseRequested = false;
     try {
-      while (operation.index < operation.items.length && !leaving) {
+      while (operation.index < operation.items.length && !leaving && !operation.pauseRequested) {
         const item = operation.items[operation.index];
         actionStatus.textContent = `${describeAction(operation.action)} ${operation.index + 1} / ${operation.items.length}：${item.contact.remark || item.contact.name || item.contact.external_id}`;
         if (!operation.job) {
           const path = `${base()}/friends/${encodeURIComponent(item.contact.id)}${operation.action === 'recheck' ? '' : '/' + operation.action}`;
-          const job = await request(path, 'POST', operation.payload);
+          const job = await request(path, 'POST', {...operation.payload, generation, ...(operation.action === 'recheck' ? {scan: false} : {})});
           if (!Number.isInteger(job.job_id) || job.job_id < 1) throw new Error('操作任务创建结果异常。');
           operation.job = job.job_id;
         }
-        const result = await waitForResult(operation.job, operation.action);
-        if (leaving || !result) break;
+        const body = await waitForResult(operation.job, operation.action);
+        if (leaving || !body) break;
+        const result = body.result;
+        applyProgress(body.progress);
         if (operation.action === 'recheck') {
           item.recheckCategory = result.category;
           item.contact = {...item.contact, ...result.contact};
@@ -314,10 +421,6 @@
             if (operation.action === 'remark') item.contact = {...item.contact, ...result.contact};
             if (operation.action === 'delete') {
               item.removed = true; item.message = '已删除微信好友'; tables[item.category].selected.delete(String(item.contact.id));
-              if (queue) {
-                queue = queue.slice(0, cursor).concat(queue.slice(cursor).filter((contact) => String(contact.id) !== String(item.contact.id)));
-                total = queue.length; renderProgress();
-              }
             }
           } else operation.failed += 1;
         }
@@ -330,14 +433,19 @@
         actionQueue = null;
       }
     } catch (error) {
+      if (await recoverConflict(error)) return;
       if (operation.job) {
         actionStatus.textContent = `操作已暂停：${error.message} 请继续查询当前任务结果。`;
       } else {
         // 创建请求不自动重发；网络中断时无法确定手机是否已收到命令。
         actionStatus.textContent = `操作已停止：${error.message} 当前提交未自动重试，请核实好友状态后再操作。`;
         actionQueue = null;
+        stateReady = false;
       }
-    } finally { busy = ''; renderControls(); }
+    } finally {
+      busy = ''; renderControls();
+      if (restoreOnResume) { restoreOnResume = false; void loadState(); }
+    }
   }
 
   async function beginAction(action, items, payload) {
@@ -407,9 +515,18 @@
   restart.addEventListener('click', async () => {
     if (actionsBlocked()) return;
     busy = 'confirm'; renderControls();
-    const confirmed = await window.appDialog.confirm({title: '清空结果并重新开始？', message: '当前检测结果、分页选择和未完成进度会清空，所有好友将重新检测。', confirmText: '清空并重新开始'});
-    busy = ''; renderControls();
-    if (confirmed && !leaving) { resetResults(); void runScan(); }
+    try {
+      const confirmed = await window.appDialog.confirm({title: '清空检测记录？', message: '这会清空当前账号已保存的检测结果和进度。其他账号的记录不受影响。', confirmText: '确认清空', tone: 'danger'});
+      if (!confirmed || leaving) return;
+      const saved = await request(`${base()}/clear`, 'POST', {generation, confirmed: true});
+      applySnapshot(saved);
+      status.textContent = '检测记录已清空，点击开始检测可重新检测。';
+    } catch (error) {
+      if (!await recoverConflict(error)) {
+        stateReady = false;
+        status.textContent = `清空未获确认：${error.message || '网络异常'} 请重新读取记录后核对。`;
+      }
+    } finally { busy = ''; renderControls(); }
   });
   stop.addEventListener('click', () => {
     if (busy !== 'scan') return;
@@ -418,7 +535,8 @@
     if (wakeInterval) wakeInterval();
     renderControls();
   });
-  channel.addEventListener('change', () => { if (!actionsBlocked()) { resetResults(); status.textContent = '尚未开始检测'; } });
+  channel.addEventListener('change', () => { if (!busy) void loadState(); });
+  reload.addEventListener('click', () => { if (!busy) void loadState(); });
   interval.addEventListener('input', renderProgress);
   actionResume.addEventListener('click', () => void runActions());
   suffix.addEventListener('input', updateRemarkPreview);
@@ -431,8 +549,25 @@
   });
   suffix.addEventListener('input', () => suffix.setCustomValidity(''));
   remarkModal.addEventListener('close', () => { if (busy === 'confirm') { busy = ''; renderControls(); } });
-  window.addEventListener('pagehide', () => { leaving = true; stopRequested = true; if (wakeInterval) wakeInterval(); });
-  window.addEventListener('pageshow', () => { leaving = false; });
+  window.addEventListener('pagehide', () => {
+    leaving = true; stopRequested = true;
+    if (actionQueue) actionQueue.pauseRequested = true;
+    if (wakeInterval) wakeInterval();
+    if (stateReady && runId && editable) {
+      // 离开页面仅暂停，不清空；即使此请求未送达，已保存结果和任务仍可从服务器恢复。
+      void fetch(`${base()}/pause`, {method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: {'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+        body: JSON.stringify({generation})}).catch(() => {});
+    }
+  });
+  window.addEventListener('pageshow', (event) => {
+    leaving = false;
+    if (event.persisted) {
+      if (busy) restoreOnResume = true;
+      else void loadState();
+    }
+  });
   setInterval(() => { if (busy === 'scan') renderProgress(); }, 1000);
-  resetResults();
+  renderProgress(); renderControls();
+  void loadState();
 })();

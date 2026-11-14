@@ -105,7 +105,14 @@ def _expire_if_stale(db: Session, job: TaskJob) -> bool:
     return bool(changed)
 
 
-def start_check(db: Session, channel: Channel, contact_id: int) -> TaskJob:
+def _use_job_request_id(job: TaskJob) -> None:
+    # 检测占用独立的去重键，回报改用任务主键，避免每位好友都扫描历史命令。
+    payload = parse_job_payload(job)
+    payload["command"]["request_id"] = f"job_{int(job.id)}"
+    job.payload_json = json.dumps(payload, ensure_ascii=False)
+
+
+def start_check(db: Session, channel: Channel, contact_id: int, *, commit: bool = True) -> TaskJob:
     _validate_channel(channel)
     if channel.is_enabled is False:
         raise FriendCheckError(400, "账号尚未启用，请先完成接入并启用账号")
@@ -131,15 +138,20 @@ def start_check(db: Session, channel: Channel, contact_id: int) -> TaskJob:
             previous.dedupe_key = None
             db.flush()
         job = service.enqueue_command(db, channel, command_name=COMMAND, args={"id": contact.contact_external_id, "refresh": True})
+        _use_job_request_id(job)
         job.related_type = RELATED_TYPE
         job.related_id = int(contact.id)
         # 复用已有唯一约束，让不同页面或并发请求也只能占用一个检测位置。
         job.dedupe_key = active_key
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError as exc:
         db.rollback()
         raise FriendCheckError(409, "该账号已有检测在进行，请稍后重试") from exc
-    wakeup.notify(int(channel.id))
+    if commit:
+        wakeup.notify(int(channel.id))
     return job
 
 
@@ -184,7 +196,7 @@ def _classify_result(job: TaskJob, target: str) -> dict[str, str]:
     return outcome
 
 
-def poll_check(db: Session, channel: Channel, job_id: int) -> dict[str, Any]:
+def poll_check(db: Session, channel: Channel, job_id: int, *, commit: bool = True) -> dict[str, Any]:
     _validate_channel(channel)
     job = db.scalar(select(TaskJob).where(
         TaskJob.id == job_id,
@@ -210,7 +222,7 @@ def poll_check(db: Session, channel: Channel, job_id: int) -> dict[str, Any]:
     ):
         raise FriendCheckError(404, "未找到该账号对应的好友检测任务")
     if _expire_if_stale(db, job):
-        db.commit()
+        db.commit() if commit else db.flush()
     if job.status in ACTIVE_STATUSES:
         return {"state": job.status, "result": None}
     return {"state": "completed", "result": {**_classify_result(job, contact.contact_external_id), "contact": _contact_row(contact)}}

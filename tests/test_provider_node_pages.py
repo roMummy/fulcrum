@@ -60,6 +60,7 @@ def provider_page_context(tmp_path, monkeypatch):
         "app.web.platform_auth",
         "app.web.tenant_admin",
         "app.web.open_api_apps",
+        "app.web.contact_check",
     ):
         route_module = importlib.import_module(module_name)
         if hasattr(route_module, "SessionLocal"):

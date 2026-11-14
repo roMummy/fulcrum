@@ -18,11 +18,14 @@
       <div class="compact-filter-actions">
         <button class="btn" id="contact-check-start" type="button" disabled><span class="i i-play" aria-hidden="true"></span><span>开始检测</span></button>
         <button class="btn btn-secondary" id="contact-check-stop" type="button" disabled>停止检测</button>
-        <button class="btn btn-ghost" id="contact-check-restart" type="button" hidden><span class="i i-refresh" aria-hidden="true"></span><span>重新开始</span></button>
+        <button class="btn btn-ghost" id="contact-check-restart" type="button" hidden><span class="i i-refresh" aria-hidden="true"></span><span>清空检测记录</span></button>
+        <button class="btn btn-secondary" id="contact-check-reload" type="button" hidden>重新读取记录</button>
       </div>
     </div>
     {% if not can_edit %}<p class="muted-text">当前账号只有查看权限，请联系企业管理员或运营人员发起检测。</p>{% endif %}
     {% if not channels %}<p class="muted-text">请先<a href="/channels/connect">接入微桥账号</a>，并同步好友资料。</p>{% endif %}
+    {# 记录以账号为单位保存在服务端，刷新或离开页面均保留；清空必须由用户明确确认。 #}
+    <p class="muted-text">检测结果和进度会自动保存。重新打开页面后可继续，只有点击“清空检测记录”才会清除。</p>
     <noscript><p class="notice-card">请启用浏览器 JavaScript 后使用好友检测。</p></noscript>
     <div class="contact-check-progress">
       <div class="contact-check-progress-heading"><strong id="contact-check-status" role="status" aria-live="polite">尚未开始检测</strong><span class="muted-text" id="contact-check-count">已检测 0 位</span></div>

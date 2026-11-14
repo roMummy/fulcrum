@@ -4,7 +4,8 @@
 {% block hero_actions %}
 <div class="chip-row">
   {% include '_directory_sync.html' %}
-  {% if can_edit %}<a class="btn btn-secondary" href="/contacts/check?channel_id={{ directory.channel_id or 0 }}">好友检测</a>{% endif %}
+  {# 只读角色也能查看已保存记录；真正发起检测仍由接口校验运营权限。 #}
+  <a class="btn btn-secondary" href="/contacts/check?channel_id={{ directory.channel_id or 0 }}">好友检测</a>
   <span class="chip chip-outline">共 {{ directory.paging.total }} 位好友</span>
 </div>
 {% endblock %}

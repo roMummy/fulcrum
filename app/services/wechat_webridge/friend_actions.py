@@ -27,6 +27,8 @@ def start_action(
     contact_id: int,
     action: str,
     suffix: str = "- 单删",
+    *,
+    commit: bool = True,
 ) -> TaskJob:
     friend_check._validate_channel(channel)
     if channel.is_enabled is False:
@@ -66,15 +68,20 @@ def start_action(
             previous.dedupe_key = None
             db.flush()
         job = service.enqueue_command(db, channel, command_name=COMMANDS[action], args=args)
+        friend_check._use_job_request_id(job)
         job.related_type = RELATED_TYPE
         job.related_id = int(contact.id)
         # 检测、复查和写操作共用同一占位，防止不同页面同时操作同一账号。
         job.dedupe_key = active_key
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError as exc:
         db.rollback()
         raise FriendCheckError(409, "该账号已有好友操作在进行，请稍后重试") from exc
-    wakeup.notify(int(channel.id))
+    if commit:
+        wakeup.notify(int(channel.id))
     return job
 
 
@@ -119,7 +126,7 @@ def _outcome(job: TaskJob, action: str, target: str) -> tuple[bool, str, str]:
     return True, "好友已删除", ""
 
 
-def poll_action(db: Session, channel: Channel, job_id: int) -> dict[str, Any]:
+def poll_action(db: Session, channel: Channel, job_id: int, *, commit: bool = True) -> dict[str, Any]:
     friend_check._validate_channel(channel)
     job = db.scalar(select(TaskJob).where(
         TaskJob.id == job_id,
@@ -144,7 +151,7 @@ def poll_action(db: Session, channel: Channel, job_id: int) -> dict[str, Any]:
     if action == "remark" and (not isinstance(args.get("remark"), str) or not args["remark"]):
         raise FriendCheckError(404, "未找到该账号对应的好友操作任务")
     if friend_check._expire_if_stale(db, job):
-        db.commit()
+        db.commit() if commit else db.flush()
     if job.status in friend_check.ACTIVE_STATUSES:
         return {"state": job.status, "result": None}
     ok, message, remark = _outcome(job, action, contact.contact_external_id)
@@ -163,7 +170,7 @@ def poll_action(db: Session, channel: Channel, job_id: int) -> dict[str, Any]:
                 contact.deleted_at = now_shanghai()
                 contact.sync_status = "deleted"
                 contact.delete_reason = "webridge_delete_friend"
-            db.commit()
+            db.commit() if commit else db.flush()
         db.refresh(job)
         db.refresh(contact)
     return {"state": "completed", "result": {

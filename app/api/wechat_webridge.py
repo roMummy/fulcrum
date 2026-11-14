@@ -225,17 +225,23 @@ async def poll(channel_id: int, request: Request):
         wakeup.unregister(channel_id, loop, wake)
 
 
+def _accept_command_result(channel_id: int, body: dict) -> dict:
+    """在线程内创建并关闭数据库会话，批量保存资料时不阻塞 Web 事件循环。"""
+
+    tenant_id, _ = _channel_tenant(channel_id)
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        return accept_command_result(db, db.get(Channel, int(channel_id)), body)
+
+
 @router.post("/{channel_id}/{connection_token}/agent/command_result", dependencies=[Depends(_require_device_token)])
 async def command_result(channel_id: int, request: Request):
     body = await _json(request)
     logger.info("webridge command result received", extra={"channel_id": channel_id, "payload": _payload_summary(body)})
-    tenant_id, _ = _channel_tenant(channel_id)
-    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
-        try:
-            return accept_command_result(db, db.get(Channel, int(channel_id)), body)
-        except ValueError as exc:
-            logger.exception("webridge command result rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        return await run_in_threadpool(_accept_command_result, channel_id, body)
+    except ValueError as exc:
+        logger.exception("webridge command result rejected", extra={"channel_id": channel_id, "error_code": str(exc)})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{channel_id}/{connection_token}/agent/upload_media", dependencies=[Depends(_require_device_token)])

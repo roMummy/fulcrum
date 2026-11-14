@@ -181,8 +181,6 @@ from app.services.wechat_webridge.dashboard import build_webridge_dashboard, bui
 from app.services.identity_directory import IdentityDirectory, _avatar_from_extra
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
-from app.services.wechat_webridge import friend_check as webridge_friend_check
-from app.services.wechat_webridge import friend_actions as webridge_friend_actions
 from app.services.wechat_webridge import directory_sync as webridge_directory_sync
 from app.services.wechat_webridge import wakeup as webridge_wakeup
 from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, websocket_url as webridge_websocket_url, initialize_connection as initialize_webridge_connection
@@ -221,6 +219,7 @@ from app.web.auth_common import (
     tenant_must_change_password_redirect,
 )
 from app.web.tenant_navigation import build_tenant_navigation
+from app.web.contact_check import router as contact_check_router
 configure_logging()
 logger = get_logger(__name__)
 
@@ -241,6 +240,7 @@ app.include_router(open_media_router)
 app.include_router(payment_webhook_router)
 app.include_router(workwechat_provider_cloud_router)
 app.include_router(wechat_webridge_router)
+app.include_router(contact_check_router)
 app.include_router(guga_agent_router)
 app.include_router(local_proxy_connector_router)
 app.include_router(provider_router)
@@ -2697,118 +2697,7 @@ async def contact_directory_page(request: Request, q: str = "", channel_id: int 
         db.close()
 
 
-@app.get("/contacts/check", response_class=HTMLResponse)
-async def contact_check_page(request: Request, channel_id: int = 0):
-    user = enforce_role(request, "readonly")
-    db = get_session()
-    try:
-        channels = webridge_friend_check.list_check_channels(db)
-        selected = next((item["id"] for item in channels if item["id"] == channel_id), 0)
-        if not selected and channels:
-            selected = channels[0]["id"]
-        response = render(
-            request, "contact_check.html", page_title="好友检测",
-            channels=channels, selected_channel_id=selected,
-            can_edit=has_tenant_role(user, "operator"),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
-    finally:
-        db.close()
-
-
-def _friend_check_channel(db: Session, channel_id: int) -> Channel:
-    channel = get_channel(db, channel_id)
-    if channel is None or channel.channel_type != "wechat_webridge":
-        raise HTTPException(status_code=404, detail="未找到可检测的微桥账号")
-    return channel
-
-
-@app.get("/contacts/check/{channel_id}/friends")
-async def contact_check_friends(request: Request, channel_id: int):
-    enforce_role(request, "readonly")
-    db = get_session()
-    try:
-        contacts = webridge_friend_check.list_check_contacts(db, _friend_check_channel(db, channel_id))
-        return JSONResponse({"contacts": contacts, "total": len(contacts)}, headers={"Cache-Control": "no-store"})
-    finally:
-        db.close()
-
-
-@app.post("/contacts/check/{channel_id}/friends/{contact_id}")
-async def contact_check_start(request: Request, channel_id: int, contact_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        require_tenant_csrf(db, request, _csrf_from_header(request))
-        job = webridge_friend_check.start_check(db, _friend_check_channel(db, channel_id), contact_id)
-        return JSONResponse({"job_id": int(job.id)}, headers={"Cache-Control": "no-store"})
-    except webridge_friend_check.FriendCheckError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    finally:
-        db.close()
-
-
-@app.post("/contacts/check/{channel_id}/jobs/{job_id}/poll")
-async def contact_check_poll(request: Request, channel_id: int, job_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        require_tenant_csrf(db, request, _csrf_from_header(request))
-        # 轮询会终止超时任务，使用带 CSRF 的 POST，避免查询链接触发状态变更。
-        result = webridge_friend_check.poll_check(db, _friend_check_channel(db, channel_id), job_id)
-        return JSONResponse(result, headers={"Cache-Control": "no-store"})
-    except webridge_friend_check.FriendCheckError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    finally:
-        db.close()
-
-
-@app.post("/contacts/check/{channel_id}/friends/{contact_id}/remark")
-@app.post("/contacts/check/{channel_id}/friends/{contact_id}/delete")
-async def contact_check_action_start(request: Request, channel_id: int, contact_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        require_tenant_csrf(db, request, _csrf_from_header(request))
-        try:
-            body = await request.json()
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="操作参数格式不正确") from exc
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="操作参数格式不正确")
-        action = "remark" if request.url.path.endswith("/remark") else "delete"
-        suffix = body.get("suffix", "- 单删")
-        if action == "delete" and body.get("confirmed") is not True:
-            raise HTTPException(status_code=400, detail="请先确认删除好友")
-        if action == "remark" and not isinstance(suffix, str):
-            raise HTTPException(status_code=400, detail="备注后缀格式不正确")
-        job = webridge_friend_actions.start_action(db, _friend_check_channel(db, channel_id), contact_id, action=action, suffix=suffix)
-        return JSONResponse({"job_id": int(job.id)}, headers={"Cache-Control": "no-store"})
-    except webridge_friend_check.FriendCheckError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    finally:
-        db.close()
-
-
-
-@app.post("/contacts/check/{channel_id}/actions/{job_id}/poll")
-async def contact_check_action_poll(request: Request, channel_id: int, job_id: int):
-    enforce_role(request, "ops")
-    db = get_session()
-    try:
-        require_tenant_csrf(db, request, _csrf_from_header(request))
-        result = webridge_friend_actions.poll_action(db, _friend_check_channel(db, channel_id), job_id)
-        return JSONResponse(result, headers={"Cache-Control": "no-store"})
-    except webridge_friend_check.FriendCheckError as exc:
-        db.rollback()
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    finally:
-        db.close()
-
+# 好友检测统一注册独立的持久化 Router，避免旧入口先匹配而跳过代次与结果保存。
 
 
 @app.get("/points", response_class=HTMLResponse)

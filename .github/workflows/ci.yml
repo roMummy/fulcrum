@@ -27,6 +27,8 @@ jobs:
         run: node tests/action_feedback.test.cjs
       # 逐文件隔离运行主体功能里已验证稳定通过的测试文件(清单见 .github/ci-test-files.txt)。
       # 业务插件的测试不在 CI 范围内;其余历史测试正在整理,修好后加入清单。
+      - name: Friend check browser logic
+        run: node --check app/static/js/contact-check.js && node --test tests/contact_check_persistence.test.cjs
       - name: Tests
         env:
           JOBS: "4"
