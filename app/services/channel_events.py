@@ -263,10 +263,13 @@ def ingest_normalized_event(
         from app.services.wechat_webridge.group_sync import observe_inbound_event
         from app.services.wechat_webridge.member_directory import apply_event
         from app.services.wechat_webridge.message_directory import observe_message
+        from app.services.wechat_webridge.official_accounts import observe_message as observe_official_message
 
         observe_inbound_event(db, channel, normalized, conversation)
         apply_event(db, channel, normalized, conversation)
         observe_message(db, channel, normalized, conversation)
+        # 公众号没有好友快照时，按匹配账号的文章发布者补名称，历史消息共用身份目录。
+        observe_official_message(db, channel, normalized, conversation)
     elif channel.channel_type == "workwechat":
         from app.services.workwechat_chatrooms import sync_workwechat_chatroom_from_message
         from app.services.workwechat_contacts import apply_workwechat_contact_event

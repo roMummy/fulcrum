@@ -192,26 +192,32 @@ def persist_directory_result(
     db: Session, channel: Channel, command: dict[str, Any], result: dict[str, Any],
     *, snapshot_revision: int | None = None, snapshot_started_at: datetime | None = None,
 ) -> dict[str, int]:
-    """把好友、群组和群成员同步结果写入现有联系人与群组实体。"""
+    """把好友、公众号、群组和群成员同步结果写入现有身份目录。"""
 
     command_name = text(command.get("type") or command.get("command_name"))
     if command_name in {"groups_all", "room_members"}:
         db.flush()
     now = now_shanghai()
     counts = {"contacts": 0, "groups": 0, "members": 0}
-    if command_name in {"friends", "friends_all"}:
-        for item in _result_items(result, "items", "friends", "contacts"):
+    if command_name in {"friends", "friends_all", "official_accounts"}:
+        from app.services.conversation_kinds import is_official_account
+
+        for item in _result_items(result, "items", "friends", "contacts", "official_accounts"):
             external_id = _directory_id(item, "account_id", "user_name", "wxid", "username", "id")
-            if not external_id:
+            if not external_id or command_name == "official_accounts" and not is_official_account(external_id):
                 continue
             contact = db.scalar(select(WorkWechatContact).where(WorkWechatContact.channel_id == channel.id, WorkWechatContact.contact_external_id == external_id))
             if contact is None:
                 contact = WorkWechatContact(channel_id=channel.id, contact_external_id=external_id, first_seen_at=now)
                 db.add(contact)
-            contact.contact_kind = "friend"
-            contact.name = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or item.get("remark") or external_id)[:255]
-            contact.display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or external_id)[:255]
-            contact.avatar_url = str(item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "") or None
+            contact.contact_kind = "official" if is_official_account(external_id) else "friend"
+            name = str(item.get("nick_name") or item.get("nickname") or item.get("display_name") or item.get("remark") or "")[:255]
+            display_name = str(item.get("display_name") or item.get("remark") or item.get("nick_name") or item.get("nickname") or "")[:255]
+            avatar = str(item.get("avatar_url") or item.get("avatar") or item.get("head_img_url") or "")
+            # 公众号的空回报不能抹掉文章补齐的名称或已确认头像；封面图片不作为头像来源。
+            contact.name = name or (contact.name if contact.contact_kind == "official" else "") or external_id
+            contact.display_name = display_name or (contact.display_name if contact.contact_kind == "official" else "") or contact.name
+            contact.avatar_url = avatar or (contact.avatar_url if contact.contact_kind == "official" else None)
             contact.source = "wechat_webridge"
             contact.sync_status = "active"
             contact.last_seen_at = now
@@ -732,6 +738,10 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     record_device_sample(db, channel)
     _enqueue_device_status(db, channel)
     _enqueue_account_status(db, channel)
+    # 公众号目录与好友分开读取，补齐现有会话的真实头像；手机未准备好时按间隔重试。
+    from app.services.wechat_webridge.official_accounts import refresh_missing_profiles
+
+    refresh_missing_profiles(db, channel)
     # bot 被拉进新群后自动同步群资料和成员:定期对账(其余触发见 group_sync)。
     from app.services.wechat_webridge import group_sync
 

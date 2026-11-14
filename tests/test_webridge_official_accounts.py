@@ -1,0 +1,144 @@
+"""公众号资料按明确账号 ID 归属，验证真实入站、目录同步及历史消息身份补齐。"""
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import select
+
+from app.core.time import now_shanghai
+from app.models.entities import Conversation, Message, TaskJob, WorkWechatContact
+from app.services.channel_events import ingest_inbound_event
+from app.services.identity_directory import IdentityDirectory
+from app.services.wechat_webridge import service
+from app.services.wechat_webridge.official_accounts import publisher_name, refresh_missing_profiles
+from tests.test_webridge_member_directory import env  # noqa: F401
+
+OFFICIAL = 'gh_a1b2c3d4'
+
+
+def article(*, publisher=OFFICIAL, name='天然工坊'):
+    """样例保留线上确认的 publisher 结构；thumburl 是文章封面，不能当作账号头像。"""
+    return f'<msg><appmsg><type>5</type><title>文章标题</title><thumburl>https://example.test/article.jpg</thumburl><publisher><username>{publisher}</username><nickname>{name}</nickname></publisher></appmsg><fromusername>{OFFICIAL}</fromusername></msg>'
+
+
+def test_direct_publisher_enriches_conversation_and_old_message_without_rewriting_history(env):
+    db, channel, _, _ = env
+    conversation = Conversation(tenant_id=1, bot_id=channel.bot_id, channel_id=channel.id,
+                                channel_type=channel.channel_type, external_id=OFFICIAL,
+                                chat_type='direct', title=OFFICIAL)
+    db.add(conversation)
+    db.flush()
+    old = Message(tenant_id=1, conversation_id=conversation.id, direction='in', sender_id=OFFICIAL,
+                  content='历史文章', message_type='link')
+    db.add(old)
+    db.commit()
+    ingest_inbound_event(db, channel, {'event_id': 'official-article', 'body': {
+        'chat_id': OFFICIAL, 'sender_id': OFFICIAL, 'msg_type': 'app', 'msg_subtype': 'link',
+        'content': article(), 'content_xml': article(),
+    }})
+    contact = db.scalar(select(WorkWechatContact).where(WorkWechatContact.contact_external_id == OFFICIAL))
+    assert contact is not None and contact.contact_kind == 'official'
+    assert contact.name == contact.display_name == conversation.title == '天然工坊'
+    identity = IdentityDirectory(db).for_messages([old])[old.id]
+    assert identity['name'] == '天然工坊' and not identity['avatar_url']
+    assert old.sender_name is None  # 历史显示读取身份目录，无需重写旧消息。
+
+
+@pytest.mark.parametrize('chat_id,sender_id,publisher', [
+    ('friend', 'friend', OFFICIAL),
+    (OFFICIAL, OFFICIAL, 'gh_other'),
+    ('group@chatroom', OFFICIAL, OFFICIAL),
+    (OFFICIAL, 'wxid_other', OFFICIAL),
+])
+def test_forwarded_or_mismatched_publisher_cannot_create_an_official_profile(env, chat_id, sender_id, publisher):
+    """文章发布者不是每次转发的会话对象，必须同时核对会话 ID、发送者和发布者。"""
+    db, channel, _, _ = env
+    ingest_inbound_event(db, channel, {'event_id': 'forwarded', 'body': {
+        'chat_id': chat_id, 'sender_id': sender_id, 'msg_type': 'app', 'msg_subtype': 'link',
+        'content': article(publisher=publisher),
+    }})
+    assert db.scalar(select(WorkWechatContact).where(WorkWechatContact.contact_external_id == OFFICIAL)) is None
+
+
+def test_official_directory_saves_actual_profile_and_enriches_existing_identity(env):
+    db, channel, _, _ = env
+    counts = service.persist_directory_result(db, channel, {'type': 'official_accounts'}, {'items': [
+        {'account_id': OFFICIAL, 'nick_name': '目录中的公众号名称', 'avatar_url': 'https://example.test/account.jpg'},
+    ]})
+    db.flush()
+    assert counts['contacts'] == 1
+    contact = db.scalar(select(WorkWechatContact).where(WorkWechatContact.contact_external_id == OFFICIAL))
+    assert contact.contact_kind == 'official'
+    identity = IdentityDirectory(db).get(channel.id, OFFICIAL)
+    assert identity['name'] == '目录中的公众号名称' and identity['avatar_url'] == 'https://example.test/account.jpg'
+
+
+def test_incomplete_official_directory_keeps_known_name_and_avatar(env):
+    db, channel, _, _ = env
+    db.add(WorkWechatContact(tenant_id=1, channel_id=channel.id, contact_kind='official',
+                            contact_external_id=OFFICIAL, name='已确认的名称', display_name='已确认的名称',
+                            avatar_url='https://example.test/account.jpg'))
+    db.flush()
+    counts = service.persist_directory_result(db, channel, {'type': 'official_accounts'}, {'items': [
+        {'account_id': OFFICIAL, 'nick_name': '', 'avatar_url': ''},
+        {'account_id': 'wxid_friend', 'nick_name': '不属于公众号的条目'},
+    ]})
+    db.flush()
+    assert counts['contacts'] == 1
+    identity = IdentityDirectory(db).get(channel.id, OFFICIAL)
+    assert identity['name'] == '已确认的名称' and identity['avatar_url'] == 'https://example.test/account.jpg'
+    assert db.scalar(select(WorkWechatContact).where(WorkWechatContact.contact_external_id == 'wxid_friend')) is None
+
+
+def test_account_poll_merges_profile_reads_and_backs_off_after_phone_not_ready(env):
+    """真实缺资料会话才触发读取；在途请求合并，失败后的手机加载期至少等待十分钟。"""
+    db, channel, _, _ = env
+    runtime = json.loads(channel.runtime_info_json)
+    runtime['webridge']['capabilities'] = ['official_accounts']
+    channel.runtime_info_json = json.dumps(runtime)
+    db.add(Conversation(tenant_id=1, bot_id=channel.bot_id, channel_id=channel.id,
+                        channel_type=channel.channel_type, external_id=OFFICIAL, chat_type='direct', title=OFFICIAL))
+    db.commit()
+    refresh_missing_profiles(db, channel)
+    db.commit()
+    refresh_missing_profiles(db, channel)
+    jobs = db.scalars(select(TaskJob).where(TaskJob.job_type == service.JOB_TYPE)).all()
+    assert len(jobs) == 1 and json.loads(jobs[0].payload_json)['command']['type'] == 'official_accounts'
+    jobs[0].status = 'failed'
+    db.commit()
+    refresh_missing_profiles(db, channel)
+    assert db.scalar(select(TaskJob.id).order_by(TaskJob.id.desc())) == jobs[0].id
+    runtime = json.loads(channel.runtime_info_json)
+    runtime['official_account_profiles']['requested_at'] = (now_shanghai() - timedelta(seconds=601)).isoformat()
+    channel.runtime_info_json = json.dumps(runtime)
+    db.commit()
+    refresh_missing_profiles(db, channel)
+    db.commit()
+    assert len(db.scalars(select(TaskJob).where(TaskJob.job_type == service.JOB_TYPE)).all()) == 2
+
+
+def test_complete_profiles_and_unsupported_phone_do_not_request_extra_directories(env):
+    db, channel, _, _ = env
+    db.add(Conversation(tenant_id=1, bot_id=channel.bot_id, channel_id=channel.id,
+                        channel_type=channel.channel_type, external_id=OFFICIAL, chat_type='direct', title=OFFICIAL))
+    db.commit()
+    refresh_missing_profiles(db, channel)  # 手机没有声明此命令时不能盲发。
+    assert db.scalar(select(TaskJob.id).where(TaskJob.job_type == service.JOB_TYPE)) is None
+    runtime = json.loads(channel.runtime_info_json)
+    runtime['webridge']['capabilities'] = ['official_accounts']
+    channel.runtime_info_json = json.dumps(runtime)
+    service.persist_directory_result(db, channel, {'type': 'official_accounts'}, {'items': [
+        {'account_id': OFFICIAL, 'nick_name': '已完整同步', 'avatar_url': 'https://example.test/account.jpg'},
+    ]})
+    db.commit()
+    refresh_missing_profiles(db, channel)
+    assert db.scalar(select(TaskJob.id).where(TaskJob.job_type == service.JOB_TYPE)) is None
+
+
+@pytest.mark.parametrize('content', ['<broken>', article() * 2000,
+    '<!DOCTYPE msg [<!ENTITY name "伪造名称">]><msg><appmsg><publisher><username>gh_a1b2c3d4</username><nickname>&name;</nickname></publisher></appmsg></msg>',
+])
+def test_invalid_or_unbounded_xml_is_not_used_as_profile(content):
+    assert publisher_name(OFFICIAL, content) == ''
