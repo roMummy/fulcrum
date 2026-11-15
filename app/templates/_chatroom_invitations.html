@@ -94,7 +94,7 @@
         <div class="invitation-empty"><span class="i i-users" aria-hidden="true"></span><strong>{{ '暂未记录到邀请关系' if detail.invitations.total else '暂无成员信息' }}</strong><p>{{ '已同步的成员可在下方查看；收到明确的邀请记录后，会自动显示关系连线。' if detail.invitations.total else '请先同步群资料，获取成员信息。' }}</p></div>
         {% endif %}
       </div>
-      <div class="invitation-caption" id="invitation-graph-help"><span>邀请人 <span aria-hidden="true">→</span> 被邀请人</span><span>{% if graph_nodes %}拖动画布查看 · + / − 缩放 · 0 适应画布{% else %}仅展示有明确记录的邀请关系{% endif %}</span></div>
+      <div class="invitation-caption" id="invitation-graph-help"><span>邀请人 <span aria-hidden="true">→</span> 被邀请人</span><span>{% if graph_nodes %}拖动画布查看 · 滚轮或 + / − 缩放 · 0 适应画布{% else %}仅展示有明确记录的邀请关系{% endif %}</span></div>
       <aside class="invitation-inspector" data-invitation-inspector aria-label="选中成员的邀请关系详情" hidden>
         <div class="invitation-inspector-head"><div><h4 data-invitation-detail-name>成员详情</h4><p class="muted-text" data-invitation-detail-id></p><p class="muted-text" data-invitation-detail-status></p></div><button type="button" class="btn btn-ghost btn-icon" data-invitation-clear-selection aria-label="关闭成员详情"><span class="i i-x" aria-hidden="true"></span></button></div>
         <dl class="invitation-inspector-facts"><div><dt>邀请人</dt><dd data-invitation-detail-inviter></dd></div><div><dt>关系来源</dt><dd data-invitation-detail-source></dd></div><div><dt>入群时间</dt><dd data-invitation-detail-joined></dd></div><div><dt data-invitation-detail-time-label>资料获取时间</dt><dd data-invitation-detail-time></dd></div><div><dt>直接邀请</dt><dd data-invitation-detail-count></dd></div><div class="invitation-inspector-description"><dt>入群说明</dt><dd data-invitation-detail-description></dd></div></dl>

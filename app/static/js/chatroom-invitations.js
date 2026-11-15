@@ -325,11 +325,18 @@
   viewport.addEventListener('pointercancel', endDrag);
   viewport.addEventListener('lostpointercapture', endDrag);
   viewport.addEventListener('wheel', (event) => {
-    // 普通滚轮仍滚动页面，仅触控板捏合或 Ctrl+滚轮缩放，避免画布截走页面浏览操作。
-    if (!scene || !event.ctrlKey) return;
+    // 画布内直接用纵向滚轮缩放；空图谱和纯横向输入不拦截页面原有滚动。
+    if (!scene || event.deltaY === 0) return;
     event.preventDefault();
+    // 鼠标可能按行或页上报，触控板通常按像素上报；统一单位并限制单次幅度，
+    // 让上滚放大、下滚缩小保持平滑，避免一次滚动跨越过大的缩放范围。
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1;
+    const delta = Math.max(-120, Math.min(120, event.deltaY * unit));
     const rect = viewport.getBoundingClientRect();
-    zoom(Math.exp(-event.deltaY * 0.01), event.clientX - rect.left, event.clientY - rect.top);
+    // 扣除画布边框，以鼠标所指的图谱位置为锚点；弹窗继续复用同一工作区和视图。
+    zoom(Math.exp(-delta * 0.002), event.clientX - rect.left - viewport.clientLeft,
+      event.clientY - rect.top - viewport.clientTop);
   }, {passive: false});
   viewport.addEventListener('keydown', (event) => {
     if (event.target !== viewport || !scene) return;
