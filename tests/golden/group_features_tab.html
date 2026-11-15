@@ -201,7 +201,7 @@
 <header class="gf-head">
 <div class="gf-head-copy" data-gf-toggle-title>
 <h3>群成员变更提醒</h3>
-<p>成员加入、退出、改群昵称时在群里通知,并可对新成员发送欢迎卡片。</p>
+<p>成员加入、退出、改群昵称时在群里通知，可按群自定义文案，并向新成员发送欢迎卡片。</p>
 </div>
 <div class="gf-head-actions">
 <label class="gf-master" title="在本群开启或关闭">
@@ -244,6 +244,36 @@
 <span class="ui-switch-track">
 </span>
 </span>
+</label>
+</div>
+</section>
+<section class="gf-section">
+<h4>通知文案</h4>
+<div class="gf-inputs">
+<label class="gf-field gf-field-wide">
+<span class="gf-field-label">通知标题</span>
+<input type="text" name="cfg_notify_title" value="示例值-notify_title" />
+<small>留空不添加标题；可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间（标题中多人昵称用顿号连接）</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_notify_join">
+<span class="gf-field-label">新成员加入文案</span>
+<textarea name="cfg_join_template" rows="4" maxlength="2000">示例值-join_template</textarea>
+<small>留空不发加入文字，仍可发送欢迎卡片；可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_notify_leave">
+<span class="gf-field-label">成员退出文案</span>
+<textarea name="cfg_leave_template" rows="4" maxlength="2000">示例值-leave_template</textarea>
+<small>留空不发退出文字；可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_notify_leave">
+<span class="gf-field-label">成员被移出文案</span>
+<textarea name="cfg_removed_template" rows="4" maxlength="2000">示例值-removed_template</textarea>
+<small>留空不发被移出文字；可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_notify_rename">
+<span class="gf-field-label">修改群昵称文案</span>
+<textarea name="cfg_rename_template" rows="4" maxlength="2000">示例值-rename_template</textarea>
+<small>留空不发改昵称文字；可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间、{old_nickname} 原群昵称、{new_nickname} 新群昵称</small>
 </label>
 </div>
 </section>

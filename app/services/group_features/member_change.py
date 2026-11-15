@@ -20,15 +20,17 @@ from app.models.entities import Channel, Chatroom, ChatroomMember
 from app.services.group_features.dispatch import FeatureContext, register_handler
 from app.services.config_fields import ConfigField
 from app.services.group_features.registry import GroupFeature, register
-from app.services.plugin_runtime.replies import PluginReplyError, link_reply, text_reply
+from app.services.plugin_runtime.replies import MAX_TEXT_LENGTH, PluginReplyError, link_reply, text_reply
 
 logger = get_logger(__name__)
 
 # 每次事件最多给几位新成员发欢迎卡片,防止一次拉很多人时刷屏。
 MAX_WELCOME_CARDS = 3
-# 卡片的文案和地址使用同一组变量；单次匹配避免成员昵称里的花括号被再次当成模板执行。
+# 文字通知和欢迎卡片共用单次匹配，只替换各自上下文提供的变量。
+# 不递归解释昵称或群名中的花括号，未声明变量保留给用户检查。
 WELCOME_TEMPLATE_FIELDS = ("card_title", "card_desc", "card_url", "card_thumb_url")
-WELCOME_VARIABLE = re.compile(r"\{(nickname|now|avatar_url)\}")
+TEMPLATE_VARIABLE = re.compile(r"\{([a-z_]+)\}")
+NOTIFICATION_VARIABLE_HINT = "可用变量：{nickname} 用户昵称、{group_name} 群名称、{now} 当前时间"
 
 JOIN_PATTERNS = (
     '"$names$"加入了群聊',
@@ -61,12 +63,38 @@ FEATURE = register(
     GroupFeature(
         key="member_change",
         name="群成员变更提醒",
-        description="成员加入、退出、改群昵称时在群里通知,并可对新成员发送欢迎卡片。",
+        description="成员加入、退出、改群昵称时在群里通知，可按群自定义文案，并向新成员发送欢迎卡片。",
         event_types=("event", "system", "text", "group_member_join", "group_member_leave", "group_member_nickname_change"),
         fields=(
             ConfigField("notify_join", "新成员加入时通知", kind="bool", default=True, group="通知方式"),
             ConfigField("notify_leave", "成员退出或被移出时通知", kind="bool", default=True, group="通知方式"),
             ConfigField("notify_rename", "成员修改群昵称时通知", kind="bool", default=True, group="通知方式"),
+            # 默认文案仅在声明中维护；群存储会补齐缺省值，生成通知时只使用本群生效配置。
+            # 正文分别依赖通知开关，空正文仅停发对应文字，不影响已开启的欢迎卡片。
+            ConfigField(
+                "notify_title", "通知标题", default="📋 群成员变动通知:", group="通知文案",
+                hint="留空不添加标题；" + NOTIFICATION_VARIABLE_HINT + "（标题中多人昵称用顿号连接）",
+            ),
+            ConfigField(
+                "join_template", "新成员加入文案", kind="textarea", default="🆕 成员新增: {nickname}",
+                group="通知文案", depends_on="notify_join",
+                hint="留空不发加入文字，仍可发送欢迎卡片；" + NOTIFICATION_VARIABLE_HINT,
+            ),
+            ConfigField(
+                "leave_template", "成员退出文案", kind="textarea", default="❌ 成员减少: {nickname}",
+                group="通知文案", depends_on="notify_leave",
+                hint="留空不发退出文字；" + NOTIFICATION_VARIABLE_HINT,
+            ),
+            ConfigField(
+                "removed_template", "成员被移出文案", kind="textarea", default="❌ 成员减少: {nickname}",
+                group="通知文案", depends_on="notify_leave",
+                hint="留空不发被移出文字；" + NOTIFICATION_VARIABLE_HINT,
+            ),
+            ConfigField(
+                "rename_template", "修改群昵称文案", kind="textarea", default="📝 昵称修改: {nickname} ({old_nickname} -> {new_nickname})",
+                group="通知文案", depends_on="notify_rename",
+                hint="留空不发改昵称文字；" + NOTIFICATION_VARIABLE_HINT + "、{old_nickname} 原群昵称、{new_nickname} 新群昵称",
+            ),
             ConfigField("card_enabled", "新成员加入时发送欢迎卡片", kind="bool", default=False, group="欢迎卡片"),
             ConfigField(
                 "card_title", "卡片标题", default="欢迎 {nickname} 加入本群", group="欢迎卡片", depends_on="card_enabled",
@@ -124,7 +152,7 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
 
     replies: list[dict[str, Any]] = []
     reply_text = build_reply_text(
-        change_type, members,
+        change_type, members, config=ctx.config, group_name=ctx.chatroom.name or ctx.chatroom.external_id,
         new_name=new_name, old_name=str(parsed.get("old_name") or ""), previous=previous,
     )
     if reply_text:
@@ -149,6 +177,12 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
     return replies
 
 
+def _render_template(template: Any, variables: Mapping[str, str]) -> str:
+    """按当前通知或卡片上下文替换一次，缺少变量保持原文，不执行替换结果。"""
+
+    return TEMPLATE_VARIABLE.sub(lambda match: variables.get(match.group(1), match.group(0)), str(template or ""))
+
+
 def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]) -> list[dict[str, Any]]:
     """为新成员生成欢迎卡片;地址不合法时只记日志并跳过,不影响文字通知。"""
 
@@ -167,19 +201,15 @@ def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]
             avatar_url = ""
         variables = {"nickname": nickname, "now": now_text, "avatar_url": avatar_url}
 
-        def fill(template: str) -> str:
-            # 只替换声明的变量且不递归处理替换结果，未知花括号和真实昵称均原样保留。
-            return WELCOME_VARIABLE.sub(lambda match: variables[match.group(1)], str(template or ""))
-
         try:
             # 缩略图严格按显式来源选择。头像缺失时不改用已保存的自定义 URL，
             # URL 模式则继续复用同一模板替换入口，避免出现两套发送逻辑。
-            thumb_url = avatar_url if config.get("card_thumb_source") == "member_avatar" else fill(config.get("card_thumb_url"))
+            thumb_url = avatar_url if config.get("card_thumb_source") == "member_avatar" else _render_template(config.get("card_thumb_url"), variables)
             cards.append(
                 link_reply(
-                    url=fill(config.get("card_url")),
-                    title=fill(config.get("card_title")),
-                    description=fill(config.get("card_desc")),
+                    url=_render_template(config.get("card_url"), variables),
+                    title=_render_template(config.get("card_title"), variables),
+                    description=_render_template(config.get("card_desc"), variables),
                     thumb_url=thumb_url,
                 )
             )
@@ -366,27 +396,51 @@ def build_reply_text(
     change_type: str,
     members: list[dict[str, str]],
     *,
+    config: Mapping[str, Any],
+    group_name: str,
     new_name: str = "",
     old_name: str = "",
     previous: dict[str, dict[str, str]] | None = None,
 ) -> str:
-    """群内变动通知,格式与 abot 一致:标题 + 每个变动一行,加入、退出、移除、改群昵称都通知。"""
+    """按本群模板逐人生成正文，再合并为一条通知；空正文不发送孤立标题。"""
 
+    template_key = {"join": "join_template", "left": "leave_template", "removed": "removed_template", "rename": "rename_template"}.get(change_type)
+    template = str(config.get(template_key) or "").strip() if template_key else ""
+    if not template:
+        return ""
+
+    common = {"group_name": group_name, "now": now_shanghai().strftime("%Y-%m-%d %H:%M")}
     lines: list[str] = []
-    if change_type == "join":
-        lines = [f"🆕 成员新增: {item['display_name']}" for item in members if item.get("display_name")]
-    elif change_type in {"left", "removed"}:
-        lines = [f"❌ 成员减少: {item['display_name']}" for item in members if item.get("display_name")]
-    elif change_type == "rename" and members:
-        item = members[0]
-        before = (previous or {}).get(item["external_id"], {})
-        # 旧群昵称优先用事件自带的,其次用库里改名前记录的群昵称/昵称,都没有写“未设置”。
-        old = old_name or before.get("display_name") or before.get("nickname") or "未设置"
-        who = before.get("nickname") or item.get("display_name") or item["external_id"]
-        lines = [f"📝 昵称修改: {who} ({old} -> {new_name or '已清除'})"]
+    nicknames: list[str] = []
+    # 改昵称事件仍只描述该次变更的单个成员，不能把同一新旧昵称套用到其他成员。
+    for item in members[:1] if change_type == "rename" else members:
+        nickname = item.get("display_name") or item["external_id"]
+        variables = {**common, "nickname": nickname}
+        if change_type == "rename":
+            before = (previous or {}).get(item["external_id"], {})
+            # 入站目录已更新，必须消费事件保存的改名前资料；旧群昵称优先取事件的明确证据。
+            nickname = before.get("nickname") or nickname
+            variables.update(
+                nickname=nickname,
+                old_nickname=old_name or before.get("display_name") or before.get("nickname") or "未设置",
+                new_nickname=new_name or "已清除",
+            )
+        body = _render_template(template, variables).strip()
+        if body:
+            lines.append(body)
+            nicknames.append(nickname)
     if not lines:
         return ""
-    return "📋 群成员变动通知:\n" + "\n".join(lines)
+
+    # 标题只渲染一次，多人昵称以顿号连接；正文的内部换行按用户填写保留。
+    title = _render_template(config.get("notify_title"), {**common, "nickname": "、".join(nicknames)}).strip()
+    text = "\n".join(([title] if title else []) + lines)
+    if len(text) > MAX_TEXT_LENGTH:
+        # 多人长模板可能超过公共单条消息限制，明确提示截断，避免抛出异常后整次卡片也丢失。
+        suffix = "\n…（通知内容过长，已截断）"
+        logger.warning("群成员通知内容超过单条上限，已截断", extra={"change_type": change_type, "member_count": len(members), "text_length": len(text)})
+        text = text[:MAX_TEXT_LENGTH - len(suffix)].rstrip() + suffix
+    return text
 
 
 register_handler(FEATURE, handle)
