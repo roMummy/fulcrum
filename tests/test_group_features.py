@@ -229,7 +229,8 @@ def test_welcome_card_avatar_matches_each_new_member_and_current_group(env, sent
     env.db.flush()
     save_state(env.room, "member_change", enabled=True, config={
         "card_enabled": True, "card_title": "欢迎 {nickname}", "card_url": "https://example.com/rules",
-        "card_desc": "新人头像：{avatar_url}", "card_thumb_url": "{avatar_url}",
+        # 仅靠来源选择触发头像读取，不能要求用户再填写变量；保留的自定义 URL 不应生效。
+        "card_thumb_source": "member_avatar", "card_thumb_url": "https://example.com/custom.jpg",
     })
     event = _join_event()
     event["message"]["sender_id"] = "wxid_inviter"
@@ -238,7 +239,6 @@ def test_welcome_card_avatar_matches_each_new_member_and_current_group(env, sent
     dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
     cards = [reply for reply in sent[0]["replies"] if reply["type"] == "link"]
     assert [(card["title"], card["thumb_url"]) for card in cards] == [("欢迎 小明", own_avatar), ("欢迎 小红", friend_avatar)]
-    assert cards[0]["description"] == f"新人头像：{own_avatar}"
     # 补充头像只作用于卡片上下文，不能修改入站事件中的原始证据。
     assert all("avatar_url" not in item for item in event["details"]["member_change"]["members"])
 
@@ -257,7 +257,7 @@ def test_welcome_card_avatar_does_not_use_another_group_or_channel(env, sent):
     ])
     env.db.flush()
     save_state(env.room, "member_change", enabled=True, config={
-        "card_enabled": True, "card_url": "https://example.com/rules", "card_thumb_url": "{avatar_url}",
+        "card_enabled": True, "card_url": "https://example.com/rules", "card_thumb_source": "member_avatar",
     })
     event = _join_event()
     apply_event(env.db, env.channel, event, env.conversation)
@@ -270,7 +270,7 @@ def test_welcome_card_avatar_does_not_use_another_group_or_channel(env, sent):
 def test_welcome_card_missing_or_invalid_avatar_still_sends_each_card(avatar):
     """头像缺失或不合法时省略缩略图，后续新成员仍能收到各自的欢迎卡片。"""
 
-    cards = build_welcome_cards({"card_url": "https://example.com/rules", "card_title": "欢迎 {nickname}", "card_thumb_url": "{avatar_url}"}, [
+    cards = build_welcome_cards({"card_url": "https://example.com/rules", "card_title": "欢迎 {nickname}", "card_thumb_source": "member_avatar"}, [
         {"external_id": "a", "display_name": "小明", "avatar_url": avatar},
         {"external_id": "b", "display_name": "小红", "avatar_url": "https://example.com/b.jpg"},
     ])
@@ -284,13 +284,41 @@ def test_welcome_card_templates_replace_variables_once_and_keep_custom_urls():
     avatar = "https://wx.qlogo.cn/mmhead/member/132"
     member = {"external_id": "a", "display_name": "小明{avatar_url}{now}", "avatar_url": avatar}
     config = {"card_title": "欢迎 {nickname} {unknown}", "card_desc": "{now}",
-              "card_url": "{avatar_url}", "card_thumb_url": "{avatar_url}"}
+              "card_url": "{avatar_url}", "card_thumb_source": "member_avatar"}
     card = build_welcome_cards(config, [member])[0]
     assert card["title"] == "欢迎 小明{avatar_url}{now} {unknown}"
     assert "{now}" not in card["description"]
     assert card["url"] == avatar and card["thumb_url"] == avatar
-    config.update(card_url="https://example.com/rules", card_thumb_url="https://example.com/custom-cover.jpg")
+    config.update(card_url="https://example.com/rules", card_thumb_source="url", card_thumb_url="https://example.com/custom-cover.jpg")
     assert build_welcome_cards(config, [member])[0]["thumb_url"] == "https://example.com/custom-cover.jpg"
+
+
+@pytest.mark.parametrize(("source", "avatar", "expected"), [
+    ("url", "https://example.com/member.jpg", "https://example.com/custom.jpg"),
+    ("member_avatar", "https://example.com/member.jpg", "https://example.com/member.jpg"),
+    ("member_avatar", "", None),
+])
+def test_welcome_card_thumbnail_uses_only_selected_source(source, avatar, expected):
+    """来源互斥：头像模式不能使用已保留的自定义 URL，头像缺失也不能隐式改用该地址。"""
+
+    cards = build_welcome_cards({
+        "card_url": "https://example.com/rules", "card_title": "欢迎 {nickname}",
+        "card_thumb_source": source, "card_thumb_url": "https://example.com/custom.jpg",
+    }, [{"external_id": "a", "display_name": "小明", "avatar_url": avatar}])
+    assert len(cards) == 1
+    assert cards[0].get("thumb_url") == expected
+
+
+@pytest.mark.parametrize(("source", "expected"), [("url", "url"), ("member_avatar", "member_avatar"), ("invalid", "url")])
+def test_welcome_card_image_source_roundtrip_and_option_validation(env, source, expected):
+    """配置只接受声明选项，保存头像来源时仍保留自定义 URL，便于日后切回。"""
+
+    save_state(env.room, "member_change", enabled=True, config={
+        "card_thumb_source": source, "card_thumb_url": "https://example.com/custom.jpg",
+    })
+    _, config = get_state(env.room, get_feature("member_change"))
+    assert config["card_thumb_source"] == expected
+    assert config["card_thumb_url"] == "https://example.com/custom.jpg"
 
 
 def test_welcome_card_without_avatar_variable_does_not_query_identity(env, sent, monkeypatch):
@@ -303,7 +331,8 @@ def test_welcome_card_without_avatar_variable_does_not_query_identity(env, sent,
 
     monkeypatch.setattr(IdentityDirectory, "preload", unexpected_lookup)
     save_state(env.room, "member_change", enabled=True, config={
-        "card_enabled": True, "card_url": "https://example.com/rules", "card_thumb_url": "https://example.com/cover.jpg",
+        "card_enabled": True, "card_url": "https://example.com/rules",
+        "card_thumb_source": "url", "card_thumb_url": "https://example.com/cover.jpg",
     })
     event = _join_event()
     apply_event(env.db, env.channel, event, env.conversation)

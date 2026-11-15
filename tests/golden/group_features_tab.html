@@ -276,9 +276,17 @@
 <small>支持上述变量;替换后必须以 http:// 或 https:// 开头;群成员手机能打开才能点开</small>
 </label>
 <label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
-<span class="gf-field-label">缩略图地址</span>
+<span class="gf-field-label">缩略图来源</span>
+<select name="cfg_card_thumb_source">
+<option value="url">自定义图片 URL</option>
+<option value="member_avatar" selected>新成员头像</option>
+</select>
+<small>选择新成员头像后自动使用该新人的已同步微信头像，无需填写地址；未获取头像时不带缩略图</small>
+</label>
+<label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled" data-gf-show-when="cfg_card_thumb_source" data-gf-show-value="url" hidden>
+<span class="gf-field-label">自定义图片 URL</span>
 <input type="text" name="cfg_card_thumb_url" value="示例值-card_thumb_url" />
-<small>填 {avatar_url} 使用新成员已同步的微信头像;未获取头像时不带缩略图。也可填写 http:// 或 https:// 图片直链,留空不显示图片</small>
+<small>填写 http:// 或 https:// 图片直链，留空不显示图片；切换来源会保留已填地址</small>
 </label>
 </div>
 </section>

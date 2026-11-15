@@ -78,8 +78,14 @@ FEATURE = register(
                 hint="支持上述变量;替换后必须以 http:// 或 https:// 开头;群成员手机能打开才能点开",
             ),
             ConfigField(
-                "card_thumb_url", "缩略图地址", group="欢迎卡片", depends_on="card_enabled",
-                hint="填 {avatar_url} 使用新成员已同步的微信头像;未获取头像时不带缩略图。也可填写 http:// 或 https:// 图片直链,留空不显示图片",
+                "card_thumb_source", "缩略图来源", kind="select", default="url", group="欢迎卡片", depends_on="card_enabled",
+                options=(("url", "自定义图片 URL"), ("member_avatar", "新成员头像")),
+                hint="选择新成员头像后自动使用该新人的已同步微信头像，无需填写地址；未获取头像时不带缩略图",
+            ),
+            ConfigField(
+                "card_thumb_url", "自定义图片 URL", group="欢迎卡片", depends_on="card_enabled",
+                show_when=("card_thumb_source", "url"),
+                hint="填写 http:// 或 https:// 图片直链，留空不显示图片；切换来源会保留已填地址",
             ),
         ),
     )
@@ -125,10 +131,13 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
         replies.append(text_reply(reply_text))
     if change_type == "join" and ctx.config.get("card_enabled"):
         card_members = members[:MAX_WELCOME_CARDS]
-        if any("{avatar_url}" in str(ctx.config.get(field) or "") for field in WELCOME_TEMPLATE_FIELDS):
+        use_member_avatar = ctx.config.get("card_thumb_source") == "member_avatar"
+        # 头像模式忽略保留的自定义 URL；其他卡片字段仍支持现有头像变量。
+        template_fields = WELCOME_TEMPLATE_FIELDS[:-1] if use_member_avatar else WELCOME_TEMPLATE_FIELDS
+        if use_member_avatar or any("{avatar_url}" in str(ctx.config.get(field) or "") for field in template_fields):
             from app.services.identity_directory import IdentityDirectory
 
-            # 只在真正使用头像变量时查询，且按新人 ID 批量读取当前渠道、本群资料。
+            # 只在选中成员头像或生效模板使用头像变量时查询，按新人 ID 批量读取本群资料。
             # 身份目录会用同渠道好友头像补缺，不能取事件发送者、邀请人或其他群的成员头像。
             directory = IdentityDirectory(ctx.db)
             group_id = str(ctx.chatroom.external_id)
@@ -163,12 +172,15 @@ def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]
             return WELCOME_VARIABLE.sub(lambda match: variables[match.group(1)], str(template or ""))
 
         try:
+            # 缩略图严格按显式来源选择。头像缺失时不改用已保存的自定义 URL，
+            # URL 模式则继续复用同一模板替换入口，避免出现两套发送逻辑。
+            thumb_url = avatar_url if config.get("card_thumb_source") == "member_avatar" else fill(config.get("card_thumb_url"))
             cards.append(
                 link_reply(
                     url=fill(config.get("card_url")),
                     title=fill(config.get("card_title")),
                     description=fill(config.get("card_desc")),
-                    thumb_url=fill(config.get("card_thumb_url")),
+                    thumb_url=thumb_url,
                 )
             )
         except PluginReplyError as exc:

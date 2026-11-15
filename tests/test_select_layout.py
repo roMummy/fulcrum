@@ -20,6 +20,9 @@ def browser():
     executable = next((path for path in (
         Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
         Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+        # 本地 Linux 验证复用已安装浏览器，避免因没有 Playwright 下载副本而跳过定向检查。
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/chromium"),
     ) if path.exists()), None)
     with playwright.sync_playwright() as runtime:
         try:
@@ -131,5 +134,38 @@ def test_dropdown_near_modal_bottom_opens_up_and_only_scrolls_its_options(browse
         assert panel.evaluate("node => node.scrollTop <= node.firstElementChild.offsetTop")
         page.locator(".ui-select-trigger").press("Escape")
         assert not panel.is_visible()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_input_scroll_keeps_dropdown_open_and_ancestor_scroll_closes_it(browser, width):
+    """长 URL 失焦回滚不应误关来源菜单，页面或弹窗容器滚动仍需收起菜单。"""
+
+    page = browser.new_page(viewport={"width": width, "height": 844}, reduced_motion="reduce")
+    try:
+        page.set_content('''<div style="height:240px;overflow:auto" id="container">
+          <input id="url" value="https://example.com/very-long-custom-image-url.jpg">
+          <label>缩略图来源<select><option>自定义图片 URL</option><option>新成员头像</option></select></label>
+          <div style="height:600px"></div></div><div style="height:1600px"></div>''')
+        page.add_style_tag(path=str(ROOT / "app/static/css/style.css"))
+        page.add_script_tag(path=str(ROOT / "app/static/js/select.js"))
+        trigger, panel = page.locator(".ui-select-trigger"), page.locator(".ui-select-panel")
+        trigger.click()
+        playwright.expect(panel).to_be_visible()
+        # 模拟浏览器输入框失焦产生的自身滚动，事件不冒泡但会经过全局捕获监听器。
+        page.locator("#url").evaluate('node => node.dispatchEvent(new Event("scroll"))')
+        playwright.expect(panel).to_be_visible()
+        panel.evaluate('node => node.dispatchEvent(new Event("scroll"))')
+        playwright.expect(panel).to_be_visible()
+        page.locator("#container").evaluate('node => {node.scrollTop = 40}')
+        playwright.expect(panel).to_be_hidden()
+        # 先稳定触发按钮位置，避免定位产生的祖先滚动与打开动作交错。
+        trigger.scroll_into_view_if_needed()
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        trigger.click()
+        playwright.expect(panel).to_be_visible()
+        page.evaluate('() => window.scrollBy(0, 80)')
+        playwright.expect(panel).to_be_hidden()
     finally:
         page.close()

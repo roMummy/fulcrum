@@ -51,6 +51,9 @@ def _sample_config(feature, index: int) -> dict:
             config[field.key] = min(max(low + 3, low), high)
         elif field.kind == "secret":
             config[field.key] = f"secret-{feature.key}"
+        elif field.kind == "select":
+            # 下拉配置必须使用真实选项，才能覆盖选中态而不是无效值的规整结果。
+            config[field.key] = field.options[-1][0]
         else:
             config[field.key] = f"示例值-{field.key}"
     return config
@@ -100,28 +103,36 @@ def test_group_feature_tab_matches_the_golden_render(feature_page) -> None:
 
 
 def test_the_golden_covers_every_kind_of_field_and_state() -> None:
-    """基准必须覆盖开关/输入框/数字/密钥/文本域和开启/关闭两种状态,否则对比没有意义。"""
+    """基准覆盖开关、文本、数字、密钥、下拉及开启/关闭状态，避免空壳对比。"""
 
     text = GOLDEN.read_text(encoding="utf-8") if GOLDEN.exists() else ""
     if not text:
         pytest.skip("基准文件尚未生成")
     assert 'role="switch"' in text and 'type="number"' in text and 'type="password"' in text and 'type="text"' in text
     assert "已配置，留空则保持不变" in text and " is-on" in text and "data-gf-depends" in text
+    assert '<select name="cfg_card_thumb_source">' in text
+    assert '<option value="member_avatar" selected>新成员头像</option>' in text
 
 
-def test_welcome_card_avatar_variable_is_explained_and_persists_through_the_page(feature_page) -> None:
-    """真实群功能表单必须能保存头像占位符，重新打开时保留变量并给出缺头像时的说明。"""
+@pytest.mark.parametrize("first_source", ["member_avatar", "url"])
+def test_welcome_card_image_source_and_custom_url_persist_through_the_page(feature_page, first_source) -> None:
+    """真实表单可双向切换来源；重新打开正确选中、隐藏 URL，并始终保留已填地址。"""
 
     client, channel_id, room_id = feature_page
     csrf = _login(client, "admin")
     base = f"/channels/{channel_id}/chatrooms/{room_id}"
-    response = client.post(base + "/features/member_change", data={
-        "enabled": "true", "cfg_notify_join": "true", "cfg_card_enabled": "true",
-        "cfg_card_title": "欢迎 {nickname}", "cfg_card_desc": "{now}",
-        "cfg_card_url": "https://example.com/rules", "cfg_card_thumb_url": "{avatar_url}",
-    }, headers={"X-CSRF-Token": csrf, "X-Requested-With": "fetch"})
-    assert response.status_code == 200 and response.json()["ok"] is True
-    html = client.get(base + "?tab=features").text
-    assert 'name="cfg_card_thumb_url" value="{avatar_url}"' in html
-    assert "填 {avatar_url} 使用新成员已同步的微信头像" in html
-    assert "未获取头像时不带缩略图" in html
+    for source in (first_source, "url" if first_source == "member_avatar" else "member_avatar"):
+        response = client.post(base + "/features/member_change", data={
+            "enabled": "true", "cfg_notify_join": "true", "cfg_card_enabled": "true",
+            "cfg_card_title": "欢迎 {nickname}", "cfg_card_desc": "{now}",
+            "cfg_card_url": "https://example.com/rules", "cfg_card_thumb_source": source,
+            "cfg_card_thumb_url": "https://example.com/custom.jpg",
+        }, headers={"X-CSRF-Token": csrf, "X-Requested-With": "fetch"})
+        assert response.status_code == 200 and response.json()["ok"] is True
+        html = client.get(base + "?tab=features").text
+        assert f'<option value="{source}" selected>' in html
+        assert 'name="cfg_card_thumb_url" value="https://example.com/custom.jpg"' in html
+        label = re.search(r'<label[^>]*data-gf-show-when="cfg_card_thumb_source"[^>]*>', html)
+        assert label is not None and 'data-gf-show-value="url"' in label.group()
+        assert (' hidden' in label.group()) == (source == "member_avatar")
+        assert "未获取头像时不带缩略图" in html

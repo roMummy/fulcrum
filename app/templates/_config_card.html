@@ -45,7 +45,7 @@
         {% if section.inputs %}
         <div class="gf-inputs">
           {% for field in section.inputs %}
-          <label class="gf-field{% if field.kind != 'number' %} gf-field-wide{% endif %}"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}>
+          <label class="gf-field{% if field.kind != 'number' %} gf-field-wide{% endif %}"{% if field.depends_on %} data-gf-depends="{{ field.depends_on }}"{% endif %}{% if field.show_when %} data-gf-show-when="{{ field.show_when }}" data-gf-show-value="{{ field.show_value }}"{% endif %}{% if field.hidden %} hidden{% endif %}>
             <span class="gf-field-label">{{ field.label }}</span>
             {% if field.kind == 'number' %}
             <input type="number" name="{{ field.name }}" value="{{ field.value }}"{% if field.minimum is not none %} min="{{ field.minimum }}"{% endif %}{% if field.maximum is not none %} max="{{ field.maximum }}"{% endif %} />
@@ -53,6 +53,11 @@
             <input type="password" name="{{ field.name }}" autocomplete="new-password" placeholder="{{ '已配置，留空则保持不变' if field.configured else '未配置，沿用租户统一设置' }}" />
             {% elif field.kind == 'textarea' %}
             <textarea name="{{ field.name }}" rows="4" maxlength="2000">{{ field.value }}</textarea>
+            {% elif field.kind == 'select' %}
+            {# 下拉只渲染声明选项，使用当前配置标记选中项，保存仍走统一表单。 #}
+            <select name="{{ field.name }}">
+              {% for value, label in field.options %}<option value="{{ value }}"{% if field.value == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
             {% else %}
             <input type="text" name="{{ field.name }}" value="{{ field.value }}" />
             {% endif %}

@@ -23,7 +23,10 @@
   });
   window.addEventListener("resize", closeOpen);
   document.addEventListener("scroll", (event) => {
-    if (openInstance && event.target !== openInstance.panel) closeOpen();
+    // 只有页面或触发按钮的祖先滚动才会改变菜单位置，此时需要关闭。
+    // 长 URL 输入框失焦可能触发自身的横向回滚，不能误关刚打开的来源菜单；
+    // 选项列表自身和其他控件的滚动同样不影响触发按钮，保持正常展开。
+    if (openInstance && event.target instanceof Node && event.target.contains(openInstance.root)) closeOpen();
   }, true);
 
   class UiSelect {

@@ -6294,13 +6294,19 @@ select.ui-select-native {
   grid-column: 1 / -1;
 }
 
+/* 配置字段使用 grid 布局，需显式保证 hidden 仍生效；来源切换只隐藏字段，不清空值。 */
+.gf-field[hidden] {
+  display: none;
+}
+
 .gf-field-label {
   color: var(--text-soft);
   font-size: 13px;
   font-weight: 500;
 }
 
-.gf-field input {
+.gf-field input,
+.gf-field select:not(.ui-select-native) {
   width: 100%;
   min-height: 40px;
   padding: 8px 12px;
@@ -6310,11 +6316,13 @@ select.ui-select-native {
   border-radius: var(--radius-md);
 }
 
-.gf-field input:hover {
+.gf-field input:hover,
+.gf-field select:not(.ui-select-native):hover {
   border-color: var(--border-strong);
 }
 
-.gf-field input:focus-visible {
+.gf-field input:focus-visible,
+.gf-field select:not(.ui-select-native):focus-visible {
   border-color: var(--primary);
   outline: 0;
   box-shadow: 0 0 0 4px var(--focus);

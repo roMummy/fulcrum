@@ -47,6 +47,12 @@
         var dependency = card.querySelector('input[type="checkbox"][name="' + el.dataset.gfDepends + '"]');
         el.classList.toggle("is-dim", !!dependency && !dependency.checked);
       });
+      // 来源选择只控制字段可见性，不禁用或清空输入，确保隐藏的自定义 URL
+      // 仍随 FormData 保存；切回 URL 模式及刷新页面后都能继续使用原地址。
+      card.querySelectorAll("[data-gf-show-when]").forEach(function (el) {
+        var dependency = card.elements.namedItem(el.dataset.gfShowWhen);
+        el.hidden = !dependency || dependency.value !== el.dataset.gfShowValue;
+      });
       // 运行模式:选中的那一项高亮
       card.querySelectorAll(".gf-mode").forEach(function (label) {
         var radio = label.querySelector('input[type="radio"]');
