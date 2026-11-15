@@ -168,7 +168,9 @@
     selectedKey = node.key;
     const fields = {name: node.data.name, id: node.data.externalId,
       status: `${node.data.role} · ${node.data.status}`, inviter: node.data.inviter,
-      source: node.data.source || '未知', time: node.data.recordedAt, count: `${node.data.directInvites} 人`};
+      source: node.data.source || '未知', joined: node.data.joinedAt,
+      time: node.data.fetchedAt, 'time-label': node.data.timeLabel,
+      description: node.data.description || '暂无入群说明', count: `${node.data.directInvites} 人`};
     Object.entries(fields).forEach(([key, value]) => {
       find(`[data-invitation-detail-${key}]`).textContent = value;
     });
@@ -387,4 +389,102 @@
     if (autoFit) fit();
     else applyView();
   });
+})();
+
+/* 邀请同步只操作已有进度区域。手机任务由服务端续排，关闭页面不影响执行；
+ * 新关系由“更新图谱”明确载入，避免同步完成时突然打断正在拖动或查看的成员。 */
+(() => {
+  const panel = document.querySelector('[data-invitation-graph][data-invitation-sync-url]');
+  if (!panel) return;
+  const find = (selector) => panel.querySelector(selector);
+  const form = find('[data-invitation-sync-form]');
+  const start = find('[data-invitation-sync-start]');
+  const box = find('[data-invitation-sync]');
+  const summary = find('[data-invitation-sync-summary]');
+  const counts = find('[data-invitation-sync-counts]');
+  const progress = find('[data-invitation-sync-progress]');
+  const refresh = find('[data-invitation-sync-refresh]');
+  const url = panel.dataset.invitationSyncUrl;
+  let run = panel.dataset.syncRun;
+  let baseline = Number(panel.dataset.syncCompleted);
+  let running = panel.dataset.syncStatus === 'running';
+  let timer;
+  let stopped = false;
+  let controller;
+
+  function render(data) {
+    if (data.run_id !== run) {
+      run = data.run_id;
+      baseline = 0;
+    }
+    running = data.status === 'running';
+    // 使用 textContent 接收查询结果，昵称、说明和错误文本都不能进入 HTML 执行上下文。
+    summary.textContent = data.summary;
+    counts.textContent = `本轮查到邀请人 ${data.known} 人 · 未知 ${data.unknown} 人 · 失败 ${data.failed} 人`;
+    counts.hidden = data.status === 'idle';
+    progress.max = Math.max(1, data.total);
+    progress.value = data.completed;
+    progress.hidden = !running;
+    refresh.hidden = data.completed <= baseline;
+    if (start) {
+      start.disabled = running || box.dataset.unavailable === 'true';
+      start.textContent = running ? '正在同步…' : '重新同步邀请关系';
+    }
+    if (!running && !refresh.hidden) summary.textContent += '，点击“更新图谱”查看新资料';
+  }
+
+  async function request(options = {}) {
+    controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store',
+        ...options, headers: {Accept: 'application/json'}, signal: controller.signal});
+      if (response.redirected) throw new Error('登录状态已过期，请刷新页面后重试');
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('暂时无法读取同步进度');
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.summary || data.detail || '邀请资料同步失败');
+      return data;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function schedule(delay = 2000) {
+    clearTimeout(timer);
+    if (running && !stopped) timer = setTimeout(poll, delay);
+  }
+
+  async function poll() {
+    try {
+      render(await request());
+      schedule();
+    } catch (error) {
+      if (stopped) return;
+      summary.textContent = `${error.message}；5 秒后重试，后台同步会继续`;
+      schedule(5000);
+    }
+  }
+
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (running || start.disabled) return;
+    start.disabled = true;
+    summary.textContent = '正在提交邀请资料同步…';
+    try {
+      render(await request({method: 'POST', body: new FormData(form)}));
+      schedule();
+    } catch (error) {
+      summary.textContent = error.message;
+      start.disabled = false;
+    }
+  });
+  refresh.addEventListener('click', () => window.location.reload());
+  window.addEventListener('pagehide', () => {
+    stopped = true;
+    clearTimeout(timer);
+    controller?.abort();
+  });
+  // 从放大弹窗返回或浏览器恢复页面时无需重新开始同步，继续读取同一服务端轮次即可。
+  window.addEventListener('pageshow', () => { stopped = false; schedule(); });
+  schedule();
 })();

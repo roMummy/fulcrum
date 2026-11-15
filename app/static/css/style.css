@@ -1481,6 +1481,47 @@ code {
   font-weight: 600;
 }
 
+/* 同步工具与状态共用后台的轻量表面，窄屏自然换行，不挤占图谱画布。 */
+.invitation-actions,
+.invitation-sync-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.invitation-actions form {
+  margin: 0;
+}
+
+.invitation-sync {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+
+.invitation-sync p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.invitation-sync progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin: 10px 0;
+  accent-color: var(--primary-strong);
+}
+
+.invitation-sync .muted-text,
+.invitation-time-hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
 .invitation-toolbar {
   align-items: flex-end;
   margin: 16px 0 12px;
@@ -1863,6 +1904,14 @@ code {
   color: var(--text-soft);
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.invitation-inspector-description {
+  grid-column: 1 / -1;
+}
+
+.invitation-inspector-description dd {
+  white-space: pre-wrap;
 }
 
 .invitation-unlinked {

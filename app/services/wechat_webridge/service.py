@@ -762,6 +762,10 @@ def _poll_maintenance(db: Session, channel: Channel) -> None:
     from app.services.wechat_webridge import member_directory
 
     member_directory.retry_due(db, channel)
+    # 邀请资料只恢复用户主动发起的轮次，不能因打开页面或手机上线就遍历所有群查询。
+    from app.services.wechat_webridge import invitation_sync
+
+    invitation_sync.resume_channel(db, channel)
 
 
 def _enqueue_device_status(db: Session, channel: Channel) -> None:
@@ -1078,6 +1082,17 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             if notice_error:
                 succeeded = False
                 command_error = notice_error
+        if saved_command.get("type") == "room_member_join_info":
+            from app.services.wechat_webridge import invitation_sync
+
+            invitation_error = invitation_sync.save_result(db, channel, job, inner_result, ok=succeeded)
+            if invitation_error == invitation_sync.ALREADY_SETTLED:
+                # 同请求的另一个回报已完成提交，释放本次群锁并返回一致的终态 ACK。
+                db.commit()
+                return {"ok": True, "deduplicated": True, "job_id": int(job.id), "status": job.status}
+            if invitation_error:
+                succeeded = False
+                command_error = invitation_error
         command = saved_command
         command_type = text(command.get("type") or command.get("command_name"))
         if command_type == "official_accounts":
@@ -1116,6 +1131,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
                 official_accounts.after_result(db, channel, data, result)
             settle_outbound_message(db, job, ok=True, result=result)
             complete_job(db, job, result={"webridge": _compact_result_for_storage(payload, counts)})
+            if command_type == "room_member_join_info":
+                invitation_sync.after_result(db, channel, job)
             _persist_friend_operation(db, channel, job)
             logger.info("webridge command completed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id})
             return {"ok": True, "job_id": int(job.id), "status": "completed"}
@@ -1128,6 +1145,8 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
             member_directory.after_result(db, channel, text(as_object(failed_command.get("params")).get("room_id")), complete=False)
         settle_outbound_message(db, job, ok=False, error=command_error)
         fail_job_terminal(db, job, error_message=command_error, result={"webridge": payload})
+        if command_type == "room_member_join_info":
+            invitation_sync.after_result(db, channel, job)
         _persist_friend_operation(db, channel, job)
         logger.error("webridge command failed", extra={"channel_id": channel.id, "job_id": job.id, "request_id": request_id, "error_code": command_error})
         return {"ok": True, "job_id": int(job.id), "status": "failed"}

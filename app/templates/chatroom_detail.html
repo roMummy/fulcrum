@@ -131,7 +131,7 @@
         <td>{{ item.display_name }}</td>
         <td class="col-compact">{% if item.role in ('owner', 'admin') %}<span class="chip {{ 'chip-muted' if item.status == 'left' else ('chip-success' if item.role == 'owner' else 'chip-outline') }}">{{ item.role_label }}</span>{% else %}{{ item.role_label }}{% endif %}</td>
         <td class="col-compact">{{ item.status_label }}</td>
-        <td class="member-inviter">{% if item.inviter.known %}<span title="{{ item.inviter.external_id }}{% if item.inviter.recorded_at %} · 记录于 {{ item.inviter.recorded_at|bj_time }}{% endif %}">{{ item.inviter.name }}</span><div class="muted-text">{{ item.inviter.source_label }}</div>{% else %}<span class="muted-text">未知</span>{% endif %}</td>
+        <td class="member-inviter">{% if item.inviter.known %}<span title="{{ item.inviter.external_id }} · 入群时间 {{ item.inviter.joined_at|bj_time if item.inviter.joined_at else '未知' }}{% if item.inviter.recorded_at %} · {{ item.inviter.time_label }} {{ (item.inviter.fetched_at or item.inviter.recorded_at)|bj_time }}{% endif %}">{{ item.inviter.name }}</span><div class="muted-text">{{ item.inviter.source_label }}</div>{% else %}<span class="muted-text">未知</span>{% endif %}</td>
         {% if detail.show_points %}<td class="col-compact">{{ item.points }} <a class="btn btn-small btn-secondary" href="/points?group_id={{ detail.chatroom_external_id|urlencode }}&q={{ (item.nickname or item.member_external_id)|urlencode }}"><span class="i i-sliders" aria-hidden="true"></span><span>调整</span></a></td>{% endif %}
         <td class="col-time">{{ item.last_active_at|bj_time if item.last_active_at else '-' }}{% if item.last_active_label %}<div class="muted-text">{{ item.last_active_label }}</div>{% endif %}</td>
       </tr>

@@ -182,6 +182,7 @@ from app.services.identity_directory import IdentityDirectory, _avatar_from_extr
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge import directory_sync as webridge_directory_sync
+from app.services.wechat_webridge import invitation_sync as webridge_invitation_sync
 from app.services.wechat_webridge import wakeup as webridge_wakeup
 from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, websocket_url as webridge_websocket_url, initialize_connection as initialize_webridge_connection
 from app.services.guga_agent.access import account_info as guga_account_info, connection_url as guga_connection_url, initialize_connection as initialize_guga_connection
@@ -2445,6 +2446,9 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
         detail["profile"] = build_chatroom_profile(channel, chatroom, detail["members"])
         # 图谱与成员表使用同一份邀请快照；未知成员只分组展示，不推断额外邀请关系。
         detail["invitations"] = build_invitation_graph(detail["members"])
+        # 读取能力提示与已保存的进度，页面 GET 绝不触发逐成员手机查询。
+        detail["invitation_sync"] = webridge_invitation_sync.view(chatroom)
+        detail["invitation_sync_reason"] = webridge_invitation_sync.support_reason(channel, chatroom)
         # 群消息只在消息中心里有一份:这里给出直达这个群会话的入口,不再自带一张最近 30 条的表
         group_conversation_id = db.scalar(
             select(Conversation.id).where(Conversation.channel_id == channel.id, Conversation.external_id == chatroom.external_id)
@@ -3598,6 +3602,54 @@ async def issue_workwechat_cloud_poll_authorization_code_action(request: Request
         message = f"企微云端授权码：{code}（24小时内使用一次）"
         record_audit(db, "channel.workwechat.cloud-poll.authorization-code", "channel", channel.id, "生成企微云端授权码")
         return RedirectResponse(url=f"/channels/{channel.id}?notice={quote(message)}", status_code=303)
+    finally:
+        db.close()
+
+
+def _invitation_sync_target(db: Session, channel_id: int, chatroom_id: int) -> tuple[Channel, Chatroom]:
+    """同步和进度共用同一归属校验，不允许将其他渠道或租户的群资料混入当前图谱。"""
+    channel = get_channel(db, channel_id)
+    if not channel or channel.channel_type != "wechat_webridge":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    room = db.get(Chatroom, chatroom_id)
+    if not room or room.channel_id != channel.id or room.bot_id != channel.bot_id:
+        raise HTTPException(status_code=404, detail="Chatroom not found")
+    return channel, room
+
+
+@app.get("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/sync")
+async def chatroom_invitation_sync_status(request: Request, channel_id: int, chatroom_id: int):
+    """只读进度供成员页恢复展示；GET 不修改进度，不排队、不重试。"""
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        _, room = _invitation_sync_target(db, channel_id, chatroom_id)
+        return JSONResponse({"ok": True, **webridge_invitation_sync.view(room)}, headers={"Cache-Control": "no-store"})
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/sync")
+async def sync_chatroom_invitations_action(request: Request, channel_id: int, chatroom_id: int):
+    """运营人员明确操作后才开始批量读取；CSRF、能力检查和群锁在入队之前完成。"""
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        await _require_operation_csrf(db, request)
+        channel, room = _invitation_sync_target(db, channel_id, chatroom_id)
+        return_url = f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=members"
+        try:
+            result = webridge_invitation_sync.request_sync(db, channel, room)
+        except ValueError as exc:
+            if _operation_json_requested(request):
+                return JSONResponse({"ok": False, "summary": str(exc)}, status_code=400)
+            return _completed_operation_response(request, str(exc), return_url, ok=False)
+        db.commit()
+        webridge_wakeup.notify(int(channel.id))
+        record_audit(db, "channel.wechat_webridge.chatroom.invitations.sync", "chatroom", room.id, result["summary"])
+        if _operation_json_requested(request):
+            return JSONResponse({"ok": True, **result}, headers={"Cache-Control": "no-store"})
+        return RedirectResponse(url=return_url, status_code=303)
     finally:
         db.close()
 

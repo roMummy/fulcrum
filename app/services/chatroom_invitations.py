@@ -1,6 +1,6 @@
 """群邀请关系的唯一快照、系统消息证据及无递归层级图谱。
 
-邀请边只使用明确成员 ID，昵称只作显示；成员资料优先于系统消息，空快照和旧消息
+邀请边只使用明确成员 ID，昵称只作显示；入群资料优先于普通资料和系统消息，空快照和旧消息
 不能清空已知关系。查看图谱不改数据库，历史补查也不修改成员在群状态。
 """
 
@@ -22,7 +22,9 @@ from app.services.account_identity import account_identity
 from app.services.chatroom_directory import get_or_create_member
 from app.services.plugin_schemas import parse_config_json
 
-SOURCE_LABELS = {'member_profile': '成员资料', 'system_message': '入群系统消息'}
+JOIN_INFO_SOURCE = 'webridge_join_info'
+SOURCE_LABELS = {JOIN_INFO_SOURCE: '微桥入群资料', 'member_profile': '成员资料', 'system_message': '入群系统消息'}
+SOURCE_PRIORITY = {JOIN_INFO_SOURCE: 3, 'member_profile': 2, 'system_message': 1}
 HISTORY_LIMIT = 2000
 
 
@@ -44,7 +46,10 @@ def member_invitation(member: ChatroomMember) -> dict[str, Any]:
     if not isinstance(saved, dict) or not isinstance(saved.get('source'), str) or saved['source'] not in SOURCE_LABELS:
         return {}
     inviter = _person_id(saved.get('inviter_external_id'))
-    if not inviter or inviter == member.member_external_id:
+    # 新接口也可能只返回入群说明和时间。允许保存这种未知快照，但它不会产生邀请边，
+    # 也不能凭来源优先级挡住之后取得的明确系统邀请证据。
+    unknown_profile = saved['source'] == JOIN_INFO_SOURCE and not saved.get('inviter_external_id')
+    if (not inviter and not unknown_profile) or inviter == member.member_external_id:
         return {}
     return {**saved, 'inviter_external_id': inviter}
 
@@ -52,18 +57,23 @@ def member_invitation(member: ChatroomMember) -> dict[str, Any]:
 def save_member_invitation(
     member: ChatroomMember, inviter_id: str, *, source: str, recorded_at: datetime,
     method: str = 'invite', event_key: str = '', inviter_name: str = '',
+    joined_at: datetime | None = None, fetched_at: datetime | None = None, description: str = '',
 ) -> bool:
-    """保存一条可核实的邀请边，返回是否更新；空字段、跨租户和较低优先级证据不覆盖。"""
+    """保存唯一邀请证据；真实入群时间与资料获取时间分别保存，缺失时绝不相互填充。"""
+    unknown_profile = source == JOIN_INFO_SOURCE and not inviter_id
     inviter_id = _person_id(inviter_id)
-    if (not inviter_id or inviter_id == member.member_external_id
-            or source not in SOURCE_LABELS or method not in ('invite', 'qr')):
+    if ((not inviter_id and not unknown_profile) or inviter_id == member.member_external_id
+            or source not in SOURCE_LABELS or method not in ('invite', 'qr', 'unknown')
+            or method == 'unknown' and source != JOIN_INFO_SOURCE):
         return False
     if member.tenant_id != require_tenant_id():
         return False
     previous = member_invitation(member)
     recorded_at = ensure_shanghai_datetime(recorded_at)
     if previous:
-        if previous['source'] == 'member_profile' and source != 'member_profile':
+        if previous['inviter_external_id'] and (
+            not inviter_id or SOURCE_PRIORITY[previous['source']] > SOURCE_PRIORITY[source]
+        ):
             return False
         if previous['source'] == source:
             try:
@@ -82,6 +92,16 @@ def save_member_invitation(
         'recorded_at': recorded_at.isoformat(), 'event_key': str(event_key or '')[:128],
         'inviter_name': str(inviter_name or '')[:255],
     }
+    if source == JOIN_INFO_SOURCE:
+        # 相同邀请人的新快照缺字段时保留已有实际时间；换了邀请人则不能挪用旧时间。
+        same_person = previous.get('inviter_external_id') == inviter_id
+        saved.update({
+            'joined_at': ensure_shanghai_datetime(joined_at).isoformat() if joined_at else (
+                previous.get('joined_at') if same_person else None
+            ),
+            'fetched_at': ensure_shanghai_datetime(fetched_at).isoformat() if fetched_at else None,
+            'description': str(description or (previous.get('description') if same_person else '') or '')[:1000],
+        })
     serialized = json.dumps({**parse_config_json(member.extra_json), 'invitation': saved}, ensure_ascii=False, sort_keys=True)
     if len(serialized.encode('utf-8')) > BYTE_LIMIT:
         return False
@@ -243,9 +263,17 @@ def build_invitation_graph(members: list[dict[str, Any]]) -> dict[str, Any]:
             if saved.get('method') == 'qr':
                 source_label += ' · 扫码来源'
             row['inviter'] = {'known': True, 'name': nodes[inviter]['name'], 'external_id': inviter,
-                              'source_label': source_label, 'recorded_at': saved.get('recorded_at')}
+                              'source_label': source_label}
         else:
-            row['inviter'] = {'known': False, 'name': '未知', 'external_id': '', 'source_label': '', 'recorded_at': None}
+            row['inviter'] = {'known': False, 'name': '未知', 'external_id': '',
+                              'source_label': SOURCE_LABELS.get(source, '') if isinstance(source, str) else ''}
+        # 只有来源合法的标准证据才能进入详情；未知邀请人也可查看接口明确返回的入群说明。
+        evidence = saved if isinstance(source, str) and source in SOURCE_LABELS else {}
+        row['inviter'].update({
+            'recorded_at': evidence.get('recorded_at'), 'joined_at': evidence.get('joined_at'),
+            'fetched_at': evidence.get('fetched_at'), 'description': evidence.get('description', ''),
+            'time_label': '资料获取时间' if source in (JOIN_INFO_SOURCE, 'member_profile') else '证据记录时间',
+        })
         parents[key] = inviter or None
     for key in nodes:
         parents.setdefault(key, None)

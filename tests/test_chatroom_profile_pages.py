@@ -221,6 +221,67 @@ def test_incoming_invitation_is_recorded_with_member_notifications_disabled(prof
         assert json.loads(member.extra_json)['invitation']['inviter_external_id'] == 'wxid_owner'
 
 
+def test_invitation_sync_route_progress_and_real_result_details(profile_page_context):
+    """真实页面和 POST 共用进度；partial 可建边，时间未知、接口说明安全转义。"""
+    client, ids, channel_id, room_id = profile_page_context
+    with ids['factory']() as db:
+        db.get(Channel, channel_id).runtime_info_json = json.dumps({'webridge': {
+            **IDENTITY, 'capabilities': ['room_member_join_info'],
+        }})
+        db.commit()
+    csrf = _login(client, 'operator')
+    base = f'/channels/{channel_id}/chatrooms/{room_id}'
+    path = base + '/invitations/sync'
+    page = client.get(base + '?tab=members')
+    assert page.status_code == 200 and '同步邀请关系' in page.text
+    assert client.get(path).json()['status'] == 'idle'
+    with ids['factory']() as db:
+        assert db.scalars(select(TaskJob)).all() == []
+    assert client.post(path, data={'csrf_token': 'invalid'}).status_code == 403
+    headers = {'Accept': 'application/json'}
+    response = client.post(path, data={'csrf_token': csrf}, headers=headers)
+    assert response.status_code == 200 and response.json()['total'] == 5
+    repeat = client.post(path, data={'csrf_token': csrf}, headers=headers)
+    assert repeat.json()['run_id'] == response.json()['run_id']
+    assert client.get(path).headers['cache-control'] == 'no-store'
+    with tenant_scope(ids['alpha']), tenant_session(ids['factory']) as db:
+        jobs = list(db.scalars(select(TaskJob)))
+        assert len(jobs) == 3
+        job = jobs[0]
+        job.status = 'running'
+        db.commit()
+        command = parse_job_payload(job)['command']
+        assert command['params']['wxid'] != 'wxid_left'
+        service.accept_command_result(db, db.get(Channel, channel_id), {**IDENTITY,
+            'request_id': command['request_id'], 'ok': True, 'result': {
+                'room_id': 'profile@chatroom', 'wxid': command['params']['wxid'], 'status': 'partial',
+                'inviter_wxid': 'wxid_inviter', 'inviter_name': '名单外邀请人', 'join_time': None,
+                'join_type': 'unknown', 'join_description': '<script>unsafe</script>扫描入群',
+            }})
+    page = client.get(base + '?tab=members')
+    assert '已知 1 / 6 人' in page.text and '名单外邀请人' in page.text
+    assert 'data-joined-at="未知"' in page.text and '微桥入群资料' in page.text
+    assert '&lt;script&gt;unsafe&lt;/script&gt;扫描入群' in page.text and '<script>unsafe</script>' not in page.text
+    assert '资料获取时间' in page.text and '入群时间' in page.text and '入群说明' in page.text
+    readonly_csrf = _login(client, 'readonly')
+    assert client.get(path).status_code == 200
+    assert client.post(path, data={'csrf_token': readonly_csrf}).status_code == 403
+    readonly = client.get(base + '?tab=members')
+    assert 'data-invitation-sync-form' not in readonly.text
+
+
+def test_invitation_sync_without_phone_capability_is_explicit_and_does_not_enqueue(profile_page_context):
+    client, ids, channel_id, room_id = profile_page_context
+    csrf = _login(client, 'admin')
+    base = f'/channels/{channel_id}/chatrooms/{room_id}'
+    page = client.get(base + '?tab=members')
+    assert '当前微桥版本未提供邀请资料读取' in page.text
+    response = client.post(base + '/invitations/sync', data={'csrf_token': csrf}, headers={'Accept': 'application/json'})
+    assert response.status_code == 400 and not response.json()['ok']
+    with ids['factory']() as db:
+        assert db.scalars(select(TaskJob)).all() == []
+
+
 def test_group_profile_and_backfill_reject_other_tenant_and_unsupported_notice_is_explicit(profile_page_context):
     client, ids, channel_id, room_id = profile_page_context
     with ids['factory']() as db:
@@ -241,5 +302,6 @@ def test_group_profile_and_backfill_reject_other_tenant_and_unsupported_notice_i
     for channel_key, room_key in [(channel_id, other_room_id), (other_channel_id, other_room_id)]:
         base = f'/channels/{channel_key}/chatrooms/{room_key}'
         assert client.get(base + '?tab=profile').status_code == 404
-        for action in ('sync', 'invitations/backfill'):
+        assert client.get(base + '/invitations/sync').status_code == 404
+        for action in ('sync', 'invitations/backfill', 'invitations/sync'):
             assert client.post(base + '/' + action, data={'csrf_token': csrf}).status_code == 404
