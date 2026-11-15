@@ -62,13 +62,16 @@ def test_webridge_outbound_message_mapping_covers_media_and_cards(monkeypatch) -
         object(), channel, conversation, {"message_type": "image", "image_url": "https://example.test/a.jpg"}
     )
     service.enqueue_message_command(
-        object(), channel, conversation, {"message_type": "link", "title": "文档", "link_url": "https://example.test"}
+        object(), channel, conversation, {"message_type": "link", "title": "文档", "link_url": "https://example.test",
+                                          "thumb_url": "https://wx.qlogo.cn/mmhead/new-member/132"}
     )
 
     assert captured[0]["payload"]["command"]["type"] == "send_image"
     assert captured[0]["payload"]["command"]["params"]["image_path"].endswith("a.jpg")
     assert captured[1]["payload"]["command"]["type"] == "send_link_card"
     assert captured[1]["payload"]["command"]["params"]["url"] == "https://example.test"
+    # 新人头像沿用标准 thumb_url 传给手机，不能被链接卡片映射丢掉或替换成网页地址。
+    assert captured[1]["payload"]["command"]["params"]["thumb_url"] == "https://wx.qlogo.cn/mmhead/new-member/132"
 
 
 def test_webridge_media_upload_command_contains_attachment_reference(monkeypatch) -> None:

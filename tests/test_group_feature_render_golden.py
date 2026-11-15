@@ -107,3 +107,21 @@ def test_the_golden_covers_every_kind_of_field_and_state() -> None:
         pytest.skip("基准文件尚未生成")
     assert 'role="switch"' in text and 'type="number"' in text and 'type="password"' in text and 'type="text"' in text
     assert "已配置，留空则保持不变" in text and " is-on" in text and "data-gf-depends" in text
+
+
+def test_welcome_card_avatar_variable_is_explained_and_persists_through_the_page(feature_page) -> None:
+    """真实群功能表单必须能保存头像占位符，重新打开时保留变量并给出缺头像时的说明。"""
+
+    client, channel_id, room_id = feature_page
+    csrf = _login(client, "admin")
+    base = f"/channels/{channel_id}/chatrooms/{room_id}"
+    response = client.post(base + "/features/member_change", data={
+        "enabled": "true", "cfg_notify_join": "true", "cfg_card_enabled": "true",
+        "cfg_card_title": "欢迎 {nickname}", "cfg_card_desc": "{now}",
+        "cfg_card_url": "https://example.com/rules", "cfg_card_thumb_url": "{avatar_url}",
+    }, headers={"X-CSRF-Token": csrf, "X-Requested-With": "fetch"})
+    assert response.status_code == 200 and response.json()["ok"] is True
+    html = client.get(base + "?tab=features").text
+    assert 'name="cfg_card_thumb_url" value="{avatar_url}"' in html
+    assert "填 {avatar_url} 使用新成员已同步的微信头像" in html
+    assert "未获取头像时不带缩略图" in html

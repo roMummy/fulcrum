@@ -263,7 +263,7 @@
 <label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
 <span class="gf-field-label">卡片标题</span>
 <input type="text" name="cfg_card_title" value="示例值-card_title" />
-<small>可用变量:{nickname} 新成员昵称,{now} 当前时间</small>
+<small>可用变量:{nickname} 新成员昵称,{now} 当前时间,{avatar_url} 新成员头像地址</small>
 </label>
 <label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
 <span class="gf-field-label">卡片描述</span>
@@ -273,12 +273,12 @@
 <label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
 <span class="gf-field-label">点击后打开的页面</span>
 <input type="text" name="cfg_card_url" value="示例值-card_url" />
-<small>必须以 http:// 或 https:// 开头;群成员手机能打开才能点开</small>
+<small>支持上述变量;替换后必须以 http:// 或 https:// 开头;群成员手机能打开才能点开</small>
 </label>
 <label class="gf-field gf-field-wide" data-gf-depends="cfg_card_enabled">
 <span class="gf-field-label">缩略图地址</span>
 <input type="text" name="cfg_card_thumb_url" value="示例值-card_thumb_url" />
-<small>可留空;以 http:// 或 https:// 开头的图片地址</small>
+<small>填 {avatar_url} 使用新成员已同步的微信头像;未获取头像时不带缩略图。也可填写 http:// 或 https:// 图片直链,留空不显示图片</small>
 </label>
 </div>
 </section>

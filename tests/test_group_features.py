@@ -17,9 +17,10 @@ from sqlalchemy.orm import sessionmaker
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import tenant_session
 from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, TaskJob, WorkWechatContact
 from app.services.group_features import dispatch as dispatch_module
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
+from app.services.group_features.member_change import build_welcome_cards
 from app.services.group_features.registry import all_features, get_feature
 from app.services.group_features.store import get_state, is_enabled, save_state
 from app.services.group_features.view import build_feature_cards, save_from_form
@@ -43,7 +44,7 @@ def env():
     """一个微桥群 + 几个成员;收集 send_replies 的调用以便断言回复内容。"""
 
     engine = create_engine("sqlite://")
-    for table in (Channel, Conversation, Chatroom, ChatroomMember, TaskJob):
+    for table in (Channel, Conversation, Chatroom, ChatroomMember, TaskJob, WorkWechatContact):
         table.__table__.create(engine)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with tenant_scope(1):
@@ -209,3 +210,102 @@ def test_member_change_switches_and_bad_card_url(env, sent):
     # 普通聊天文本与本能力无关:不执行
     sent.clear()
     assert dispatch_group_features(env.db, env.channel, _text_event("大家好"), conversation_id=env.conversation.id) == []
+
+
+def test_welcome_card_avatar_matches_each_new_member_and_current_group(env, sent):
+    """多人入群时逐人取本群头像，缺失时取同渠道好友头像，不误用邀请人的头像。"""
+
+    own_avatar = "https://wx.qlogo.cn/mmhead/member-a/132"
+    friend_avatar = "https://wx.qlogo.cn/mmhead/member-b/132"
+    env.db.add_all([
+        ChatroomMember(tenant_id=1, bot_id=1, channel_id=env.channel.id, chatroom_id=env.room.id,
+                       member_external_id="wxid_a", extra_json=json.dumps({"avatar_url": own_avatar})),
+        WorkWechatContact(tenant_id=1, channel_id=env.channel.id, contact_external_id="wxid_a",
+                         avatar_url="https://example.com/older-friend-avatar.jpg"),
+        WorkWechatContact(tenant_id=1, channel_id=env.channel.id, contact_external_id="wxid_b", avatar_url=friend_avatar),
+        WorkWechatContact(tenant_id=1, channel_id=env.channel.id, contact_external_id="wxid_inviter",
+                         avatar_url="https://example.com/inviter.jpg"),
+    ])
+    env.db.flush()
+    save_state(env.room, "member_change", enabled=True, config={
+        "card_enabled": True, "card_title": "欢迎 {nickname}", "card_url": "https://example.com/rules",
+        "card_desc": "新人头像：{avatar_url}", "card_thumb_url": "{avatar_url}",
+    })
+    event = _join_event()
+    event["message"]["sender_id"] = "wxid_inviter"
+    event["details"]["member_change"]["members"].append({"external_id": "wxid_b", "display_name": "小红"})
+    apply_event(env.db, env.channel, event, env.conversation)
+    dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
+    cards = [reply for reply in sent[0]["replies"] if reply["type"] == "link"]
+    assert [(card["title"], card["thumb_url"]) for card in cards] == [("欢迎 小明", own_avatar), ("欢迎 小红", friend_avatar)]
+    assert cards[0]["description"] == f"新人头像：{own_avatar}"
+    # 补充头像只作用于卡片上下文，不能修改入站事件中的原始证据。
+    assert all("avatar_url" not in item for item in event["details"]["member_change"]["members"])
+
+
+def test_welcome_card_avatar_does_not_use_another_group_or_channel(env, sent):
+    """相同 wxid 在别群或别渠道的资料不能补进当前新成员卡片。"""
+
+    other_room = Chatroom(tenant_id=1, bot_id=1, channel_id=env.channel.id, external_id="other@chatroom", name="其他群")
+    env.db.add(other_room)
+    env.db.flush()
+    env.db.add_all([
+        ChatroomMember(tenant_id=1, bot_id=1, channel_id=env.channel.id, chatroom_id=other_room.id,
+                       member_external_id="wxid_a", extra_json=json.dumps({"avatar_url": "https://example.com/other-group.jpg"})),
+        WorkWechatContact(tenant_id=1, channel_id=env.channel.id + 100, contact_external_id="wxid_a",
+                         avatar_url="https://example.com/other-channel.jpg"),
+    ])
+    env.db.flush()
+    save_state(env.room, "member_change", enabled=True, config={
+        "card_enabled": True, "card_url": "https://example.com/rules", "card_thumb_url": "{avatar_url}",
+    })
+    event = _join_event()
+    apply_event(env.db, env.channel, event, env.conversation)
+    dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
+    cards = [reply for reply in sent[0]["replies"] if reply["type"] == "link"]
+    assert len(cards) == 1 and "thumb_url" not in cards[0]
+
+
+@pytest.mark.parametrize("avatar", ["", "file:///private/avatar.png", "https://user:secret@example.com/avatar.png", "https://["])
+def test_welcome_card_missing_or_invalid_avatar_still_sends_each_card(avatar):
+    """头像缺失或不合法时省略缩略图，后续新成员仍能收到各自的欢迎卡片。"""
+
+    cards = build_welcome_cards({"card_url": "https://example.com/rules", "card_title": "欢迎 {nickname}", "card_thumb_url": "{avatar_url}"}, [
+        {"external_id": "a", "display_name": "小明", "avatar_url": avatar},
+        {"external_id": "b", "display_name": "小红", "avatar_url": "https://example.com/b.jpg"},
+    ])
+    assert len(cards) == 2 and "thumb_url" not in cards[0]
+    assert cards[1]["thumb_url"] == "https://example.com/b.jpg"
+
+
+def test_welcome_card_templates_replace_variables_once_and_keep_custom_urls():
+    """所有卡片字段使用同一轮替换；昵称里的变量外观及用户自定义 URL 不应被再次解释。"""
+
+    avatar = "https://wx.qlogo.cn/mmhead/member/132"
+    member = {"external_id": "a", "display_name": "小明{avatar_url}{now}", "avatar_url": avatar}
+    config = {"card_title": "欢迎 {nickname} {unknown}", "card_desc": "{now}",
+              "card_url": "{avatar_url}", "card_thumb_url": "{avatar_url}"}
+    card = build_welcome_cards(config, [member])[0]
+    assert card["title"] == "欢迎 小明{avatar_url}{now} {unknown}"
+    assert "{now}" not in card["description"]
+    assert card["url"] == avatar and card["thumb_url"] == avatar
+    config.update(card_url="https://example.com/rules", card_thumb_url="https://example.com/custom-cover.jpg")
+    assert build_welcome_cards(config, [member])[0]["thumb_url"] == "https://example.com/custom-cover.jpg"
+
+
+def test_welcome_card_without_avatar_variable_does_not_query_identity(env, sent, monkeypatch):
+    """未使用头像变量时不读取身份目录，不增加已有纯文字/自定义封面卡片的查询成本。"""
+
+    from app.services.identity_directory import IdentityDirectory
+
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("未使用头像变量的欢迎卡片不应查询身份目录")
+
+    monkeypatch.setattr(IdentityDirectory, "preload", unexpected_lookup)
+    save_state(env.room, "member_change", enabled=True, config={
+        "card_enabled": True, "card_url": "https://example.com/rules", "card_thumb_url": "https://example.com/cover.jpg",
+    })
+    event = _join_event()
+    apply_event(env.db, env.channel, event, env.conversation)
+    dispatch_group_features(env.db, env.channel, event, conversation_id=env.conversation.id)
+    assert sent[0]["replies"][1]["thumb_url"] == "https://example.com/cover.jpg"

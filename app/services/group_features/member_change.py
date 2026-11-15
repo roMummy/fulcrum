@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +26,9 @@ logger = get_logger(__name__)
 
 # 每次事件最多给几位新成员发欢迎卡片,防止一次拉很多人时刷屏。
 MAX_WELCOME_CARDS = 3
+# 卡片的文案和地址使用同一组变量；单次匹配避免成员昵称里的花括号被再次当成模板执行。
+WELCOME_TEMPLATE_FIELDS = ("card_title", "card_desc", "card_url", "card_thumb_url")
+WELCOME_VARIABLE = re.compile(r"\{(nickname|now|avatar_url)\}")
 
 JOIN_PATTERNS = (
     '"$names$"加入了群聊',
@@ -65,16 +70,16 @@ FEATURE = register(
             ConfigField("card_enabled", "新成员加入时发送欢迎卡片", kind="bool", default=False, group="欢迎卡片"),
             ConfigField(
                 "card_title", "卡片标题", default="欢迎 {nickname} 加入本群", group="欢迎卡片", depends_on="card_enabled",
-                hint="可用变量:{nickname} 新成员昵称,{now} 当前时间",
+                hint="可用变量:{nickname} 新成员昵称,{now} 当前时间,{avatar_url} 新成员头像地址",
             ),
             ConfigField("card_desc", "卡片描述", default="{now}", group="欢迎卡片", depends_on="card_enabled", hint="可用变量同上"),
             ConfigField(
                 "card_url", "点击后打开的页面", group="欢迎卡片", depends_on="card_enabled",
-                hint="必须以 http:// 或 https:// 开头;群成员手机能打开才能点开",
+                hint="支持上述变量;替换后必须以 http:// 或 https:// 开头;群成员手机能打开才能点开",
             ),
             ConfigField(
                 "card_thumb_url", "缩略图地址", group="欢迎卡片", depends_on="card_enabled",
-                hint="可留空;以 http:// 或 https:// 开头的图片地址",
+                hint="填 {avatar_url} 使用新成员已同步的微信头像;未获取头像时不带缩略图。也可填写 http:// 或 https:// 图片直链,留空不显示图片",
             ),
         ),
     )
@@ -119,7 +124,19 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
     if reply_text:
         replies.append(text_reply(reply_text))
     if change_type == "join" and ctx.config.get("card_enabled"):
-        replies.extend(build_welcome_cards(ctx.config, members))
+        card_members = members[:MAX_WELCOME_CARDS]
+        if any("{avatar_url}" in str(ctx.config.get(field) or "") for field in WELCOME_TEMPLATE_FIELDS):
+            from app.services.identity_directory import IdentityDirectory
+
+            # 只在真正使用头像变量时查询，且按新人 ID 批量读取当前渠道、本群资料。
+            # 身份目录会用同渠道好友头像补缺，不能取事件发送者、邀请人或其他群的成员头像。
+            directory = IdentityDirectory(ctx.db)
+            group_id = str(ctx.chatroom.external_id)
+            directory.preload(ctx.channel.id, [item["external_id"] for item in card_members], group_external_id=group_id)
+            card_members = [{**item, "avatar_url": directory.get(
+                ctx.channel.id, item["external_id"], group_external_id=group_id,
+            )["avatar_url"]} for item in card_members]
+        replies.extend(build_welcome_cards(ctx.config, card_members))
     return replies
 
 
@@ -130,18 +147,28 @@ def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]
     cards: list[dict[str, Any]] = []
     for item in members[:MAX_WELCOME_CARDS]:
         nickname = item.get("display_name") or item.get("external_id") or ""
+        avatar_url = str(item.get("avatar_url") or "").strip()
+        try:
+            # 目录可能尚未返回头像或存有异常地址；只接受未内嵌凭据的 HTTP(S) 地址，
+            # 无效头像按缺失处理，不能让缩略图校验连带丢掉欢迎卡片和后续新成员。
+            avatar = urlsplit(avatar_url)
+            if avatar.scheme.lower() not in {"http", "https"} or not avatar.hostname or avatar.username is not None or avatar.password is not None:
+                avatar_url = ""
+        except ValueError:
+            avatar_url = ""
+        variables = {"nickname": nickname, "now": now_text, "avatar_url": avatar_url}
 
         def fill(template: str) -> str:
-            # 用 replace 而不是 format:配置里可能出现不相干的花括号。
-            return str(template or "").replace("{nickname}", nickname).replace("{now}", now_text)
+            # 只替换声明的变量且不递归处理替换结果，未知花括号和真实昵称均原样保留。
+            return WELCOME_VARIABLE.sub(lambda match: variables[match.group(1)], str(template or ""))
 
         try:
             cards.append(
                 link_reply(
-                    url=str(config.get("card_url") or ""),
+                    url=fill(config.get("card_url")),
                     title=fill(config.get("card_title")),
                     description=fill(config.get("card_desc")),
-                    thumb_url=str(config.get("card_thumb_url") or ""),
+                    thumb_url=fill(config.get("card_thumb_url")),
                 )
             )
         except PluginReplyError as exc:
