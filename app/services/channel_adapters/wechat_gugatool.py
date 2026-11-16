@@ -484,6 +484,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             "kind": kind,
             "is_history": bool(item.get("isHistory")),
             "create_time": self._coerce_int(item.get("createTime")),
+            # 历史补传和实时消息都保留渠道原时间，统一参与十分钟指令时效判断。
+            "timestamp": self._coerce_int(item.get("createTime")),
             "sequence": self._coerce_int(item.get("sequence")),
             "local_message_id": local_message_id,
             "server_message_id": server_message_id,

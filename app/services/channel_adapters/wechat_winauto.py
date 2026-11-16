@@ -103,6 +103,8 @@ class WechatWinAutoAdapter(GenericHttpAdapter):
             "raw_chat_name": self._clean_string(payload.get("chat_name")),
             "raw_sender": self._clean_string(payload.get("sender")),
             "raw_timestamp": payload.get("timestamp"),
+            # 原始时间进入统一时效字段，不能仅作为调试字段保留而绕过过期判断。
+            "timestamp": payload.get("timestamp"),
         }
         merged_details.update({key: value for key, value in details.items() if value not in (None, "")})
         event_type = self._clean_string(payload.get("event_type") or payload.get("event")) or "message"

@@ -146,6 +146,44 @@ def test_query_count_is_constant_when_plugin_count_grows(usage_context):
             event.remove(connection, 'before_cursor_execute', callback)
 
 
+@pytest.mark.parametrize('period', ['24h', '7d', '30d'])
+def test_last_activity_is_independent_of_chart_period_and_ignores_scans(usage_context, period):
+    """最近活动包含实际命中，未命中扫描和未来日志不能把插件推到前面。"""
+
+    _, ids = usage_context
+    now = now_shanghai()
+    called = now - timedelta(days=3)
+    matched = now - timedelta(days=2)
+    with tenant_scope(ids['alpha']), tenant_session(ids['factory']) as db:
+        db.add_all([
+            _log(ids, matched=True, attempted=True, ok=True, status='completed', created_at=called),
+            _log(ids, matched=True, attempted=False, ok=False, status='blocked', created_at=matched),
+            _log(ids, matched=False, attempted=False, ok=False, status='skipped', created_at=now),
+            _log(ids, matched=True, attempted=True, ok=True, status='completed', created_at=now + timedelta(days=1)),
+        ])
+        db.commit()
+        data = build_plugin_usage(db, ['weather', 'empty'], period=period, now=now)['plugins']
+        assert data['weather']['last_activity_at'] == matched.isoformat()
+        assert data['empty']['last_activity_at'] is None
+        assert data['weather']['last_called_at'] == (None if period == '24h' else called.isoformat())
+
+
+def test_last_activity_respects_tenant_scope(usage_context):
+    """其他企业同名插件的新活动不能改变本企业的卡片顺序。"""
+
+    _, ids = usage_context
+    now = now_shanghai()
+    older = now - timedelta(hours=2)
+    with ids['factory']() as db:
+        db.add_all([_log(ids, matched=True, attempted=True, created_at=older),
+            PluginExecutionLog(tenant_id=ids['beta'], plugin_code='weather', matched=True, attempted=True, created_at=now)])
+        db.commit()
+        assert build_plugin_usage(db, ['weather'], now=now)['plugins']['weather']['last_activity_at'] == now.isoformat()
+    with tenant_scope(ids['alpha']), tenant_session(ids['factory']) as db:
+        item = build_plugin_usage(db, ['weather'], now=now)['plugins']['weather']
+        assert item['last_activity_at'] == older.isoformat()
+
+
 def test_dispatch_adapter_records_one_execution_with_ai_source(usage_context):
     """AI 改写沿用分发结果记录，底层原生桥接不再次增加计数。"""
 

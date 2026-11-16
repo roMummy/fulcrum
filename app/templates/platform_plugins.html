@@ -26,11 +26,11 @@
 <p class="pp-note">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
 {{ usage_toolbar('全平台') }}
 
-<section class="pp-grid" data-pp-grid>
+<section class="pp-grid" data-pp-grid data-usage-grid>
   {% for row in rows %}
   {% set plugin = row.plugin %}
   {% set stopped = plugin.platform_status != 'active' %}
-  <article class="pp-card{% if stopped %} is-off{% endif %}" data-pp-card
+  <article class="pp-card{% if stopped %} is-off{% endif %}" data-pp-card data-usage-card
     data-code="{{ plugin.code }}" data-name="{{ plugin.display_name }}"
     data-search="{{ (plugin.display_name ~ ' ' ~ plugin.code ~ ' ' ~ (plugin.description or ''))|lower }}"
     data-stopped="{{ '1' if stopped else '0' }}" data-used="{{ '1' if row.usage.bindings else '0' }}"

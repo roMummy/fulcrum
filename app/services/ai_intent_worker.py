@@ -195,9 +195,14 @@ def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent,
     """记录决策；识别出插件就直接执行，缺参数就追问，聊天则发送人格回复。"""
 
     from app.services.plugin_directory import send_ai_reply
+    from app.services.inbound_policy import expired_message_dispatch
 
     channel = db.get(Channel, int(payload.get("channel_id") or 0))
     event = payload.get("normalized_event") or {}
+    # 慢模型可能跨过消息时限；下发前再次检查，改写指令、追问和聊天共用此出口。
+    expired = expired_message_dispatch(event)
+    if expired is not None:
+        return expired
     message = event.get("message") or {}
     conversation_id = payload.get("conversation_id")
     ai_dispatch.record_decision(

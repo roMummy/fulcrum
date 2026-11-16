@@ -18,6 +18,21 @@
     var period = "24h", controller = null, sequence = 0;
     var chartStates = new WeakMap();
 
+    function sortCards(plugins) {
+      var grid = root.querySelector("[data-usage-grid]");
+      if (!grid) return;
+      // 活动时间独立于图表范围；同一时间或无活动时按初始位置稳定排序。
+      // 移动已有节点保留开关、弹窗和筛选状态，仅移动顺序发生变化的卡片。
+      cards.map(function (card, index) {
+        return {node: card.closest("[data-usage-card]"), index: index,
+          activity: Date.parse(plugins[card.dataset.usagePlugin].last_activity_at) || 0};
+      }).sort(function (first, second) {
+        return second.activity - first.activity || first.index - second.index;
+      }).forEach(function (item, index) {
+        if (grid.children[index] !== item.node) grid.insertBefore(item.node, grid.children[index] || null);
+      });
+    }
+
     function readPoint(card, index) {
       var state = chartStates.get(card);
       if (!state) return;
@@ -124,6 +139,7 @@
         // 即使旧请求已经到达服务器，后返回的旧范围也不能覆盖用户的新选择。
         if (request !== sequence) return;
         cards.forEach(function (card) { render(card, data.plugins[card.dataset.usagePlugin], data.buckets); });
+        sortCards(data.plugins);
         updated.textContent = "更新于 " + data.generated_label;
       } catch (error) {
         if (request !== sequence || error.name === "AbortError") return;

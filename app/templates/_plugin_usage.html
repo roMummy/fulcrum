@@ -1,7 +1,7 @@
 {# 两类插件目录共用统计结构；卡片只携带插件编码，计数由认证后的批量接口提供。 #}
 {% macro usage_toolbar(scope_label) %}
 <div class="plugin-usage-toolbar">
-  <div class="plugin-usage-heading"><strong>调用情况</strong><span>{{ scope_label }}</span></div>
+  <div class="plugin-usage-heading"><strong>调用情况</strong><span>{{ scope_label }} · 最近活动优先</span></div>
   <div class="plugin-usage-controls">
     <div class="plugin-usage-periods" role="group" aria-label="调用统计时间范围">
       {% for value, label in [('24h', '近 24 小时'), ('7d', '近 7 天'), ('30d', '近 30 天')] %}

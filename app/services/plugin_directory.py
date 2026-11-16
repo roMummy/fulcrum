@@ -623,10 +623,14 @@ def _enqueue_ai_intent(
     """
 
     from app.services import ai_dispatch
+    from app.services.inbound_policy import expired_message_dispatch
     from app.services.task_queue import AI_INTENT_JOB, enqueue_job
 
     context = static_plan.context
     try:
+        # 独立的 AI 入队入口也执行时效规则，过期原文不能通过意图改写重新入队。
+        if expired_message_dispatch(normalized_event) is not None:
+            return False
         details = normalized_event.get("details") or {}
         if details.get("ai_rewritten"):
             # 正文已经是 AI 改写出的命令，再不命中就直接放弃，不再二次分析。

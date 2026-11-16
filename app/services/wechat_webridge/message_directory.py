@@ -35,7 +35,7 @@ def observe_message(db: Session, channel: Channel, normalized: dict[str, Any], c
 
     if not is_group_message(normalized, conversation):
         return
-    from app.services.channel_events import _resolve_event_time
+    from app.services.inbound_policy import resolve_event_time
 
     now = now_shanghai()
     # 并发的首批消息只会有一个真正建群,其余回读同一条(数据库唯一约束兜底)
@@ -57,7 +57,7 @@ def observe_message(db: Session, channel: Channel, normalized: dict[str, Any], c
             membership_changed = True
         member_state = service.as_object(directory.extra_object(member.extra_json).get(directory.STATE_KEY))
         missing_sender = missing_sender or member.status != "active" or bool(member_state.get("observed_only")) or not member.nickname or member.nickname == sender_id
-        event_time = _resolve_event_time(normalized)
+        event_time = resolve_event_time(normalized)
         # 延迟到达的旧发言可以补历史活跃时间,不能撤销更新的退群事件。
         if event_time.timestamp() >= float(member_state.get("membership_event_at") or 0):
             if member.status != "active":

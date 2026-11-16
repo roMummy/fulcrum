@@ -334,11 +334,15 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
 
     from app.models.entities import Channel
     from app.services import ai_chat, ai_memory
+    from app.services.inbound_policy import expired_message_dispatch
     from app.services.plugin_directory import build_static_dispatch_plan
 
     channel = db.get(Channel, int(payload.get("channel_id") or 0))
     event = payload.get("normalized_event")
     if channel is None or not isinstance(event, dict):
+        return None
+    # 已有 AI 任务积压时，在准备上下文和请求模型前跳过，避免迟到响应与额外调用。
+    if expired_message_dispatch(event) is not None:
         return None
     plan = build_static_dispatch_plan(db, channel, event)
     resolved = resolve_for_conversation(
