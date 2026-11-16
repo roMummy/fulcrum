@@ -171,7 +171,10 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
     rewritten = json.loads(json.dumps(event, ensure_ascii=False, default=str))
     rewritten.setdefault("message", {})["content"] = command_text
     rewritten.setdefault("details", {})["ai_rewritten"] = True
-    with ai_dispatch.effective_message_content(db, payload.get("message_id"), command_text):
+    # AI 与本群自定义触发词共用唯一的内存消息视图，转换后的命令不得落库。
+    from app.services.plugin_commands import effective_message_content
+
+    with effective_message_content(db, payload.get("message_id"), command_text):
         build_dispatch_report(
             db,
             channel,

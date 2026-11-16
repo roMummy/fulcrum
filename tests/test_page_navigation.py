@@ -70,7 +70,7 @@ def test_the_group_page_sends_messages_to_the_message_center_with_the_conversati
     client, _ids, channel_id, room_id = webridge_group
     _login(client, "admin")
     html = client.get(f"/channels/{channel_id}/chatrooms/{room_id}").text
-    nav = html[html.index('class="tab-bar"'):]
+    nav = html[html.index('class="chatroom-tabs"'):]
     nav = nav[: nav.index("</nav>")]
     assert "/messages?" in nav and "tab=messages" not in nav          # 消息不再是群详情里的一个标签,而是通往消息中心的入口
     assert "本群还没有消息记录" not in html

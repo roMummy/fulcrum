@@ -5831,16 +5831,40 @@ code {
 .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity-id { color: var(--muted, #64748b); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 群详情标签栏：插件 / 成员 / 消息 / 资料 */
-.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border, #e5e7eb); margin: 0 0 16px; flex-wrap: wrap; }
-.tab-bar a { padding: 8px 16px; color: inherit; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.tab-bar a.active { border-bottom-color: #2563eb; font-weight: 600; }
-.plugin-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
-.plugin-row h3 { margin: 0; font-size: 15px; }
-.plugin-row-actions { display: flex; gap: 8px; align-items: center; }
-.plugin-row details { grid-column: 1 / -1; }
-.plugin-row details summary { cursor: pointer; font-size: 13px; }
-@media (max-width: 720px) { .plugin-row { grid-template-columns: 1fr; } }
+/* 群详情使用当前 Soft UI 分段导航，导航自身滚动，手机页面不因计数或长标签溢出。 */
+.chatroom-tabs { display:flex; align-items:center; gap:5px; width:fit-content; max-width:100%; padding:5px; margin:4px 0 24px; background:var(--surface-muted); border-radius:var(--radius-md); overflow-x:auto; }
+.chatroom-tabs a { display:inline-flex; align-items:center; justify-content:center; gap:7px; flex:0 0 auto; min-height:42px; padding:9px 16px; border-radius:12px; color:var(--text-soft); text-decoration:none; white-space:nowrap; }
+.chatroom-tabs a:hover { color:var(--primary-strong); background:var(--surface); }
+.chatroom-tabs a.active { color:var(--primary-strong); background:var(--primary-soft); box-shadow:var(--shadow-card); font-weight:600; }
+.chatroom-tabs a:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+.chatroom-tab-count { padding:1px 7px; font-size:12px; line-height:1.6; border-radius:7px; background:var(--surface); color:var(--muted); }
+.chatroom-tabs .active .chatroom-tab-count { color:var(--primary-strong); }
+.chatroom-plugins-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 18px; }
+.chatroom-plugins-heading h2 { font-size:18px; margin:0 0 5px; }
+.chatroom-plugins-heading p { margin:0; color:var(--muted); font-size:13px; }
+.chatroom-plugin-list { gap:16px; }
+.chatroom-plugin-title { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.chatroom-plugin-summary { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:10px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.chatroom-plugin-source { color:var(--primary-strong); }
+.chatroom-plugin-card .gf-head-copy p { max-width:960px; line-height:1.7; }
+.chatroom-plugin-card .chatroom-plugin-warning { color:var(--warning); }
+/* 停用插件也允许预先编辑，保持表单文字清楚可读。 */
+.gf-card.chatroom-plugin-card:not(.is-on) .gf-body { opacity:1; }
+.chatroom-plugin-card .form-grid textarea { width:100%; min-width:0; resize:vertical; }
+.chatroom-plugin-card textarea[name^="command__"] { min-height:72px; }
+.chatroom-plugin-default-note { color:var(--muted); font-size:12px; margin:0; }
+.chatroom-plugin-default-note a { color:var(--primary-strong); text-underline-offset:3px; }
+.chatroom-plugin-footer { justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.chatroom-plugin-reset-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.chatroom-plugin-feedback { margin:0; color:var(--success); font-size:13px; }
+.chatroom-plugin-feedback.is-error { color:var(--danger); }
+@media (max-width:720px) {
+  .chatroom-tabs { width:100%; margin-bottom:20px; }
+  .chatroom-tabs a { padding:9px 12px; }
+  .chatroom-plugins-heading { align-items:flex-start; flex-direction:column; }
+  .chatroom-plugin-card .gf-head-actions { width:100%; justify-content:space-between; }
+  .chatroom-plugin-footer > .btn { margin-left:auto; }
+}
 
 /* ===== 全局下拉框(由 static/js/select.js 把原生 select 升级而来) =====
  * 触发按钮沿用输入框的底色、边框、圆角和聚焦环;选项面板沿用卡片阴影。

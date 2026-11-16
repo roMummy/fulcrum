@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request, File, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -94,6 +95,9 @@ from app.services.ops import (
 )
 from app.services.group_features.registry import get_feature as get_group_feature
 from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form, toggle_flag as toggle_group_feature_flag
+from app.services.group_plugin_settings import (
+    attach_group_plugin_settings, group_plugin_settings_view, reset_group_plugin_settings, save_group_plugin_settings,
+)
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
 from app.services.plugin_governance import blocked_plugin_codes, tenant_visible_plugins
 from app.services.conversation_kinds import KIND_LABELS, apply_kind_filter, conversation_kind, normalize_kind
@@ -2442,6 +2446,9 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
         # 群头像与列表共用已保存的群资料，避免渠道详情遗漏头像后退回首字占位。
         detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
+        # 群插件卡片展示真正合并后的本群配置，敏感密钥不会进入模板或保存回报。
+        if tab == 'plugins':
+            attach_group_plugin_settings(db, channel, chatroom, detail['bindings'])
         # 资料标签只读取本群已保存的快照；打开页面不自动向设备下发命令。
         detail["profile"] = build_chatroom_profile(channel, chatroom, detail["members"])
         # 图谱与成员表使用同一份邀请快照；未知成员只分组展示，不推断额外邀请关系。
@@ -3970,6 +3977,64 @@ async def toggle_chatroom_feature_action(request: Request, channel_id: int, chat
         db.commit()
         record_audit(db, "channel.chatroom-feature.toggle", "chatroom", chatroom.id, f"{feature_key}.{field}={value} by {user.username}")
         return JSONResponse({"ok": True, "notice": notice})
+    finally:
+        db.close()
+
+
+def _group_plugin_settings_target(db: Session, channel_id: int, chatroom_id: int) -> tuple[Channel, Chatroom]:
+    """结构化配置与恢复共用群归属校验，跨租户或跨渠道均按资源不存在处理。"""
+
+    channel = get_channel(db, channel_id)
+    room = db.get(Chatroom, chatroom_id)
+    if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES or not room or room.channel_id != channel.id:
+        raise HTTPException(status_code=404, detail='未找到当前群')
+    return channel, room
+
+
+@app.post('/channels/{channel_id}/chatrooms/{chatroom_id}/plugins/{bot_plugin_id}/settings')
+async def save_chatroom_plugin_settings_action(request: Request, channel_id: int, chatroom_id: int, bot_plugin_id: int):
+    """群详情只接收声明式表单，不重新引入已删除的 JSON 覆盖接口。"""
+
+    user = enforce_role(request, 'ops')
+    form = await request.form()
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, request.headers.get('X-CSRF-Token') or str(form.get('csrf_token') or ''))
+        channel, room = _group_plugin_settings_target(db, channel_id, chatroom_id)
+        try:
+            binding = save_group_plugin_settings(db, channel, room, bot_plugin_id, form, user.user_id)
+        except ValueError as exc:
+            db.rollback()
+            return JSONResponse({'ok':False, 'notice':str(exc)}, status_code=400)
+        db.commit()
+        record_audit(db, 'channel.chatroom-plugin.settings', 'group_plugin_scope', bot_plugin_id, f'chatroom={room.id}, operator={user.user_id}')
+        if request.headers.get('X-Requested-With') == 'fetch':
+            return JSONResponse(jsonable_encoder({'ok':True, 'notice':'本群插件设置已保存', 'settings':group_plugin_settings_view(db, channel, room, binding)}))
+        return RedirectResponse(url=f'/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote("本群插件设置已保存")}', status_code=303)
+    finally:
+        db.close()
+
+
+@app.post('/channels/{channel_id}/chatrooms/{chatroom_id}/plugins/{bot_plugin_id}/settings/reset')
+async def reset_chatroom_plugin_settings_action(request: Request, channel_id: int, chatroom_id: int, bot_plugin_id: int):
+    """仅恢复参数默认值，保留群内启停，避免用户恢复指令时误开启插件。"""
+
+    user = enforce_role(request, 'ops')
+    form = await request.form()
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, request.headers.get('X-CSRF-Token') or str(form.get('csrf_token') or ''))
+        channel, room = _group_plugin_settings_target(db, channel_id, chatroom_id)
+        try:
+            binding = reset_group_plugin_settings(db, channel, room, bot_plugin_id, user.user_id)
+        except ValueError as exc:
+            db.rollback()
+            return JSONResponse({'ok':False, 'notice':str(exc)}, status_code=400)
+        db.commit()
+        record_audit(db, 'channel.chatroom-plugin.settings.reset', 'group_plugin_scope', bot_plugin_id, f'chatroom={room.id}, operator={user.user_id}')
+        if request.headers.get('X-Requested-With') == 'fetch':
+            return JSONResponse(jsonable_encoder({'ok':True, 'notice':'配置已恢复默认，本群启停保持不变', 'settings':group_plugin_settings_view(db, channel, room, binding)}))
+        return RedirectResponse(url=f'/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote("配置已恢复默认，本群启停保持不变")}', status_code=303)
     finally:
         db.close()
 

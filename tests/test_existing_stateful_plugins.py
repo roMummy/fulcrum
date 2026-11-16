@@ -1207,7 +1207,7 @@ def test_message_sign_runs_on_ai_rewritten_command_without_persisting_it(message
     这是线上暴露的缺陷：插件按消息 ID 回库读正文，只改事件正文会得到 command_invalid。
     """
 
-    from app.services.ai_dispatch import effective_message_content
+    from app.services.plugin_commands import effective_message_content
 
     factory, identity = message_sign_fixture
     loaded = load_directory_plugin("message_sign", force=True)

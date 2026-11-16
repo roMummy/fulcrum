@@ -246,6 +246,7 @@ def test_effective_content_is_memory_only_and_never_persisted() -> None:
     from app.core.db import Base
     from app.models import saas  # noqa: F401
     from app.models.entities import Message
+    from app.services.plugin_commands import effective_message_content
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -256,7 +257,7 @@ def test_effective_content_is_memory_only_and_never_persisted() -> None:
             "values (1, 1, 1, 'in', '@bot 我要签到', 'text', 'received', '2026-11-09', '2026-11-09')"
         ))
         db.commit()
-        with ai_dispatch.effective_message_content(db, 1, "/签到"):
+        with effective_message_content(db, 1, "/签到"):
             # 插件按消息 ID 回库读取，拿到的是改写后的命令。
             assert db.get(Message, 1).content == "/签到"
             # 即使中途 flush（插件执行里的查询会触发自动刷新），也不会产生 UPDATE。
@@ -267,5 +268,5 @@ def test_effective_content_is_memory_only_and_never_persisted() -> None:
         db.commit()
         assert raw(db) == "@bot 我要签到"
         # 没有改写时是空操作。
-        with ai_dispatch.effective_message_content(db, 1, None):
+        with effective_message_content(db, 1, None):
             assert db.get(Message, 1).content == "@bot 我要签到"

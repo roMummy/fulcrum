@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import BotPlugin
+from app.models.entities import BotPlugin, Chatroom, Conversation, GroupPluginScope
 from app.core.logging import get_logger
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest, PluginExecutionResult
 from app.services.plugin_runtime.registry import get_plugin_runtime_definition
@@ -74,6 +75,7 @@ def execute_binding_message_action(
         action,
         payload=payload,
         context=context,
+        config_override=_group_config_override(db, binding, context),
     )
     definition = get_plugin_runtime_definition(plugin_code)
     executor = definition.executor if definition else None
@@ -103,6 +105,7 @@ def execute_binding_scheduled_action(
         action,
         payload=payload,
         context=context,
+        config_override=_group_config_override(db, binding, context),
     )
     definition = get_plugin_runtime_definition(plugin_code)
     executor = definition.executor if definition else None
@@ -123,6 +126,7 @@ def _build_binding_request(
     *,
     payload: Mapping[str, Any] | None,
     context: PluginExecutionContext | None,
+    config_override: Mapping[str, Any] | None = None,
 ) -> tuple[str | None, PluginExecutionRequest]:
     """从可信绑定统一构造普通、消息和定时请求，确保三条链路使用同一密钥边界。"""
 
@@ -130,7 +134,10 @@ def _build_binding_request(
         raise ValueError("插件已从机器人解绑，请重新绑定后再使用")
     plugin_code = binding.plugin.code if binding.plugin else None
     runtime_payload = dict(payload or {})
-    ordinary_config = _parse_config_json(binding.config_json)
+    # 群设置只能来自数据库定位的可信会话，绝不从业务 payload 提取。
+    from app.services.plugin_schemas import deep_merge_config
+
+    ordinary_config = deep_merge_config(_parse_config_json(binding.config_json), dict(config_override or {}))
     secret_config = decrypt_plugin_secret_config(
         tenant_id=int(binding.tenant_id),
         binding_id=int(binding.id),
@@ -159,6 +166,39 @@ def _build_binding_request(
         payload=runtime_payload,
         context=trusted_context,
     )
+
+
+def _group_config_override(db: Session, binding: BotPlugin, context: PluginExecutionContext | None) -> dict[str, Any]:
+    """原生消息和定时任务共用群配置；完整核对归属后才允许读取覆盖。"""
+
+    from app.services.plugin_directory import get_discovered_plugin
+
+    if not context or not context.conversation_id or not context.channel_id:
+        return {}
+    if int(context.tenant_id) != int(binding.tenant_id) or int(context.bot_id) != int(binding.bot_id) or int(context.binding_id) != int(binding.id):
+        return {}
+    conversation = db.get(Conversation, int(context.conversation_id))
+    if (conversation is None or conversation.chat_type != 'group'
+            or int(conversation.tenant_id) != int(binding.tenant_id)
+            or int(conversation.bot_id) != int(binding.bot_id)
+            or int(conversation.channel_id or 0) != int(context.channel_id)):
+        return {}
+    scope = db.scalar(select(GroupPluginScope).join(Chatroom, Chatroom.id == GroupPluginScope.chatroom_id).where(
+        GroupPluginScope.bot_plugin_id == binding.id, GroupPluginScope.channel_id == context.channel_id,
+        GroupPluginScope.tenant_id == binding.tenant_id, Chatroom.tenant_id == binding.tenant_id,
+        Chatroom.bot_id == binding.bot_id, Chatroom.channel_id == context.channel_id, Chatroom.external_id == conversation.external_id,
+    ))
+    config = _parse_config_json(scope.config_override_json) if scope else {}
+    code = binding.plugin.code if binding.plugin else None
+    definition = get_plugin_runtime_definition(code)
+    discovered = get_discovered_plugin(code)
+    sensitive = set(discovered.secret_fields) if discovered else set()
+    # 群层不持有密钥；历史覆盖里的敏感同名字段也不能绕过绑定密文边界。
+    if definition and definition.schema:
+        sensitive.update(field.name for field in definition.schema.fields if field.sensitive)
+    for name in sensitive:
+        config.pop(name, None)
+    return config
 
 
 def _parse_config_json(raw_config: str | None) -> dict[str, Any]:

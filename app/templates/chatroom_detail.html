@@ -34,12 +34,13 @@
   <div class="notice-card"><strong>机器人已不在这个群里</strong><p>可能是退出了群聊或被移出。群功能和 AI 已暂停，发往这个群的消息会被拒绝；历史消息和成员记录都保留。重新加入后会自动恢复原来的设置。</p></div>
   {% endif %}
 
-  <nav class="tab-bar">
-    <a href="{{ base_url }}?tab=features" class="{{ 'active' if tab == 'features' }}">群功能</a>
-    <a href="{{ base_url }}?tab=plugins" class="{{ 'active' if tab == 'plugins' }}">插件 ({{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }})</a>
-    <a href="{{ base_url }}?tab=members" class="{{ 'active' if tab == 'members' }}">成员 ({{ detail.members|length }})</a>
-    <a href="{{ detail.message_center_href }}" title="在消息中心查看这个群的消息">消息 <span class="i i-external" aria-hidden="true"></span></a>
-    <a href="{{ base_url }}?tab=profile" class="{{ 'active' if tab == 'profile' }}">资料</a>
+  {# 页面链接采用当前页语义，手机只滚动导航自身，不把整页撑宽或伪装为脚本式 Tab。 #}
+  <nav class="chatroom-tabs" aria-label="群详情导航">
+    <a href="{{ base_url }}?tab=features"{% if tab == 'features' %} class="active" aria-current="page"{% endif %}><span class="i i-sliders" aria-hidden="true"></span><span>群功能</span></a>
+    <a href="{{ base_url }}?tab=plugins"{% if tab == 'plugins' %} class="active" aria-current="page"{% endif %}><span class="i i-puzzle" aria-hidden="true"></span><span>插件</span><span class="chatroom-tab-count" data-group-plugin-count>{{ detail.binding_summary.effective_enabled_count }}/{{ detail.binding_summary.total }}</span></a>
+    <a href="{{ base_url }}?tab=members"{% if tab == 'members' %} class="active" aria-current="page"{% endif %}><span class="i i-users" aria-hidden="true"></span><span>成员</span><span class="chatroom-tab-count">{{ detail.members|length }}</span></a>
+    <a href="{{ detail.message_center_href }}" title="在消息中心查看这个群的消息"><span class="i i-message" aria-hidden="true"></span><span>消息</span><span class="i i-external" aria-hidden="true"></span></a>
+    <a href="{{ base_url }}?tab=profile"{% if tab == 'profile' %} class="active" aria-current="page"{% endif %}><span class="i i-info" aria-hidden="true"></span><span>资料</span></a>
   </nav>
 
   {% if tab == 'features' %}
@@ -77,28 +78,12 @@
 
   {% elif tab == 'plugins' %}
   {% if detail.bindings %}
+  <div class="chatroom-plugins-heading"><div><h2>本群插件</h2><p>指令与功能选项可单独调整，未修改的项目跟随机器人默认设置。</p></div><a class="btn btn-secondary btn-small" href="/chatrooms/plugin-scopes">批量管理</a></div>
+  <div class="gf-list chatroom-plugin-list">
   {% for item in detail.bindings %}
-  <div class="plugin-row" data-scope-row>
-    <div>
-      <h3>{{ item.plugin_name }}
-        <span class="chip chip-success" data-scope-custom-chip{% if item.group_scope_status == 'inherited' %} hidden{% endif %}>本群已自定义</span>
-      </h3>
-      {% if item.plugin_description %}<p class="muted-text" style="margin:2px 0 0;">{{ item.plugin_description }}</p>{% endif %}
-    </div>
-    <div class="plugin-row-actions row-controls">
-      {# 开关:点击即保存(启用/停用);“恢复默认”回到继承 bot 级状态。 #}
-      <span class="ui-switch" title="在本群启用或停用这个插件">
-        <input type="checkbox" role="switch" aria-label="在本群启用 {{ item.plugin_name }}" data-autosave-url="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-autosave-key="mode" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if item.group_scope_enabled %} checked{% endif %} />
-        <span class="ui-switch-track"></span>
-      </span>
-      <form method="post" action="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-scope-reset-form{% if item.group_scope_status == 'inherited' %} hidden{% endif %}>
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <input type="hidden" name="mode" value="inherited" />
-        <button class="btn btn-secondary btn-small btn-icon" type="submit" title="恢复默认（跟随机器人的设置）" aria-label="恢复默认"><span class="i i-undo" aria-hidden="true"></span></button>
-      </form>
-    </div>
-  </div>
+  {% include '_chatroom_plugin_card.html' %}
   {% endfor %}
+  </div>
   {% else %}
   <p class="muted-text">当前机器人还没有绑定插件，请先在“插件”页把插件绑定到机器人。</p>
   {% endif %}
@@ -206,18 +191,5 @@
 {% block scripts %}
 <script src="/static/js/group-features.js" defer></script>
 {% if tab == 'members' %}<script src="/static/js/chatroom-invitations.js" defer></script>{% endif %}
-<script>
-  (() => {
-    // 群内插件开关保存成功后:启用/停用都算"本群已自定义",显示标签和"恢复默认"按钮。
-    document.addEventListener("autosave:done", (event) => {
-      const row = event.target.closest("[data-scope-row]");
-      if (!row) return;
-      const custom = Boolean(event.detail.response.custom);
-      const chip = row.querySelector("[data-scope-custom-chip]");
-      const reset = row.querySelector("[data-scope-reset-form]");
-      if (chip) chip.hidden = !custom;
-      if (reset) reset.hidden = !custom;
-    });
-  })();
-</script>
+{% if tab == 'plugins' %}<script src="/static/js/chatroom-plugin-settings.js" defer></script>{% endif %}
 {% endblock %}

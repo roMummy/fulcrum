@@ -8,17 +8,15 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.logging import get_logger
 from app.core.time import now_shanghai
-from app.models.entities import AiDecision, Chatroom, Message, TenantAiSetting
+from app.models.entities import AiDecision, Chatroom, TenantAiSetting
 from app.services.plugin_runtime.text_generation import PluginTextGenerationClient, PluginTextGenerationError
 from app.services.security import decrypt_secret, encrypt_secret
 
@@ -395,28 +393,6 @@ def prepare_intent(db: Session, payload: dict[str, Any]):
     return resolved.config, text, catalog, chat
 
 
-@contextmanager
-def effective_message_content(db: Session, message_id: int | None, content: str | None):
-    """让插件在本次调度中把原消息读成 AI 改写出的命令，但不向数据库写入任何东西。
-
-    很多插件不读事件正文，而是按消息 ID 回库读 Message.content 再解析命令，
-    所以只改事件不够。这里用 set_committed_value 只改会话内对象的内存值：
-    它不会把对象标记为已修改，flush / commit 都不会产生 UPDATE；
-    退出时还原，且该会话只服务这一个调度任务。库里始终只有用户的原话。
-    """
-
-    message = db.get(Message, int(message_id)) if message_id and content else None
-    if message is None:
-        yield
-        return
-    original = message.content
-    set_committed_value(message, "content", content)
-    try:
-        yield
-    finally:
-        set_committed_value(message, "content", original)
-
-
 def record_decision(
     db: Session,
     *,
@@ -457,7 +433,6 @@ __all__ = [
     "AiResolution",
     "analyze_intent",
     "build_catalog",
-    "effective_message_content",
     "ModelConfig",
     "get_ai_setting",
     "is_ai_ready",

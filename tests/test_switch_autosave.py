@@ -286,15 +286,19 @@ def test_group_plugin_tab_renders_the_switch_and_the_custom_markers(plugin_env) 
     client.post("/plugins/toggle-direct", data={"bot_id": str(ids["bot"]), "plugin_id": str(plugin_id), "enabled": "true"}, headers=_headers(csrf))
     binding_id = _binding(ids, plugin_id).id
     html = client.get(f"/channels/{channel_id}/chatrooms/{room_id}?tab=plugins").text
-    row = html[html.index("data-scope-row"): html.index("data-scope-row") + 2600]
+    # 卡片包含完整结构化表单，按表单边界截取，避免介绍或字段变长后错误截断。
+    row = html[html.index("data-group-plugin-settings"):]
+    row = row[:row.index('</form>')]
     assert f'data-autosave-url="/channels/{channel_id}/chatrooms/{room_id}/scopes/{binding_id}/mode"' in row and 'data-autosave-on="enabled"' in row
     assert "已启用，点击停用" not in html and "已停用，点击启用" not in html  # 旧的文字按钮没有了
-    # 没单独设置过:"本群已自定义"和"恢复默认"都隐藏着(脚本在开关保存后再显示)
-    assert "data-scope-custom-chip hidden" in row and "data-scope-reset-form hidden" in row
+    # 未覆盖时明确显示继承来源；只有自定义之后才展示完整恢复入口。
+    assert 'data-scope-source>跟随默认</span>' in row and 'data-scope-all-reset hidden' in row
     client.post(f"/channels/{channel_id}/chatrooms/{room_id}/scopes/{binding_id}/mode", data={"mode": "disabled"}, headers=_headers(csrf))
     html = client.get(f"/channels/{channel_id}/chatrooms/{room_id}?tab=plugins").text
-    row = html[html.index("data-scope-row"): html.index("data-scope-row") + 2600]
-    assert "data-scope-custom-chip hidden" not in row and "data-scope-reset-form hidden" not in row and "checked" not in row.split("data-autosave-form")[1][:20]
+    row = html[html.index("data-group-plugin-settings"):]
+    row = row[:row.index('</form>')]
+    assert 'data-scope-source>本群已自定义</span>' in row and 'data-scope-all-reset hidden' not in row
+    assert "checked" not in row.split("data-autosave-form")[1][:20]
 
 
 def test_plugins_and_directory_pages_use_switches_instead_of_buttons(plugin_env) -> None:
