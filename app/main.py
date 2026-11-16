@@ -4384,6 +4384,24 @@ async def plugins_page(request: Request):
         db.close()
 
 
+@app.get('/plugins/usage')
+async def plugin_usage_data(request: Request, period: str = '24h'):
+    """企业卡片一次读取全部可见插件，租户身份只能来自认证会话。"""
+
+    from app.services.plugin_usage import build_plugin_usage
+
+    require_user(request)
+    db = get_session()
+    try:
+        plugins = tenant_visible_plugins(db, _current_tenant_id())
+        return JSONResponse(build_plugin_usage(db, (plugin.code for plugin in plugins), period=period),
+            headers={'Cache-Control': 'no-store'})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
 @app.post("/plugins/refresh")
 async def refresh_plugins_action(request: Request):
     enforce_role(request, "ops")
@@ -4700,14 +4718,23 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         _ensure_binding_plugin_usable(db, binding)
         payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         context = _build_manual_plugin_execution_context(db, binding, payload)
-        result = execute_binding_message_action(
-            db,
-            binding,
-            "execute",
-            payload=payload,
-            context=context,
-        )
+        from app.services.analytics import record_binding_execution_analytics
+
+        started = time_module.perf_counter()
+        try:
+            result = execute_binding_message_action(db, binding, 'execute', payload=payload, context=context)
+        except Exception as exc:
+            # 回滚失败动作未提交的业务写入，再独立提交异常统计，避免请求结束时
+            # 日志也跟着被回滚；底层消息桥接不记数，因此不会与分发调用重复。
+            db.rollback()
+            record_binding_execution_analytics(db, binding, context=context, error=exc,
+                duration_ms=int((time_module.perf_counter() - started) * 1000), trigger_source='manual')
+            db.commit()
+            raise
+        record_binding_execution_analytics(db, binding, context=context, result=result,
+            duration_ms=int((time_module.perf_counter() - started) * 1000), trigger_source='manual')
         if result is None:
+            db.commit()
             raise HTTPException(status_code=400, detail="Plugin execution not supported")
         persist_binding_execution(db, binding, result, action="execute")
         record_audit(db, "plugin.execute", "bot_plugin", binding.id, result.message)

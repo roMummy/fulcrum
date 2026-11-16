@@ -167,6 +167,7 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
     """
 
     from app.services.plugin_directory import build_dispatch_report
+    from app.services.analytics import record_plugin_dispatch_analytics
 
     rewritten = json.loads(json.dumps(event, ensure_ascii=False, default=str))
     rewritten.setdefault("message", {})["content"] = command_text
@@ -175,7 +176,7 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
     from app.services.plugin_commands import effective_message_content
 
     with effective_message_content(db, payload.get("message_id"), command_text):
-        build_dispatch_report(
+        report = build_dispatch_report(
             db,
             channel,
             rewritten,
@@ -183,6 +184,11 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
             conversation_id=payload.get("conversation_id"),
             message_id=payload.get("message_id"),
         )
+        # AI 改写后的真正分发在此结束，只在边界记一次；原始消息未命中的扫描
+        # 不会增加命中数，底层 execute_message 桥接也不另写一份成功记录。
+        record_plugin_dispatch_analytics(db, channel=channel, dispatch_report=report,
+            raw_event_id=payload.get('raw_event_id'), conversation_id=payload.get('conversation_id'),
+            message_id=payload.get('message_id'), trigger_source='ai_dispatch')
 
 
 def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent, chat_reply: str = "") -> dict[str, Any]:

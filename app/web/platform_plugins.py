@@ -111,6 +111,21 @@ def _json_error(message: str, status_code: int = 400) -> JSONResponse:
     return JSONResponse({"ok": False, "notice": message}, status_code=status_code)
 
 
+@router.get('/plugins/usage')
+async def platform_plugin_usage_data(request: Request, period: str = '24h'):
+    """平台汇总入口明确要求平台身份，不能借企业登录越权读取其他企业计数。"""
+
+    from app.services.plugin_usage import build_plugin_usage
+
+    _require_platform_principal(request)
+    with SessionLocal() as db:
+        codes = db.scalars(select(Plugin.code)).all()
+        try:
+            return JSONResponse(build_plugin_usage(db, codes, period=period), headers={'Cache-Control': 'no-store'})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/plugins/{code}/status")
 async def platform_plugin_status_action(code: str, request: Request):
     """全平台启用/停用一个插件:列表里的开关点击即保存,提交目标状态 {"value": true|false}(幂等),返回 JSON。"""

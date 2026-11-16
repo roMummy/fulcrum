@@ -1,4 +1,5 @@
 {% extends 'platform_base.html' %}
+{% from '_plugin_usage.html' import usage_toolbar, usage_card %}
 {# 平台插件管理与企业目录共用功能卡片的视觉结构，展示当前版本和完整功能介绍。
    平台启停、可见范围与历史版本仍使用现有开关和共用弹窗，保持原有数据属性与交互协议。 #}
 {% block hero_actions %}
@@ -12,6 +13,7 @@
 {% block content %}
 {% set stopped_count = rows|selectattr('plugin.platform_status', 'ne', 'active')|list|length %}
 {% set limited_count = rows|selectattr('plugin.visibility', 'ne', 'all')|list|length %}
+<div class="plugin-page" data-plugin-usage data-usage-url="/platform/plugins/usage">
 <section class="pp-toolbar">
   <label class="pp-search"><input type="search" placeholder="搜索名称、编码或功能介绍" aria-label="搜索插件" autocomplete="off" data-pp-search /></label>
   <div class="pp-seg" role="radiogroup" aria-label="筛选" data-pp-filter>
@@ -22,6 +24,7 @@
   </div>
 </section>
 <p class="pp-note">停用只影响执行,租户的绑定、配置和密钥都会保留,恢复后原样继续。</p>
+{{ usage_toolbar('全平台') }}
 
 <section class="pp-grid" data-pp-grid>
   {% for row in rows %}
@@ -49,6 +52,7 @@
       </label>
     </header>
     <p class="plugin-card-description">{{ plugin.description or '暂未提供功能介绍。' }}</p>
+    {{ usage_card(plugin.code, plugin.display_name) }}
     <footer class="plugin-card-footer pp-card-chips">
       <button class="pp-chip-btn" type="button" data-pp-open-visibility title="设置哪些租户能用这个插件"><span data-pp-vis-chip>{{ visibility_labels.get(plugin.visibility, '未知') }}</span></button>
       {% if row.usage.bindings %}<span class="chip chip-muted" title="{{ row.usage.enabled }}/{{ row.usage.bindings }} 个绑定启用">{{ row.usage.tenants }} 个租户在用</span>{% endif %}
@@ -62,6 +66,7 @@
   {% endfor %}
 </section>
 <div class="empty-state" data-pp-empty hidden><strong>没有符合条件的插件</strong></div>
+</div>
 
 {# ---- 可见范围弹窗:选范围;指定套餐/租户时在下面搜索并勾选 ---- #}
 <dialog class="app-modal pp-dialog" id="pp-visibility-dialog" aria-labelledby="pp-visibility-title">
@@ -133,4 +138,4 @@
 </dialog>
 {% endblock %}
 
-{% block scripts %}<script src="/static/js/platform-plugins.js" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/platform-plugins.js" defer></script><script src="/static/js/plugin-usage.js" defer></script>{% endblock %}

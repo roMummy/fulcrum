@@ -8342,6 +8342,53 @@ html.has-lightbox {
   }
 }
 
+/* 每张插件卡片的调用趋势直接融入原卡片，不额外叠加白色面板或阴影。
+   企业与平台使用同一组尺寸、色彩和图例，窄屏仍保留三个可比较的数值。 */
+.plugin-usage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 18px 0;
+}
+.plugin-usage-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.plugin-usage-heading strong { font-size: 14px; font-weight: 650; }
+.plugin-usage-heading > span, .plugin-usage-updated { color: var(--muted); font-size: 12px; }
+.plugin-usage-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.plugin-usage-periods { display: flex; gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.plugin-usage-periods button { min-height: 32px; padding: 5px 11px; border: 0; border-radius: 8px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.plugin-usage-periods button[aria-pressed="true"] { background: var(--surface); color: var(--primary-strong); box-shadow: 0 1px 4px rgba(72, 82, 140, .09); }
+.plugin-usage-periods button:focus-visible, .plugin-usage-svg:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.plugin-usage-card { min-width: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.plugin-usage-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.plugin-usage-metric { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.plugin-usage-metric > span { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.plugin-usage-metric i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; }
+.plugin-usage-metric strong { color: var(--text); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plugin-usage-matched { color: var(--info); }
+.plugin-usage-success { color: var(--success); }
+.plugin-usage-error { color: var(--danger); }
+.plugin-usage-plot { display: grid; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr); column-gap: 7px; margin-top: 14px; }
+.plugin-usage-plot[hidden] { display: none; }
+.plugin-usage-yaxis { display: flex; justify-content: space-between; flex-direction: column; padding: 0; color: var(--muted); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }
+.plugin-usage-svg { display: block; width: 100%; height: 80px; min-width: 0; overflow: visible; border-radius: 3px; touch-action: pan-y; cursor: crosshair; }
+.plugin-usage-gridline { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plugin-usage-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* 命中使用虚线，重合时仍能透出正常实线；异常保持红色实线，避免只有颜色能区分。 */
+.plugin-usage-line.plugin-usage-matched { stroke-dasharray: 4 4; }
+.plugin-usage-line.plugin-usage-error { stroke-width: 2.5; }
+.plugin-usage-marker { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; opacity: .6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.plugin-usage-xaxis { display: flex; justify-content: space-between; grid-column: 2; gap: 4px; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.plugin-usage-readout { min-height: 32px; margin: 9px 0 4px; color: var(--text-soft); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.plugin-usage-last { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.plugin-usage-last time { color: var(--text-soft); font-variant-numeric: tabular-nums; }
+@media (max-width: 680px) {
+  .plugin-usage-toolbar { gap: 10px; }
+  .plugin-usage-heading { width: 100%; }
+  .plugin-usage-controls { margin-left: 0; }
+  .plugin-usage-updated { flex-basis: 100%; }
+}
+
 /* 平台插件管理的筛选、启停状态与共用弹窗。卡片基础视觉由上方统一维护。 */
 .pp-toolbar {
   display: flex;

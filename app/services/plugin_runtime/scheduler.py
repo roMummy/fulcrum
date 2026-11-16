@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping
@@ -232,13 +233,20 @@ def process_plugin_scheduled_action_job(
         channel_type=(str(conversation.channel_type or "").strip() or None) if conversation else None,
         chat_type=(str(conversation.chat_type or "").strip() or None) if conversation else None,
     )
-    result = execute_binding_scheduled_action(
-        db,
-        binding,
-        action_key,
-        payload=parameters,
-        context=context,
-    )
+    from app.services.analytics import record_binding_execution_analytics
+
+    started = time.perf_counter()
+    try:
+        result = execute_binding_scheduled_action(db, binding, action_key, payload=parameters, context=context)
+    except Exception as exc:
+        # 业务抛错先回滚未提交的数据，再记录真实失败；外层 fail_job 会与任务重试
+        # 状态一并提交统计。一次真正重试算新的调用，不为排队／权限检查虚增次数。
+        db.rollback()
+        record_binding_execution_analytics(db, binding, context=context, error=exc,
+            duration_ms=int((time.perf_counter() - started) * 1000), trigger_source='scheduled')
+        raise
+    record_binding_execution_analytics(db, binding, context=context, result=result,
+        duration_ms=int((time.perf_counter() - started) * 1000), trigger_source='scheduled')
     if result is None:
         raise PluginSchedulerError("插件运行时不支持定时动作")
     if not result.ok:
