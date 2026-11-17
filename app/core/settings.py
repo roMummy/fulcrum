@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     media_library_root: str = ""
     # AI 长期记忆服务(Hindsight)的地址(环境变量 HINDSIGHT_URL),例如 http://hindsight:8888;留空表示不启用长期记忆。
     hindsight_url: str = ""
+    # Kitesurf 是项目统一使用的截图引擎，连接地址由部署环境维护，插件和租户均不能覆盖。
+    # 留空表示尚未接入；调用时明确报错，不自动切回另一套浏览器实现。
+    kitesurf_ws_url: str = ""
+    kitesurf_timeout_seconds: float = Field(default=45.0, ge=1, le=120)
+    # 限制每个应用进程同时运行的截图数量；额度满时立即返回繁忙，避免阻塞消息队列。
+    kitesurf_max_concurrency: int = Field(default=2, ge=1, le=8)
     # AI 联网搜索使用的 Exa MCP 服务地址(环境变量 EXA_MCP_URL),默认是 Exa 官方免费服务;租户不能改,所以不会被指向内部地址。
     exa_mcp_url: str = "https://mcp.exa.ai/mcp"
     # 本地连接器扫码期间使用的临时 SOCKS 中继监听地址；只服务登录会话，终态立即失效。

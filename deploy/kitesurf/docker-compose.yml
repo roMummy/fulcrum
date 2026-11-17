@@ -1,0 +1,23 @@
+# 可独立启动的本地截图引擎；不包含 Fulcrum 数据库和业务凭据。
+name: fulcrum-screenshots
+services:
+  kitesurf:
+    build:
+      context: ../..
+      dockerfile: deploy/kitesurf/Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    ports:
+      # 无自带认证的 CDP 仅发布到宿主机回环，不能直接对外提供浏览器控制能力。
+      - "127.0.0.1:${KITESURF_PORT:-8787}:8787"
+    networks:
+      - screenshots
+    # 单进程应用默认最多两张并发；多应用进程时按总量调整引擎资源。
+    cpus: "2.0"
+    mem_limit: 4g
+    pids_limit: 256
+
+networks:
+  screenshots:
+    name: fulcrum-screenshots

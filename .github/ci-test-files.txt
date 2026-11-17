@@ -44,6 +44,9 @@ tests/test_message_history_order.py
 tests/test_contact_chat.py
 tests/test_pr_integration_regressions.py
 tests/test_test_runtime_isolation.py
+tests/test_webridge_ws_shutdown.py
+tests/test_web_screenshots.py
+tests/test_screenshot_api.py
 tests/test_message_history_migration.py
 tests/test_moments_media.py
 tests/test_moments.py

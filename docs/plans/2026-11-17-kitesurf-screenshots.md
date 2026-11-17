@@ -7,7 +7,7 @@
 
 **Architecture:** Python 公共服务是唯一截图路径，HTTP 接口鉴权后调用同一服务。每次独立 CDP 连接与浏览器上下文，输出受限图片字节；已有出站流程继续负责图片发送。
 
-**Tech Stack:** FastAPI、Pydantic、websockets 16 同步客户端、Pillow、Kitesurf CDP、Docker Compose。
+**Tech Stack:** FastAPI、Pydantic、websockets 16 异步客户端、Pillow、Kitesurf CDP、Docker Compose；对插件提供同步公共函数。
 
 ---
 

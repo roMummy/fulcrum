@@ -4,6 +4,8 @@ import hmac
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from sqlalchemy import select
 
 from app.core.db import SessionLocal, TenantSessionLocal
@@ -16,6 +18,7 @@ from app.services.crud import get_channel
 from app.services.outbound_files import build_public_base_url, store_outbound_upload
 from app.services.task_queue import enqueue_job
 from app.services.workwechat_cloud_poll import notify_cloud_job_enqueued, resolve_outbound_job_type
+from app.services.web_screenshots import ScreenshotError, ScreenshotRequest, capture_screenshot
 
 
 router = APIRouter(tags=["tool-api"])
@@ -59,6 +62,31 @@ def authenticate_tool_tenant(request: Request) -> int:
         if tenant is None:
             raise HTTPException(status_code=401, detail="tenant_not_found")
         return int(tenant.id)
+
+
+@router.post("/api/tool/screenshots", response_class=Response)
+async def tool_screenshot_action(request: Request, screenshot: ScreenshotRequest):
+    """工具身份认证后复用公共截图服务，图片仅返回本次请求，不创建公共分享文件。"""
+
+    tenant_id = authenticate_tool_tenant(request)
+    try:
+        # 线程池会继承当前 ContextVar；身份来自已验证密钥及有效租户，而非请求体。
+        # 截图的连接、加载和渲染均在线程内执行，不占用消息收发的 ASGI 事件循环。
+        with tenant_scope(tenant_id):
+            result = await run_in_threadpool(capture_screenshot, screenshot)
+    except ScreenshotError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Screenshot-Width": str(result.width),
+            "X-Screenshot-Height": str(result.height),
+            "X-Screenshot-Elapsed-Ms": str(result.elapsed_ms),
+        },
+    )
 
 
 @router.post("/api/tool/channels/{channel_id}/upload-and-send")

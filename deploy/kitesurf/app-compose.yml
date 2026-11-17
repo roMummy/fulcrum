@@ -1,0 +1,14 @@
+# 与仓库根 docker-compose.yml 合并，连接已独立启动的截图引擎。
+# 使用外部命名网络，不把 CDP 端口发布到局域网，也不改动数据库网络。
+services:
+  app:
+    environment:
+      KITESURF_WS_URL: ws://kitesurf:8787/devtools/browser
+    networks:
+      - default
+      - screenshots
+
+networks:
+  screenshots:
+    external: true
+    name: fulcrum-screenshots
