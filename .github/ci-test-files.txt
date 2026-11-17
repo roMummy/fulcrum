@@ -40,6 +40,8 @@ tests/test_log_rotation.py
 tests/test_log_view.py
 tests/test_message_cards.py
 tests/test_message_center.py
+tests/test_message_history_order.py
+tests/test_message_history_migration.py
 tests/test_moments_media.py
 tests/test_moments.py
 tests/test_no_native_dialogs.py

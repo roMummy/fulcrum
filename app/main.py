@@ -55,6 +55,7 @@ from app.services.account_identity import account_identity, bot_identity
 from app.services.account_presence import build_account_presence
 from app.services.operation_feedback import OperationFeedbackError, build_operation_status
 from app.services import ai_dispatch, message_actions, message_mentions
+from app.services.message_history import latest_history_messages, list_history_messages
 from app.services.channel_deletion import ChannelDeletionError, delete_channel_account
 from app.services.chatroom_registry import (
     GROUP_MODE_COLLECT_ONLY,
@@ -4935,20 +4936,10 @@ def load_conversation_messages(db: Session, conversation_id: int, *, before_id: 
     多取一条用来判断两个方向上是否还有更多。
     """
 
-    base = select(Message).where(Message.conversation_id == conversation_id, Message.status != "echo")
-    if message_ids is not None:
-        rows = list(db.scalars(base.where(Message.id.in_(message_ids)).order_by(Message.id.asc())).all())
-        has_more = False
-    elif after_id:
-        rows = list(db.scalars(base.where(Message.id > after_id).order_by(Message.id.asc()).limit(limit + 1)).all())
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-    else:
-        if before_id:
-            base = base.where(Message.id < before_id)
-        fetched = list(db.scalars(base.order_by(Message.id.desc()).limit(limit + 1)).all())
-        has_more = len(fetched) > limit
-        rows = list(reversed(fetched[:limit]))
+    rows, has_more = list_history_messages(
+        db, conversation_id, before_id=before_id, after_id=after_id,
+        limit=limit, message_ids=message_ids,
+    )
     identities = IdentityDirectory(db).for_messages(rows)
     attachments: dict[int, list[MessageAttachment]] = {}
     if rows:
@@ -5281,12 +5272,7 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
     conversation_summaries = []
     summary_directory = IdentityDirectory(db)
     summary_identities = summary_directory.for_conversations(conversations)
-    latest_messages = {
-        int(item.conversation_id): item
-        for item in db.scalars(select(Message).where(Message.id.in_(
-            select(func.max(Message.id)).where(Message.conversation_id.in_([int(row.id) for row in conversations]), Message.status != "echo").group_by(Message.conversation_id)
-        ))).all()
-    } if conversations else {}
+    latest_messages = latest_history_messages(db, [int(row.id) for row in conversations])
     for item in conversations:
         latest = latest_messages.get(int(item.id))
         identity = summary_identities[int(item.id)]
