@@ -24,7 +24,7 @@ import io
 import json
 import re
 import uuid
-from html import unescape
+from html import escape, unescape
 from typing import Any
 from urllib import parse as urlparse
 from urllib.error import HTTPError, URLError
@@ -32,6 +32,7 @@ from urllib.error import HTTPError, URLError
 from app.core.logging import get_logger
 from app.models.entities import Channel, Conversation
 
+from app.services.message_view import parse_quote_payload, recall_info
 from app.services.safe_fetch import UnsafeUrlError, open_public_url
 
 from .base import BaseChannelAdapter
@@ -45,6 +46,8 @@ PROFILE_TIMEOUT_SECONDS = 4
 MAX_MEDIA_BYTES = 20 * 1024 * 1024
 MAX_SEND_BYTES = 32 * 1024 * 1024
 DEFAULT_VOICE_MS = 3000
+GUGATOOL_MUSIC_APP_ID = "wx8dd6ecd81906fd84"
+GUGATOOL_MUSIC_SEND_TYPE = 3
 
 # 微信原生 messageType 到通用消息类型的映射；49 是 app 消息（文件/链接/小程序）。
 MSG_TYPE_MAP = {
@@ -94,6 +97,35 @@ XML_ATTR_RE = re.compile(r'([A-Za-z0-9_:-]+)\s*=\s*"([^"]*)"')
 XML_MEDIA_TAG_RE = re.compile(r"<(img|video|emoji|appmsg)[^>]*>", re.IGNORECASE)
 
 logger = get_logger(__name__)
+
+
+def build_music_card_xml(payload: dict[str, Any], from_user: str) -> str:
+    """微信原生音乐卡片 XML；与服务端插件验证过的 Type=3 / 内层 76 模板一致。"""
+
+    def esc(value: Any) -> str:
+        cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(value or ""))
+        return escape(cleaned, quote=True)
+
+    app_id = esc(str(payload.get("app_id") or "").strip() or GUGATOOL_MUSIC_APP_ID)
+    title = esc(payload.get("title") or "音乐")
+    singer = esc(payload.get("desc") or "")
+    url = esc(payload.get("url") or payload.get("data_url") or "")
+    data_url = esc(payload.get("data_url") or "")
+    cover = esc(payload.get("song_album_url") or "")
+    lyric = esc(payload.get("song_lyric") or "")
+    return (
+        f'<appmsg appid="{app_id}" sdkver="0"><title>{title}</title><des>{singer}</des>'
+        f"<action>view</action><type>76</type><showtype>0</showtype><content/><url>{url}</url>"
+        f"<dataurl>{data_url}</dataurl><lowurl>{url}</lowurl><lowdataurl>{data_url}</lowdataurl>"
+        f"<recorditem/><thumburl>{cover}</thumburl><messageaction/><laninfo/><extinfo/>"
+        f"<sourceusername/><sourcedisplayname/><songlyric>{lyric}</songlyric><commenturl/>"
+        f"<appattach><totallen>0</totallen><attachid/><emoticonmd5/><fileext/><aeskey/></appattach>"
+        f"<webviewshared><publisherId/><publisherReqId>0</publisherReqId></webviewshared>"
+        f"<weappinfo><pagepath/><username/><appid/><appservicetype>0</appservicetype></weappinfo>"
+        f"<websearch/><songalbumurl>{cover}</songalbumurl></appmsg>"
+        f"<fromusername>{esc(from_user)}</fromusername><scene>0</scene>"
+        f"<appinfo><version>1</version><appname/></appinfo><commenturl/>"
+    )
 
 
 class WechatGugatoolAdapter(BaseChannelAdapter):
@@ -200,6 +232,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
                 return self._send_text(channel, conversation, payload, to_wxid)
             if message_type == "image":
                 return self._send_image(channel, conversation, payload, to_wxid)
+            if message_type == "emoji":
+                return self._send_emoji(channel, conversation, payload, to_wxid)
             if message_type == "voice":
                 return self._send_voice(channel, conversation, payload, to_wxid)
             if message_type == "video":
@@ -208,6 +242,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
                 return self._send_file(channel, conversation, payload, to_wxid)
             if message_type in {"link", "card"}:
                 return self._send_link(channel, conversation, payload, to_wxid)
+            if message_type == "music":
+                return self._send_music(channel, conversation, payload, to_wxid)
             return self._fail(
                 conversation,
                 message_type,
@@ -227,6 +263,16 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         content = str(payload.get("content") or "").strip()
         if not content:
             return self._fail(conversation, "text", "empty_content", "文本内容为空")
+        quote_local_id = self._coerce_int(payload.get("quote_local_id"))
+        quote_msg_svr_id = self._coerce_int(payload.get("quote_msg_svr_id"))
+        if quote_local_id or quote_msg_svr_id:
+            # 手机的 SendQuote 只接受本地/服务端消息 ID，没有 @ 字段，引用时由入口层拒绝与 @ 同时使用。
+            params: dict[str, Any] = {"to_wxid": to_wxid, "content": content}
+            if quote_local_id:
+                params["local_id"] = quote_local_id
+            if quote_msg_svr_id:
+                params["msg_svr_id"] = quote_msg_svr_id
+            return self._queued_result(channel, conversation, "text", "send_quote", params)
         params: dict[str, Any] = {"to_wxid": to_wxid, "content": content, "type": 1}
         at_targets = self._resolve_at_targets(payload)
         if at_targets:
@@ -252,6 +298,29 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             content=content,
             content_type=IMAGE_MIME_BY_EXT.get(extension, "application/octet-stream"),
             file_name=self._resolve_file_name(payload, extension or ".jpg"),
+        )
+
+    def _send_emoji(
+        self,
+        channel: Channel,
+        conversation: Conversation,
+        payload: dict[str, Any],
+        to_wxid: str,
+    ) -> dict[str, Any]:
+        """表情走手机单独的 SendEmoji 接口，同样按原始字节上传。"""
+
+        content, extension = self._load_media_bytes(
+            payload, url_keys=("emoji", "emoji_url", "image_url", "url"), b64_keys=("emoji_base64", "image_base64", "base64")
+        )
+        return self._queued_media(
+            channel,
+            conversation,
+            message_type="emoji",
+            command_name="send_emoji",
+            to_wxid=to_wxid,
+            content=content,
+            content_type=IMAGE_MIME_BY_EXT.get(extension, "image/gif"),
+            file_name=self._resolve_file_name(payload, extension or ".gif"),
         )
 
     def _send_video(
@@ -345,6 +414,28 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         if thumb_base64:
             params["thumb_base64"] = thumb_base64
         return self._queued_result(channel, conversation, "link", "send_link", params)
+
+    def _send_music(
+        self,
+        channel: Channel,
+        conversation: Conversation,
+        payload: dict[str, Any],
+        to_wxid: str,
+    ) -> dict[str, Any]:
+        """原生音乐卡片走手机的 SendApp：外层 Type=3，XML 内层 76。"""
+
+        title = str(payload.get("title") or "").strip()
+        data_url = str(payload.get("data_url") or "").strip()
+        if not title or not data_url:
+            return self._fail(conversation, "music", "music_payload_missing", "音乐卡片缺少标题或播放地址")
+        from app.services.guga_agent.service import registration
+
+        xml = build_music_card_xml(payload, str(registration(channel).get("account_id") or ""))
+        return self._queued_result(channel, conversation, "music", "send_app", {
+            "to_wxid": to_wxid,
+            "xml": xml,
+            "type": GUGATOOL_MUSIC_SEND_TYPE,
+        })
 
     def _queued_media(
         self,
@@ -472,11 +563,23 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         if kind == "revoke":
             message_type = "system"
             content = revoke_summary or "对方撤回了一条消息"
+        # 撤回在微信里是 10002 系统消息(kind 仍是 incoming),不能只认 Agent 的 revoke 事件。
+        recalled = recall_info(raw_content) if message_type == "system" else None
+        if recalled is not None:
+            event_type = "revoke"
+            message_type = "system"
+            content = str(recalled.get("text") or "一条消息已被撤回")
 
         external_message_id = str(item.get("id") or "").strip() or self._build_message_key(item)
         local_message_id = self._coerce_int(item.get("localMessageID"))
         server_message_id = self._coerce_int(item.get("serverMessageID"))
         message_source = str(item.get("messageSource") or "")
+        quote_payload = parse_quote_payload(raw_content) if kind != "revoke" else None
+        if quote_payload:
+            # 引用消息(微信 appmsg type=57)按文本入库:正文只留回复内容,
+            # 被引用的人/原文放进 details.quote_payload,消息中心和 AI 插件都读这一份。
+            message_type = "text"
+            content = str(quote_payload.get("title") or "").strip() or "[引用消息]"
 
         details: dict[str, Any] = {
             "headers_used": sorted((headers or {}).keys()),
@@ -494,6 +597,10 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             "member_id": str(item.get("memberID") or "") or None,
             "content_xml": content_xml,
             "message_source": message_source[:2000] or None,
+            # 引用原文统一走这个字段;非引用消息显式给 None,与 iPad 渠道保持一致。
+            "quote_payload": quote_payload,
+            # 撤回只携带明确编号和通知；原文不能作为匹配证据或重新展示。
+            "recall": recalled,
             # 事件自带的昵称/头像字段；群名册由异步命令补齐后写入群成员表。
             "sender_avatar_url": None,
             "profile_source": "event" if sender_name else None,
@@ -501,6 +608,9 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             # 群里 @ 自己（或 @所有人）时置位，插件与 AI 调度据此判断是否被点名。
             "mentioned_self": self._is_self_mentioned(message_source, to_user),
         }
+        if recalled is not None:
+            # 撤回是消息状态更新,不交给插件和 AI 当成新发言处理。
+            details["skip_plugin_dispatch"] = True
         if self._is_from_self(channel, sender_id):
             # 本账号自己发出的消息(手机上亲自发的、机器人回复后回流的都算):AI 不把它当用户输入,
             # 否则私聊里 AI 会对着自己的回复继续回复(与微桥渠道同样的自问自答循环)。
@@ -613,7 +723,7 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
     def _resolve_at_targets(self, payload: dict[str, Any]) -> str:
         """@ 目标统一成手机端要求的逗号分隔 wxid 串。"""
 
-        raw = payload.get("at") or payload.get("at_list") or payload.get("at_wxids")
+        raw = payload.get("at") or payload.get("at_list") or payload.get("at_wxids") or payload.get("mention_user_list")
         if isinstance(raw, (list, tuple)):
             return ",".join(str(item).strip() for item in raw if str(item).strip())
         return str(raw or "").strip()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import ast
 import re
 import tempfile
 from pathlib import Path
@@ -15,14 +16,27 @@ MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
 def test_chatroom_scope_routes_use_principal_user_id() -> None:
     """TenantPrincipal 只有 user_id，没有 id。
 
-    线上停用群插件时报 AttributeError: 'TenantPrincipal' object has no attribute 'id'，
-    原因是 21 处 operator_id=user.id 是旧管理员对象时代的残留。
-    这里直接检查源码：群级开关路由里不能再出现 user.id。
+    线上停用群插件曾读取旧身份的 id；检查当前路由中每个实际写入点，
+    不能依赖历史接口数量，否则删除旧接口也会误报回归。
     """
 
     source = MAIN.read_text(encoding="utf-8")
     assert not re.search(r"\buser\.id\b", source), "main.py 中不应再有 user.id（租户身份字段是 user_id）"
-    assert source.count("operator_id=user.user_id") >= 21
+    tree = ast.parse(source)
+    checked_routes = set()
+    for node in tree.body:
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        operators = [keyword.value for call in ast.walk(node) if isinstance(call, ast.Call)
+            for keyword in call.keywords if keyword.arg == "operator_id"]
+        for operator in operators:
+            assert ast.unparse(operator) == "user.user_id", f"{node.name} 的操作人必须使用可信租户身份 user_id"
+        if operators:
+            checked_routes.add(node.name)
+    assert {
+        "enable_wechat_ipad_chatroom_scope_action", "disable_wechat_ipad_chatroom_scope_action",
+        "reset_wechat_ipad_chatroom_scope_action", "set_wechat_ipad_chatroom_scope_mode_action",
+    } <= checked_routes
 
 
 def test_principal_has_no_id_attribute() -> None:

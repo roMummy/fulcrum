@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from app.core.tenant_context import tenant_scope
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import Chatroom, ChatroomMember
 from app.services.channel_events import ingest_inbound_event
@@ -133,8 +134,10 @@ def test_fully_closed_or_departed_group_is_not_reenabled_by_a_message(env, statu
 
 @pytest.mark.parametrize("msg_type", ["system", "pat"])
 def test_system_events_do_not_refresh_directory_or_count_as_speech(env, msg_type):
-    db, _, _, member = env
-    say(env, msg_type=msg_type, content="系统提示")
+    db, channel, _, member = env
+    # 系统消息会进入邀请资料解析；测试必须像真实入站入口一样提供可信租户上下文。
+    with tenant_scope(channel.tenant_id):
+        say(env, msg_type=msg_type, content="系统提示")
     assert member.last_active_at is None and commands(db) == []
 
 

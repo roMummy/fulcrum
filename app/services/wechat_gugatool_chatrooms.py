@@ -23,6 +23,7 @@ from app.services.wechat_gugatool_directory import (
     cache_group,
     cached_group,
     finish_group_refresh,
+    public_avatar_url,
     save_account_profile,
 )
 
@@ -80,6 +81,8 @@ def sync_wechat_gugatool_chatroom_from_message(
     chatroom.last_synced_at = seen_at
     chatroom.extra_json = json.dumps(
         {
+            # 保留群资料接口写过的头像等字段，消息只能补充不能覆盖。
+            **previous_extra,
             "source": "wechat_gugatool_message_ingest",
             "name_source": "group_roster" if roster.get("title") else "message_payload",
             "member_count": len(roster_members) or previous_extra.get("member_count"),
@@ -144,6 +147,7 @@ def apply_wechat_gugatool_roster_result(
         return {"updated": False}
 
     title = str(payload.get("Name") or payload.get("DisplayName") or "").strip()
+    room_avatar_url = _avatar_url_from_payload(payload)
     members: dict[str, dict[str, Any]] = {}
     raw_members = payload.get("Members")
     if isinstance(raw_members, list):
@@ -160,7 +164,7 @@ def apply_wechat_gugatool_roster_result(
                 "display_name": str(item.get("DisplayName") or item.get("RoomNickName") or "").strip(),
                 "remark": str(item.get("Remark") or "").strip(),
                 "alias": str(item.get("Alias") or "").strip(),
-                "avatar_url": str(item.get("HeadImgUrl") or item.get("BigHeadImgUrl") or "").strip(),
+                "avatar_url": public_avatar_url(item),
                 "is_owner": bool(item.get("IsOwner")),
                 "is_admin": bool(item.get("IsAdmin")),
             }
@@ -173,17 +177,16 @@ def apply_wechat_gugatool_roster_result(
         chatroom.name = title[:255]
     chatroom.last_synced_at = seen_at
     previous_extra = _parse_json(chatroom.extra_json)
-    chatroom.extra_json = json.dumps(
-        {
-            **previous_extra,
-            "source": "wechat_gugatool_group_roster",
-            "name_source": "group_roster",
-            "member_count": len(members) or previous_extra.get("member_count"),
-            "roster_synced": bool(members),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    extra_payload = {
+        **previous_extra,
+        "source": "wechat_gugatool_group_roster",
+        "name_source": "group_roster",
+        "member_count": len(members) or previous_extra.get("member_count"),
+        "roster_synced": bool(members),
+    }
+    if room_avatar_url:
+        extra_payload["avatar_url"] = room_avatar_url
+    chatroom.extra_json = json.dumps(extra_payload, ensure_ascii=False, sort_keys=True)
 
     member_created = 0
     for wxid, profile in list(members.items())[:MAX_ROSTER_MEMBERS]:
@@ -311,6 +314,12 @@ def _resolve_chatroom_name(
         if candidate and candidate != external_id:
             return candidate[:255]
     return external_id
+
+
+def _avatar_url_from_payload(payload: dict[str, Any]) -> str:
+    """群资料里的头像地址；手机本地下载地址服务端取不到，直接丢弃。"""
+
+    return public_avatar_url(payload)
 
 
 def _parse_json(raw: str | None) -> dict[str, Any]:

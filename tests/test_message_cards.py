@@ -325,3 +325,48 @@ def test_media_endpoints_check_csrf_roles_and_message_type(conversation_page) ->
     csrf = _login(client, "readonly")
     assert client.get(f"/messages/media/status?message_id={rows['image']}").status_code == 200
     assert client.post("/messages/media/load", data={"message_id": rows["voice"]}, headers={"X-CSRF-Token": csrf}).status_code == 403
+
+
+# ---------- 引用消息:统一解析与入站卡片 ----------
+
+def test_parse_quote_payload_normalizes_text_and_cards() -> None:
+    """引用解析对渠道无关:文字直接给原文,卡片取嵌套标题,非引用消息返回 None。"""
+
+    payload = mv.parse_quote_payload(QUOTE.format(t=1, c="被引用的话"))
+    assert payload == {
+        "title": "[掩面]山没有绿色底色",
+        "ref_type": 1,
+        "ref_content": "被引用的话",
+        "ref_name": "一",
+    }
+    nested = "&lt;msg&gt;&lt;appmsg&gt;&lt;title&gt;被引用的链接标题&lt;/title&gt;&lt;/appmsg&gt;&lt;/msg&gt;"
+    card = mv.parse_quote_payload(QUOTE.format(t=49, c=nested))
+    assert mv.quote_view(card)["refer_text"] == "[卡片] 被引用的链接标题"
+    assert mv.quote_view(card)["refer_name"] == "一"
+    assert mv.parse_quote_payload("普通文字") is None
+    assert mv.parse_quote_payload("<msg><appmsg><type>5</type></appmsg></msg>") is None
+
+
+def test_parse_quote_payload_keeps_quoted_image_cdn_fields() -> None:
+    """被引用的是图片时保留 CDN 四件套,与 iPad 协议约定一致。"""
+
+    refer = '&lt;msg&gt;&lt;img aeskey="k" cdnmidimgurl="https://cdn.test/a.jpg" md5="m" /&gt;&lt;/msg&gt;'
+    payload = mv.parse_quote_payload(QUOTE.format(t=3, c=refer))
+    assert payload["ref_type"] == 3
+    assert payload["image_info"] == {"aeskey": "k", "file_no": "https://cdn.test/a.jpg", "url": "https://cdn.test/a.jpg", "md5": "m"}
+
+
+def test_inbound_quote_snapshot_renders_as_quote_card(conversation_page) -> None:
+    """入站引用消息按消息快照还原卡片:正文是回复,引用块显示原发送人和原文。"""
+
+    client, ids, conversation_id, rows, _channel_id = conversation_page
+    with ids["factory"]() as db:
+        message = db.get(Message, rows["text"])
+        message.content = "这个怎么处理"
+        message.raw_request_json = json.dumps({"quote": {"title": "这个怎么处理", "ref_type": 1, "ref_content": "原始问题", "ref_name": "小明"}})
+        db.commit()
+    _login(client, "admin")
+    html = client.get(f"/messages?conversation_id={conversation_id}").text
+    row = _row(html, rows["text"])
+    assert 'class="msg-quote"' in row
+    assert "这个怎么处理" in row and "原始问题" in row and "<strong>小明</strong>" in row

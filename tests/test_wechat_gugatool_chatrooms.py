@@ -113,3 +113,37 @@ def test_chatroom_name_prefers_roster_over_technical_id() -> None:
 def test_seen_at_falls_back_to_now_for_invalid_timestamp() -> None:
     assert _resolve_seen_at({"create_time": "bad"}) is not None
     assert _resolve_seen_at({"create_time": 1794362355}).year == 2026
+
+
+def test_roster_result_persists_room_and_member_avatars(session_factory) -> None:
+    """手机群资料返回 HeadImgUrl 后,群列表头像与群成员头像都要落库。"""
+
+    import json
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel = _channel(db)
+        wechat_gugatool_chatrooms.apply_wechat_gugatool_roster_result(
+            db,
+            channel,
+            room_id="1@chatroom",
+            result={
+                "Data": {
+                    "ChatRoomWxid": "1@chatroom",
+                    "Name": "峡谷玩具车",
+                    "HeadImgUrl": "https://wx.qlogo.cn/mmcrhead/room/0",
+                    "Members": [
+                        {
+                            "Wxid": "wxid_a",
+                            "NickName": "老王",
+                            "HeadImgUrl": "http://wx.qlogo.cn/mmhead/a/132",
+                        }
+                    ],
+                }
+            },
+        )
+        db.commit()
+
+        room = db.scalar(select(Chatroom).where(Chatroom.external_id == "1@chatroom"))
+        assert json.loads(room.extra_json)["avatar_url"] == "https://wx.qlogo.cn/mmcrhead/room/0"
+        member = db.scalar(select(ChatroomMember).where(ChatroomMember.member_external_id == "wxid_a"))
+        assert json.loads(member.extra_json)["avatar_url"] == "https://wx.qlogo.cn/mmhead/a/132"

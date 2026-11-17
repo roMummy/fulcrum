@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -26,6 +26,7 @@ from .contract import (
     GugaAgentError,
     as_object,
     identity_from_payload,
+    message_ids,
     text,
 )
 
@@ -144,6 +145,40 @@ def accept_state(db: Session, channel: Channel, payload: dict[str, Any], *, tran
     return {"ok": True}
 
 
+def touch_agent(db: Session, channel: Channel, *, min_interval: float = 30.0, transport: str = "") -> bool:
+    """任何已鉴权的 Agent 请求都算在线心跳。
+
+    手机在 Agent 模式下主要通过 poll/event 维持连接,不一定调用 /state;
+    只按 register/state 的 last_seen_at 判断会在收到消息时仍显示“手机端未连接”。
+    数据库写入按 min_interval 节流,轮询频繁时不会每次请求都写库。
+    """
+
+    runtime = _runtime(channel)
+    current = as_object(runtime.get(RUNTIME_KEY))
+    if not current:
+        return False
+    now = now_shanghai()
+    last_raw = text(current.get("last_seen_at"))
+    if last_raw:
+        try:
+            last_seen = datetime.fromisoformat(last_raw)
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=now.tzinfo)
+            if (now - last_seen).total_seconds() < min_interval and current.get("online"):
+                return False
+        except ValueError:
+            pass
+    current["last_seen_at"] = now.isoformat()
+    current["online"] = True
+    if transport:
+        current["transport"] = transport
+    runtime[RUNTIME_KEY] = current
+    _save_runtime(channel, runtime)
+    channel.last_heartbeat_at = now
+    db.commit()
+    return True
+
+
 def health_snapshot(channel: Channel) -> dict[str, Any]:
     current = registration(channel)
     from .access import account_info
@@ -254,6 +289,17 @@ def claim_commands(
         name = text(command.get("command_name"))
         if not name:
             continue
+        if data.get("revoke_message_id"):
+            expires_at = int(data.get("revoke_expires_at") or 0)
+            if expires_at and expires_at <= int(current_time.timestamp() * 1000):
+                # 排队期间跨过两分钟就不再让手机执行,避免撤回失败后反复重试。
+                from app.services.message_actions import settle_revoke
+
+                job.status = "failed"
+                job.error_message = "消息已超过 2 分钟，无法撤回"
+                job.finished_at = current_time
+                settle_revoke(db, job, ok=False, error=job.error_message)
+                continue
         if max_payload_bytes is not None:
             encoded = json.dumps(command, ensure_ascii=False).encode("utf-8")
             if len(encoded) > int(max_payload_bytes):
@@ -313,7 +359,12 @@ def accept_command_result(db: Session, channel: Channel, payload: dict[str, Any]
     job.result_json = json.dumps(result, ensure_ascii=False) if result else None
     job.error_message = None if ok else (error or f"{command_name}_failed")
     job.finished_at = now_shanghai()
-    _settle_outbound_message(db, job, ok=ok, error=error)
+    _settle_outbound_message(db, job, ok=ok, error=error, result=result)
+    if command_name == "revoke_message":
+        from app.services.message_actions import settle_revoke
+
+        # 手机确认撤回成功后才把原消息标成已撤回;失败保留原文,2 分钟内还能重试。
+        settle_revoke(db, job, ok=ok, error=error)
     if ok and command_name == "get_chatroom_info":
         room_id = text(as_object(command.get("params")).get("chatroom_wxid"))
         if room_id:
@@ -460,7 +511,7 @@ def _ingest_history_result(db: Session, channel: Channel, result: dict[str, Any]
     logger.info("guga history ingested", extra={"channel_id": channel.id, "ingested": ingested})
 
 
-def _settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str = "") -> None:
+def _settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str = "", result: dict[str, Any] | None = None) -> None:
     """按 request_id 找回入队时落库的出站消息,更新最终发送状态。"""
 
     data = parse_job_payload(job)
@@ -482,4 +533,16 @@ def _settle_outbound_message(db: Session, job: TaskJob, *, ok: bool, error: str 
             message.external_status = "sent" if ok else "failed"
             if error:
                 message.raw_response_json = json.dumps({"error": error}, ensure_ascii=False)
+            native = message_ids(result) if ok else {}
+            if native:
+                # 机器人的回复也要能被引用:保留手机返回的编号,发送引用时直接取用。
+                try:
+                    raw = as_object(json.loads(message.raw_request_json or "{}"))
+                except (TypeError, ValueError):
+                    raw = {}
+                raw["native_ids"] = native
+                message.raw_request_json = json.dumps(raw, ensure_ascii=False)
+                if not message.external_message_id:
+                    # 服务端编号优先;消息中心据此判断这条回复可以被引用。
+                    message.external_message_id = str(native.get("server") or native.get("local"))
             return

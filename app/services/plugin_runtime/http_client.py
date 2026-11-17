@@ -151,6 +151,7 @@ class PluginHttpClient:
                         max_response_bytes=response_limit,
                         deadline=deadline,
                         clock=self._clock,
+                        read_body=normalized_method != "HEAD",
                     )
             except HTTPError as exc:
                 # HTTPError 同时也是可读取的响应对象。4xx/5xx 由插件按业务语义判断，
@@ -161,6 +162,7 @@ class PluginHttpClient:
                         max_response_bytes=response_limit,
                         deadline=deadline,
                         clock=self._clock,
+                        read_body=normalized_method != "HEAD",
                     )
             except PluginHttpError:
                 raise
@@ -273,8 +275,14 @@ def _read_response(
     max_response_bytes: int,
     deadline: float,
     clock: Callable[[], float],
+    read_body: bool = True,
 ) -> PluginHttpResponse:
     headers = _normalize_response_headers(getattr(response, "headers", {}))
+    status_code = int(getattr(response, "status", getattr(response, "code", 0)) or 0)
+    final_url = str(response.geturl() if hasattr(response, "geturl") else "")
+    if not read_body:
+        # HEAD 没有响应体；Content-Length 描述的是 GET 的大小，不能套用响应体上限。
+        return PluginHttpResponse(status_code=status_code, headers=headers, body=b"", url=final_url)
     content_length = _parse_content_length(headers.get("content-length"))
     if content_length is not None and content_length > max_response_bytes:
         raise PluginHttpResponseTooLarge("插件 HTTP 响应体超过允许大小")
@@ -292,8 +300,6 @@ def _read_response(
             raise PluginHttpResponseTooLarge("插件 HTTP 响应体超过允许大小")
         chunks.append(chunk)
 
-    status_code = int(getattr(response, "status", getattr(response, "code", 0)) or 0)
-    final_url = str(response.geturl() if hasattr(response, "geturl") else "")
     return PluginHttpResponse(
         status_code=status_code,
         headers=headers,

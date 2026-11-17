@@ -89,6 +89,7 @@ def _register_from_hello(tenant_id: int, channel_id: int, hello: dict[str, Any])
 async def _handle_frame(*, tenant_id: int, channel_id: int, frame: dict[str, Any], websocket: WebSocket) -> None:
     frame_type = text(frame.get("type")).lower()
     if frame_type == "ping":
+        await run_in_threadpool(_touch, tenant_id, channel_id)
         await _safe_send(websocket, {"type": "pong"})
         return
     if frame_type == "pong":
@@ -116,6 +117,7 @@ def _accept_command_result(tenant_id: int, channel_id: int, frame: dict[str, Any
         channel = db.get(Channel, int(channel_id))
         if channel is not None:
             service.accept_command_result(db, channel, frame)
+            service.touch_agent(db, channel, transport="ws")
 
 
 def _ingest_event(tenant_id: int, channel_id: int, frame: dict[str, Any]) -> None:
@@ -123,6 +125,14 @@ def _ingest_event(tenant_id: int, channel_id: int, frame: dict[str, Any]) -> Non
         channel = db.get(Channel, int(channel_id))
         if channel is not None:
             service.ingest_event(db, channel, frame)
+            service.touch_agent(db, channel, transport="ws")
+
+
+def _touch(tenant_id: int, channel_id: int) -> None:
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        if channel is not None:
+            service.touch_agent(db, channel, transport="ws")
 
 
 async def _sender_loop(websocket: WebSocket, *, channel_id: int, tenant_id: int, registration: dict[str, Any]) -> None:

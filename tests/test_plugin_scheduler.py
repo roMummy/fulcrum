@@ -357,7 +357,8 @@ def test_due_schedule_scanner_creates_all_plugin_jobs_once(scheduler_fixture) ->
     """各类定时插件通过统一扫描器入队，重复扫描不重复创建。"""
 
     factory, identity = scheduler_fixture
-    current = now_shanghai().replace(hour=10, minute=0, second=30, microsecond=0)
+    # 普通工作日固定为周二；周日与月末的追加任务在下方专门用例中验证。
+    current = now_shanghai().replace(year=2026, month=11, day=17, hour=10, minute=0, second=30, microsecond=0)
     with tenant_scope(identity["alpha_tenant_id"]), tenant_session(factory) as db:
         first = schedule_due_plugin_actions(db, now=current)
         second = schedule_due_plugin_actions(db, now=current + timedelta(seconds=5))

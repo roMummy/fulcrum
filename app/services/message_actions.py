@@ -6,11 +6,11 @@ import json
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
-from app.models.entities import Channel, Conversation, Message, TaskJob
+from app.models.entities import Channel, Conversation, Message, RawWebhookEvent, TaskJob
 
 
 MEDIA_TYPES = {"image", "voice", "video", "emoji", "file"}
@@ -60,10 +60,139 @@ def capabilities(channel: Channel | None, conversation: Conversation) -> dict[st
     elif kind == "wechat_ipad":
         # 普通文件/视频上传没有协议需要的 CDN XML/封面，不能宣称可直接发送。
         result.update(image=True, voice=True, mention=True)
+    elif kind == "wechat_gugatool":
+        # 手机注册时上报实际支持的命令；老版本没有清单时按适配器已实现的发送能力放行。
+        reported = object_json(channel.runtime_info_json).get("guga_agent", {})
+        reported = reported.get("capabilities") if isinstance(reported, dict) else None
+        commands = set(reported) if isinstance(reported, list) else set()
+        names = {
+            "image": "send_image",
+            "voice": "send_voice",
+            "video": "send_video",
+            "emoji": "send_emoji",
+            "file": "send_file",
+            "quote": "send_quote",
+            "mention": "send_text",
+            "revoke": "revoke_message",
+        }
+        result.update({name: not commands or command in commands for name, command in names.items()})
     elif kind == "telegram":
         result["image"] = True
     result["mention"] = result["mention"] and conversation.chat_type == "group"
     return result
+
+
+def guga_quote_ids(db: Session, channel_id: int, external_message_id: str, *, raw_request_json: str | None = None) -> dict[str, int]:
+    """咕嘎手机端的引用接口要本地/服务端消息 ID。
+
+    入站时已把这两个编号存进消息快照;老消息或历史补拉没有快照时,
+    再按渠道消息编号回查原始事件。
+    """
+
+    event_id = str(external_message_id or "").strip()
+    if not event_id:
+        return {}
+    snapshot = object_json(raw_request_json)
+    native = snapshot.get("native_ids") if isinstance(snapshot.get("native_ids"), dict) else {}
+    ids: dict[str, int] = {}
+    for source, target in (("local", "quote_local_id"), ("server", "quote_msg_svr_id")):
+        value = native.get(source)
+        if isinstance(value, bool):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            ids[target] = number
+    if ids:
+        return ids
+    event = db.scalar(
+        select(RawWebhookEvent)
+        .where(RawWebhookEvent.channel_id == int(channel_id), RawWebhookEvent.event_key == event_id)
+        .order_by(RawWebhookEvent.id.desc())
+    )
+    payload = object_json(event.payload_json) if event is not None else {}
+    for source, target in (("localMessageID", "quote_local_id"), ("serverMessageID", "quote_msg_svr_id")):
+        value = payload.get(source)
+        if isinstance(value, bool):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            ids[target] = number
+    return ids
+
+
+def guga_quote_ids_from_job(db: Session, channel: Channel, message: Message) -> dict[str, int]:
+    """出站消息没有事件快照时,从手机命令回执里找本地/服务端编号。
+
+    咕嘎手机的回执形如 ``{"Data": {"LocalId": 33300, "MsgSvrId": 0}}``;
+    老消息加这层兜底,不用等重新发送也能被引用。
+    """
+
+    request_id = str(object_json(message.raw_request_json).get("request_id") or "").strip()
+    if not request_id:
+        return {}
+    from app.services.guga_agent.contract import JOB_TYPE, message_ids
+
+    job = db.scalar(
+        select(TaskJob).where(
+            TaskJob.job_type == JOB_TYPE,
+            TaskJob.dedupe_key == f"guga:{int(channel.id)}:{request_id}",
+        )
+    )
+    if job is None or not job.result_json:
+        return {}
+    try:
+        result = json.loads(job.result_json)
+    except (TypeError, ValueError):
+        return {}
+    native = message_ids(result)
+    ids: dict[str, int] = {}
+    if native.get("local"):
+        ids["quote_local_id"] = int(native["local"])
+    if native.get("server"):
+        ids["quote_msg_svr_id"] = int(native["server"])
+    return ids
+
+
+def guga_message_ids(db: Session, channel: Channel, message: Message) -> dict[str, int]:
+    """咕嘎发送引用/撤回都要本地或服务端编号:优先消息快照,其次命令回执。"""
+
+    ids = guga_quote_ids(
+        db,
+        int(channel.id),
+        str(message.external_message_id or "").strip(),
+        raw_request_json=message.raw_request_json,
+    )
+    if ids:
+        return ids
+    return guga_quote_ids_from_job(db, channel, message)
+
+
+def quote_payload_for(db: Session, channel: Channel, message: Message) -> dict[str, Any]:
+    """把消息中心的引用目标翻译成当前渠道发送接口认识的字段。
+
+    微信协议按渠道分两种:微桥直接收被引用消息的渠道编号;咕嘎手机只收
+    本地/服务端编号,拿不到就明确报错,不能把事件 UUID 当引用编号发出去。
+    """
+
+    if message.status in {"failed", "revoked"} or message.external_status == "pending":
+        raise ValueError("这条消息尚未确认发送、已撤回或缺少渠道消息编号，无法引用")
+    external_id = str(message.external_message_id or "").strip()
+    if channel.channel_type == "wechat_gugatool":
+        ids = guga_message_ids(db, channel, message)
+        if not ids:
+            raise ValueError("这条消息缺少微信本地/服务端消息编号，无法引用")
+        # 出站消息可能只有本地编号;引用接口接受 local_id,不需要事件 UUID。
+        quote_id = external_id or str(ids.get("quote_msg_svr_id") or ids.get("quote_local_id"))
+        return {"quote_message_id": quote_id, **ids}
+    if not external_id:
+        raise ValueError("这条消息尚未确认发送、已撤回或缺少渠道消息编号，无法引用")
+    return {"quote_message_id": external_id}
 
 
 def revoke_info(message: Message, channel: Channel | None) -> dict[str, Any]:
@@ -92,14 +221,38 @@ def request_revoke(db: Session, channel: Channel, conversation: Conversation, me
         raise ValueError("这条消息已经撤回")
     if not message.created_at or (now_shanghai() - ensure_shanghai_datetime(message.created_at)).total_seconds() >= REVOKE_SECONDS:
         raise ValueError("消息已超过 2 分钟，无法撤回")
-    if message.status == "failed" or message.external_status == "pending" or not message.external_message_id:
+    if message.status == "failed" or message.external_status == "pending":
         raise ValueError("消息尚未确认发送或缺少渠道消息编号，暂时无法撤回")
     raw = object_json(message.raw_request_json)
     if isinstance(raw.get("revoke"), dict) and raw["revoke"].get("state") == "pending":
         return {"ok": True, "notice": "撤回请求已提交，等待手机执行"}
-    from app.services.wechat_webridge.service import enqueue_message_command
+    if channel.channel_type == "wechat_gugatool":
+        ids = guga_message_ids(db, channel, message)
+        if not ids:
+            raise ValueError("这条消息缺少微信本地/服务端消息编号，暂时无法撤回")
+        from app.services.guga_agent.service import enqueue_command
 
-    job = enqueue_message_command(db, channel, conversation, {"message_type": "revoke", "message_id": message.external_message_id})
+        # 手机端 /api/v1/Msg/Revoke 只认 ToWxid + LocalId/MsgSvrId,字段名不能改成 snake_case。
+        params: dict[str, Any] = {"ToWxid": str(conversation.external_id or "").strip()}
+        if ids.get("quote_local_id"):
+            params["LocalId"] = int(ids["quote_local_id"])
+        if ids.get("quote_msg_svr_id"):
+            params["MsgSvrId"] = int(ids["quote_msg_svr_id"])
+        job = enqueue_command(
+            db,
+            channel,
+            command_name="revoke_message",
+            params=params,
+            priority=95,
+            conversation_id=int(conversation.id),
+            purpose="revoke",
+        )
+    else:
+        if not message.external_message_id:
+            raise ValueError("消息尚未确认发送或缺少渠道消息编号，暂时无法撤回")
+        from app.services.wechat_webridge.service import enqueue_message_command
+
+        job = enqueue_message_command(db, channel, conversation, {"message_type": "revoke", "message_id": message.external_message_id})
     payload = object_json(job.payload_json)
     payload["revoke_message_id"] = int(message.id)
     payload["revoke_expires_at"] = revoke_info(message, channel)["revoke_until"]
@@ -153,3 +306,50 @@ def apply_recall_event(db: Session, channel: Channel, conversation: Conversation
             message.status = message.external_status = "revoked"
         return matches
     return []
+
+
+def apply_gugatool_recall_event(
+    db: Session,
+    channel: Channel,
+    conversation: Conversation,
+    recalled: dict[str, Any],
+    *,
+    raw_event_id: int,
+) -> list[Message]:
+    """只按同账号会话的明确微信编号撤回，缺失或歧义证据必须留作系统通知。"""
+
+    if conversation.channel_id != channel.id or conversation.tenant_id != channel.tenant_id:
+        return []
+    # 服务端编号优先，本地编号不能冒充服务端编号。通知不带编号时即使正文唯一也不猜。
+    server_ids = {str(int(value)) for value in recalled.get("server_message_ids", [])
+        if str(value).isdigit() and int(value) > 0}
+    local_ids = {str(int(value)) for value in recalled.get("local_message_ids", [])
+        if str(value).isdigit() and int(value) > 0}
+    identifiers = server_ids or local_ids
+    if not identifiers or len(server_ids) > 1 or len(local_ids) > 1:
+        return []
+    matches: list[Message] = []
+    # 先在已索引的会话范围内按编号文本收窄，再解析快照核对完整整数。
+    # 不在数据库中转数值，避免 SQLite/MySQL 对超大微信编号的浮点转换丢失精度。
+    candidates = db.scalars(select(Message).where(
+        Message.conversation_id == conversation.id,
+        Message.tenant_id == channel.tenant_id,
+        Message.status != "echo", Message.message_type != "system",
+        or_(Message.external_message_id.in_(identifiers),
+            *(Message.raw_request_json.contains(value) for value in identifiers)),
+    ).with_for_update()).all()
+    for message in candidates:
+        native = guga_message_ids(db, channel, message)
+        value = native.get("quote_msg_svr_id" if server_ids else "quote_local_id")
+        if value is not None and str(value) in identifiers:
+            matches.append(message)
+    # 本地编号可能重复，异常快照也可能保存同一服务器编号；不能一次改动多条历史消息。
+    if len(matches) != 1:
+        return []
+    for message in matches:
+        raw = object_json(message.raw_request_json)
+        previous = raw.get("revoke") if isinstance(raw.get("revoke"), dict) else {}
+        raw["revoke"] = {**previous, "state": "revoked", "error": "", "raw_event_id": raw_event_id}
+        message.raw_request_json = json.dumps(raw, ensure_ascii=False)
+        message.status = message.external_status = "revoked"
+    return matches

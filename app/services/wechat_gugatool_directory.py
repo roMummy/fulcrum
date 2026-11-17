@@ -6,10 +6,12 @@ Agent 模式下平台不能主动访问手机,群资料只能通过 get_chatroom
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.time import now_shanghai
 from app.models.entities import Channel
@@ -116,3 +118,44 @@ def save_account_profile(channel: Channel, *, account_id: str, name: str, avatar
             connection["display_name"] = normalized_name
         runtime["account_connection"] = connection
     channel.runtime_info_json = json.dumps(runtime, ensure_ascii=False, sort_keys=True)
+
+
+def public_avatar_url(item: dict[str, Any]) -> str:
+    """从手机回传的好友/群/成员资料里取可直接展示的头像地址。
+
+    - 优先级:大头像 > 普通头像 > 小头像 > 手机本地下载地址;
+    - 兼容旧版本把地址放在 avatar_url/head_img_url;
+    - 手机本地回环/内网地址平台和浏览器都访问不到,直接丢弃;
+    - 微信 CDN 统一升级到 https,避免后台是 https 时出现混合内容。
+    """
+
+    if not isinstance(item, dict):
+        return ""
+    for key in (
+        "BigHeadImgUrl",
+        "HeadImgUrl",
+        "SmallHeadImgUrl",
+        "big_head_img_url",
+        "head_img_url",
+        "small_head_img_url",
+        "AvatarDownloadURL",
+        "avatar_url",
+        "avatar",
+    ):
+        value = str(item.get(key) or "").strip()
+        if not value.startswith(("http://", "https://")):
+            continue
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").strip().lower()
+        if not host or host in {"localhost", "127.0.0.1", "::1"}:
+            continue
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and (address.is_private or address.is_loopback or address.is_link_local):
+            continue
+        if parsed.scheme == "http" and host.endswith("qlogo.cn"):
+            return "https://" + value[len("http://"):]
+        return value
+    return ""

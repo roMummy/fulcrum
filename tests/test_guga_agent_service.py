@@ -179,11 +179,12 @@ def test_friend_list_result_persists_friend_contacts(session_factory) -> None:
                 "ok": True,
                 "result": {
                     "Data": {
-                        "Count": 3,
+                        "Count": 4,
                         "Items": [
-                            {"Wxid": "wxid_friend_a", "Name": "好友A", "NickName": "昵称A", "Remark": "备注A", "Alias": "a"},
-                            {"Wxid": "wxid_friend_b", "Name": "好友B", "NickName": "", "Remark": "", "Alias": ""},
+                            {"Wxid": "wxid_friend_a", "Name": "好友A", "NickName": "昵称A", "Remark": "备注A", "Alias": "a", "HeadImgUrl": "http://wx.qlogo.cn/mmhead/abc/132"},
+                            {"Wxid": "wxid_friend_b", "Name": "好友B", "NickName": "", "Remark": "", "Alias": "", "HeadImgUrl": "http://172.16.20.128:19090/api/v1/Tools/DownloadFile?Name=b.jpg"},
                             {"Wxid": "123@chatroom", "Name": "保存的群", "NickName": "", "Remark": "", "Alias": ""},
+                            {"Wxid": "notification_messages", "Name": "服务通知", "NickName": "", "Remark": "", "Alias": ""},
                         ],
                     }
                 },
@@ -196,7 +197,11 @@ def test_friend_list_result_persists_friend_contacts(session_factory) -> None:
         assert all(item.contact_kind == "friend" for item in contacts)
         assert contacts[0].display_name == "备注A"
         assert contacts[0].alias == "a"
+        # 微信 CDN 的 http 地址升级为 https,后台走 HTTPS 时不会被浏览器拦截。
+        assert contacts[0].avatar_url == "https://wx.qlogo.cn/mmhead/abc/132"
         assert contacts[1].name == "好友B"
+        # 手机本地内网地址平台/浏览器都访问不到,不写入头像。
+        assert contacts[1].avatar_url is None
 
 
 def test_all_phone_capabilities_are_registered_as_commands() -> None:
@@ -335,3 +340,50 @@ def test_sync_messages_result_ingests_history(session_factory) -> None:
 
         messages = db.scalars(select(Message)).all()
         assert [item.external_message_id for item in messages] == ["hist-1"]
+
+
+def test_send_result_keeps_native_ids_so_the_reply_can_be_quoted(session_factory) -> None:
+    """手机发送成功后回报的本地/服务端编号要留在消息上,后续引用机器人自己的回复才有编号可用。"""
+
+    from app.models.entities import Conversation
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel = _channel(db)
+        service.register_device(db, channel, {"device_id": "device-1", "account_id": "wxid_self"})
+        conversation = Conversation(bot_id=1, channel_id=channel.id, channel_type="wechat_gugatool", external_id="wxid_peer", chat_type="direct", tenant_id=7)
+        db.add(conversation)
+        db.flush()
+        message = Message(tenant_id=7, conversation_id=conversation.id, direction="out", content="收到", message_type="text", status="queued", external_status="pending", raw_request_json=json.dumps({"request_id": "req-quote"}))
+        db.add(message)
+        service.enqueue_command(db, channel, command_name="send_text", params={"to_wxid": "wxid_peer", "content": "收到"}, request_id="req-quote", conversation_id=int(conversation.id))
+        db.commit()
+
+        service.accept_command_result(
+            db,
+            channel,
+            {"device_id": "device-1", "request_id": "req-quote", "command_name": "send_text", "ok": True, "result": {"Data": {"LocalId": 1097, "MsgSvrId": 2773629253319918141}}},
+        )
+
+        assert message.status == "sent"
+        assert message.external_message_id == "2773629253319918141"
+        assert json.loads(message.raw_request_json)["native_ids"] == {"local": 1097, "server": 2773629253319918141}
+
+
+def test_touch_agent_keeps_polling_device_online_between_state_heartbeats(session_factory) -> None:
+    """手机只 poll 不报 /state 时,轮询也要刷新在线时间,否则后台会误判“手机端未连接”。"""
+
+    from app.services.guga_agent.access import account_info
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel = _channel(db)
+        service.register_device(db, channel, {"device_id": "device-1", "account_id": "wxid_self"})
+        runtime = json.loads(channel.runtime_info_json)
+        runtime["guga_agent"]["last_seen_at"] = "2026-01-01T00:00:00+08:00"
+        channel.runtime_info_json = json.dumps(runtime)
+        db.commit()
+        assert account_info(channel)["online"] is False
+
+        assert service.touch_agent(db, channel) is True
+
+        assert account_info(channel)["online"] is True
+        assert service.touch_agent(db, channel) is False  # 30 秒内重复请求不重复写库

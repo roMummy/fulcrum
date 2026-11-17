@@ -101,7 +101,7 @@
         <p class="muted-text invitation-time-hint">入群时间仅展示渠道明确返回的时间，资料获取时间不代表入群时间。</p>
       </aside>
       {% if unlinked_nodes %}
-      <details class="invitation-unlinked" data-invitation-unlinked>
+      <details class="invitation-unlinked disclosure" data-invitation-unlinked>
         <summary>未关联成员 <span>{{ detail.invitations.unlinked_count }} 人</span></summary>
         <p class="muted-text">暂时没有邀请关系记录，可点击成员查看资料。</p>
         <ul class="invitation-unlinked-nodes" aria-label="尚无邀请连线的成员">{% for node in unlinked_nodes %}{{ invitation_card(node) }}{% endfor %}</ul>

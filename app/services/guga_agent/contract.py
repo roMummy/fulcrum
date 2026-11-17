@@ -100,3 +100,32 @@ def identity_from_payload(payload: dict[str, Any]) -> dict[str, str]:
         "account_id": text(payload.get("account_id")),
         "session_id": text(payload.get("session_id")),
     }
+
+
+# 手机发送回执的字段名随版本不同:命令结果用 LocalId/MsgSvrId,
+# 事件体用 localMessageID/serverMessageID,统一在这里认。
+_LOCAL_ID_KEYS = ("LocalId", "localId", "localMessageID", "localMessageId", "local_message_id", "local_id")
+_SERVER_ID_KEYS = ("MsgSvrId", "msgSvrId", "serverMessageID", "serverMessageId", "server_message_id", "server_id")
+
+
+def message_ids(result: Any) -> dict[str, int]:
+    """从命令结果里取本地/服务端消息编号;认不出就返回空,不猜。"""
+
+    payload = as_object(result)
+    for source in (as_object(payload.get("Data")), payload):
+        ids: dict[str, int] = {}
+        for keys, target in ((_LOCAL_ID_KEYS, "local"), (_SERVER_ID_KEYS, "server")):
+            for key in keys:
+                value = source.get(key)
+                if isinstance(value, bool):
+                    continue
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if number > 0:
+                    ids[target] = number
+                    break
+        if ids:
+            return ids
+    return {}

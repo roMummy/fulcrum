@@ -145,13 +145,6 @@ def ingest_normalized_event(
         # 旧值为空或只是 external_id 时允许被真实群名覆盖，避免后台一直显示 R:xxx。
         conversation.title = str(conversation_payload.get("title")).strip()
 
-    if channel.channel_type == "wechat_gugatool":
-        # 咕嘎助手没有群列表接口，群实体只能在收到群消息时按名册落库；
-        # 这样群管理页才能在群第一次说话后就有群和成员，而不是一直空白。
-        from app.services.wechat_gugatool_chatrooms import sync_wechat_gugatool_chatroom_from_message
-
-        sync_wechat_gugatool_chatroom_from_message(db, channel, normalized, conversation=conversation)
-
     details = normalized.get("details") if isinstance(normalized.get("details"), dict) else {}
     recalled = details.get("recall")
     if channel.channel_type == "wechat_webridge" and isinstance(recalled, dict):
@@ -178,6 +171,43 @@ def ingest_normalized_event(
         # 撤回既不是新发言，也不是媒体回显，不触发插件、AI、开放消息通知或群资料同步。
         db.commit()
         return {"ok": True, "deduplicated": False, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
+
+    if channel.channel_type == "wechat_gugatool" and isinstance(recalled, dict):
+        from app.services.message_actions import apply_gugatool_recall_event
+
+        originals = apply_gugatool_recall_event(
+            db,
+            channel,
+            conversation,
+            recalled,
+            raw_event_id=int(raw_event.id),
+        )
+        if originals:
+            message_id = int(originals[0].id)
+        else:
+            # 无编号、未知编号或歧义事件保留系统通知，不伪造对方发言，也不抹掉审计证据。
+            notification = Message(
+                conversation_id=conversation.id, direction="in", sender_id=None, sender_name=None,
+                content=str(recalled.get("text") or "一条消息已被撤回"), message_type="system", status="received",
+            )
+            db.add(notification)
+            db.flush()
+            message_id = int(notification.id)
+            refresh_conversation_last_message_at(db, conversation.id)
+        raw_event.status = "mapped"
+        dispatch = {"mode": "storage_only", "queued": False, "reason": "message_recalled",
+            "message_id": message_id, "conversation_id": conversation.id,
+            "raw_event_id": raw_event.id, "matched": bool(originals)}
+        raw_event.dispatch_summary_json = json.dumps(dispatch, ensure_ascii=False)
+        # 所有撤回通知都在资料同步、统计、插件、AI 和开放消息通知之前结束处理。
+        db.commit()
+        return {"ok": True, "deduplicated": False, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
+
+    if channel.channel_type == "wechat_gugatool":
+        # 撤回通知已提前结束；只有普通群消息才补齐群实体和名册，不能把系统通知当作发言。
+        from app.services.wechat_gugatool_chatrooms import sync_wechat_gugatool_chatroom_from_message
+
+        sync_wechat_gugatool_chatroom_from_message(db, channel, normalized, conversation=conversation)
 
     if channel.channel_type == "wechat_ipad":
         from app.services.wechat_ipad.chatrooms import sync_wechat_ipad_chatroom_from_message
@@ -311,6 +341,9 @@ def ingest_normalized_event(
             content=message_content,
             message_type=str(message_payload.get("message_type") or "text"),
             external_message_id=str(message_payload.get("external_message_id") or "") or None,
+            # 引用原文和微信本地/服务端编号单独留一份快照:消息表只有正文一列,
+            # 消息中心靠它还原引用卡片,发送引用时也不必回头解析原始事件。
+            raw_request_json=_inbound_snapshot(details),
             status="received",
         )
         db.add(message)
@@ -575,6 +608,34 @@ def _resolve_message_direction(normalized: dict[str, Any]) -> str:
     candidate = str(message_payload.get("direction") or details.get("direction") or "").strip().lower()
     # 当前只允许 in/out 两种方向落库，避免外部 payload 写入任意状态值污染统计口径。
     return candidate if candidate in {"in", "out"} else "in"
+
+
+def _inbound_snapshot(details: dict[str, Any]) -> str | None:
+    """入站消息留一份引用原文与微信本地/服务端编号。
+
+    - quote: 消息中心还原引用卡片,插件也能读到被引用的原文;
+    - native_ids: 咕嘎手机发送引用只认 local_id/msg_svr_id,先存下来,
+      后续即使原始事件被清理或来自历史补拉,也能正常引用。
+    """
+
+    snapshot: dict[str, Any] = {}
+    quote = details.get("quote_payload")
+    if isinstance(quote, dict) and quote:
+        snapshot["quote"] = quote
+    native: dict[str, int] = {}
+    for source, target in (("local_message_id", "local"), ("server_message_id", "server")):
+        value = details.get(source)
+        if isinstance(value, bool):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            native[target] = number
+    if native:
+        snapshot["native_ids"] = native
+    return json.dumps(snapshot, ensure_ascii=False) if snapshot else None
 
 
 def _resolve_wechat_winauto_attachment_direction(

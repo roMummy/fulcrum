@@ -307,6 +307,12 @@ def test_plugin_http_client_limits_body_retries_and_redacts_secrets() -> None:
             max_response_bytes=10,
         )
 
+    head_opener = _FakeOpener(_FakeResponse(b"", headers={"Content-Length": "999999"}))
+    head_response = PluginHttpClient(opener_factory=lambda _limit: head_opener).request(
+        "HEAD", "https://api.example.test/media", max_response_bytes=10,
+    )
+    assert head_response.status_code == 200 and head_response.body == b""
+
     timeout_get = _FakeOpener(timeout_error=True)
     with pytest.raises(PluginHttpTimeoutError):
         PluginHttpClient(opener_factory=lambda _limit: timeout_get).request(

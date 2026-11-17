@@ -138,7 +138,9 @@ async def command_result(channel_id: int, request: Request):
             channel = db.get(Channel, int(channel_id))
             if channel is None:
                 raise HTTPException(status_code=404, detail="guga_agent_channel_not_found")
-            return service.accept_command_result(db, channel, body)
+            result = service.accept_command_result(db, channel, body)
+            service.touch_agent(db, channel)
+            return result
     except GugaAgentError as exc:
         return _error_response(exc, channel_id=channel_id)
 
@@ -153,7 +155,9 @@ async def event(channel_id: int, request: Request):
             channel = db.get(Channel, int(channel_id))
             if channel is None:
                 raise HTTPException(status_code=404, detail="guga_agent_channel_not_found")
-            return service.ingest_event(db, channel, body)
+            result = service.ingest_event(db, channel, body)
+            service.touch_agent(db, channel)
+            return result
     except GugaAgentError as exc:
         return _error_response(exc, channel_id=channel_id)
 
@@ -165,7 +169,10 @@ def _claim_once(channel_id: int, tenant_id: int, body: dict) -> list[dict]:
         channel = db.get(Channel, int(channel_id))
         if channel is None:
             return []
-        return service.claim_commands(db, channel, body, limit=5)
+        commands = service.claim_commands(db, channel, body, limit=5)
+        # 长轮询本身就是在线心跳:手机不发 /state 时也要刷新最后在线时间。
+        service.touch_agent(db, channel)
+        return commands
 
 
 @router.post("/{channel_id}/{connection_token}/agent/poll", dependencies=[Depends(_require_device_token)])

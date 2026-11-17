@@ -1,7 +1,7 @@
 """咕嘎助手好友同步：把手机通讯录写入通用联系人表。
 
-手机端 ``Friend/GetContractList`` 只返回通讯录里的联系人，字段固定为
-``Wxid/Name/NickName/Remark/Alias``，不含头像。平台按 wxid 幂等写入
+手机端 ``Friend/GetContractList`` 返回 ``Wxid/Name/NickName/Remark/Alias`` 以及
+``HeadImgUrl/BigHeadImgUrl/SmallHeadImgUrl`` 头像地址。平台按 wxid 幂等写入
 ``workwechat_contacts``，好友页与昵称解析直接复用现有查询。
 """
 
@@ -10,16 +10,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.core.time import now_shanghai
 from app.models.entities import Channel, WorkWechatContact
+from app.services.wechat_gugatool_directory import public_avatar_url
 
 logger = get_logger(__name__)
 
-# 微信内置的系统联系人不是好友，不进入好友列表。
+# 微信内置的系统联系人/服务号不是好友，不进入好友列表。
+# Friend/GetList 也会把“服务通知”“折叠的聊天”等内部会话一起返回。
 SYSTEM_CONTACT_IDS = frozenset(
     {
         "filehelper",
@@ -33,6 +35,21 @@ SYSTEM_CONTACT_IDS = frozenset(
         "notifymessage",
         "voip",
         "exmail_tool",
+        "brandservicesessionholder",
+        "notification_messages",
+        "brandsessionholder",
+        "opencustomerservicemsg",
+        "feedsapp",
+        "masssendapp",
+        "schedule_message",
+        "band_ecs_notification_messages",
+        "blogapp",
+        "fav_weapp_messages",
+        "brandsessionholder_weapp",
+        "voiceinputapp",
+        "chatroom_session_box",
+        "iwatchholder",
+        "qmessage",
     }
 )
 
@@ -90,6 +107,9 @@ def apply_wechat_gugatool_friend_list(
         contact.name = (nickname or name or remark or wxid)[:255]
         contact.display_name = (remark or name or nickname or wxid)[:255]
         contact.alias = alias[:128] or None
+        avatar_url = _avatar_url_from_item(item)
+        if avatar_url:
+            contact.avatar_url = avatar_url
         contact.source = "provider_sync"
         contact.sync_status = "active"
         contact.deleted_at = None
@@ -101,6 +121,17 @@ def apply_wechat_gugatool_friend_list(
         synced += 1
 
     db.flush()
+    # 旧版本同步时把系统会话也当成好友存了进来;新清单已经过滤,这里一并隐藏。
+    db.execute(
+        update(WorkWechatContact)
+        .where(
+            WorkWechatContact.channel_id == channel.id,
+            WorkWechatContact.contact_kind == "friend",
+            WorkWechatContact.contact_external_id.in_(SYSTEM_CONTACT_IDS),
+            WorkWechatContact.sync_status != "deleted",
+        )
+        .values(sync_status="deleted", deleted_at=seen_at, delete_reason="system_contact")
+    )
     logger.info(
         "wechat gugatool friend list applied",
         extra={"channel_id": channel.id, "synced_contacts": synced},
@@ -153,9 +184,9 @@ def apply_wechat_gugatool_friend_detail(
         contact.name = (nickname or name or remark or wxid)[:255]
         contact.display_name = (display_name or remark or name or nickname or wxid)[:255]
         contact.alias = alias[:128] or None
-        avatar_url = _text(item.get("AvatarDownloadURL") or item.get("avatar_url"))
+        avatar_url = _avatar_url_from_item(item)
         # 手机回传的头像地址可能是本机回环地址，服务端和浏览器都访问不到，直接丢弃。
-        if avatar_url.startswith(("http://", "https://")) and not _is_loopback_url(avatar_url):
+        if avatar_url:
             contact.avatar_url = avatar_url
         contact.source = "provider_sync"
         contact.sync_status = "active"
@@ -175,8 +206,9 @@ def apply_wechat_gugatool_friend_detail(
     return {"updated_contacts": updated}
 
 
-def _is_loopback_url(value: str) -> bool:
-    return "://127.0.0.1" in value or "://localhost" in value or "://[::1]" in value
+def _avatar_url_from_item(item: dict[str, Any]) -> str:
+    # 好友列表/详情统一用公共 CDN 地址;手机本地下载地址服务端和浏览器都取不到。
+    return public_avatar_url(item)
 
 
 def _text(value: Any) -> str:

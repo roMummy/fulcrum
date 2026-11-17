@@ -102,19 +102,35 @@ def recall_info(content: object) -> dict[str, Any] | None:
     node = root.find(kind)
     if node is None:
         return None
-    # 新微桥只给服务器编号，旧协议还会给本地 msgid；都按字符串保留，不能转浮点数。
-    identifiers = list(dict.fromkeys(value for value in (
-        _find(node, "reEditReferMsgSvrId"), _find(node, "newmsgid"), _find(node, "msgid"),
+    # 本地与服务器编号分属不同空间；字符串保留完整 64 位精度，禁止混用或转浮点数。
+    server_ids = list(dict.fromkeys(value for value in (
+        _find(node, ".//reEditReferMsgSvrId"), _find(node, "newmsgid"),
     ) if value and value != "0"))
+    local_id = _find(node, "msgid")
+    local_ids = [local_id] if local_id and local_id != "0" else []
+    identifiers = list(dict.fromkeys([*server_ids, *local_ids]))
     notification = _find(node, "replacemsg") or _find(node, "stringContent") or _find(node, "text")
     # reEditStringContent 是被撤回的原文，只能用通知文字，不能把原文重新展示出来。
     shown = _text(_TAG.sub(" ", html.unescape(notification)))
-    return {"message_ids": identifiers, "session": _find(node, "session"), "text": shown or "一条消息已被撤回"}
+    return {"message_ids": identifiers, "server_message_ids": server_ids, "local_message_ids": local_ids,
+        "session": _find(node, "session"), "text": shown or "一条消息已被撤回"}
 
 
 def _quote(root: ElementTree.Element) -> dict[str, Any]:
-    refer_type = _int(_find(root, ".//refermsg/type"))
-    refer_text = _find(root, ".//refermsg/content")
+    quote = {
+        "title": _find(root, ".//appmsg/title"),
+        "ref_type": _int(_find(root, ".//refermsg/type")),
+        "ref_content": _find(root, ".//refermsg/content"),
+        "ref_name": _find(root, ".//refermsg/displayname"),
+    }
+    return quote_view(quote, title=quote["title"])
+
+
+def quote_view(quote: dict[str, Any], title: object = "") -> dict[str, Any]:
+    """把统一引用结构转成消息中心卡片;渠道适配器与历史消息共用同一套展示规则。"""
+
+    refer_type = _int(quote.get("ref_type"))
+    refer_text = _text(quote.get("ref_content"))
     if refer_type == 1:
         shown = refer_text
     elif refer_type == 49 and refer_text.startswith("<"):
@@ -123,7 +139,66 @@ def _quote(root: ElementTree.Element) -> dict[str, Any]:
         shown = f"[卡片] {_find(nested, './/title')}".strip() if nested is not None else "[卡片]"
     else:
         shown = REFER_LABELS.get(refer_type, refer_text or "[消息]")
-    return {"kind": "quote", "title": _find(root, ".//appmsg/title"), "refer_name": _find(root, ".//refermsg/displayname"), "refer_text": shown[:200]}
+    return {
+        "kind": "quote",
+        "title": _text(title or quote.get("title")),
+        "refer_name": _text(quote.get("ref_name")),
+        "refer_text": shown[:200],
+    }
+
+
+_CDN_IMAGE_ATTR_RE = re.compile(r'(aeskey|cdnmidimgurl|cdnbigimgurl|cdnthumburl|md5)="([^"]+)"')
+
+
+def _image_info(content: str) -> dict[str, str]:
+    """被引用的图片 XML 里只有 CDN 字段;沿用 iPad 协议的键名交给下载链路。"""
+
+    attrs = {key: value for key, value in _CDN_IMAGE_ATTR_RE.findall(html.unescape(str(content or "")))}
+    url = attrs.get("cdnmidimgurl") or attrs.get("cdnbigimgurl") or attrs.get("cdnthumburl") or ""
+    if not attrs.get("aeskey") or not url:
+        return {}
+    return {"aeskey": attrs["aeskey"], "file_no": url, "url": url, "md5": attrs.get("md5") or ""}
+
+
+def parse_quote_payload(content: object) -> dict[str, Any] | None:
+    """解析微信引用消息(appmsg type=57),返回插件与消息中心共用的引用结构。
+
+    兼容手机端把整段 XML 再转义一层的情况;不是引用消息时返回 None。
+    """
+
+    raw = str(content or "").strip()
+    if not raw:
+        return None
+    root = _xml(strip_sender(raw))
+    if root is None:
+        for _ in range(2):
+            unescaped = html.unescape(raw)
+            if unescaped == raw:
+                break
+            raw = unescaped
+            root = _xml(strip_sender(raw))
+            if root is not None:
+                break
+    if root is None:
+        return None
+    appmsg = root.find(".//appmsg")
+    if appmsg is None or _int(_find(appmsg, "type")) != 57:
+        return None
+    refer = appmsg.find("refermsg")
+    if refer is None:
+        return None
+    refer_text = html.unescape((refer.findtext("content", "") or "").strip())
+    payload: dict[str, Any] = {
+        "title": _text(appmsg.findtext("title", "")),
+        "ref_type": _int(refer.findtext("type", "0")),
+        "ref_content": refer_text,
+        "ref_name": _text(refer.findtext("displayname", "")),
+    }
+    if payload["ref_type"] == 3:
+        info = _image_info(refer_text)
+        if info:
+            payload["image_info"] = info
+    return payload
 
 
 def _media_view(media_type: str, root: ElementTree.Element | None) -> dict[str, Any]:

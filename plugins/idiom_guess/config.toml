@@ -8,7 +8,7 @@ description = "456 道看图猜成语，支持群聊抢答、答案解释、本�
 default_enabled = false
 
 [capability]
-channel_types = ["wechat_webridge", "wechat_ipad", "wechat_winauto", "workwechat"]
+channel_types = ["wechat_webridge", "wechat_ipad", "wechat_winauto", "workwechat", "wechat_gugatool"]
 chat_types = ["group"]
 message_types = ["text"]
 priority = 100
