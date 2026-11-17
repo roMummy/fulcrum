@@ -1,0 +1,33 @@
+{# 两类插件目录共用统计结构；卡片只携带插件编码，计数由认证后的批量接口提供。 #}
+{% macro usage_toolbar(scope_label) %}
+<div class="plugin-usage-toolbar">
+  <div class="plugin-usage-heading"><strong>调用情况</strong><span>{{ scope_label }} · 最近活动优先</span></div>
+  <div class="plugin-usage-controls">
+    <div class="plugin-usage-periods" role="group" aria-label="调用统计时间范围">
+      {% for value, label in [('24h', '近 24 小时'), ('7d', '近 7 天'), ('30d', '近 30 天')] %}
+      <button type="button" data-usage-period="{{ value }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-secondary btn-icon btn-small" data-usage-refresh title="刷新调用统计" aria-label="刷新调用统计"><span class="i i-refresh" aria-hidden="true"></span></button>
+  </div>
+  <span class="plugin-usage-updated" data-usage-updated role="status">正在加载统计</span>
+</div>
+{% endmacro %}
+
+{% macro usage_card(code, name) %}
+<section class="plugin-usage-card" data-usage-plugin="{{ code }}" aria-label="{{ name }}调用情况" aria-busy="true">
+  <div class="plugin-usage-numbers">
+    {% for key, label in [('matched', '命中'), ('success', '正常'), ('error', '异常')] %}
+    <div class="plugin-usage-metric plugin-usage-{{ key }}"><span title="{{ {'matched': '匹配规则或触发调用的次数；拦截与跳过不计异常', 'success': '实际执行且返回成功的次数', 'error': '执行失败、超时或发送请求失败的次数'}[key] }}"><i aria-hidden="true"></i>{{ label }}</span><strong data-usage-value="{{ key }}">—</strong></div>
+    {% endfor %}
+  </div>
+  <div class="plugin-usage-plot" data-usage-plot hidden>
+    <div class="plugin-usage-yaxis" aria-hidden="true"><span data-usage-max>0</span><span>0</span></div>
+    <svg class="plugin-usage-svg" viewBox="0 0 300 80" preserveAspectRatio="none" tabindex="0" role="slider" aria-label="{{ name }}调用趋势，方向键切换时间点" aria-valuemin="1" aria-valuemax="24" aria-valuenow="24"></svg>
+    <div class="plugin-usage-xaxis" aria-hidden="true"><span></span><span></span><span></span></div>
+  </div>
+  {# 读数放在图下，不使用会被卡片边界裁切的悬浮层；键盘与手机点读共用同一结果。 #}
+  <p class="plugin-usage-readout" data-usage-readout aria-live="polite">正在加载调用统计…</p>
+  <p class="plugin-usage-last">最近调用 <time data-usage-last>—</time></p>
+</section>
+{% endmacro %}

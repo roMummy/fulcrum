@@ -112,7 +112,7 @@ def plan_group_digest(db: Session, chatroom: Chatroom, conversation: Conversatio
 
     rows = db.scalars(
         select(Message)
-        .where(Message.conversation_id == conversation.id, Message.id > cursor["message_id"], Message.direction == "in", Message.message_type == "text")
+        .where(Message.conversation_id == conversation.id, Message.id > cursor["message_id"], Message.direction == "in", Message.message_type == "text", Message.status != "archived")
         .order_by(Message.id.asc())
         .limit(SCAN_LIMIT)
     ).all()

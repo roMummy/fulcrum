@@ -102,19 +102,18 @@ def recall_info(content: object) -> dict[str, Any] | None:
     node = root.find(kind)
     if node is None:
         return None
-    # 新微桥只给服务器编号，旧协议还会给本地 msgid；都按字符串保留，不能转浮点数。
-    identifiers = list(dict.fromkeys(value for value in (
-        _find(node, "reEditReferMsgSvrId"), _find(node, "newmsgid"), _find(node, "msgid"),
+    # 本地与服务器编号分属不同空间；字符串保留完整 64 位精度，禁止混用或转浮点数。
+    server_ids = list(dict.fromkeys(value for value in (
+        _find(node, ".//reEditReferMsgSvrId"), _find(node, "newmsgid"),
     ) if value and value != "0"))
+    local_id = _find(node, "msgid")
+    local_ids = [local_id] if local_id and local_id != "0" else []
+    identifiers = list(dict.fromkeys([*server_ids, *local_ids]))
     notification = _find(node, "replacemsg") or _find(node, "stringContent") or _find(node, "text")
     # reEditStringContent 是被撤回的原文，只能用通知文字，不能把原文重新展示出来。
     shown = _text(_TAG.sub(" ", html.unescape(notification)))
-    result = {"message_ids": identifiers, "session": _find(node, "session"), "text": shown or "一条消息已被撤回"}
-    # 原文只用于按内容匹配原消息(部分客户端撤回通知不带消息编号),不参与展示。
-    original_text = _find(node, ".//reEditStringContent")
-    if original_text:
-        result["original_text"] = original_text
-    return result
+    return {"message_ids": identifiers, "server_message_ids": server_ids, "local_message_ids": local_ids,
+        "session": _find(node, "session"), "text": shown or "一条消息已被撤回"}
 
 
 def _quote(root: ElementTree.Element) -> dict[str, Any]:

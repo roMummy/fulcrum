@@ -200,6 +200,8 @@ class TelegramAdapter(BaseChannelAdapter):
 
         details: dict[str, Any] = {
             "headers_used": sorted((headers or {}).keys()),
+            # 使用消息原始 date，不能用本轮轮询时间刷新积压消息的时效。
+            "timestamp": event_payload.get("date"),
             "update_id": update_id,
             "telegram_chat_type": self._clean_string(chat_payload.get("type")),
             "telegram_chat_id": self._clean_string(chat_payload.get("id")),

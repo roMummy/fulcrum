@@ -62,13 +62,16 @@ def test_webridge_outbound_message_mapping_covers_media_and_cards(monkeypatch) -
         object(), channel, conversation, {"message_type": "image", "image_url": "https://example.test/a.jpg"}
     )
     service.enqueue_message_command(
-        object(), channel, conversation, {"message_type": "link", "title": "文档", "link_url": "https://example.test"}
+        object(), channel, conversation, {"message_type": "link", "title": "文档", "link_url": "https://example.test",
+                                          "thumb_url": "https://wx.qlogo.cn/mmhead/new-member/132"}
     )
 
     assert captured[0]["payload"]["command"]["type"] == "send_image"
     assert captured[0]["payload"]["command"]["params"]["image_path"].endswith("a.jpg")
     assert captured[1]["payload"]["command"]["type"] == "send_link_card"
     assert captured[1]["payload"]["command"]["params"]["url"] == "https://example.test"
+    # 新人头像沿用标准 thumb_url 传给手机，不能被链接卡片映射丢掉或替换成网页地址。
+    assert captured[1]["payload"]["command"]["params"]["thumb_url"] == "https://wx.qlogo.cn/mmhead/new-member/132"
 
 
 def test_webridge_media_upload_command_contains_attachment_reference(monkeypatch) -> None:
@@ -310,9 +313,10 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
     # 维护会入队设备/账号资料、群列表和公众号目录，裸会话没有租户补全；这里只验证领取逻辑，故桩掉。
     from unittest.mock import patch
 
-    from app.services.wechat_webridge import group_sync, member_directory, official_accounts
+    from app.services.wechat_webridge import group_sync, invitation_sync, member_directory, official_accounts
 
-    with patch.object(service, "_enqueue_device_status"), patch.object(service, "_enqueue_account_status"), patch.object(group_sync, "reconcile_if_due"), patch.object(member_directory, "retry_due"), patch.object(official_accounts, "request_sync"):
+    # 逐成员邀请同步也是维护任务；此例只验证普通出站领取，不为它建立群表或租户上下文。
+    with patch.object(service, "_enqueue_device_status"), patch.object(service, "_enqueue_account_status"), patch.object(group_sync, "reconcile_if_due"), patch.object(member_directory, "retry_due"), patch.object(official_accounts, "request_sync"), patch.object(invitation_sync, "resume_channel"):
         commands = service.claim_commands(db, channel, identity)
 
     assert len(commands) == 1
@@ -447,11 +451,13 @@ def test_poll_maintenance_is_throttled_and_refreshes_last_seen() -> None:
     """超时回收和在线心跳按渠道节流：间隔内重复 poll 不再重复执行，首次执行会刷新在线时间。"""
 
     from unittest.mock import MagicMock, patch
+    from app.services.wechat_webridge import invitation_sync
 
     service._last_poll_maintenance.clear()
     identity = {"device_id": "d1", "session_id": "s1", "account_id": "a1", "last_seen_at": "old", "online": False}
     channel = Channel(id=9, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge", runtime_info_json=json.dumps({"webridge": identity}))
-    with patch.object(service, "reap_stale_commands") as reap:
+    # 此处使用 MagicMock 会话只观察心跳节流，邀请轮次恢复在其真实数据库测试中验证。
+    with patch.object(service, "reap_stale_commands") as reap, patch.object(invitation_sync, "resume_channel"):
         service._poll_maintenance(MagicMock(), channel)
         service._poll_maintenance(MagicMock(), channel)
     assert reap.call_count == 1

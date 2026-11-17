@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_plugin_usage.html' import usage_toolbar, usage_card %}
 {# 插件目录使用较大的功能卡片，让名称、真实版本和完整功能介绍在列表里即可读。
    按机器人启停、绑定和配置仍由详情页承接；卡片只提供对应入口和必要的清单异常。 #}
 {% block hero_actions %}
@@ -11,7 +12,7 @@
 {% endblock %}
 {% block content %}
 {# 网格卡片直接放在工作区背景上，避免白色大面板里再叠一层卡片阴影。 #}
-<section class="plugin-page">
+<section class="plugin-page" data-plugin-usage data-usage-url="/plugins/usage">
   {# 单行筛选条在窄屏自动换行；空值选项写明筛选维度，避免四个“全部”难以辨认。 #}
   <form method="get" action="/plugins" class="inline-form plugin-filter">
     <label class="plugin-filter-search"><span class="i i-search" aria-hidden="true"></span><input type="search" name="q" value="{{ plugin_filters.q }}" placeholder="搜索名称、编码、描述、作者" aria-label="搜索插件" /></label>
@@ -24,11 +25,12 @@
     <span class="plugin-filter-count">{{ filtered_plugin_count }} / {{ total_plugin_count }}</span>
   </form>
 
+  {{ usage_toolbar('本企业') }}
   {% if plugins %}
-  <div class="plugin-grid">
+  <div class="plugin-grid" data-usage-grid>
     {% for plugin in plugins %}
     {% set runtime_info = plugin_runtime_map.get(plugin.code, {}) %}
-    <article class="plugin-card{% if runtime_info.manifest_errors %} is-broken{% endif %}">
+    <article class="plugin-card{% if runtime_info.manifest_errors %} is-broken{% endif %}" data-usage-card>
       <header class="plugin-card-head">
         <span class="plugin-card-icon" aria-hidden="true">{{ plugin.display_name[:1] }}</span>
         <div class="plugin-card-copy">
@@ -44,6 +46,7 @@
       {% elif runtime_info.manifest_warnings %}
       <p class="plugin-card-warning">有提示 · {{ runtime_info.manifest_warnings|join('；') }}</p>
       {% endif %}
+      {{ usage_card(plugin.code, plugin.display_name) }}
       <footer class="plugin-card-footer">
         {% if plugin.author %}<span class="plugin-card-author">开发者 · {{ plugin.author }}</span>{% endif %}
         <div class="plugin-card-actions">
@@ -64,3 +67,4 @@
   {% endif %}
 </section>
 {% endblock %}
+{% block scripts %}<script src="/static/js/plugin-usage.js" defer></script>{% endblock %}

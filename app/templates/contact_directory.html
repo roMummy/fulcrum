@@ -39,7 +39,8 @@
         {% if channels|length > 1 %}<td class="muted-text">{{ item.channel_name }}</td>{% endif %}
         <td class="col-compact">{{ item.group_count or '-' }}</td>
         <td class="col-compact">{{ item.points or '-' }}</td>
-        <td class="col-action">{% if item.conversation_id %}<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ item.channel_id }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a>{% elif item.channel_type == 'wechat_gugatool' %}<form method="post" action="/contacts/{{ item.contact_id }}/chat"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-small btn-secondary" type="submit"><span class="i i-message" aria-hidden="true"></span><span>发起聊天</span></button></form>{% endif %}</td>
+        {# 页面使用服务端统一能力判断；只读人员可以查看已有记录，不能创建新会话。 #}
+        <td class="col-action">{% if item.conversation_id %}<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&channel_id={{ item.channel_id }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a>{% elif can_edit and item.can_start_chat %}<form method="post" action="/contacts/{{ item.contact_id }}/chat"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="btn btn-small btn-secondary" type="submit"><span class="i i-message" aria-hidden="true"></span><span>发起聊天</span></button></form>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

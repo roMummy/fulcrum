@@ -15,6 +15,7 @@ from app.models.entities import BotPlugin, Channel, Chatroom, ChatroomMember, Co
 from app.services.chatroom_invitations import (
     backfill_chatroom_invitations,
     build_invitation_graph,
+    JOIN_INFO_SOURCE,
     member_invitation,
     parse_system_invitation,
     record_invitation_event,
@@ -95,6 +96,37 @@ def test_repeated_relation_keeps_newest_evidence_ahead_of_a_delayed_other_invite
     assert member_invitation(member)['recorded_at'] == latest.isoformat()
     # 相同事件重复送达不再推进证据时间，也不计算成新的邀请关系。
     assert not save_member_invitation(member, 'a', source='system_message', recorded_at=latest + timedelta(seconds=1), event_key='latest-join')
+
+
+def test_join_profile_keeps_real_times_separate_and_protects_known_evidence(invitation_db):
+    """接口获取时间只表示查询；空邀请人不能清空关系，同人空时间不清空已有实际时间。"""
+    db, _, _, _ = invitation_db
+    member = db.query(ChatroomMember).filter_by(member_external_id='b').one()
+    now = now_shanghai()
+    joined = now - timedelta(days=10)
+    assert save_member_invitation(member, 'a', source=JOIN_INFO_SOURCE, recorded_at=now, fetched_at=now,
+                                  joined_at=joined, method='unknown', description='接口原文')
+    assert not save_member_invitation(member, '', source=JOIN_INFO_SOURCE, recorded_at=now + timedelta(seconds=2))
+    assert not save_member_invitation(member, 'c', source='member_profile', recorded_at=now + timedelta(days=1))
+    assert not save_member_invitation(member, 'c', source=JOIN_INFO_SOURCE, recorded_at=now - timedelta(days=1))
+    assert save_member_invitation(member, 'a', source=JOIN_INFO_SOURCE, recorded_at=now + timedelta(seconds=3),
+                                  fetched_at=now + timedelta(seconds=4), method='unknown')
+    saved = member_invitation(member)
+    assert saved['joined_at'] == joined.isoformat() and saved['fetched_at'] != saved['joined_at']
+    assert saved['description'] == '接口原文'
+
+
+def test_unknown_join_profile_does_not_fabricate_edge_or_block_system_evidence(invitation_db):
+    db, _, _, _ = invitation_db
+    member = db.query(ChatroomMember).filter_by(member_external_id='b').one()
+    now = now_shanghai()
+    assert save_member_invitation(member, '', source=JOIN_INFO_SOURCE, recorded_at=now, fetched_at=now,
+                                  method='unknown', description='未知邀请人')
+    row = {**_view('b'), 'invitation': member_invitation(member)}
+    graph = build_invitation_graph([row])
+    assert graph['known_count'] == 0 and graph['unlinked_count'] == 1
+    assert row['inviter']['joined_at'] is None and row['inviter']['description'] == '未知邀请人'
+    assert save_member_invitation(member, 'a', source='system_message', recorded_at=now)
 
 
 def test_workwechat_member_normalization_uses_only_explicit_inviter_id_fields():

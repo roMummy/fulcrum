@@ -6,7 +6,7 @@ import json
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.time import ensure_shanghai_datetime, now_shanghai
@@ -314,45 +314,38 @@ def apply_gugatool_recall_event(
     conversation: Conversation,
     recalled: dict[str, Any],
     *,
-    message_payload: dict[str, Any],
     raw_event_id: int,
 ) -> list[Message]:
-    """咕嘎撤回通知尽量落到原消息上,不再生成一条“对方撤回了一条消息”的假发言。
-
-    微信的撤回通知有时不带消息编号,只能用原文 + 发送者 + 最近 10 分钟找回原消息。
-    """
+    """只按同账号会话的明确微信编号撤回，缺失或歧义证据必须留作系统通知。"""
 
     if conversation.channel_id != channel.id or conversation.tenant_id != channel.tenant_id:
         return []
-    ids = [str(value) for value in recalled.get("message_ids") or [] if str(value).strip()]
+    # 服务端编号优先，本地编号不能冒充服务端编号。通知不带编号时即使正文唯一也不猜。
+    server_ids = {str(int(value)) for value in recalled.get("server_message_ids", [])
+        if str(value).isdigit() and int(value) > 0}
+    local_ids = {str(int(value)) for value in recalled.get("local_message_ids", [])
+        if str(value).isdigit() and int(value) > 0}
+    identifiers = server_ids or local_ids
+    if not identifiers or len(server_ids) > 1 or len(local_ids) > 1:
+        return []
     matches: list[Message] = []
-    if ids:
-        matches = list(db.scalars(select(Message).where(
-            Message.conversation_id == conversation.id,
-            Message.tenant_id == channel.tenant_id,
-            Message.external_message_id.in_(ids),
-            Message.status != "echo",
-        ).with_for_update()).all())
-    if not matches:
-        original = str(recalled.get("original_text") or "").strip()
-        if original:
-            self_revoked = "你撤回" in str(recalled.get("text") or "")
-            sender_id = str(message_payload.get("sender_id") or "").strip()
-            stmt = select(Message).where(
-                Message.conversation_id == conversation.id,
-                Message.tenant_id == channel.tenant_id,
-                Message.content == original,
-                Message.message_type != "system",
-                Message.status.notin_(("revoked", "echo")),
-                Message.created_at >= now_shanghai() - timedelta(minutes=10),
-            )
-            if self_revoked:
-                stmt = stmt.where(Message.direction == "out")
-            else:
-                stmt = stmt.where(Message.direction == "in")
-                if sender_id:
-                    stmt = stmt.where(Message.sender_id == sender_id)
-            matches = list(db.scalars(stmt.order_by(Message.id.desc()).limit(1).with_for_update()).all())
+    # 先在已索引的会话范围内按编号文本收窄，再解析快照核对完整整数。
+    # 不在数据库中转数值，避免 SQLite/MySQL 对超大微信编号的浮点转换丢失精度。
+    candidates = db.scalars(select(Message).where(
+        Message.conversation_id == conversation.id,
+        Message.tenant_id == channel.tenant_id,
+        Message.status != "echo", Message.message_type != "system",
+        or_(Message.external_message_id.in_(identifiers),
+            *(Message.raw_request_json.contains(value) for value in identifiers)),
+    ).with_for_update()).all()
+    for message in candidates:
+        native = guga_message_ids(db, channel, message)
+        value = native.get("quote_msg_svr_id" if server_ids else "quote_local_id")
+        if value is not None and str(value) in identifiers:
+            matches.append(message)
+    # 本地编号可能重复，异常快照也可能保存同一服务器编号；不能一次改动多条历史消息。
+    if len(matches) != 1:
+        return []
     for message in matches:
         raw = object_json(message.raw_request_json)
         previous = raw.get("revoke") if isinstance(raw.get("revoke"), dict) else {}

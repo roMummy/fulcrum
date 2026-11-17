@@ -587,6 +587,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             "kind": kind,
             "is_history": bool(item.get("isHistory")),
             "create_time": self._coerce_int(item.get("createTime")),
+            # 历史补传和实时消息都保留渠道原时间，统一参与十分钟指令时效判断。
+            "timestamp": self._coerce_int(item.get("createTime")),
             "sequence": self._coerce_int(item.get("sequence")),
             "local_message_id": local_message_id,
             "server_message_id": server_message_id,
@@ -597,9 +599,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             "message_source": message_source[:2000] or None,
             # 引用原文统一走这个字段;非引用消息显式给 None,与 iPad 渠道保持一致。
             "quote_payload": quote_payload,
-            # 撤回通知:编号不一定有,original_text 用于按内容找回原消息。
+            # 撤回只携带明确编号和通知；原文不能作为匹配证据或重新展示。
             "recall": recalled,
-            "recall_original_text": recalled.get("original_text") if recalled else None,
             # 事件自带的昵称/头像字段；群名册由异步命令补齐后写入群成员表。
             "sender_avatar_url": None,
             "profile_source": "event" if sender_name else None,

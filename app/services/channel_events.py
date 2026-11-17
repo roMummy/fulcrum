@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, time as dt_time, timedelta, timezone
+from datetime import time as dt_time
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.core.time import SHANGHAI_TZ, ensure_shanghai_datetime, now_shanghai
+from app.core.time import SHANGHAI_TZ, now_shanghai
 from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, Message, MessageAttachment, RawWebhookEvent, TaskJob
 from app.services.analytics import record_message_activity
 from app.services.channel_adapters import get_channel_adapter
 from app.services.inbound_media import create_wechat_media_attachment
+from app.services.inbound_policy import expired_message_dispatch, resolve_event_time
 from app.services.message_state import refresh_conversation_last_message_at
 from app.services.open_webhooks import dispatch_open_message_event
 from app.services.chatroom_registry import is_collection_off
@@ -144,13 +145,6 @@ def ingest_normalized_event(
         # 旧值为空或只是 external_id 时允许被真实群名覆盖，避免后台一直显示 R:xxx。
         conversation.title = str(conversation_payload.get("title")).strip()
 
-    if channel.channel_type == "wechat_gugatool":
-        # 咕嘎助手没有群列表接口，群实体只能在收到群消息时按名册落库；
-        # 这样群管理页才能在群第一次说话后就有群和成员，而不是一直空白。
-        from app.services.wechat_gugatool_chatrooms import sync_wechat_gugatool_chatroom_from_message
-
-        sync_wechat_gugatool_chatroom_from_message(db, channel, normalized, conversation=conversation)
-
     details = normalized.get("details") if isinstance(normalized.get("details"), dict) else {}
     recalled = details.get("recall")
     if channel.channel_type == "wechat_webridge" and isinstance(recalled, dict):
@@ -186,27 +180,34 @@ def ingest_normalized_event(
             channel,
             conversation,
             recalled,
-            message_payload=message_payload,
             raw_event_id=int(raw_event.id),
         )
-        # 自己撤回时微信也会回一条 10002 通知;平台已经在那条出站消息上显示过
-        # “你撤回了一条消息”,这里不能再生成一条署名为对方的系统发言。
-        self_revoked = "你撤回" in str(recalled.get("text") or "")
-        if originals or self_revoked:
-            raw_event.status = "mapped"
-            dispatch = {
-                "mode": "storage_only",
-                "queued": False,
-                "reason": "message_recalled",
-                "message_id": int(originals[0].id) if originals else None,
-                "conversation_id": conversation.id,
-                "raw_event_id": raw_event.id,
-                "matched": bool(originals),
-            }
-            raw_event.dispatch_summary_json = json.dumps(dispatch, ensure_ascii=False)
-            # 撤回是消息状态更新,不触发插件、AI、开放消息通知。
-            db.commit()
-            return {"ok": True, "deduplicated": False, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
+        if originals:
+            message_id = int(originals[0].id)
+        else:
+            # 无编号、未知编号或歧义事件保留系统通知，不伪造对方发言，也不抹掉审计证据。
+            notification = Message(
+                conversation_id=conversation.id, direction="in", sender_id=None, sender_name=None,
+                content=str(recalled.get("text") or "一条消息已被撤回"), message_type="system", status="received",
+            )
+            db.add(notification)
+            db.flush()
+            message_id = int(notification.id)
+            refresh_conversation_last_message_at(db, conversation.id)
+        raw_event.status = "mapped"
+        dispatch = {"mode": "storage_only", "queued": False, "reason": "message_recalled",
+            "message_id": message_id, "conversation_id": conversation.id,
+            "raw_event_id": raw_event.id, "matched": bool(originals)}
+        raw_event.dispatch_summary_json = json.dumps(dispatch, ensure_ascii=False)
+        # 所有撤回通知都在资料同步、统计、插件、AI 和开放消息通知之前结束处理。
+        db.commit()
+        return {"ok": True, "deduplicated": False, "mapped": True, "raw_event_id": raw_event.id, "normalized": normalized, "dispatch": dispatch}
+
+    if channel.channel_type == "wechat_gugatool":
+        # 撤回通知已提前结束；只有普通群消息才补齐群实体和名册，不能把系统通知当作发言。
+        from app.services.wechat_gugatool_chatrooms import sync_wechat_gugatool_chatroom_from_message
+
+        sync_wechat_gugatool_chatroom_from_message(db, channel, normalized, conversation=conversation)
 
     if channel.channel_type == "wechat_ipad":
         from app.services.wechat_ipad.chatrooms import sync_wechat_ipad_chatroom_from_message
@@ -314,7 +315,7 @@ def ingest_normalized_event(
         )
 
     # 邀请关系属于成员基础资料；在插件及通知开关前记录，群关闭采集仍由入口统一拦截。
-    record_invitation_event(db, channel, conversation, normalized, recorded_at=_resolve_event_time(normalized))
+    record_invitation_event(db, channel, conversation, normalized, recorded_at=resolve_event_time(normalized))
 
     message_content = str(message_payload.get("content") or "")
     message_id: int | None = None
@@ -540,6 +541,19 @@ def ingest_normalized_event(
             "dispatch": dispatch_payload,
         }
 
+    # 存档、成员资料及附件处理完成后再限制指令时效，历史补传不能触发插件或 AI。
+    expired = expired_message_dispatch(normalized, now=now_shanghai())
+    if expired is not None:
+        dispatch_payload = {**expired, 'job_id': None, 'job_type': None,
+            'raw_event_id': raw_event.id, 'conversation_id': conversation.id, 'message_id': message_id}
+        raw_event.dispatch_summary_json = json.dumps(dispatch_payload, ensure_ascii=False)
+        db.commit()
+        logger.info('stale inbound message stored without command dispatch', extra={
+            'channel_id': channel.id, 'raw_event_id': raw_event.id,
+            'message_id': message_id or 0, 'age_seconds': expired['age_seconds']})
+        return {'ok': True, 'deduplicated': False, 'mapped': mapped, 'raw_event_id': raw_event.id,
+            'normalized': normalized, 'dispatch': dispatch_payload}
+
     queue_payload = {
         "channel_id": channel.id,
         "raw_event_id": raw_event.id,
@@ -752,7 +766,7 @@ def _update_chatroom_member_last_active(
     member_external_id = str(message_payload.get("sender_id") or "").strip()
     if not member_external_id:
         return
-    event_time = _resolve_event_time(normalized)
+    event_time = resolve_event_time(normalized)
     member = db.scalar(
         select(ChatroomMember).where(
             ChatroomMember.channel_id == channel.id,
@@ -785,7 +799,7 @@ def _should_update_conversation_title(current_title: Any, incoming_title: Any, e
 
 
 def _resolve_quiet_hours_state(normalized: dict[str, Any]) -> dict[str, Any]:
-    event_time = _resolve_event_time(normalized)
+    event_time = resolve_event_time(normalized)
     local_time = event_time.astimezone(BEIJING_TZ)
     local_clock = local_time.time().replace(tzinfo=None)
     in_quiet_hours = QUIET_HOURS_START <= local_clock < QUIET_HOURS_END
@@ -794,36 +808,6 @@ def _resolve_quiet_hours_state(normalized: dict[str, Any]) -> dict[str, Any]:
         "event_time_iso": local_time.isoformat(),
         "event_time_display": local_time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-
-
-def _resolve_event_time(normalized: dict[str, Any]) -> datetime:
-    details = normalized.get("details")
-    if isinstance(details, dict):
-        timestamp_value = details.get("timestamp")
-        parsed_timestamp = _parse_timestamp_value(timestamp_value)
-        if parsed_timestamp is not None:
-            return parsed_timestamp
-    return now_shanghai()
-
-
-def _parse_timestamp_value(value: Any) -> datetime | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, datetime):
-        return ensure_shanghai_datetime(value)
-    try:
-        if isinstance(value, str) and any(marker in value for marker in ("T", "-", ":")):
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return ensure_shanghai_datetime(parsed)
-        normalized = int(value)
-    except (TypeError, ValueError):
-        return None
-    if normalized > 10_000_000_000:
-        normalized = normalized / 1000
-    try:
-        return datetime.fromtimestamp(normalized, tz=SHANGHAI_TZ)
-    except (OverflowError, OSError, ValueError):
-        return None
 
 
 def _materialize_wechat_winauto_attachment_if_needed(

@@ -131,10 +131,11 @@ def test_friend_check_migration_merges_deployed_branch_without_losing_records(tm
 
     from app.models import saas
     from app.models.entities import Bot, Channel, FriendCheckItem, FriendCheckRun
+    from app.services.database_lifecycle import expected_database_revision
 
     database_path = tmp_path / "friend-check-merge.db"
     scripts = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
-    assert scripts.get_heads() == ["20261113_0040"]
+    assert scripts.get_heads() == [expected_database_revision()]
     _run_alembic(database_path, "upgrade", "20261113_0038")
 
     migration_engine = create_engine(f"sqlite:///{database_path}")
@@ -172,7 +173,7 @@ def test_friend_check_migration_merges_deployed_branch_without_losing_records(tm
     expected = saved_record()
     assert len(expected) == 1
     _run_alembic(database_path, "upgrade", "head")
-    assert _current_revision(database_path) == "20261113_0040"
+    assert _current_revision(database_path) == expected_database_revision()
     assert saved_record() == expected
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT count(*) FROM alembic_version").fetchone() == (1,)
@@ -191,12 +192,14 @@ def test_friend_check_migration_merges_deployed_branch_without_losing_records(tm
         }
     assert saved_record() == expected
     _run_alembic(database_path, "upgrade", "head")
-    assert _current_revision(database_path) == "20261113_0040"
+    assert _current_revision(database_path) == expected_database_revision()
     assert saved_record() == expected
 
 
 def test_friend_check_migration_upgrades_current_main_head(tmp_path: Path) -> None:
     """当前主线 0039 升级后新增持久表，版本表只保留合流后的一个 head。"""
+    from app.services.database_lifecycle import expected_database_revision
+
     database_path = tmp_path / "current-main-friend-check.db"
     _run_alembic(database_path, "upgrade", "20261112_0039")
     assert _current_revision(database_path) == "20261112_0039"
@@ -204,6 +207,6 @@ def test_friend_check_migration_upgrades_current_main_head(tmp_path: Path) -> No
         assert not connection.execute("SELECT name FROM sqlite_master WHERE name = 'webridge_friend_check_runs'").fetchall()
     _run_alembic(database_path, "upgrade", "head")
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchall() == [("20261113_0040",)]
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchall() == [(expected_database_revision(),)]
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert {"webridge_friend_check_runs", "webridge_friend_check_items"} <= tables

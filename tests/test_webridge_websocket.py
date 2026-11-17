@@ -59,7 +59,16 @@ def test_hello_commands_and_result_use_ws_contract(bridge_context):
         command = _command(socket, "account_status")
         assert set(command) == {"type", "request_id", "command_name", "args"}
         socket.send_json({**IDENTITY, "type": "command_result", "request_id": command["request_id"], "command_name": "account_status", "ok": True, "result": {"account_id": IDENTITY["account_id"], "nick_name": "测试 WS 昵称"}, "error": ""})
-        # 同一接收任务按顺序处理，后续事件落库说明此前结果已经完成。
+        # HTTP 确认与 WS 接收属于两个独立任务；先等待真实资料落库，再确认账号。
+        # SQLite 测试不提供 MariaDB 行锁，不能靠线程调度恰好有序避免快照覆盖。
+        deadline = time.monotonic() + 5
+        while True:
+            with ids["factory"]() as db:
+                profile = json.loads(db.get(Channel, channel_id).runtime_info_json).get("account_profile", {})
+            if profile.get("nickname") == "测试 WS 昵称":
+                break
+            assert time.monotonic() < deadline, "account profile result not persisted"
+            time.sleep(0.01)
         assert _confirm(bridge_context, channel_id).status_code == 303
         with tenant_scope(ids["alpha"]), tenant_session(ids["factory"]) as db:
             job = service.enqueue_command(db, db.get(Channel, channel_id), command_name="send_message", args={"receiver": "wxid_test", "content": "测试"})

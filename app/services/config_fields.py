@@ -41,13 +41,15 @@ class ConfigField:
     group: str = ""
     # 依赖另一个 bool 配置项的 key:被依赖项关闭时,本项在页面上变淡(仍可编辑、仍会保存)。
     depends_on: str = ""
-    # 以下几项供插件清单声明使用,群功能不用:
-    # 英文标签(界面语言为英文时优先显示,缺省回退 label)、输入框占位提示、是否必填、
-    # 下拉选项 (值, 显示名),select 类型必须提供。
+    # 英文标签、占位提示及必填约束供插件清单使用；下拉选项由通用配置表单共同消费。
     label_en: str = ""
     placeholder: str = ""
     required: bool = False
+    # 下拉选项 (值, 显示名)，select 类型必须提供，存储时只接受声明过的值。
     options: tuple[tuple[str, str], ...] = ()
+    # 仅在另一字段等于指定值时显示：(依赖字段 key, 目标值)。隐藏保留输入与提交，
+    # 例如切到成员头像后保留自定义图片 URL，切回时无需重新填写。
+    show_when: tuple[str, str] | None = None
 
 
 def build_sections(fields: Iterable[ConfigField], config: Mapping[str, Any], *, prefix: str = FORM_PREFIX) -> list[dict[str, Any]]:
@@ -56,6 +58,8 @@ def build_sections(fields: Iterable[ConfigField], config: Mapping[str, Any], *, 
     config 里没有的键按字段默认值处理;密钥不回显,只告诉页面"是否已配置"。
     """
 
+    fields = tuple(fields)
+    defaults = {item.key: item.default for item in fields}
     sections: list[dict[str, Any]] = []
     for item in fields:
         if not sections or sections[-1]["title"] != item.group:
@@ -73,6 +77,11 @@ def build_sections(fields: Iterable[ConfigField], config: Mapping[str, Any], *, 
             "minimum": item.minimum,
             "maximum": item.maximum,
             "depends_on": prefix + item.depends_on if item.depends_on else "",
+            "options": item.options,
+            # 首次渲染即按配置隐藏，避免依赖 JavaScript 执行后才闪烁收起字段。
+            "show_when": prefix + item.show_when[0] if item.show_when else "",
+            "show_value": item.show_when[1] if item.show_when else "",
+            "hidden": bool(item.show_when and config.get(item.show_when[0], defaults.get(item.show_when[0])) != item.show_when[1]),
         }
         # 开关项和输入项分开摆:开关排成一列,输入框排成整齐的两列。
         sections[-1]["switches" if item.kind == "bool" else "inputs"].append(field)

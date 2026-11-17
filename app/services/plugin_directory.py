@@ -10,7 +10,7 @@ import time
 import signal
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html import unescape
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -31,6 +31,7 @@ from app.services.outbound_files import externalize_media_payload, redact_base64
 from app.models.entities import BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, Plugin, TaskJob
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.plugin_scopes import group_plugin_scope_enabled
+from app.services.plugin_commands import canonical_command_text, command_triggers, effective_message_content
 
 
 ENTRYPOINT_CANDIDATES = ("plugin.py", "main.py", "plugin_main.py")
@@ -517,7 +518,8 @@ def build_static_dispatch_plan(
             )
             continue
 
-        matcher = _resolve_effective_matcher(binding, discovered)
+        # 触发条件与执行参数使用同一份本群覆盖，避免群里改了指令却仍匹配机器人默认值。
+        matcher = _resolve_effective_matcher(binding, discovered, getattr(scope, "config_override_json", None))
         logger.debug(
             "static plan accepted candidate",
             extra={
@@ -621,10 +623,14 @@ def _enqueue_ai_intent(
     """
 
     from app.services import ai_dispatch
+    from app.services.inbound_policy import expired_message_dispatch
     from app.services.task_queue import AI_INTENT_JOB, enqueue_job
 
     context = static_plan.context
     try:
+        # 独立的 AI 入队入口也执行时效规则，过期原文不能通过意图改写重新入队。
+        if expired_message_dispatch(normalized_event) is not None:
+            return False
         details = normalized_event.get("details") or {}
         if details.get("ai_rewritten"):
             # 正文已经是 AI 改写出的命令，再不命中就直接放弃，不再二次分析。
@@ -988,12 +994,26 @@ def _build_dispatch_context(channel: Channel, normalized_event: dict[str, Any]) 
     )
 
 
-def _resolve_effective_matcher(binding: BotPlugin, discovered: DiscoveredPlugin) -> PluginMatcher:
-    config = _parse_config_json(binding.config_json)
+def _resolve_effective_matcher(binding: BotPlugin, discovered: DiscoveredPlugin, scope_config_json: str | None = None) -> PluginMatcher:
+    config = _deep_merge_config(_parse_config_json(binding.config_json), _parse_config_json(scope_config_json))
     commands = _normalize_text_tuple(config.get("commands")) or discovered.matcher.commands
-    keywords = _normalize_text_tuple(config.get("keywords")) or discovered.matcher.keywords
+    commands = command_triggers(commands, config)
+    # 明确保存的空列表表示清空关键词，不能再用默认关键词隐式补回。
+    keywords = _normalize_text_tuple(config["keywords"]) if "keywords" in config else discovered.matcher.keywords
     require_mention = bool(config.get("require_mention", discovered.matcher.require_mention))
     return PluginMatcher(commands=commands, keywords=keywords, require_mention=require_mention)
+
+
+def _canonical_command_context(context: DirectoryPluginContext) -> DirectoryPluginContext:
+    """插件只解析正式业务指令；映射后的正文不会回写事件或消息记录。"""
+
+    content = canonical_command_text(context.content, context.binding_config)
+    if content == context.content:
+        return context
+    event = dict(context.normalized_event)
+    event['message'] = {**dict(event.get('message') or {}), 'content': content}
+    return replace(context, content=content, normalized_event=event,
+                   command_name=_extract_command_name(content, context.command_prefix))
 
 
 def _dynamic_match_candidate(
@@ -1026,7 +1046,7 @@ def _dynamic_match_candidate(
         reason = "strict_command_hit" if matched else "strict_command_mismatch"
         loaded = load_directory_plugin(discovered.manifest.code)
         if matched and loaded and loaded.supports_matcher and loaded.instance:
-            custom = loaded.instance.matches_event(context)
+            custom = loaded.instance.matches_event(_canonical_command_context(context))
             custom_matched, custom_reason, custom_debug = _normalize_match_result(custom)
             debug = {**debug, **custom_debug, "custom_matcher_used": True}
             if not custom_matched:
@@ -1071,7 +1091,7 @@ def _dynamic_match_candidate(
 
     loaded = load_directory_plugin(discovered.manifest.code)
     if matched and loaded and loaded.supports_matcher and loaded.instance:
-        custom = loaded.instance.matches_event(context)
+        custom = loaded.instance.matches_event(_canonical_command_context(context))
         custom_matched, custom_reason, custom_debug = _normalize_match_result(custom)
         debug = {**debug, **custom_debug, "custom_matcher_used": True}
         if not custom_matched:
@@ -1108,6 +1128,7 @@ def _execute_candidate(
         command_name=command_name,
         matched_keyword=matched_keyword,
     )
+    context = _canonical_command_context(context)
     loaded = load_directory_plugin(candidate.plugin_code)
     from app.services.plugin_runtime.registry import get_plugin_runtime_definition
     from app.services.plugin_runtime.service import execute_binding_message_action
@@ -1222,16 +1243,18 @@ def _execute_candidate(
                 runtime_payload["channel_api_base"] = str(channel.api_base or "").strip()
                 runtime_payload["channel_adapter_config"] = _parse_config_json(channel.adapter_config_json)
             try:
-                runtime_result = _run_with_timeout(
-                    lambda: execute_binding_message_action(
-                        db,
-                        binding,
-                        "execute",
-                        payload=runtime_payload,
-                        context=_build_runtime_execution_context(static_context, context),
-                    ),
-                    candidate.timeout_ms,
-                )
+                def execute_runtime():
+                    # 原生插件按消息主键读正文；复用 AI 的内存消息视图，不修改用户聊天记录。
+                    canonical = context.content if context.content != static_context.message_text else None
+                    with effective_message_content(db, message_id, canonical):
+                        return execute_binding_message_action(
+                            db,
+                            binding,
+                            "execute",
+                            payload=runtime_payload,
+                            context=_build_runtime_execution_context(static_context, context),
+                        )
+                runtime_result = _run_with_timeout(execute_runtime, candidate.timeout_ms)
             except PluginExecutionTimeoutError:
                 logger.error("runtime executor timed out", extra={"plugin_code": candidate.plugin_code})
                 return PluginDispatchExecution(

@@ -166,7 +166,7 @@ def build_webridge_dashboard(
         if sender_q:
             like = _like(sender_q)
             stmt = stmt.where(or_(Message.sender_name.like(like, escape="\\"), Message.sender_id.like(like, escape="\\")))
-        rows, pagination = _paginate(db, stmt.order_by(Message.id.desc()), page)
+        rows, pagination = _paginate(db, stmt.order_by(Message.created_at.desc(), Message.id.desc()), page)
         messages = [row[0] for row in rows]
         # 查询按最新优先分页，模板内再反转，保证页内最新消息在底部。
         result["rows"] = messages

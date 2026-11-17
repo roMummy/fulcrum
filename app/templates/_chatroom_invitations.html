@@ -5,6 +5,9 @@
     data-name="{{ node.name }}" data-external-id="{{ node.external_id }}" data-direct-invites="{{ node.direct_invites }}"
     data-inviter="{{ node.inviter.name|default('未知') }}" data-source="{{ node.inviter.source_label|default('未知') }}"
     data-recorded-at="{{ node.inviter.recorded_at|bj_time if node.inviter.recorded_at else '暂无记录' }}"
+    data-fetched-at="{{ node.inviter.fetched_at|bj_time if node.inviter.fetched_at else (node.inviter.recorded_at|bj_time if node.inviter.recorded_at else '未知') }}"
+    data-joined-at="{{ node.inviter.joined_at|bj_time if node.inviter.joined_at else '未知' }}"
+    data-time-label="{{ node.inviter.time_label|default('证据记录时间') }}" data-description="{{ node.inviter.description|default('') }}"
     data-role="{{ '身份未知' if node.placeholder else ('群主' if node.role == 'owner' else ('管理员' if node.role == 'admin' else '普通成员')) }}"
     data-status="{{ '暂无成员资料' if node.placeholder else ('已退群' if node.status == 'left' else '在群') }}">
   <button type="button" class="invitation-member" data-invitation-select aria-pressed="false" aria-label="查看 {{ node.name }} 的邀请关系详情">
@@ -27,19 +30,36 @@
 {% endmacro %}
 {% set graph_nodes = detail.invitations.nodes|selectattr('connected')|list %}
 {% set unlinked_nodes = detail.invitations.nodes|rejectattr('connected')|list %}
-<section class="invitation-panel" data-invitation-graph aria-labelledby="invitation-graph-title">
+<section class="invitation-panel" data-invitation-graph aria-labelledby="invitation-graph-title"
+    {% if channel.channel_type == 'wechat_webridge' %}data-invitation-sync-url="{{ base_url }}/invitations/sync" data-sync-status="{{ detail.invitation_sync.status }}" data-sync-run="{{ detail.invitation_sync.run_id }}" data-sync-completed="{{ detail.invitation_sync.completed }}"{% endif %}>
   <div class="invitation-panel-head">
     <div>
       <h3 id="invitation-graph-title">邀请关系图谱</h3>
       <p class="invitation-summary"><span>已知 {{ detail.invitations.known_count }} / {{ detail.invitations.total }} 人</span><span>邀请人未知 {{ detail.invitations.unknown_count }} 人</span></p>
     </div>
     {% if channel.channel_type in ('wechat_webridge', 'wechat_ipad', 'workwechat', 'wechat_gugatool') and current_user.role in ('tenant_admin', 'operator') %}
+    <div class="invitation-actions">
+    {% if channel.channel_type == 'wechat_webridge' %}
+    <form method="post" action="{{ base_url }}/invitations/sync" data-invitation-sync-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button type="submit" class="btn btn-primary btn-small" data-invitation-sync-start {% if detail.invitation_sync_reason or detail.invitation_sync.status == 'running' %}disabled{% endif %} title="{{ detail.invitation_sync_reason or '逐个查询当前在群成员的邀请资料' }}">{{ '正在同步…' if detail.invitation_sync.status == 'running' else '同步邀请关系' }}</button>
+    </form>
+    {% endif %}
     <form method="post" action="{{ base_url }}/invitations/backfill" data-action-feedback>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <button type="submit" class="btn btn-secondary btn-small" title="检查本群已保存的最近 2000 条系统消息">补查历史邀请</button>
     </form>
+    </div>
     {% endif %}
   </div>
+  {% if channel.channel_type == 'wechat_webridge' %}
+  {# 状态取自服务端快照；没有脚本也能看到进度，页面刷新不会触发新一轮同步。 #}
+  <div class="invitation-sync" data-invitation-sync {% if detail.invitation_sync_reason %}data-unavailable="true"{% endif %}>
+    <div class="invitation-sync-heading"><p role="status" aria-live="polite" data-invitation-sync-summary>{{ detail.invitation_sync_reason or detail.invitation_sync.summary }}</p><button type="button" class="btn btn-secondary btn-small" data-invitation-sync-refresh hidden>更新图谱</button></div>
+    <progress data-invitation-sync-progress aria-label="邀请资料同步进度" max="{{ detail.invitation_sync.total or 1 }}" value="{{ detail.invitation_sync.completed }}" {% if detail.invitation_sync.status != 'running' %}hidden{% endif %}></progress>
+    <p class="muted-text" data-invitation-sync-counts {% if detail.invitation_sync.status == 'idle' %}hidden{% endif %}>本轮查到邀请人 {{ detail.invitation_sync.known }} 人 · 未知 {{ detail.invitation_sync.unknown }} 人 · 失败 {{ detail.invitation_sync.failed }} 人</p>
+  </div>
+  {% endif %}
   {% if detail.invitations.cycle_count %}<p class="chatroom-notice-error">有 {{ detail.invitations.cycle_count }} 组关系存在循环，已分开展示，原始邀请人仍保留在成员列表。</p>{% endif %}
   <div data-invitation-inline-slot>
     {# 放大时移动这一工作区，不复制节点，确保搜索、展开、选择与成员 ID 始终只有一份。 #}
@@ -74,13 +94,14 @@
         <div class="invitation-empty"><span class="i i-users" aria-hidden="true"></span><strong>{{ '暂未记录到邀请关系' if detail.invitations.total else '暂无成员信息' }}</strong><p>{{ '已同步的成员可在下方查看；收到明确的邀请记录后，会自动显示关系连线。' if detail.invitations.total else '请先同步群资料，获取成员信息。' }}</p></div>
         {% endif %}
       </div>
-      <div class="invitation-caption" id="invitation-graph-help"><span>邀请人 <span aria-hidden="true">→</span> 被邀请人</span><span>{% if graph_nodes %}拖动画布查看 · + / − 缩放 · 0 适应画布{% else %}仅展示有明确记录的邀请关系{% endif %}</span></div>
+      <div class="invitation-caption" id="invitation-graph-help"><span>邀请人 <span aria-hidden="true">→</span> 被邀请人</span><span>{% if graph_nodes %}拖动画布查看 · 滚轮或 + / − 缩放 · 0 适应画布{% else %}仅展示有明确记录的邀请关系{% endif %}</span></div>
       <aside class="invitation-inspector" data-invitation-inspector aria-label="选中成员的邀请关系详情" hidden>
         <div class="invitation-inspector-head"><div><h4 data-invitation-detail-name>成员详情</h4><p class="muted-text" data-invitation-detail-id></p><p class="muted-text" data-invitation-detail-status></p></div><button type="button" class="btn btn-ghost btn-icon" data-invitation-clear-selection aria-label="关闭成员详情"><span class="i i-x" aria-hidden="true"></span></button></div>
-        <dl class="invitation-inspector-facts"><div><dt>邀请人</dt><dd data-invitation-detail-inviter></dd></div><div><dt>关系来源</dt><dd data-invitation-detail-source></dd></div><div><dt>记录时间</dt><dd data-invitation-detail-time></dd></div><div><dt>直接邀请</dt><dd data-invitation-detail-count></dd></div></dl>
+        <dl class="invitation-inspector-facts"><div><dt>邀请人</dt><dd data-invitation-detail-inviter></dd></div><div><dt>关系来源</dt><dd data-invitation-detail-source></dd></div><div><dt>入群时间</dt><dd data-invitation-detail-joined></dd></div><div><dt data-invitation-detail-time-label>资料获取时间</dt><dd data-invitation-detail-time></dd></div><div><dt>直接邀请</dt><dd data-invitation-detail-count></dd></div><div class="invitation-inspector-description"><dt>入群说明</dt><dd data-invitation-detail-description></dd></div></dl>
+        <p class="muted-text invitation-time-hint">入群时间仅展示渠道明确返回的时间，资料获取时间不代表入群时间。</p>
       </aside>
       {% if unlinked_nodes %}
-      <details class="invitation-unlinked" data-invitation-unlinked>
+      <details class="invitation-unlinked disclosure" data-invitation-unlinked>
         <summary>未关联成员 <span>{{ detail.invitations.unlinked_count }} 人</span></summary>
         <p class="muted-text">暂时没有邀请关系记录，可点击成员查看资料。</p>
         <ul class="invitation-unlinked-nodes" aria-label="尚无邀请连线的成员">{% for node in unlinked_nodes %}{{ invitation_card(node) }}{% endfor %}</ul>

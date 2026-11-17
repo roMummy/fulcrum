@@ -47,6 +47,12 @@
         var dependency = card.querySelector('input[type="checkbox"][name="' + el.dataset.gfDepends + '"]');
         el.classList.toggle("is-dim", !!dependency && !dependency.checked);
       });
+      // 来源选择只控制字段可见性，不禁用或清空输入，确保隐藏的自定义 URL
+      // 仍随 FormData 保存；切回 URL 模式及刷新页面后都能继续使用原地址。
+      card.querySelectorAll("[data-gf-show-when]").forEach(function (el) {
+        var dependency = card.elements.namedItem(el.dataset.gfShowWhen);
+        el.hidden = !dependency || dependency.value !== el.dataset.gfShowValue;
+      });
       // 运行模式:选中的那一项高亮
       card.querySelectorAll(".gf-mode").forEach(function (label) {
         var radio = label.querySelector('input[type="radio"]');
@@ -61,7 +67,8 @@
     if (saveUrl) {
       card.addEventListener("submit", function (event) {
         event.preventDefault();
-        var button = card.querySelector('.gf-foot button[type="submit"]');
+        // 带 form 属性的恢复/解绑按钮属于外部表单，保存时只锁定本卡片的提交按钮。
+        var button = card.querySelector('.gf-foot button[type="submit"]:not([form])');
         if (button) button.disabled = true;
         fetch(saveUrl, {
           method: "POST",
@@ -74,10 +81,13 @@
           })
           .then(function (result) {
             if (!result.ok) {
+              card.dispatchEvent(new CustomEvent("gf:save-failed", { bubbles: true, detail: result.payload }));
               toast(result.payload.notice || "保存失败，请稍后再试", "danger");
               return;
             }
             toast(result.payload.notice || "已保存", "success");
+            // 本群插件卡片按保存回报同步指令摘要和继承状态，其他配置卡片不需要额外处理。
+            card.dispatchEvent(new CustomEvent("gf:saved", { bubbles: true, detail: result.payload }));
             // 密钥只保存不回显:保存后清空输入框,并把提示改成"已配置"。
             card.querySelectorAll('input[type="password"]').forEach(function (input) {
               if (input.value) {
@@ -86,7 +96,11 @@
               }
             });
           })
-          .catch(function () { toast("网络异常，保存失败", "danger"); })
+          .catch(function () {
+            var payload = { notice: "网络异常，保存失败" };
+            card.dispatchEvent(new CustomEvent("gf:save-failed", { bubbles: true, detail: payload }));
+            toast(payload.notice, "danger");
+          })
           .then(function () { if (button) button.disabled = false; });
       });
     }

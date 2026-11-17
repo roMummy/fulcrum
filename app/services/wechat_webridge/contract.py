@@ -31,7 +31,7 @@ COMMAND_GROUPS: dict[str, tuple[str, ...]] = {
         "set_friend_star", "set_friend_blacklist", "friend_request_probe", "friend_pay_name",
     ),
     "groups": (
-        "groups_all", "room_members", "create_group", "add_group_member", "invite_group_member",
+        "groups_all", "room_members", "room_member_join_info", "create_group", "add_group_member", "invite_group_member",
         "kick_group_member", "kick_group_members", "quit_group", "rename_group", "set_group_name",
         "set_group_self_nickname", "get_group_notice", "get_chatroom_qrcode", "group_admin_operate",
         "set_group_msg_silence", "get_group_invitation", "accept_group_invitation", "group_invitation_probe",

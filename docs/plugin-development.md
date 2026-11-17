@@ -249,7 +249,48 @@ return PluginExecutionResult(
 | `rate_limit.PluginRateLimiter` | 按用户/群的频率限制 |
 | `text_generation` | 调用租户配置的模型生成文本 |
 | `member_names` | 批量把群成员 ID 换成群昵称(排行榜、点名必用) |
+| `web_screenshots` | 项目统一的 Kitesurf 网页/HTML 截图，独立会话、尺寸与并发限制，返回标准图片回复所需内容 |
 | `outbound_batch.enqueue_outbound_job` | 主动给某个会话发消息(定时推送必用)：传入会话、渠道和消息载荷，平台走统一出站队列 |
+
+### 网页与 HTML 截图
+
+截图是项目公共能力，统一配置 `KITESURF_WS_URL`，插件直接调用公共 Python 服务，不在各个绑定里重复配置浏览器地址。输入 URL 和 HTML 必须二选一，每次使用独立浏览器上下文，不共用 Cookie。调用须处于平台建立的可信租户作用域；真实插件执行链路已建立该作用域，不要从消息载荷里自行指定租户。
+
+```python
+from app.services.web_screenshots import ScreenshotRequest, ScreenshotError, capture_screenshot
+from app.services.plugin_runtime.contracts import PluginExecutionResult
+
+try:
+    image = capture_screenshot(ScreenshotRequest(
+        url="https://example.com/", width=1280, height=900,
+        full_page=True, format="png", timeout_seconds=30,
+    ))
+    # 使用既有标准回复，平台继续统一处理媒体存储和各渠道发送。
+    result = PluginExecutionResult(
+        ok=True, status="completed", message="截图完成",
+        output={"replies": [image.as_image_reply()]},
+    )
+except ScreenshotError as exc:
+    # exc.code 是稳定错误码，exc.message 可展示给用户；不要捕获后改用另一截图引擎。
+    result = PluginExecutionResult(ok=False, status=exc.code, message=exc.message)
+```
+
+HTML 示例：`capture_screenshot(ScreenshotRequest(html="<html><body><h1>统计日报</h1></body></html>", width=820, height=600, format="jpeg", quality=85))`。需要 CSS、图片等资源时提供可从引擎访问的公网地址；相对路径不代表 Fulcrum 本地目录。`full_page=False` 只截当前视口；`wait_ms` 可增加 0～3000 毫秒的渲染等待，仍计入总超时。
+
+宽度范围 320～2048，视口高度 200～4096；整页高度最多 8192，总像素最多 16M，结果最多 12MB。超过整页边界明确失败，不自动裁掉页面尾部。请求超时不能突破全局 `KITESURF_TIMEOUT_SECONDS`；`KITESURF_MAX_CONCURRENCY` 按应用进程限制并发，满额返回 `screenshot_busy`，不无限排队。
+
+受信任的站内服务也可调用同一 HTTP 入口，插件自身优先使用 Python 函数。HTTP 复用全局工具密钥和有效租户编码，成功返回图片字节，附 `X-Screenshot-Width`、`X-Screenshot-Height`、`X-Screenshot-Elapsed-Ms`；不会自动发消息或生成公开分享地址：
+
+```bash
+curl --fail-with-body -X POST http://127.0.0.1:8280/api/tool/screenshots \
+  -H "X-API-Key: ${TOOL_API_KEY}" \
+  -H "X-Tenant-Code: example-tenant" \
+  -H "Content-Type: application/json" \
+  --data '{"url":"https://example.com/","width":1280,"height":900,"full_page":true,"format":"png"}' \
+  --output page.png
+```
+
+请求 JSON 不支持租户 ID、引擎地址、Cookie 或任意请求头。典型错误码：`screenshot_not_configured`（503）、`screenshot_busy`（429）、`screenshot_timeout`（504）、`screenshot_too_large`（413）、`screenshot_url_invalid`（400）、`screenshot_engine_error`（502）。其他入口参数不合法返回 422。异步站内函数应通过 `run_in_threadpool(capture_screenshot, request)` 调用，避免阻塞事件循环。本地独立部署见 `deploy/kitesurf/README.md`。
 
 ### 显示成员名字:存 ID,显示时再换
 

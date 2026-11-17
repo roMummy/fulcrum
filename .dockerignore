@@ -10,6 +10,8 @@ __pycache__
 # 环境文件由 Compose 在容器启动时注入，禁止复制进包含历史层的应用镜像。
 .env
 .env.docker
+# SSH 与内网 Git 凭据只在部署控制端读取，不能随应用重建进入镜像层。
+.env.deploy
 logs
 data
 tmp

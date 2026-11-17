@@ -128,7 +128,7 @@ def complete_snapshot(result: dict[str, Any], members: list[dict[str, Any]]) -> 
 def apply_event(db: Session, channel: Channel, normalized: dict[str, Any], conversation: Any) -> None:
     """在业务开关与免打扰判断之前处理,旧事件只存档,不回滚目录或重复发通知。"""
 
-    from app.services.channel_events import _resolve_event_time
+    from app.services.inbound_policy import resolve_event_time
     from app.services.group_features.member_change import lookup_previous_names, parse_member_change
 
     if conversation.chat_type != "group" or not str(conversation.external_id).endswith("@chatroom"):
@@ -145,7 +145,7 @@ def apply_event(db: Session, channel: Channel, normalized: dict[str, Any], conve
         return
     details = normalized.setdefault("details", {})
     previous = lookup_previous_names(db, chatroom=room, members=parsed["members"])
-    event_time = _resolve_event_time(normalized)
+    event_time = resolve_event_time(normalized)
     event_key = service.text(normalized.get("event_key"))
     changed = False
     change = parsed["change_type"]

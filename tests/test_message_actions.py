@@ -352,6 +352,8 @@ def test_gugatool_self_revoke_notice_updates_original_without_fake_peer_message(
         original.status = "sent"
         original.external_status = "sent"
         original.external_message_id = "1106"
+        # 原消息必须有明确微信编号快照，正文相同不能作为撤回证据。
+        original.raw_request_json = json.dumps({"native_ids": {"server": 1106}})
         original.created_at = now_shanghai()
         db.commit()
         before = db.scalar(select(Message.id).where(Message.conversation_id == cid).order_by(Message.id.desc()))
@@ -364,6 +366,7 @@ def test_gugatool_self_revoke_notice_updates_original_without_fake_peer_message(
             "content": (
                 '<sysmsg type="revokemsgcontent"><revokemsgcontent><link><scene>revokemsgcontent</scene>'
                 "<reEditStringContent>123</reEditStringContent><stringContent>你撤回了一条消息</stringContent></link>"
+                "<reEditReferMsgSvrId>1106</reEditReferMsgSvrId>"
                 "<text>你撤回了一条消息</text></revokemsgcontent></sysmsg>"
             ),
         }

@@ -24,6 +24,7 @@ from app.services.inbound_media import download_wechat_media_attachment, mark_at
 from app.services.open_webhooks import dispatch_open_message_event, process_open_webhook_delivery_job
 from app.services.group_features.dispatch import consumed_command, dispatch_group_features
 from app.services.plugin_directory import build_dispatch_report, serialize_dispatch_report
+from app.services.inbound_policy import expired_message_dispatch
 from app.services.plugin_scopes import plugin_group_conversation_enabled
 from app.services.self_sent import is_self_sent
 from app.services.plugin_runtime.scheduler import process_plugin_scheduled_action_job, schedule_due_plugin_actions
@@ -183,6 +184,10 @@ def _run_single_job() -> bool:
         try:
             payload = parse_job_payload(job)
             if job.job_type == PLUGIN_DISPATCH_JOB:
+                # 新人头像需等待已有目录读取完成；实际发送前延期同一任务，
+                # 不能先发无图卡片再补发，也不能等待手机时占住工作线程。
+                if _defer_welcome_for_avatar(db, job, payload):
+                    return True
                 result = _process_plugin_dispatch_job(db, payload)
             elif job.job_type == PLUGIN_SCHEDULED_ACTION_JOB:
                 result = process_plugin_scheduled_action_job(db, job, payload)
@@ -203,6 +208,36 @@ def _run_single_job() -> bool:
                 extra={"job_id": job.id, "job_type": job.job_type, "tenant_id": tenant_id},
             )
             return True
+
+
+def _defer_welcome_for_avatar(db: Session, job: TaskJob, payload: dict[str, Any]) -> bool:
+    """资料尚在同步时让原任务短暂回到队列，纯等待不计作一次执行失败。"""
+
+    from app.services.group_features.member_change import welcome_avatar_retry_at
+
+    retry_at = welcome_avatar_retry_at(db, payload, queued_at=job.created_at, now=now_shanghai())
+    if retry_at is None:
+        return False
+    job.status = "pending"
+    job.available_at = retry_at
+    job.started_at = None
+    job.locked_at = None
+    job.finished_at = None
+    job.error_message = None
+    # claim 已增加次数，但这里尚未执行任何群功能或插件；还原这次纯等待，
+    # 让真正执行时仍保留原有失败重试额度，且不创建第二条插件任务。
+    job.attempts = max(0, int(job.attempts or 0) - 1)
+    result = {"status": "pending", "reason": "member_avatar_sync", "retry_at": retry_at.isoformat()}
+    job.result_json = dump_json_for_text_column(result)
+    raw_event_id = _coerce_int(payload.get("raw_event_id"))
+    raw_event = db.get(RawWebhookEvent, raw_event_id) if raw_event_id else None
+    if raw_event is not None:
+        raw_event.dispatch_summary_json = dump_json_for_text_column({**result, "mode": "async", "queued": True,
+            "job_id": job.id, "job_type": job.job_type, "raw_event_id": raw_event_id,
+            "conversation_id": payload.get("conversation_id"), "message_id": payload.get("message_id")})
+    db.commit()
+    logger.info("欢迎通知等待新人头像同步，已让出队列", extra={"job_id": job.id, "retry_at": retry_at.isoformat()})
+    return True
 
 
 def _run_due_plugin_scheduler() -> bool:
@@ -243,6 +278,16 @@ def _process_plugin_dispatch_job(db: Session, payload: dict[str, Any]) -> dict[s
     if is_self_sent(normalized_event):
         # 兜底:入站时已经拦过,这里再拦一次——队列里已经排着的任务、重试和任何绕过入站总闸的入队都不能让自己发的消息进入检测。
         return {"dispatch": {"mode": "storage_only", "status": "skipped", "reason": "self_sent"}, "raw_event_id": raw_event_id, "executed_plugins": [], "executed_group_features": []}
+    # 入队时新鲜的消息也可能在拥堵期间过期；执行群功能之前再次检查原始发送时间。
+    expired = expired_message_dispatch(normalized_event, now=now_shanghai())
+    if expired is not None:
+        expired.update(raw_event_id=raw_event_id, conversation_id=conversation_id, message_id=message_id)
+        raw_event = db.get(RawWebhookEvent, raw_event_id) if raw_event_id else None
+        if raw_event is not None:
+            raw_event.dispatch_summary_json = dump_json_for_text_column(expired)
+            db.commit()
+        return {'dispatch': expired, 'raw_event_id': raw_event_id,
+            'executed_plugins': [], 'executed_group_features': []}
     # 群功能(成员变更提醒、潜水排行、自动抢红包、自动收款等)只看群自己的开关,先于插件调度执行;
     # 命令被群功能处理后不再交给 AI 兜底。
     executed_features = dispatch_group_features(db, channel, normalized_event, conversation_id=conversation_id)

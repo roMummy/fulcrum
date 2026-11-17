@@ -21,7 +21,7 @@ from sqlalchemy import select
 from app.core.time import now_shanghai
 from app.models.entities import Chatroom, ChatroomMember, TaskJob
 from app.services.channel_events import ingest_inbound_event
-from app.services.wechat_webridge import group_sync, service, wakeup
+from app.services.wechat_webridge import group_sync, invitation_sync, service, wakeup
 from tests.test_ai_chat import _session
 from tests.test_ai_dispatch import _seed
 
@@ -271,7 +271,8 @@ def test_archived_groups_are_not_asked_for_members(env) -> None:
 def test_the_long_poll_maintenance_requests_a_periodic_group_sync(env) -> None:
     db, channel = env
     service._last_poll_maintenance.clear()
-    with patch.object(service, "_enqueue_account_status"), patch.object(service, "_enqueue_device_status"):
+    # 该例仅观察群列表对账；邀请轮次的可信租户与恢复行为由独立的真实队列用例验证。
+    with patch.object(service, "_enqueue_account_status"), patch.object(service, "_enqueue_device_status"), patch.object(invitation_sync, "resume_channel"):
         service._poll_maintenance(db, channel)
     db.commit()
     assert len(_commands(db, "groups_all")) == 1

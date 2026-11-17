@@ -384,5 +384,6 @@ def test_revokemsg_system_message_keeps_recall_details() -> None:
     assert normalized["event_type"] == "revoke"
     assert normalized["message"]["message_type"] == "system"
     assert normalized["message"]["content"] == "你撤回了一条消息"
-    assert normalized["details"]["recall"]["original_text"] == "123"
+    assert normalized["details"]["recall"]["message_ids"] == []
+    assert "original_text" not in normalized["details"]["recall"]
     assert normalized["details"]["skip_plugin_dispatch"] is True

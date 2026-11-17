@@ -167,12 +167,16 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
     """
 
     from app.services.plugin_directory import build_dispatch_report
+    from app.services.analytics import record_plugin_dispatch_analytics
 
     rewritten = json.loads(json.dumps(event, ensure_ascii=False, default=str))
     rewritten.setdefault("message", {})["content"] = command_text
     rewritten.setdefault("details", {})["ai_rewritten"] = True
-    with ai_dispatch.effective_message_content(db, payload.get("message_id"), command_text):
-        build_dispatch_report(
+    # AI 与本群自定义触发词共用唯一的内存消息视图，转换后的命令不得落库。
+    from app.services.plugin_commands import effective_message_content
+
+    with effective_message_content(db, payload.get("message_id"), command_text):
+        report = build_dispatch_report(
             db,
             channel,
             rewritten,
@@ -180,15 +184,25 @@ def _execute_routed(db: Session, channel: Channel, payload: dict[str, Any], even
             conversation_id=payload.get("conversation_id"),
             message_id=payload.get("message_id"),
         )
+        # AI 改写后的真正分发在此结束，只在边界记一次；原始消息未命中的扫描
+        # 不会增加命中数，底层 execute_message 桥接也不另写一份成功记录。
+        record_plugin_dispatch_analytics(db, channel=channel, dispatch_report=report,
+            raw_event_id=payload.get('raw_event_id'), conversation_id=payload.get('conversation_id'),
+            message_id=payload.get('message_id'), trigger_source='ai_dispatch')
 
 
 def _deliver(db: Session, payload: dict[str, Any], intent: ai_dispatch.AiIntent, chat_reply: str = "") -> dict[str, Any]:
     """记录决策；识别出插件就直接执行，缺参数就追问，聊天则发送人格回复。"""
 
     from app.services.plugin_directory import send_ai_reply
+    from app.services.inbound_policy import expired_message_dispatch
 
     channel = db.get(Channel, int(payload.get("channel_id") or 0))
     event = payload.get("normalized_event") or {}
+    # 慢模型可能跨过消息时限；下发前再次检查，改写指令、追问和聊天共用此出口。
+    expired = expired_message_dispatch(event)
+    if expired is not None:
+        return expired
     message = event.get("message") or {}
     conversation_id = payload.get("conversation_id")
     ai_dispatch.record_decision(

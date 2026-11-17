@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.services.points import PointsService
 from app.models.entities import Bot, BotPlugin, Channel, Chatroom, ChatroomMember, Conversation, GroupPluginScope, WorkWechatContact
 from app.services.chatroom_registry import MANAGEMENT_STATUS_LABELS
+from app.services.channel_catalog import channel_supports
 from app.services.identity_directory import _avatar_from_extra, make_identity
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES
 from app.services.plugin_governance import tenant_visible_plugins
@@ -234,6 +235,8 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
     contacts = db.scalars(stmt.order_by(WorkWechatContact.display_name.asc(), WorkWechatContact.id.desc()).offset(paging["offset"]).limit(PAGE_SIZE)).all()
 
     channels = {int(item.id): item for item in db.scalars(select(Channel).where(Channel.deleted_at.is_(None))).all()}
+    # 按账号与机器人状态批量计算写入口资格；不逐行查询，也不为已失效账号展示操作按钮。
+    active_bot_ids = set(db.scalars(select(Bot.id).where(Bot.deleted_at.is_(None), Bot.is_enabled.is_(True))).all())
     # 本页好友各自所在的群数、以及与好友的私聊会话,一次性批量取,避免逐行查询。
     external_ids = {item.contact_external_id for item in contacts}
     group_counts: dict[tuple[int, str], int] = {}
@@ -245,13 +248,20 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
             .group_by(ChatroomMember.channel_id, ChatroomMember.member_external_id)
         ).all():
             group_counts[(int(cid), str(member_id))] = int(count or 0)
-        for conv in db.scalars(select(Conversation).where(Conversation.external_id.in_(external_ids), Conversation.chat_type == "direct")).all():
+        for conv in db.scalars(select(Conversation).join(Channel, Channel.id == Conversation.channel_id).where(
+            Conversation.external_id.in_(external_ids), Conversation.chat_type == "direct",
+            Conversation.bot_id == Channel.bot_id, Conversation.tenant_id == Channel.tenant_id,
+        )).all():
             conversation_ids[(int(conv.channel_id or 0), str(conv.external_id))] = int(conv.id)
 
     totals = PointsService(db).user_totals(sorted(external_ids))
     rows = []
     for item in contacts:
         key = (int(item.channel_id), item.contact_external_id)
+        channel = channels.get(int(item.channel_id))
+        can_start_chat = bool(channel and channel.is_enabled and channel.bot_id in active_bot_ids
+            and item.sync_status == "active" and item.deleted_at is None and str(item.contact_external_id or "").strip()
+            and channel_supports(channel.channel_type, "direct_chat"))
         rows.append(
             {
                 "channel_id": int(item.channel_id),
@@ -263,6 +273,7 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
                 "group_count": group_counts.get(key, 0),
                 "points": totals.get(item.contact_external_id, 0),
                 "conversation_id": conversation_ids.get(key),
+                "can_start_chat": can_start_chat,
             }
         )
     return {"rows": rows, "paging": paging, "keyword": q, "channel_id": channel_id}

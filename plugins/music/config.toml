@@ -23,7 +23,8 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
-provider = "netease"
+# 默认音源与既有机器人绑定一致；网易云须由用户在表单中明确选择。
+provider = "qqmusic"
 api_base = ""
 api_key = ""
 file_type = "mp3_128"
@@ -40,7 +41,7 @@ app_id = "wx904fb3ecf62c7dea"
 key = "provider"
 label = "音源"
 kind = "select"
-default = "netease"
+default = "qqmusic"
 options = [
   { value = "netease", label = "网易云（公开接口，免部署）" },
   { value = "qqmusic", label = "QQMusicApi 0.9.0（自建服务）" },

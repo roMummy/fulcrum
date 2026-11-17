@@ -43,6 +43,11 @@ def _coerce(field: ConfigField, raw: Any) -> Any:
         if field.maximum is not None:
             value = min(field.maximum, value)
         return value
+    if field.kind == "select":
+        # 下拉值来自字段声明；直接提交非法值时按既有规整策略取默认值，
+        # 防止表单显示的来源与欢迎卡片实际使用的来源出现分歧。
+        value = str(raw if raw is not None else field.default).strip()
+        return value if any(value == option[0] for option in field.options) else field.default
     return str(raw if raw is not None else field.default).strip()
 
 

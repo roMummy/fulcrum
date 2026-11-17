@@ -105,7 +105,7 @@ def build_chat_input(
         rows = db.scalars(
             select(Message)
             .where(Message.conversation_id == conversation_id, Message.message_type == "text")
-            .order_by(Message.id.desc())
+            .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(HISTORY_LIMIT + 1)
         ).all()
         rows = list(reversed(rows))
@@ -151,7 +151,7 @@ def collect_speaker_names(
     for sender_id, sender_name in db.execute(
         select(Message.sender_id, Message.sender_name)
         .where(Message.conversation_id == conversation_id, Message.direction == "in", Message.sender_id.is_not(None))
-        .order_by(Message.id.desc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(limit)
     ).all():
         label = ai_memory.speaker_label(str(sender_id))

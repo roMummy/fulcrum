@@ -1481,6 +1481,47 @@ code {
   font-weight: 600;
 }
 
+/* 同步工具与状态共用后台的轻量表面，窄屏自然换行，不挤占图谱画布。 */
+.invitation-actions,
+.invitation-sync-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.invitation-actions form {
+  margin: 0;
+}
+
+.invitation-sync {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+
+.invitation-sync p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.invitation-sync progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin: 10px 0;
+  accent-color: var(--primary-strong);
+}
+
+.invitation-sync .muted-text,
+.invitation-time-hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
 .invitation-toolbar {
   align-items: flex-end;
   margin: 16px 0 12px;
@@ -1863,6 +1904,14 @@ code {
   color: var(--text-soft);
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.invitation-inspector-description {
+  grid-column: 1 / -1;
+}
+
+.invitation-inspector-description dd {
+  white-space: pre-wrap;
 }
 
 .invitation-unlinked {
@@ -5782,16 +5831,40 @@ code {
 .identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity-id { color: var(--muted, #64748b); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 群详情标签栏：插件 / 成员 / 消息 / 资料 */
-.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border, #e5e7eb); margin: 0 0 16px; flex-wrap: wrap; }
-.tab-bar a { padding: 8px 16px; color: inherit; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.tab-bar a.active { border-bottom-color: #2563eb; font-weight: 600; }
-.plugin-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
-.plugin-row h3 { margin: 0; font-size: 15px; }
-.plugin-row-actions { display: flex; gap: 8px; align-items: center; }
-.plugin-row details { grid-column: 1 / -1; }
-.plugin-row details summary { cursor: pointer; font-size: 13px; }
-@media (max-width: 720px) { .plugin-row { grid-template-columns: 1fr; } }
+/* 群详情使用当前 Soft UI 分段导航，导航自身滚动，手机页面不因计数或长标签溢出。 */
+.chatroom-tabs { display:flex; align-items:center; gap:5px; width:fit-content; max-width:100%; padding:5px; margin:4px 0 24px; background:var(--surface-muted); border-radius:var(--radius-md); overflow-x:auto; }
+.chatroom-tabs a { display:inline-flex; align-items:center; justify-content:center; gap:7px; flex:0 0 auto; min-height:42px; padding:9px 16px; border-radius:12px; color:var(--text-soft); text-decoration:none; white-space:nowrap; }
+.chatroom-tabs a:hover { color:var(--primary-strong); background:var(--surface); }
+.chatroom-tabs a.active { color:var(--primary-strong); background:var(--primary-soft); box-shadow:var(--shadow-card); font-weight:600; }
+.chatroom-tabs a:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+.chatroom-tab-count { padding:1px 7px; font-size:12px; line-height:1.6; border-radius:7px; background:var(--surface); color:var(--muted); }
+.chatroom-tabs .active .chatroom-tab-count { color:var(--primary-strong); }
+.chatroom-plugins-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 18px; }
+.chatroom-plugins-heading h2 { font-size:18px; margin:0 0 5px; }
+.chatroom-plugins-heading p { margin:0; color:var(--muted); font-size:13px; }
+.chatroom-plugin-list { gap:16px; }
+.chatroom-plugin-title { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.chatroom-plugin-summary { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:10px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.chatroom-plugin-source { color:var(--primary-strong); }
+.chatroom-plugin-card .gf-head-copy p { max-width:960px; line-height:1.7; }
+.chatroom-plugin-card .chatroom-plugin-warning { color:var(--warning); }
+/* 停用插件也允许预先编辑，保持表单文字清楚可读。 */
+.gf-card.chatroom-plugin-card:not(.is-on) .gf-body { opacity:1; }
+.chatroom-plugin-card .form-grid textarea { width:100%; min-width:0; resize:vertical; }
+.chatroom-plugin-card textarea[name^="command__"] { min-height:72px; }
+.chatroom-plugin-default-note { color:var(--muted); font-size:12px; margin:0; }
+.chatroom-plugin-default-note a { color:var(--primary-strong); text-underline-offset:3px; }
+.chatroom-plugin-footer { justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.chatroom-plugin-reset-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.chatroom-plugin-feedback { margin:0; color:var(--success); font-size:13px; }
+.chatroom-plugin-feedback.is-error { color:var(--danger); }
+@media (max-width:720px) {
+  .chatroom-tabs { width:100%; margin-bottom:20px; }
+  .chatroom-tabs a { padding:9px 12px; }
+  .chatroom-plugins-heading { align-items:flex-start; flex-direction:column; }
+  .chatroom-plugin-card .gf-head-actions { width:100%; justify-content:space-between; }
+  .chatroom-plugin-footer > .btn { margin-left:auto; }
+}
 
 /* ===== 全局下拉框(由 static/js/select.js 把原生 select 升级而来) =====
  * 触发按钮沿用输入框的底色、边框、圆角和聚焦环;选项面板沿用卡片阴影。
@@ -6245,13 +6318,19 @@ select.ui-select-native {
   grid-column: 1 / -1;
 }
 
+/* 配置字段使用 grid 布局，需显式保证 hidden 仍生效；来源切换只隐藏字段，不清空值。 */
+.gf-field[hidden] {
+  display: none;
+}
+
 .gf-field-label {
   color: var(--text-soft);
   font-size: 13px;
   font-weight: 500;
 }
 
-.gf-field input {
+.gf-field input,
+.gf-field select:not(.ui-select-native) {
   width: 100%;
   min-height: 40px;
   padding: 8px 12px;
@@ -6261,11 +6340,13 @@ select.ui-select-native {
   border-radius: var(--radius-md);
 }
 
-.gf-field input:hover {
+.gf-field input:hover,
+.gf-field select:not(.ui-select-native):hover {
   border-color: var(--border-strong);
 }
 
-.gf-field input:focus-visible {
+.gf-field input:focus-visible,
+.gf-field select:not(.ui-select-native):focus-visible {
   border-color: var(--primary);
   outline: 0;
   box-shadow: 0 0 0 4px var(--focus);
@@ -8259,6 +8340,53 @@ html.has-lightbox {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
+}
+
+/* 每张插件卡片的调用趋势直接融入原卡片，不额外叠加白色面板或阴影。
+   企业与平台使用同一组尺寸、色彩和图例，窄屏仍保留三个可比较的数值。 */
+.plugin-usage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 18px 0;
+}
+.plugin-usage-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.plugin-usage-heading strong { font-size: 14px; font-weight: 650; }
+.plugin-usage-heading > span, .plugin-usage-updated { color: var(--muted); font-size: 12px; }
+.plugin-usage-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.plugin-usage-periods { display: flex; gap: 3px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.plugin-usage-periods button { min-height: 32px; padding: 5px 11px; border: 0; border-radius: 8px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.plugin-usage-periods button[aria-pressed="true"] { background: var(--surface); color: var(--primary-strong); box-shadow: 0 1px 4px rgba(72, 82, 140, .09); }
+.plugin-usage-periods button:focus-visible, .plugin-usage-svg:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.plugin-usage-card { min-width: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.plugin-usage-numbers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.plugin-usage-metric { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.plugin-usage-metric > span { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.plugin-usage-metric i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; }
+.plugin-usage-metric strong { color: var(--text); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plugin-usage-matched { color: var(--info); }
+.plugin-usage-success { color: var(--success); }
+.plugin-usage-error { color: var(--danger); }
+.plugin-usage-plot { display: grid; grid-template-columns: minmax(20px, max-content) minmax(0, 1fr); column-gap: 7px; margin-top: 14px; }
+.plugin-usage-plot[hidden] { display: none; }
+.plugin-usage-yaxis { display: flex; justify-content: space-between; flex-direction: column; padding: 0; color: var(--muted); font-size: 10px; line-height: 1; font-variant-numeric: tabular-nums; }
+.plugin-usage-svg { display: block; width: 100%; height: 80px; min-width: 0; overflow: visible; border-radius: 3px; touch-action: pan-y; cursor: crosshair; }
+.plugin-usage-gridline { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plugin-usage-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* 命中使用虚线，重合时仍能透出正常实线；异常保持红色实线，避免只有颜色能区分。 */
+.plugin-usage-line.plugin-usage-matched { stroke-dasharray: 4 4; }
+.plugin-usage-line.plugin-usage-error { stroke-width: 2.5; }
+.plugin-usage-marker { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; opacity: .6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.plugin-usage-xaxis { display: flex; justify-content: space-between; grid-column: 2; gap: 4px; margin-top: 7px; color: var(--muted); font-size: 10px; }
+.plugin-usage-readout { min-height: 32px; margin: 9px 0 4px; color: var(--text-soft); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.plugin-usage-last { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.plugin-usage-last time { color: var(--text-soft); font-variant-numeric: tabular-nums; }
+@media (max-width: 680px) {
+  .plugin-usage-toolbar { gap: 10px; }
+  .plugin-usage-heading { width: 100%; }
+  .plugin-usage-controls { margin-left: 0; }
+  .plugin-usage-updated { flex-basis: 100%; }
 }
 
 /* 平台插件管理的筛选、启停状态与共用弹窗。卡片基础视觉由上方统一维护。 */

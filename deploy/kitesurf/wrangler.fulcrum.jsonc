@@ -1,0 +1,26 @@
+{
+  // 对应固定上游版本的独立运行入口，文件会复制到 packages/engine 目录。
+  // 保留源码和构建产物的相对路径，不引入开发环境的 fixtures 服务绑定。
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "fulcrum-kitesurf",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-11",
+  // 页面和 HTML 子资源均不可信，保持 Workerd 与 Kitesurf 两层公网出站限制。
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "rules": [
+    {"type": "Text", "globs": ["**/*.glue.js", "**/*.css", "**/*.dat"], "fallthrough": true}
+  ],
+  "limits": {"cpu_ms": 300000, "subrequests": 1000000},
+  "vars": {
+    "KITESURF_ENV": "local",
+    "KITESURF_VERSION": "39feadfb9a3e6c14b40cf170a559ce417d0fce5d",
+    "KITESURF_RESOURCE_DRAIN_QUIET_TURNS": "5",
+    "KITESURF_LAG_WATCHDOG": "1",
+    "KITESURF_ALLOW_PRIVATE_NETWORK": "",
+    // 独立服务没有本机 tracing 接收端，不向 localhost:4318 发送遥测。
+    "KITESURF_OTLP_ENDPOINT": ""
+  },
+  // PageScript / Renderer 通过 Worker Loader 运行，字体由构建时生成的 public 目录提供。
+  "worker_loaders": [{"binding": "LOADER"}],
+  "assets": {"directory": "./public", "binding": "FONT_ASSETS", "run_worker_first": ["/", "/rbi/*"]}
+}

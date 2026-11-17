@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import html as html_module
 import os
 import re
 import tempfile
@@ -21,8 +22,8 @@ os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="gf-golden-logs-"))
 import pytest
 
 from app.models.entities import Channel, Chatroom
-from app.services.group_features.registry import all_features
-from app.services.group_features.store import save_state
+from app.services.group_features.registry import all_features, get_feature
+from app.services.group_features.store import get_state, save_state
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 GOLDEN = Path(__file__).parent / "golden" / "group_features_tab.html"
@@ -51,6 +52,9 @@ def _sample_config(feature, index: int) -> dict:
             config[field.key] = min(max(low + 3, low), high)
         elif field.kind == "secret":
             config[field.key] = f"secret-{feature.key}"
+        elif field.kind == "select":
+            # 下拉配置必须使用真实选项，才能覆盖选中态而不是无效值的规整结果。
+            config[field.key] = field.options[-1][0]
         else:
             config[field.key] = f"示例值-{field.key}"
     return config
@@ -100,10 +104,89 @@ def test_group_feature_tab_matches_the_golden_render(feature_page) -> None:
 
 
 def test_the_golden_covers_every_kind_of_field_and_state() -> None:
-    """基准必须覆盖开关/输入框/数字/密钥/文本域和开启/关闭两种状态,否则对比没有意义。"""
+    """基准覆盖开关、文本、数字、密钥、下拉及开启/关闭状态，避免空壳对比。"""
 
     text = GOLDEN.read_text(encoding="utf-8") if GOLDEN.exists() else ""
     if not text:
         pytest.skip("基准文件尚未生成")
     assert 'role="switch"' in text and 'type="number"' in text and 'type="password"' in text and 'type="text"' in text
+    assert '<textarea name="cfg_join_template" rows="4" maxlength="2000">' in text
     assert "已配置，留空则保持不变" in text and " is-on" in text and "data-gf-depends" in text
+    assert '<select name="cfg_card_thumb_source">' in text
+    assert '<option value="member_avatar" selected>新成员头像</option>' in text
+
+
+@pytest.mark.parametrize("first_source", ["member_avatar", "url"])
+def test_welcome_card_image_source_and_custom_url_persist_through_the_page(feature_page, first_source) -> None:
+    """真实表单可双向切换来源；重新打开正确选中、隐藏 URL，并始终保留已填地址。"""
+
+    client, channel_id, room_id = feature_page
+    csrf = _login(client, "admin")
+    base = f"/channels/{channel_id}/chatrooms/{room_id}"
+    for source in (first_source, "url" if first_source == "member_avatar" else "member_avatar"):
+        response = client.post(base + "/features/member_change", data={
+            "enabled": "true", "cfg_notify_join": "true", "cfg_card_enabled": "true",
+            "cfg_card_title": "欢迎 {nickname}", "cfg_card_desc": "{now}",
+            "cfg_card_url": "https://example.com/rules", "cfg_card_thumb_source": source,
+            "cfg_card_thumb_url": "https://example.com/custom.jpg",
+        }, headers={"X-CSRF-Token": csrf, "X-Requested-With": "fetch"})
+        assert response.status_code == 200 and response.json()["ok"] is True
+        html = client.get(base + "?tab=features").text
+        assert f'<option value="{source}" selected>' in html
+        assert 'name="cfg_card_thumb_url" value="https://example.com/custom.jpg"' in html
+        label = re.search(r'<label[^>]*data-gf-show-when="cfg_card_thumb_source"[^>]*>', html)
+        assert label is not None and 'data-gf-show-value="url"' in label.group()
+        assert (' hidden' in label.group()) == (source == "member_avatar")
+        assert "未获取头像时不带缩略图" in html
+
+
+@pytest.mark.parametrize("title", ["{group_name} · <{nickname}>", ""])
+def test_member_notification_templates_persist_only_in_the_current_group(feature_page, provider_page_context, title) -> None:
+    """真实表单保存并刷新多行模板、花括号与空标题，另一群配置和头像来源独立保留。"""
+
+    client, channel_id, room_id = feature_page
+    ids = provider_page_context[1]
+    with ids["factory"]() as db:
+        room = db.get(Chatroom, room_id)
+        other_room = Chatroom(tenant_id=room.tenant_id, bot_id=room.bot_id, channel_id=channel_id,
+                             external_id="other@chatroom", name="另一个群", is_active=True)
+        db.add(other_room)
+        db.flush()
+        save_state(other_room, "member_change", enabled=True, config={"notify_title": "另一群标题", "join_template": "另一群欢迎 {nickname}"})
+        other_room_id = int(other_room.id)
+        other_state = get_state(other_room, get_feature("member_change"))
+        db.commit()
+
+    csrf = _login(client, "admin")
+    base = f"/channels/{channel_id}/chatrooms/{room_id}"
+    templates = {
+        "notify_title": title,
+        "join_template": "欢迎 {nickname} 加入 {group_name}\n请先阅读 <群公告> & 群规\n时间：{now}",
+        "leave_template": "{nickname} 离开了 {group_name}\n期待再见",
+        "removed_template": "已将 {nickname} 移出 {group_name}\n{now}",
+        "rename_template": "{nickname} 修改群昵称\n{old_nickname} → {new_nickname}\n{unknown}",
+    }
+    response = client.post(base + "/features/member_change", data={
+        "enabled": "true", "cfg_notify_join": "true", "cfg_notify_leave": "true", "cfg_notify_rename": "true",
+        **{"cfg_" + key: value for key, value in templates.items()},
+        "cfg_card_enabled": "true", "cfg_card_title": "欢迎 {nickname}", "cfg_card_url": "https://example.com/rules",
+        "cfg_card_thumb_source": "member_avatar", "cfg_card_thumb_url": "https://example.com/saved-cover.jpg",
+    }, headers={"X-CSRF-Token": csrf, "X-Requested-With": "fetch"})
+    assert response.status_code == 200 and response.json()["ok"] is True
+    refreshed = client.get(base + "?tab=features")
+    assert refreshed.status_code == 200
+    rendered = refreshed.text
+    assert f'name="cfg_notify_title" value="{html_module.escape(title, quote=True)}"' in rendered
+    for key, value in templates.items():
+        if key != "notify_title":
+            field = re.search(r'<textarea name="cfg_' + key + r'"[^>]*>(.*?)</textarea>', rendered, re.S)
+            assert field is not None and html_module.unescape(field.group(1)) == value
+    assert '<option value="member_avatar" selected>新成员头像</option>' in rendered
+    assert 'name="cfg_card_thumb_url" value="https://example.com/saved-cover.jpg"' in rendered
+    with ids["factory"]() as db:
+        enabled, config = get_state(db.get(Chatroom, room_id), get_feature("member_change"))
+        assert enabled and {key: config[key] for key in templates} == templates
+        assert get_state(db.get(Chatroom, other_room_id), get_feature("member_change")) == other_state
+    other_page = client.get(f"/channels/{channel_id}/chatrooms/{other_room_id}?tab=features")
+    assert other_page.status_code == 200
+    assert "另一群欢迎 {nickname}" in other_page.text and "请先阅读" not in other_page.text

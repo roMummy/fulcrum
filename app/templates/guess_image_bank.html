@@ -17,7 +17,7 @@
     <div class="gi-list-heading"><h2 id="gi-list-title">题目清单</h2><span class="compact-filter-count">共 {{ total }} 道题</span></div>
     <div class="gi-counts" aria-label="题库状态统计"><span>已启用 <strong>{{ counts.get('enabled', 0) }}</strong></span><span>草稿 <strong>{{ counts.get('draft', 0) }}</strong></span><span>已停用 <strong>{{ counts.get('disabled', 0) }}</strong></span></div>
   </div>
-  <details class="compact-filter" open data-filter-active="{{ 'true' if q or category or status else 'false' }}">
+  <details class="compact-filter disclosure" open data-filter-active="{{ 'true' if q or category or status else 'false' }}">
     <summary class="compact-filter-summary"><span>筛选题目</span><span class="compact-filter-summary-text">{{ '已设置条件' if q or category or status else '搜索 / 分类 / 状态' }}</span></summary>
     <form method="get" action="{{ base }}" class="compact-filter-form">
       <label class="compact-filter-field compact-filter-field-query"><span>搜索答案或标签</span><input type="search" name="q" value="{{ q }}" maxlength="80" placeholder="输入答案或标签" /></label>

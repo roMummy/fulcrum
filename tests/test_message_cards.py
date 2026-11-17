@@ -296,14 +296,14 @@ def test_upload_url_prefers_the_channel_setting_and_makes_relative_ones_absolute
 
 
 def test_event_time_strings_can_be_parsed() -> None:
-    """channel_events 里解析事件时间的函数用到了没导入的 ensure_shanghai_datetime,带 ISO 时间的事件会直接 NameError。"""
+    """公共入站时间解析保留正确的 ISO 时区和本地 datetime 语义。"""
 
     from datetime import datetime
 
-    from app.services.channel_events import _parse_timestamp_value
+    from app.services.inbound_policy import parse_timestamp_value
 
-    assert _parse_timestamp_value("2026-11-10T12:00:00Z").hour == 20  # UTC 12 点 = 上海 20 点
-    assert _parse_timestamp_value(datetime(2026, 11, 10, 12, 0, 0)).hour == 12 and _parse_timestamp_value(1794300000).year == 2026
+    assert parse_timestamp_value("2026-11-10T12:00:00Z").hour == 20  # UTC 12 点 = 上海 20 点
+    assert parse_timestamp_value(datetime(2026, 11, 10, 12, 0, 0)).hour == 12 and parse_timestamp_value(1794300000).year == 2026
 
 
 # ---------- 点击才加载:接口 ----------

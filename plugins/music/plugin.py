@@ -272,10 +272,8 @@ def _parse_command(payload: Mapping[str, Any]) -> Command:
 
 
 def _load_config(raw: Mapping[str, Any]) -> MusicConfig:
-    provider = str(raw.get("provider") or "").strip().lower()
-    if not provider:
-        # 旧绑定没有 provider 字段；已填 QQMusicApi 地址的继续用原音源，其余走免部署的网易云。
-        provider = "qqmusic" if str(raw.get("api_base") or "").strip() else "netease"
+    # 音源只能由明确配置决定；缺省沿用 QQ，不根据服务地址猜测或自动切到网易云。
+    provider = str(raw.get("provider") or "qqmusic").strip().lower()
     file_type = str(raw.get("file_type") or "mp3_128").strip().lower()
     output_mode = str(raw.get("output_mode") or "auto").strip().lower()
     on_failure = str(raw.get("on_failure") or "message").strip().lower()

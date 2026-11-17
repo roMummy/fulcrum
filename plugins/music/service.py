@@ -69,7 +69,8 @@ class MusicConfig:
     on_failure: str = "message"
     app_id: str = DEFAULT_CARD_APP_ID
     app_name: str = "汽水音乐"
-    provider: str = "netease"
+    # 默认值与清单、表单及消息执行配置合并保持一致，避免升级改变已有绑定音源。
+    provider: str = "qqmusic"
 
 
 @dataclass(frozen=True)

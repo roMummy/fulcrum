@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request, File, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -41,6 +42,7 @@ from app.services.bot_entitlements import BotEntitlementError, get_bot_quota
 from app.services.channel_adapters import dispatch_outbound_message, get_channel_adapter
 from app.services.channel_catalog import (
     ChannelConfigurationError,
+    channel_supports,
     get_channel_type_definition,
     list_supported_channel_types,
     require_supported_channel_type,
@@ -54,6 +56,7 @@ from app.services.account_identity import account_identity, bot_identity
 from app.services.account_presence import build_account_presence
 from app.services.operation_feedback import OperationFeedbackError, build_operation_status
 from app.services import ai_dispatch, message_actions, message_mentions
+from app.services.message_history import latest_history_messages, list_history_messages
 from app.services.channel_deletion import ChannelDeletionError, delete_channel_account
 from app.services.chatroom_registry import (
     GROUP_MODE_COLLECT_ONLY,
@@ -94,6 +97,9 @@ from app.services.ops import (
 )
 from app.services.group_features.registry import get_feature as get_group_feature
 from app.services.group_features.view import build_feature_cards, save_from_form as save_group_feature_form, toggle_flag as toggle_group_feature_flag
+from app.services.group_plugin_settings import (
+    attach_group_plugin_settings, group_plugin_settings_view, reset_group_plugin_settings, save_group_plugin_settings,
+)
 from app.services.plugin_directory import GROUP_SCOPED_CHANNEL_TYPES, sync_plugins_from_directory
 from app.services.plugin_governance import blocked_plugin_codes, tenant_visible_plugins
 from app.services.conversation_kinds import KIND_LABELS, apply_kind_filter, conversation_kind, normalize_kind
@@ -182,6 +188,7 @@ from app.services.identity_directory import IdentityDirectory, _avatar_from_extr
 from app.services import message_media, message_view, moments_media, payment_ledger
 from app.services.wechat_webridge import moments as webridge_moments
 from app.services.wechat_webridge import directory_sync as webridge_directory_sync
+from app.services.wechat_webridge import invitation_sync as webridge_invitation_sync
 from app.services.wechat_webridge import wakeup as webridge_wakeup
 from app.services.wechat_webridge.access import account_info as webridge_account_info, connection_url as webridge_connection_url, websocket_url as webridge_websocket_url, initialize_connection as initialize_webridge_connection
 from app.services.guga_agent.access import account_info as guga_account_info, connection_url as guga_connection_url, initialize_connection as initialize_guga_connection
@@ -318,15 +325,7 @@ async def startup_event() -> None:
     finally:
         db.close()
     start_background_workers()
-    try:
-        await local_proxy_relay_server.start()
-    except OSError:
-        # 中继端口被上一个进程占用时不能让整个后台起不来:消息、插件和渠道
-        # 仍然可用,只影响 iPad 扫码登录这一条链路。
-        logger.exception(
-            "local proxy relay unavailable; iPad scan login may be affected",
-            extra={"host": settings.local_proxy_relay_host, "port": settings.local_proxy_relay_port},
-        )
+    await local_proxy_relay_server.start()
     log_startup_banner()
 
 
@@ -2449,10 +2448,16 @@ async def channel_chatroom_detail_page(request: Request, channel_id: int, chatro
             raise HTTPException(status_code=400, detail="Chatroom detail only supported for wechat_ipad / wechat_winauto / workwechat / wechat_webridge / wechat_gugatool channels")
         # 群头像与列表共用已保存的群资料，避免渠道详情遗漏头像后退回首字占位。
         detail["avatar_url"] = _avatar_from_extra(chatroom.extra_json)
+        # 群插件卡片展示真正合并后的本群配置，敏感密钥不会进入模板或保存回报。
+        if tab == 'plugins':
+            attach_group_plugin_settings(db, channel, chatroom, detail['bindings'])
         # 资料标签只读取本群已保存的快照；打开页面不自动向设备下发命令。
         detail["profile"] = build_chatroom_profile(channel, chatroom, detail["members"])
         # 图谱与成员表使用同一份邀请快照；未知成员只分组展示，不推断额外邀请关系。
         detail["invitations"] = build_invitation_graph(detail["members"])
+        # 读取能力提示与已保存的进度，页面 GET 绝不触发逐成员手机查询。
+        detail["invitation_sync"] = webridge_invitation_sync.view(chatroom)
+        detail["invitation_sync_reason"] = webridge_invitation_sync.support_reason(channel, chatroom)
         # 群消息只在消息中心里有一份:这里给出直达这个群会话的入口,不再自带一张最近 30 条的表
         group_conversation_id = db.scalar(
             select(Conversation.id).where(Conversation.channel_id == channel.id, Conversation.external_id == chatroom.external_id)
@@ -2723,28 +2728,39 @@ async def start_contact_chat(request: Request, contact_id: int, csrf_token: str 
         )
         if contact is None:
             raise HTTPException(status_code=404, detail="好友不存在")
-        channel = get_channel(db, int(contact.channel_id or 0)) if contact.channel_id else None
-        if channel is None or channel.deleted_at is not None:
-            return RedirectResponse(url=f"/contacts?notice={quote('好友所属账号已删除')}", status_code=303)
-        if channel.channel_type != "wechat_gugatool":
-            # 发起聊天目前只适配了咕嘎渠道;其他渠道维持原有行为,不放行。
-            return RedirectResponse(url=f"/contacts?notice={quote('当前渠道暂不支持从好友发起聊天')}", status_code=303)
+        # 核对机器人和渠道归属；锁住同一账号，让并发点击在生产数据库中串行复用会话。
+        channel = db.scalar(select(Channel).join(Bot, Bot.id == Channel.bot_id).where(
+            Channel.id == contact.channel_id, Channel.tenant_id == _current_tenant_id(),
+            Bot.tenant_id == _current_tenant_id(), Channel.deleted_at.is_(None), Bot.deleted_at.is_(None),
+        ).with_for_update())
+        if channel is None:
+            raise HTTPException(status_code=404, detail="好友所属账号不存在")
+        if not channel.is_enabled or not channel.bot.is_enabled:
+            raise HTTPException(status_code=400, detail="好友所属账号已停用")
+        if not channel_supports(channel.channel_type, "direct_chat"):
+            raise HTTPException(status_code=400, detail="当前渠道暂不支持从好友发起聊天")
+        external_id = str(contact.contact_external_id or "").strip()
+        if not external_id:
+            raise HTTPException(status_code=400, detail="好友缺少有效的渠道编号")
         conversation = db.scalar(
             select(Conversation)
             .where(
+                Conversation.tenant_id == _current_tenant_id(),
                 Conversation.bot_id == channel.bot_id,
                 Conversation.channel_id == channel.id,
-                Conversation.external_id == contact.contact_external_id,
+                Conversation.external_id == external_id,
+                Conversation.chat_type == "direct",
             )
             .order_by(Conversation.id.asc())
         )
         if conversation is None:
             title = str(contact.display_name or contact.name or contact.contact_external_id)[:255]
             conversation = Conversation(
+                tenant_id=_current_tenant_id(),
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 channel_type=channel.channel_type,
-                external_id=contact.contact_external_id,
+                external_id=external_id,
                 title=title,
                 chat_type="direct",
             )
@@ -3662,6 +3678,54 @@ async def issue_workwechat_cloud_poll_authorization_code_action(request: Request
         db.close()
 
 
+def _invitation_sync_target(db: Session, channel_id: int, chatroom_id: int) -> tuple[Channel, Chatroom]:
+    """同步和进度共用同一归属校验，不允许将其他渠道或租户的群资料混入当前图谱。"""
+    channel = get_channel(db, channel_id)
+    if not channel or channel.channel_type != "wechat_webridge":
+        raise HTTPException(status_code=404, detail="Channel not found")
+    room = db.get(Chatroom, chatroom_id)
+    if not room or room.channel_id != channel.id or room.bot_id != channel.bot_id:
+        raise HTTPException(status_code=404, detail="Chatroom not found")
+    return channel, room
+
+
+@app.get("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/sync")
+async def chatroom_invitation_sync_status(request: Request, channel_id: int, chatroom_id: int):
+    """只读进度供成员页恢复展示；GET 不修改进度，不排队、不重试。"""
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        _, room = _invitation_sync_target(db, channel_id, chatroom_id)
+        return JSONResponse({"ok": True, **webridge_invitation_sync.view(room)}, headers={"Cache-Control": "no-store"})
+    finally:
+        db.close()
+
+
+@app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/sync")
+async def sync_chatroom_invitations_action(request: Request, channel_id: int, chatroom_id: int):
+    """运营人员明确操作后才开始批量读取；CSRF、能力检查和群锁在入队之前完成。"""
+    enforce_role(request, "ops")
+    db = get_session()
+    try:
+        await _require_operation_csrf(db, request)
+        channel, room = _invitation_sync_target(db, channel_id, chatroom_id)
+        return_url = f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=members"
+        try:
+            result = webridge_invitation_sync.request_sync(db, channel, room)
+        except ValueError as exc:
+            if _operation_json_requested(request):
+                return JSONResponse({"ok": False, "summary": str(exc)}, status_code=400)
+            return _completed_operation_response(request, str(exc), return_url, ok=False)
+        db.commit()
+        webridge_wakeup.notify(int(channel.id))
+        record_audit(db, "channel.wechat_webridge.chatroom.invitations.sync", "chatroom", room.id, result["summary"])
+        if _operation_json_requested(request):
+            return JSONResponse({"ok": True, **result}, headers={"Cache-Control": "no-store"})
+        return RedirectResponse(url=return_url, status_code=303)
+    finally:
+        db.close()
+
+
 @app.post("/channels/{channel_id}/chatrooms/{chatroom_id}/invitations/backfill")
 async def backfill_chatroom_invitations_action(request: Request, channel_id: int, chatroom_id: int):
     """按用户操作补查本群已有系统消息，所有写入沿用运营权限、CSRF 和租户会话。"""
@@ -3978,6 +4042,64 @@ async def toggle_chatroom_feature_action(request: Request, channel_id: int, chat
         db.commit()
         record_audit(db, "channel.chatroom-feature.toggle", "chatroom", chatroom.id, f"{feature_key}.{field}={value} by {user.username}")
         return JSONResponse({"ok": True, "notice": notice})
+    finally:
+        db.close()
+
+
+def _group_plugin_settings_target(db: Session, channel_id: int, chatroom_id: int) -> tuple[Channel, Chatroom]:
+    """结构化配置与恢复共用群归属校验，跨租户或跨渠道均按资源不存在处理。"""
+
+    channel = get_channel(db, channel_id)
+    room = db.get(Chatroom, chatroom_id)
+    if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES or not room or room.channel_id != channel.id:
+        raise HTTPException(status_code=404, detail='未找到当前群')
+    return channel, room
+
+
+@app.post('/channels/{channel_id}/chatrooms/{chatroom_id}/plugins/{bot_plugin_id}/settings')
+async def save_chatroom_plugin_settings_action(request: Request, channel_id: int, chatroom_id: int, bot_plugin_id: int):
+    """群详情只接收声明式表单，不重新引入已删除的 JSON 覆盖接口。"""
+
+    user = enforce_role(request, 'ops')
+    form = await request.form()
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, request.headers.get('X-CSRF-Token') or str(form.get('csrf_token') or ''))
+        channel, room = _group_plugin_settings_target(db, channel_id, chatroom_id)
+        try:
+            binding = save_group_plugin_settings(db, channel, room, bot_plugin_id, form, user.user_id)
+        except ValueError as exc:
+            db.rollback()
+            return JSONResponse({'ok':False, 'notice':str(exc)}, status_code=400)
+        db.commit()
+        record_audit(db, 'channel.chatroom-plugin.settings', 'group_plugin_scope', bot_plugin_id, f'chatroom={room.id}, operator={user.user_id}')
+        if request.headers.get('X-Requested-With') == 'fetch':
+            return JSONResponse(jsonable_encoder({'ok':True, 'notice':'本群插件设置已保存', 'settings':group_plugin_settings_view(db, channel, room, binding)}))
+        return RedirectResponse(url=f'/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote("本群插件设置已保存")}', status_code=303)
+    finally:
+        db.close()
+
+
+@app.post('/channels/{channel_id}/chatrooms/{chatroom_id}/plugins/{bot_plugin_id}/settings/reset')
+async def reset_chatroom_plugin_settings_action(request: Request, channel_id: int, chatroom_id: int, bot_plugin_id: int):
+    """仅恢复参数默认值，保留群内启停，避免用户恢复指令时误开启插件。"""
+
+    user = enforce_role(request, 'ops')
+    form = await request.form()
+    db = get_session()
+    try:
+        require_tenant_csrf(db, request, request.headers.get('X-CSRF-Token') or str(form.get('csrf_token') or ''))
+        channel, room = _group_plugin_settings_target(db, channel_id, chatroom_id)
+        try:
+            binding = reset_group_plugin_settings(db, channel, room, bot_plugin_id, user.user_id)
+        except ValueError as exc:
+            db.rollback()
+            return JSONResponse({'ok':False, 'notice':str(exc)}, status_code=400)
+        db.commit()
+        record_audit(db, 'channel.chatroom-plugin.settings.reset', 'group_plugin_scope', bot_plugin_id, f'chatroom={room.id}, operator={user.user_id}')
+        if request.headers.get('X-Requested-With') == 'fetch':
+            return JSONResponse(jsonable_encoder({'ok':True, 'notice':'配置已恢复默认，本群启停保持不变', 'settings':group_plugin_settings_view(db, channel, room, binding)}))
+        return RedirectResponse(url=f'/channels/{channel_id}/chatrooms/{chatroom_id}?tab=plugins&notice={quote("配置已恢复默认，本群启停保持不变")}', status_code=303)
     finally:
         db.close()
 
@@ -4327,6 +4449,24 @@ async def plugins_page(request: Request):
         db.close()
 
 
+@app.get('/plugins/usage')
+async def plugin_usage_data(request: Request, period: str = '24h'):
+    """企业卡片一次读取全部可见插件，租户身份只能来自认证会话。"""
+
+    from app.services.plugin_usage import build_plugin_usage
+
+    require_user(request)
+    db = get_session()
+    try:
+        plugins = tenant_visible_plugins(db, _current_tenant_id())
+        return JSONResponse(build_plugin_usage(db, (plugin.code for plugin in plugins), period=period),
+            headers={'Cache-Control': 'no-store'})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
 @app.post("/plugins/refresh")
 async def refresh_plugins_action(request: Request):
     enforce_role(request, "ops")
@@ -4643,14 +4783,23 @@ async def execute_plugin_binding_action(request: Request, binding_id: int):
         _ensure_binding_plugin_usable(db, binding)
         payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         context = _build_manual_plugin_execution_context(db, binding, payload)
-        result = execute_binding_message_action(
-            db,
-            binding,
-            "execute",
-            payload=payload,
-            context=context,
-        )
+        from app.services.analytics import record_binding_execution_analytics
+
+        started = time_module.perf_counter()
+        try:
+            result = execute_binding_message_action(db, binding, 'execute', payload=payload, context=context)
+        except Exception as exc:
+            # 回滚失败动作未提交的业务写入，再独立提交异常统计，避免请求结束时
+            # 日志也跟着被回滚；底层消息桥接不记数，因此不会与分发调用重复。
+            db.rollback()
+            record_binding_execution_analytics(db, binding, context=context, error=exc,
+                duration_ms=int((time_module.perf_counter() - started) * 1000), trigger_source='manual')
+            db.commit()
+            raise
+        record_binding_execution_analytics(db, binding, context=context, result=result,
+            duration_ms=int((time_module.perf_counter() - started) * 1000), trigger_source='manual')
         if result is None:
+            db.commit()
             raise HTTPException(status_code=400, detail="Plugin execution not supported")
         persist_binding_execution(db, binding, result, action="execute")
         record_audit(db, "plugin.execute", "bot_plugin", binding.id, result.message)
@@ -4860,20 +5009,10 @@ def load_conversation_messages(db: Session, conversation_id: int, *, before_id: 
     多取一条用来判断两个方向上是否还有更多。
     """
 
-    base = select(Message).where(Message.conversation_id == conversation_id, Message.status != "echo")
-    if message_ids is not None:
-        rows = list(db.scalars(base.where(Message.id.in_(message_ids)).order_by(Message.id.asc())).all())
-        has_more = False
-    elif after_id:
-        rows = list(db.scalars(base.where(Message.id > after_id).order_by(Message.id.asc()).limit(limit + 1)).all())
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-    else:
-        if before_id:
-            base = base.where(Message.id < before_id)
-        fetched = list(db.scalars(base.order_by(Message.id.desc()).limit(limit + 1)).all())
-        has_more = len(fetched) > limit
-        rows = list(reversed(fetched[:limit]))
+    rows, has_more = list_history_messages(
+        db, conversation_id, before_id=before_id, after_id=after_id,
+        limit=limit, message_ids=message_ids,
+    )
     identities = IdentityDirectory(db).for_messages(rows)
     attachments: dict[int, list[MessageAttachment]] = {}
     if rows:
@@ -5210,12 +5349,7 @@ def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id:
     conversation_summaries = []
     summary_directory = IdentityDirectory(db)
     summary_identities = summary_directory.for_conversations(conversations)
-    latest_messages = {
-        int(item.conversation_id): item
-        for item in db.scalars(select(Message).where(Message.id.in_(
-            select(func.max(Message.id)).where(Message.conversation_id.in_([int(row.id) for row in conversations]), Message.status != "echo").group_by(Message.conversation_id)
-        ))).all()
-    } if conversations else {}
+    latest_messages = latest_history_messages(db, [int(row.id) for row in conversations])
     for item in conversations:
         latest = latest_messages.get(int(item.id))
         identity = summary_identities[int(item.id)]

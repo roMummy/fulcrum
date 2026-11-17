@@ -715,17 +715,21 @@ def test_netease_unplayable_song_does_not_return_a_card(music):
     assert all(reply["type"] != "music" for reply in result.output["replies"])
 
 
-def test_netease_is_the_default_provider_without_api_base(music):
-    fake = FakeNeteaseService()
-    with patch.object(music, "PluginHttpClient", return_value=fake):
+def test_missing_qqmusic_service_does_not_switch_provider(music):
+    """默认 QQ 未配置服务时明确报错，不借用网易云接口掩盖缺失配置。"""
+
+    with patch.object(music, "PluginHttpClient") as client:
         result = music.execute_action(PluginExecutionRequest(
             action="execute", config={}, payload={"content": "点歌 天下"}, context=None,
         ))
-    assert result.ok and result.output["replies"][0]["url"] == "https://music.163.com/song?id=191254"
+    assert not result.ok and result.output["provider_status"] == "music_not_configured"
+    client.assert_not_called()
 
 
-def test_legacy_config_with_api_base_keeps_qqmusic_provider(music):
-    assert music._load_config({}).provider == "netease"
+def test_provider_defaults_are_explicit_and_consistent(music):
+    """是否填写地址不改变音源；网易云只由明确 provider 选择。"""
+
+    assert music._load_config({}).provider == "qqmusic"
     assert music._load_config({"api_base": "https://music.example.test"}).provider == "qqmusic"
     assert music._load_config({"provider": "netease", "api_base": "https://music.example.test"}).provider == "netease"
 

@@ -51,7 +51,15 @@ def test_real_revokemsgcontent_is_parsed_and_historical_system_rows_are_readable
 
 def test_old_xml_uses_server_id_then_local_id_and_handles_group_sender_prefix():
     xml = "wxid_user: \n" + OLD_RECALL.format(target=SERVER_ID)
-    assert message_view.recall_info(xml) == {"message_ids": [SERVER_ID, "42"], "session": "1@chatroom", "text": "小明撤回了一条消息"}
+    # 解析结果同时保留两类原生编号，撤回匹配才能区分服务器编号与本地编号；
+    # 合并后的契约不能再用旧字典断言把这两个防误撤回字段当成多余数据。
+    assert message_view.recall_info(xml) == {
+        "message_ids": [SERVER_ID, "42"],
+        "server_message_ids": [SERVER_ID],
+        "local_message_ids": ["42"],
+        "session": "1@chatroom",
+        "text": "小明撤回了一条消息",
+    }
 
 
 def test_templates_quotes_and_malformed_xml_are_never_mistaken_for_recall():

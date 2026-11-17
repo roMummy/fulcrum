@@ -102,7 +102,8 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="企业微信",
         summary="通过企业本地执行端接入企业微信账号、联系人和群聊。",
         runtime_mode="remote_executor",
-        capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "remote_executor"}),
+        # direct_chat 表示联系人外部 ID 可直接用于适配器私聊，供好友入口统一判断。
+        capabilities=frozenset({"send", "direct_chat", "inbound", "health", "chatrooms", "contacts", "remote_executor"}),
         config_fields=(
             ChannelConfigField("provider_node_id", "执行端节点", input_type="executor_node", required_when_enabled=True),
             ChannelConfigField(
@@ -123,7 +124,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="微信 iPad 协议",
         summary="通过微信协议服务接入个人微信，支持登录、消息、联系人和群聊。",
         runtime_mode="platform_polling",
-        capabilities=frozenset({"send", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
+        capabilities=frozenset({"send", "direct_chat", "inbound", "health", "chatrooms", "contacts", "login", "polling"}),
         config_fields=(
             *COMMON_POLICY_FIELDS,
         ),
@@ -135,7 +136,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="微信 Windows",
         summary="通过 Windows 微信执行端接入个人微信消息和群聊。",
         runtime_mode="webhook",
-        capabilities=frozenset({"send", "inbound", "health", "chatrooms"}),
+        capabilities=frozenset({"send", "direct_chat", "inbound", "health", "chatrooms"}),
         config_fields=(
             ChannelConfigField("api_base", "API Base", placeholder="http://127.0.0.1:8182", required_when_enabled=True),
             ChannelConfigField("bot_token", "访问凭证", input_type="password", secret=True),
@@ -149,7 +150,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         summary="通过 iPhone 微信微桥插件的服务端长轮询接入个人微信消息。",
         runtime_mode="platform_polling",
         capabilities=frozenset({
-            "send", "inbound", "health", "polling", "advanced_commands", "media",
+            "send", "direct_chat", "inbound", "health", "polling", "advanced_commands", "media",
             "contacts", "chatrooms", "payments", "profile", "moments", "favorites", "official_accounts",
         }),
         config_fields=(
@@ -163,7 +164,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="咕嘎助手",
         summary="通过 iPhone 上的咕嘎助手客户端主动连接平台，收发消息并管理群。",
         runtime_mode="platform_polling",
-        capabilities=frozenset({"send", "inbound", "health", "polling", "media", "chatrooms"}),
+        capabilities=frozenset({"send", "direct_chat", "inbound", "health", "polling", "media", "chatrooms"}),
         config_fields=(
             *COMMON_POLICY_FIELDS,
         ),
@@ -174,7 +175,7 @@ CHANNEL_TYPE_DEFINITIONS = (
         label="Telegram",
         summary="通过 Telegram Bot API 接入私聊和群聊消息。",
         runtime_mode="platform_polling",
-        capabilities=frozenset({"send", "inbound", "health", "polling"}),
+        capabilities=frozenset({"send", "direct_chat", "inbound", "health", "polling"}),
         config_fields=(
             ChannelConfigField("bot_token", "Bot Token", input_type="password", required_when_enabled=True, secret=True),
             ChannelConfigField("api_base", "API Base", placeholder="https://api.telegram.org"),

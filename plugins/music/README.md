@@ -1,10 +1,10 @@
 # 音乐点播
 
-本插件 3.1.0 支持两种音源：默认 **网易云公开接口**（搜索直连 `music.163.com`，播放、封面和歌词走 `api.qijieya.cn/meting`），无需部署任何服务；也可切换为 **L-1124/QQMusicApi v0.9.0 Web 服务**。Fulcrum 中的 `guess_song`（猜歌）是独立插件，不改动它的旧服务接口。
+本插件 3.1.0 支持两种音源：默认 **L-1124/QQMusicApi v0.9.0 Web 服务**，保持现有绑定的音源和账号策略；可手动选择 **网易云公开接口**（搜索直连 `music.163.com`，播放、封面和歌词走 `api.qijieya.cn/meting`）。Fulcrum 中的 `guess_song`（猜歌）是独立插件。
 
 ## 接入与升级
 
-1. 选择音源。默认“网易云（公开接口，免部署）”保存即可使用，不需要账号或服务地址。
+1. 选择音源。默认为 QQMusicApi；如需网易云，手动选择“网易云（公开接口，免部署）”，无需填写 QQ 服务地址。
 2. 选择 QQMusicApi 时，单独运行 v0.9.0 Web 服务，把根地址填入“QQMusicApi 服务地址”。支持反向代理的路径前缀；不要填写具体接口路径。
 3. QQ 账号登录、Cookie、会员权限和账号池由 QQMusicApi 服务管理。不要把 QQ 登录凭证填进 Fulcrum 插件配置。
 4. 如果 QQMusicApi 的反向代理要求 `Authorization: Bearer ...`，填写可选的“反向代理密钥”。QQMusicApi 的登录凭证不是此密钥。

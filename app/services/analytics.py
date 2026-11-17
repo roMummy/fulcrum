@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.text_column import dump_json_for_text_column
@@ -65,6 +65,83 @@ def record_message_activity(
     row.message_count += 1
 
 
+def record_plugin_execution(db: Session, execution: PluginExecutionLog) -> None:
+    """唯一的插件统计写入口：一次结果对应一条日志和一次小时增量。
+
+    matched 表示命中，attempted 表示真正调用。跳过和规则拦截均不冒充正常或
+    异常；失败与超时互斥，前端相加时不会把超时算两遍。所有身份由调用边界的
+    可信绑定提供，并继续受租户 Session 的写入校验约束。
+    """
+
+    timestamp = execution.created_at or now_shanghai()
+    execution.created_at = timestamp
+    execution.status = str(execution.status or 'skipped').strip().lower()
+    execution.duration_ms = max(int(execution.duration_ms or 0), 0)
+    execution.outbound_count = max(int(execution.outbound_count or 0), 0)
+    # 已真正调用却返回 unsupported 是执行失败；只有明确的 skipped 才是正常跳过。
+    skipped = execution.status == 'skipped'
+    blocked = execution.status == 'blocked'
+    succeeded = bool(execution.attempted and execution.ok and not skipped and not blocked)
+    failed = bool(not skipped and not blocked and not succeeded and (
+        execution.attempted or (execution.matched and execution.status in {'error', 'timeout', 'outbound_failed'})
+    ))
+    bucket = _hour_bucket(timestamp)
+    db.add(execution)
+    hourly = db.scalar(select(PluginActivityHourly).where(
+        PluginActivityHourly.tenant_id == execution.tenant_id,
+        PluginActivityHourly.bucket_start == bucket,
+        PluginActivityHourly.bot_id == execution.bot_id,
+        PluginActivityHourly.channel_id == execution.channel_id,
+        PluginActivityHourly.plugin_id == execution.plugin_id,
+        PluginActivityHourly.bot_plugin_id == execution.bot_plugin_id,
+        PluginActivityHourly.plugin_code == execution.plugin_code,
+    ))
+    if hourly is None:
+        hourly = PluginActivityHourly(tenant_id=execution.tenant_id, bucket_start=bucket,
+            bot_id=execution.bot_id, channel_id=execution.channel_id, plugin_id=execution.plugin_id,
+            bot_plugin_id=execution.bot_plugin_id, plugin_code=execution.plugin_code)
+        db.add(hourly)
+        db.flush()
+    deltas = {
+        'matched_count': int(bool(execution.matched)),
+        'trigger_count': int(bool(execution.attempted)),
+        'attempted_count': int(bool(execution.attempted)),
+        'success_count': int(succeeded),
+        'failed_count': int(failed and execution.status != 'timeout'),
+        'timeout_count': int(failed and execution.status == 'timeout'),
+        'skipped_count': int(skipped), 'blocked_count': int(blocked),
+        'outbound_count': execution.outbound_count, 'total_duration_ms': execution.duration_ms,
+    }
+    # 使用数据库原子加法，AI 线程与后台任务并发更新时不会用旧 ORM 值覆盖次数。
+    # 首次并发建桶即便出现两行，查询会汇总两行，每次调用的增量仍只写一次。
+    db.execute(update(PluginActivityHourly).where(PluginActivityHourly.id == hourly.id).values(
+        **{name: getattr(PluginActivityHourly, name) + value for name, value in deltas.items()}
+    ).execution_options(synchronize_session=False))
+    db.expire(hourly)
+
+
+def record_binding_execution_analytics(
+    db: Session, binding: BotPlugin, *, context: Any, result: Any = None,
+    error: Exception | None = None, duration_ms: int = 0, trigger_source: str,
+) -> None:
+    """适配手动／定时的最终结果，不在内部消息桥接层再次记录分发调用。"""
+
+    status = ('timeout' if isinstance(error, TimeoutError) else 'error') if error else str(getattr(result, 'status', '') or 'skipped')
+    summary = str(error if error else getattr(result, 'message', '') or '')[:2000]
+    record_plugin_execution(db, PluginExecutionLog(
+        tenant_id=int(binding.tenant_id), bot_id=int(binding.bot_id), plugin_id=int(binding.plugin_id),
+        bot_plugin_id=int(binding.id), plugin_code=str(binding.plugin.code),
+        channel_id=getattr(context, 'channel_id', None), conversation_id=getattr(context, 'conversation_id', None),
+        message_id=getattr(context, 'message_id', None), raw_event_id=getattr(context, 'raw_event_id', None),
+        channel_type=getattr(context, 'channel_type', None), chat_type=getattr(context, 'chat_type', None),
+        message_type=getattr(context, 'message_type', None), sender_id=getattr(context, 'sender_id', None),
+        matched=True, attempted=result is not None or error is not None,
+        ok=bool(error is None and getattr(result, 'ok', False)), status=status, duration_ms=duration_ms,
+        trigger_source=trigger_source, summary=summary or None,
+        error_message=summary if error or (result is not None and not result.ok and status not in {'skipped', 'blocked'}) else None,
+    ))
+
+
 def record_plugin_dispatch_analytics(
     db: Session,
     *,
@@ -73,13 +150,13 @@ def record_plugin_dispatch_analytics(
     raw_event_id: int | None,
     conversation_id: int | None,
     message_id: int | None,
+    trigger_source: str = 'inbound_dispatch',
 ) -> None:
     context = getattr(dispatch_report, "static_plan", None).context if getattr(dispatch_report, "static_plan", None) else None
     decisions = {
         str(item.candidate.plugin_code): item
         for item in (getattr(dispatch_report, "decisions", ()) or ())
     }
-    bucket = _hour_bucket()
     for execution in getattr(dispatch_report, "executions", ()) or ():
         candidate = getattr(execution, "candidate", None)
         if candidate is None:
@@ -93,8 +170,9 @@ def record_plugin_dispatch_analytics(
         matched = bool(getattr(decision, "matched", False))
         attempted = bool(getattr(execution, "attempted", False))
         ok = bool(getattr(execution, "ok", False))
-        db.add(
+        record_plugin_execution(db,
             PluginExecutionLog(
+                tenant_id=int(channel.tenant_id),
                 bot_id=channel.bot_id,
                 channel_id=channel.id,
                 conversation_id=conversation_id,
@@ -115,7 +193,7 @@ def record_plugin_dispatch_analytics(
                 consume_policy=str(getattr(candidate, "consume_policy", "") or "") or None,
                 duration_ms=duration_ms,
                 outbound_count=outbound_count,
-                trigger_source="inbound_dispatch",
+                trigger_source=trigger_source,
                 error_message=message if status in {"error", "timeout", "outbound_failed"} else None,
                 summary=message or None,
                 details_json=dump_json_for_text_column(
@@ -128,44 +206,6 @@ def record_plugin_dispatch_analytics(
                 ),
             )
         )
-        hourly = db.scalar(
-            select(PluginActivityHourly).where(
-                PluginActivityHourly.bucket_start == bucket,
-                PluginActivityHourly.bot_id == channel.bot_id,
-                PluginActivityHourly.channel_id == channel.id,
-                PluginActivityHourly.plugin_id == getattr(candidate, "plugin_id", None),
-                PluginActivityHourly.bot_plugin_id == getattr(candidate, "binding_id", None),
-                PluginActivityHourly.plugin_code == str(getattr(candidate, "plugin_code", "") or ""),
-            )
-        )
-        if hourly is None:
-            hourly = PluginActivityHourly(
-                bucket_start=bucket,
-                bot_id=channel.bot_id,
-                channel_id=channel.id,
-                plugin_id=getattr(candidate, "plugin_id", None),
-                bot_plugin_id=getattr(candidate, "binding_id", None),
-                plugin_code=str(getattr(candidate, "plugin_code", "") or ""),
-            )
-            db.add(hourly)
-            db.flush()
-        if matched:
-            hourly.matched_count += 1
-        if attempted:
-            hourly.trigger_count += 1
-            hourly.attempted_count += 1
-        if ok:
-            hourly.success_count += 1
-        if status in {"error", "outbound_failed"}:
-            hourly.failed_count += 1
-        if status == "skipped":
-            hourly.skipped_count += 1
-        if status == "blocked":
-            hourly.blocked_count += 1
-        if status == "timeout":
-            hourly.timeout_count += 1
-        hourly.outbound_count += outbound_count
-        hourly.total_duration_ms += max(duration_ms, 0)
 
 
 def upsert_alert(

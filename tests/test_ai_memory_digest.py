@@ -85,6 +85,19 @@ def test_first_scan_starts_from_now_without_backfilling_history(env) -> None:
     assert digest.plan_group_digest(db, room, conversation, now=NOW) is None  # 历史不会被整理
 
 
+def test_late_imported_archive_is_not_replayed_into_memory(env) -> None:
+    db, room, conversation = env
+    _start(env)
+    archived = _add(db, _texts(40), minutes_ago=300)
+    for message in archived:
+        message.status = "archived"
+    db.commit()
+    assert digest.plan_group_digest(db, room, conversation, now=NOW) is None
+    live = _add(db, ["这是导入完成之后的新发言"], minutes_ago=30)
+    plan = digest.plan_group_digest(db, room, conversation, now=NOW)
+    assert plan is not None and plan.count == 1 and plan.cursor_message_id == live[0].id
+
+
 def test_waits_below_threshold_then_flushes_at_thirty(env) -> None:
     db, room, conversation = env
     _start(env)

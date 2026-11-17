@@ -499,6 +499,8 @@ class RawWebhookEvent(Base, TenantOwnedMixin, TimestampMixin):
 class Message(Base, TenantOwnedMixin, TimestampMixin):
     __tablename__ = "messages"
     __table_args__ = (
+        # 历史补录的主键不代表消息时间，分页和摘要沿用同一时间索引。
+        Index("ix_messages_conversation_time", "conversation_id", "created_at", "id"),
         # 平台分析只扫描有限时间窗口，并按方向、租户和发送者完成消息及触发用户统计。
         Index("ix_messages_platform_analytics", "created_at", "direction", "tenant_id", "sender_id"),
     )
