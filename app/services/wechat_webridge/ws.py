@@ -7,6 +7,7 @@ import json
 import time
 from contextlib import suppress
 
+from anyio import CancelScope
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
@@ -158,7 +159,11 @@ async def serve(websocket: WebSocket, *, channel_id: int, tenant_id: int, connec
     finally:
         if _connections.get(channel_id) is websocket:
             _connections.pop(channel_id, None)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # ASGI 会在断开期间取消当前请求；如果取消再次命中 gather，收发任务的释放
+        # 会被中断，框架还可能把正常断开暴露成 CancelledError。仅屏蔽清理阶段的
+        # 外层作用域取消，等待本连接的两个任务退出；正常处理期间仍响应请求取消。
+        with CancelScope(shield=True):
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         # 已领取的命令保持 running，等待结果或现有超时处理，避免断线自动重发副作用。
