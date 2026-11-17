@@ -184,6 +184,10 @@ def _run_single_job() -> bool:
         try:
             payload = parse_job_payload(job)
             if job.job_type == PLUGIN_DISPATCH_JOB:
+                # 新人头像需等待已有目录读取完成；实际发送前延期同一任务，
+                # 不能先发无图卡片再补发，也不能等待手机时占住工作线程。
+                if _defer_welcome_for_avatar(db, job, payload):
+                    return True
                 result = _process_plugin_dispatch_job(db, payload)
             elif job.job_type == PLUGIN_SCHEDULED_ACTION_JOB:
                 result = process_plugin_scheduled_action_job(db, job, payload)
@@ -204,6 +208,36 @@ def _run_single_job() -> bool:
                 extra={"job_id": job.id, "job_type": job.job_type, "tenant_id": tenant_id},
             )
             return True
+
+
+def _defer_welcome_for_avatar(db: Session, job: TaskJob, payload: dict[str, Any]) -> bool:
+    """资料尚在同步时让原任务短暂回到队列，纯等待不计作一次执行失败。"""
+
+    from app.services.group_features.member_change import welcome_avatar_retry_at
+
+    retry_at = welcome_avatar_retry_at(db, payload, queued_at=job.created_at, now=now_shanghai())
+    if retry_at is None:
+        return False
+    job.status = "pending"
+    job.available_at = retry_at
+    job.started_at = None
+    job.locked_at = None
+    job.finished_at = None
+    job.error_message = None
+    # claim 已增加次数，但这里尚未执行任何群功能或插件；还原这次纯等待，
+    # 让真正执行时仍保留原有失败重试额度，且不创建第二条插件任务。
+    job.attempts = max(0, int(job.attempts or 0) - 1)
+    result = {"status": "pending", "reason": "member_avatar_sync", "retry_at": retry_at.isoformat()}
+    job.result_json = dump_json_for_text_column(result)
+    raw_event_id = _coerce_int(payload.get("raw_event_id"))
+    raw_event = db.get(RawWebhookEvent, raw_event_id) if raw_event_id else None
+    if raw_event is not None:
+        raw_event.dispatch_summary_json = dump_json_for_text_column({**result, "mode": "async", "queued": True,
+            "job_id": job.id, "job_type": job.job_type, "raw_event_id": raw_event_id,
+            "conversation_id": payload.get("conversation_id"), "message_id": payload.get("message_id")})
+    db.commit()
+    logger.info("欢迎通知等待新人头像同步，已让出队列", extra={"job_id": job.id, "retry_at": retry_at.isoformat()})
+    return True
 
 
 def _run_due_plugin_scheduler() -> bool:

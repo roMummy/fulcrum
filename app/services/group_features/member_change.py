@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -15,8 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.core.time import now_shanghai
-from app.models.entities import Channel, Chatroom, ChatroomMember
+from app.core.time import ensure_shanghai_datetime, now_shanghai
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation
 from app.services.group_features.dispatch import FeatureContext, register_handler
 from app.services.config_fields import ConfigField
 from app.services.group_features.registry import GroupFeature, register
@@ -26,6 +27,10 @@ logger = get_logger(__name__)
 
 # 每次事件最多给几位新成员发欢迎卡片,防止一次拉很多人时刷屏。
 MAX_WELCOME_CARDS = 3
+# 成员目录默认异步读取，首次入群的头像通常比事件晚几秒返回；只让原任务
+# 短暂让出队列，不能占住工作线程，也不能在手机离线时无限等待。
+WELCOME_AVATAR_MAX_WAIT = timedelta(seconds=15)
+WELCOME_AVATAR_RECHECK = timedelta(seconds=1)
 # 文字通知和欢迎卡片共用单次匹配，只替换各自上下文提供的变量。
 # 不递归解释昵称或群名中的花括号，未声明变量保留给用户检查。
 WELCOME_TEMPLATE_FIELDS = ("card_title", "card_desc", "card_url", "card_thumb_url")
@@ -136,6 +141,12 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
         if isinstance(directory, Mapping) and not directory.get("applied"):
             return None
         previous = dict(directory.get("previous") or {}) if isinstance(directory, Mapping) else {}
+        if change_type == "join":
+            # 欢迎任务让出队列期间可能又收到退群事件；发送前读取当前成员状态，
+            # 避免在退出通知之后再给已经离群的人发送迟到欢迎。
+            members = _current_join_members(ctx.db, ctx.chatroom, members)
+            if not members:
+                return None
     else:
         previous = lookup_previous_names(ctx.db, chatroom=ctx.chatroom, members=members) if change_type == "rename" else {}
         apply_member_change(
@@ -159,22 +170,108 @@ def handle(ctx: FeatureContext, args: str) -> list[dict[str, Any]] | None:
         replies.append(text_reply(reply_text))
     if change_type == "join" and ctx.config.get("card_enabled"):
         card_members = members[:MAX_WELCOME_CARDS]
-        use_member_avatar = ctx.config.get("card_thumb_source") == "member_avatar"
-        # 头像模式忽略保留的自定义 URL；其他卡片字段仍支持现有头像变量。
-        template_fields = WELCOME_TEMPLATE_FIELDS[:-1] if use_member_avatar else WELCOME_TEMPLATE_FIELDS
-        if use_member_avatar or any("{avatar_url}" in str(ctx.config.get(field) or "") for field in template_fields):
-            from app.services.identity_directory import IdentityDirectory
-
-            # 只在选中成员头像或生效模板使用头像变量时查询，按新人 ID 批量读取本群资料。
-            # 身份目录会用同渠道好友头像补缺，不能取事件发送者、邀请人或其他群的成员头像。
-            directory = IdentityDirectory(ctx.db)
-            group_id = str(ctx.chatroom.external_id)
-            directory.preload(ctx.channel.id, [item["external_id"] for item in card_members], group_external_id=group_id)
-            card_members = [{**item, "avatar_url": directory.get(
-                ctx.channel.id, item["external_id"], group_external_id=group_id,
-            )["avatar_url"]} for item in card_members]
+        if _welcome_uses_avatar(ctx.config):
+            card_members = _welcome_member_profiles(ctx.db, ctx.channel, ctx.chatroom, card_members)
         replies.extend(build_welcome_cards(ctx.config, card_members))
     return replies
+
+
+def _welcome_uses_avatar(config: Mapping[str, Any]) -> bool:
+    """等待和最终生成共用同一判断，头像模式不检查已隐藏的自定义地址。"""
+
+    use_member_avatar = config.get("card_thumb_source") == "member_avatar"
+    fields = WELCOME_TEMPLATE_FIELDS[:-1] if use_member_avatar else WELCOME_TEMPLATE_FIELDS
+    return use_member_avatar or any("{avatar_url}" in str(config.get(field) or "") for field in fields)
+
+
+def _current_join_members(db: Session, room: Chatroom, members: list[dict[str, str]]) -> list[dict[str, str]]:
+    """只排除本群已经明确离群的成员，等待判断和最终欢迎使用同一名单。"""
+
+    left_ids = set(db.scalars(select(ChatroomMember.member_external_id).where(
+        ChatroomMember.chatroom_id == room.id, ChatroomMember.status == "left",
+        ChatroomMember.member_external_id.in_([item["external_id"] for item in members]),
+    )).all())
+    return [item for item in members if item["external_id"] not in left_ids]
+
+
+def _welcome_member_profiles(db: Session, channel: Channel, room: Chatroom, members: list[dict[str, str]]) -> list[dict[str, str]]:
+    """按新人 ID 批量读取本群资料，同渠道好友可补缺，不读取邀请人或其他群头像。"""
+
+    from app.services.identity_directory import IdentityDirectory
+
+    directory = IdentityDirectory(db)
+    group_id = str(room.external_id)
+    directory.preload(channel.id, [item["external_id"] for item in members], group_external_id=group_id)
+    return [{**item, "avatar_url": directory.get(channel.id, item["external_id"], group_external_id=group_id)["avatar_url"]}
+        for item in members]
+
+
+def _welcome_avatar_url(value: Any) -> str:
+    """头像尚未返回或地址非法时按缺失处理，等待与卡片生成使用同一合法性规则。"""
+
+    avatar_url = str(value or "").strip()
+    try:
+        avatar = urlsplit(avatar_url)
+        if avatar.scheme.lower() in {"http", "https"} and avatar.hostname and avatar.username is None and avatar.password is None:
+            return avatar_url
+    except ValueError:
+        pass
+    return ""
+
+
+def welcome_avatar_retry_at(
+    db: Session, payload: Mapping[str, Any], *, queued_at: datetime, now: datetime | None = None,
+) -> datetime | None:
+    """首次欢迎缺头像且本群目录仍在同步时，返回原任务下次领取时间。
+
+    这里只读当前配置和资料；成员目录已由入站事务申请刷新，不再下发读取任务。
+    等待截止时间固定取原任务创建时间，重试或进程重启不能延长十五秒上限。
+    """
+
+    from app.services.group_features.store import get_state
+    from app.services.inbound_policy import expired_message_dispatch
+    from app.services.self_sent import is_self_sent
+    from app.services.wechat_webridge.member_directory import state as directory_state
+
+    event = payload.get("normalized_event")
+    if not isinstance(event, Mapping):
+        return None
+    details = event.get("details") or {}
+    if not isinstance(details, Mapping) or details.get("skip_plugin_dispatch") or is_self_sent(event):
+        return None
+    current = ensure_shanghai_datetime(now or now_shanghai())
+    if expired_message_dispatch(event, now=current) is not None:
+        return None
+    applied = details.get("member_directory")
+    if not isinstance(applied, Mapping) or not applied.get("applied"):
+        return None
+    parsed = parse_member_change(event)
+    if parsed is None or parsed["change_type"] != "join":
+        return None
+    channel = db.get(Channel, int(payload.get("channel_id") or 0))
+    conversation = db.get(Conversation, int(payload.get("conversation_id") or 0))
+    if channel is None or channel.channel_type != "wechat_webridge" or conversation is None:
+        return None
+    if conversation.channel_id != channel.id or conversation.chat_type != "group":
+        return None
+    room = db.scalar(select(Chatroom).where(Chatroom.channel_id == channel.id, Chatroom.external_id == conversation.external_id))
+    if room is None or not room.is_active or room.management_status == "archived":
+        return None
+    enabled, config = get_state(room, FEATURE)
+    if not enabled or not config.get("notify_join") or not config.get("card_enabled") or not _welcome_uses_avatar(config):
+        return None
+    if not directory_state(room).get("dirty"):
+        return None
+    members = _current_join_members(db, room, list(parsed["members"]))[:MAX_WELCOME_CARDS]
+    members = _welcome_member_profiles(db, channel, room, members) if members else []
+    missing = sum(not _welcome_avatar_url(item.get("avatar_url")) for item in members)
+    if not missing:
+        return None
+    deadline = ensure_shanghai_datetime(queued_at) + WELCOME_AVATAR_MAX_WAIT
+    if current >= deadline:
+        logger.info("欢迎卡片头像等待到期，继续按当前资料发送", extra={"chatroom_id": room.id, "missing_avatars": missing})
+        return None
+    return min(current + WELCOME_AVATAR_RECHECK, deadline)
 
 
 def _render_template(template: Any, variables: Mapping[str, str]) -> str:
@@ -190,15 +287,7 @@ def build_welcome_cards(config: Mapping[str, Any], members: list[dict[str, str]]
     cards: list[dict[str, Any]] = []
     for item in members[:MAX_WELCOME_CARDS]:
         nickname = item.get("display_name") or item.get("external_id") or ""
-        avatar_url = str(item.get("avatar_url") or "").strip()
-        try:
-            # 目录可能尚未返回头像或存有异常地址；只接受未内嵌凭据的 HTTP(S) 地址，
-            # 无效头像按缺失处理，不能让缩略图校验连带丢掉欢迎卡片和后续新成员。
-            avatar = urlsplit(avatar_url)
-            if avatar.scheme.lower() not in {"http", "https"} or not avatar.hostname or avatar.username is not None or avatar.password is not None:
-                avatar_url = ""
-        except ValueError:
-            avatar_url = ""
+        avatar_url = _welcome_avatar_url(item.get("avatar_url"))
         variables = {"nickname": nickname, "now": now_text, "avatar_url": avatar_url}
 
         try:
