@@ -2,9 +2,9 @@
 code = "music"
 display_name = "音乐点播"
 plugin_type = "command"
-version = "3.0.0"
+version = "3.1.0"
 author = "abot"
-description = "基于 QQMusicApi 0.9.0 Web 的点歌、搜歌选歌与歌词查询"
+description = "支持网易云与 QQMusicApi 的点歌、搜歌选歌、歌词查询及咕嘎原生音乐卡片"
 default_enabled = false
 
 [capability]
@@ -23,6 +23,7 @@ require_mention = false
 fields = ["api_key"]
 
 [runtime]
+provider = "netease"
 api_base = ""
 api_key = ""
 file_type = "mp3_128"
@@ -36,19 +37,31 @@ on_failure = "message"
 app_id = "wx904fb3ecf62c7dea"
 
 [[config.fields]]
+key = "provider"
+label = "音源"
+kind = "select"
+default = "netease"
+options = [
+  { value = "netease", label = "网易云（公开接口，免部署）" },
+  { value = "qqmusic", label = "QQMusicApi 0.9.0（自建服务）" },
+]
+hint = "网易云使用公开搜索与 meting 播放资源，无需部署；QQMusicApi 需要自行部署服务并填写地址。两者账号与曲库互不影响。"
+group = "接口"
+
+[[config.fields]]
 key = "api_base"
 label = "QQMusicApi 服务地址"
 kind = "url"
 default = ""
 placeholder = "https://music.example.com"
-hint = "填写 QQMusicApi 0.9.0 Web 服务根地址，不带接口路径。旧 /Search、/Song_V1 服务不兼容；QQ 账号登录在该服务端管理。"
+hint = "仅 QQMusicApi 音源使用。填写 0.9.0 Web 服务根地址，不带接口路径；旧 /Search、/Song_V1 服务不兼容，QQ 账号登录在该服务端管理。"
 group = "接口"
 
 [[config.fields]]
 key = "api_key"
 label = "反向代理密钥（可选）"
 kind = "secret"
-hint = "仅当反向代理要求 Bearer 授权时填写；不是 QQ 登录凭证。加密保存，留空保持原值。"
+hint = "仅 QQMusicApi 的反向代理要求 Bearer 授权时填写；不是 QQ 登录凭证。加密保存，留空保持原值。"
 group = "接口"
 
 [[config.fields]]
@@ -65,7 +78,7 @@ options = [
   { value = "aac_96", label = "AAC 96k / M4A" },
   { value = "aac_192", label = "AAC 192k / M4A" },
 ]
-hint = "高音质可能需要会员或单曲购买。插件不会自动换歌或降级音质；播放兼容性取决于接收端。"
+hint = "仅 QQMusicApi 音源使用；网易云的码率由 meting 返回决定。高音质可能需要会员或单曲购买，插件不会自动换歌或降级。"
 group = "点播"
 
 [[config.fields]]
@@ -74,11 +87,11 @@ label = "回复方式"
 kind = "select"
 default = "auto"
 options = [
-  { value = "auto", label = "自动（微桥音乐卡片，其他渠道文本链接）" },
+  { value = "auto", label = "自动（微桥/咕嘎音乐卡片，其他渠道文本链接）" },
   { value = "file", label = "文件（Telegram 使用文本链接）" },
   { value = "text", label = "文本链接" },
 ]
-hint = "微桥卡片通过现有手机命令发送，最终发送状态以手机回报为准。播放地址可能过期，需重新点歌。"
+hint = "微桥与咕嘎通过现有手机命令发送原生音乐卡片，最终发送状态以手机回报为准。播放地址可能过期，需重新点歌。"
 group = "点播"
 
 [[config.fields]]

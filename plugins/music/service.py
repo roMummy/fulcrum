@@ -10,9 +10,14 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator, Mapping
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import quote, urlencode, urljoin, urlsplit
 
-from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError, PluginHttpTimeoutError
+from app.services.plugin_runtime.http_client import (
+    PluginHttpClient,
+    PluginHttpError,
+    PluginHttpResponse,
+    PluginHttpTimeoutError,
+)
 from app.services.plugin_manifest import parse_manifest
 
 
@@ -30,6 +35,16 @@ FILE_TYPES = {
 MAX_KEYWORD_LENGTH = 80
 MAX_LYRIC_LENGTH = 5000
 DEFAULT_CARD_APP_ID = "wx904fb3ecf62c7dea"
+PROVIDERS = {"netease", "qqmusic"}
+NETEASE_SEARCH_URL = "https://music.163.com/api/search/get/web"
+NETEASE_METING_URL = "https://api.qijieya.cn/meting/"
+NETEASE_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Cookie": "appver=2.0.2",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/55.0.2883.87 Safari/537.36",
+}
+NETEASE_CDN_SUFFIXES = (".music.126.net", ".music.163.com")
+NETEASE_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 
 
 class MusicError(RuntimeError):
@@ -54,6 +69,7 @@ class MusicConfig:
     on_failure: str = "message"
     app_id: str = DEFAULT_CARD_APP_ID
     app_name: str = "汽水音乐"
+    provider: str = "netease"
 
 
 @dataclass(frozen=True)
@@ -66,13 +82,19 @@ class Song:
     media_mid: str = ""
     song_type: int | None = None
     needs_detail: bool = False
+    provider: str = "qqmusic"
+    cover: str = ""
 
     @property
     def page_url(self) -> str:
+        if self.provider == "netease":
+            return f"https://music.163.com/song?id={self.mid}"
         return f"https://y.qq.com/n/ryqq/songDetail/{self.mid}"
 
     @property
     def cover_url(self) -> str:
+        if self.cover:
+            return self.cover
         # Same album -> singer fallback as the v0.9.0 Song.cover_url() helper.
         if self.album_mid:
             return f"https://y.gtimg.cn/music/photo_new/T002R300x300M000{self.album_mid}.jpg"
@@ -343,6 +365,157 @@ class MusicApi:
             if result and urlsplit(result).netloc == urlsplit(base).netloc and urlsplit(result).scheme == urlsplit(base).scheme:
                 return result
         raise MusicError("incompatible", "cdn")
+
+
+class NeteaseMusicApi:
+    """NetEase search plus meting resources; no self-hosted service or account required."""
+
+    def __init__(self, config: MusicConfig, client: PluginHttpClient | None = None):
+        self.config = config
+        self.client = client or PluginHttpClient()
+        self.deadline = time.monotonic() + config.timeout_seconds
+        if config.provider != "netease" or config.file_type not in FILE_TYPES:
+            raise MusicError("configuration_error", "config")
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        stage: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        body: bytes | None = None,
+        max_response_bytes: int = 2 * 1024 * 1024,
+    ) -> PluginHttpResponse:
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0.1:
+            raise MusicError("timeout", stage)
+        timeout = min(self.config.request_timeout_seconds, remaining)
+        try:
+            response = self.client.request(
+                method, url, headers=headers or NETEASE_HEADERS, body=body,
+                connect_timeout_seconds=min(5, timeout), total_timeout_seconds=timeout,
+                max_response_bytes=max_response_bytes, max_redirects=0, retry_count=0,
+            )
+        except PluginHttpTimeoutError as exc:
+            raise MusicError("timeout", stage) from exc
+        except PluginHttpError as exc:
+            raise MusicError("upstream", stage) from exc
+        status = response.status_code
+        if status == 401:
+            raise MusicError("auth", stage, status)
+        if status == 403:
+            raise MusicError("access_denied", stage, status)
+        if status == 429:
+            raise MusicError("limited", stage, status)
+        if status == 504:
+            raise MusicError("timeout", stage, status)
+        if status != 200:
+            raise MusicError("upstream", stage, status)
+        if time.monotonic() >= self.deadline:
+            raise MusicError("timeout", stage)
+        return response
+
+    def _json(self, response: PluginHttpResponse, stage: str) -> Any:
+        try:
+            return response.json()
+        except (TypeError, ValueError) as exc:
+            raise MusicError("incompatible", stage) from exc
+
+    def search(self, keyword: str) -> list[Song]:
+        body = urlencode({
+            "s": keyword, "limit": self.config.result_limit, "type": 1, "offset": 0,
+        }).encode("utf-8")
+        response = self._request(
+            "POST", NETEASE_SEARCH_URL, "search",
+            headers={**NETEASE_HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+            body=body, max_response_bytes=1024 * 1024,
+        )
+        payload = self._json(response, "search")
+        result = payload.get("result") if isinstance(payload, Mapping) else None
+        values = result.get("songs") if isinstance(result, Mapping) else None
+        if not isinstance(values, list):
+            raise MusicError("incompatible", "search")
+        songs: dict[str, Song] = {}
+        for value in values:
+            if not isinstance(value, Mapping):
+                continue
+            mid, title = str(value.get("id") or ""), inline_text(value.get("name"))
+            if not re.fullmatch(r"[0-9]{1,20}", mid) or not title:
+                continue
+            artists = value.get("artists")
+            names = [inline_text(item.get("name"), 80) for item in artists if isinstance(item, Mapping)] \
+                if isinstance(artists, list) else []
+            songs.setdefault(mid, Song(
+                mid=mid, title=title, singer=" / ".join(filter(None, names))[:300], provider="netease",
+            ))
+            if len(songs) >= self.config.result_limit:
+                break
+        return list(songs.values())
+
+    def lyric(self, song: Song) -> str:
+        url = f"{NETEASE_METING_URL}?server=netease&type=lrc&id={quote(song.mid)}"
+        response = self._request("GET", url, "lyric", max_response_bytes=512 * 1024)
+        return response.text.strip()[:MAX_LYRIC_LENGTH]
+
+    def resolve(self, song: Song) -> PlayableSong:
+        url = f"{NETEASE_METING_URL}?server=netease&type=song&id={quote(song.mid)}"
+        values = self._json(self._request("GET", url, "detail"), "detail")
+        if not isinstance(values, list) or not values or not isinstance(values[0], Mapping):
+            raise MusicError("incompatible", "detail")
+        info = values[0]
+        audio = http_url(info.get("url"))
+        if not audio:
+            raise MusicError("unplayable", "play")
+        play_url = self._resolve_redirect(audio) or audio
+        extension = Path(urlsplit(play_url).path).suffix.lower()
+        if extension not in NETEASE_AUDIO_EXTENSIONS:
+            extension = ".mp3"
+        cover = http_url(info.get("pic"))
+        cover = (self._resolve_redirect(cover) or cover) if cover else ""
+        lyric = ""
+        if self.config.include_lyrics and self.config.output_mode == "auto" and self.deadline - time.monotonic() > 0.5:
+            try:
+                lyric = self.lyric(song)
+            except MusicError:
+                # Lyrics are optional; a failure must not discard an authorized playable result.
+                pass
+        return PlayableSong(
+            song=replace(song, provider="netease", cover=cover),
+            play_url=play_url, extension=extension, lyric=lyric,
+        )
+
+    def _resolve_redirect(self, url: str) -> str:
+        """Resolve meting 302 to a direct CDN URL; keep the meting URL when resolution fails."""
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0.2:
+            return ""
+        timeout = min(self.config.request_timeout_seconds, remaining)
+        try:
+            response = self.client.request(
+                "HEAD", url, headers=NETEASE_HEADERS,
+                connect_timeout_seconds=min(5, timeout), total_timeout_seconds=timeout,
+                max_response_bytes=1024, max_redirects=1, retry_count=0,
+            )
+        except PluginHttpError:
+            return ""
+        if response.status_code != 200:
+            return ""
+        final = http_url(response.url)
+        if not final or final == url:
+            return ""
+        host = (urlsplit(final).hostname or "").lower()
+        if not any(host == suffix.lstrip(".") or host.endswith(suffix) for suffix in NETEASE_CDN_SUFFIXES):
+            return ""
+        return final
+
+
+def build_api(config: MusicConfig, client: PluginHttpClient | None = None) -> MusicApi | NeteaseMusicApi:
+    if config.provider == "netease":
+        return NeteaseMusicApi(config, client)
+    if config.provider == "qqmusic":
+        return MusicApi(config, client)
+    raise MusicError("configuration_error", "config")
 
 
 _pending_lock = threading.Lock()

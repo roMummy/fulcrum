@@ -1676,11 +1676,11 @@ def _normalize_reply_item(item: Mapping[str, Any], *, channel_type: str = "") ->
             key: str(item.get(key) or "")
             for key in ("title", "url", "data_url", "desc", "song_album_url", "song_lyric", "app_id", "app_name")
         })
-        if str(channel_type or "").strip().lower() == "wechat_webridge":
+        if str(channel_type or "").strip().lower() in {"wechat_webridge", "wechat_gugatool"}:
             return {"message_type": "music", "content": reply["title"],
                     **{key: value for key, value in reply.items() if key != "type"}}
-        # Only WeBridge currently implements native music cards. All other advertised
-        # channels can deliver text, including Telegram's text/image-only adapter.
+        # WeBridge and GugaTool implement native music cards; other advertised channels
+        # deliver text, including Telegram's text/image-only adapter.
         parts = [reply["title"], reply["desc"], f"歌曲页面：{reply['url']}", f"播放地址：{reply['data_url']}"]
         return {"message_type": "text", "content": "\n".join(part for part in parts if part)}
     if reply_type == "image":

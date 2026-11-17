@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -9,15 +8,6 @@ from sqlalchemy.orm import sessionmaker
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TEST_RUNTIME = PROJECT_ROOT / ".run" / "test-runtime" / "simplified-bot-lifecycle"
-
-# 本文件会直接导入全局数据库引擎和 FastAPI 应用，因此必须在任何 app 模块导入前
-# 把运行目录锁定到一次性测试路径，避免契约测试误连开发库或未来的生产数据库。
-os.environ["APP_ENV"] = "test"
-os.environ["DATA_DIR"] = str(TEST_RUNTIME)
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_RUNTIME / 'test.db'}"
-os.environ["LOG_DIR"] = str(TEST_RUNTIME / "logs")
-os.environ["AUTH_SEED_DEMO_USERS"] = "false"
 
 from app.core.db import Base, SessionLocal, engine as app_engine
 from app.main import app
@@ -60,6 +50,10 @@ def db_session():
 def authenticated_client():
     """重建应用测试库并登录管理员，用真实表单链路验证机器人创建行为。"""
 
+    database = app_engine.url.database
+    assert database and Path(database).resolve() != (PROJECT_ROOT / "data" / "app.db").resolve(), (
+        "拒绝在线上数据库 data/app.db 上执行 drop_all"
+    )
     Base.metadata.drop_all(bind=app_engine)
     Base.metadata.create_all(bind=app_engine)
     with SessionLocal() as db:

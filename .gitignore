@@ -6,6 +6,7 @@ __pycache__/
 # Docker 部署配置包含数据库和认证凭证，只能保留在部署主机，禁止进入版本库。
 .env.docker
 data/*.db
+data/*.db.bak-*
 data/*.bak
 .pytest_cache/
 logs/

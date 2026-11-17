@@ -95,7 +95,7 @@ def music():
 
 def request(content="点歌 晴天", *, config=None, context=None, **payload):
     return PluginExecutionRequest(
-        action="execute", config={"api_base": "https://music.example.test", **(config or {})},
+        action="execute", config={"provider": "qqmusic", "api_base": "https://music.example.test", **(config or {})},
         payload={"content": content, **payload}, context=context,
     )
 
@@ -105,7 +105,7 @@ def test_manifest_exposes_valid_form_and_new_commands():
     manifest = parse_manifest(path.read_text(encoding="utf-8"))
     fields, errors = read_config_fields(manifest)
     assert errors == []
-    assert manifest["plugin"]["version"] == "3.0.0"
+    assert manifest["plugin"]["version"] == "3.1.0"
     by_key = {field.key: field for field in fields}
     assert set(manifest["runtime"]) <= set(by_key)
     assert by_key["api_key"].kind == "secret" and not by_key["api_key"].default
@@ -415,7 +415,7 @@ def test_platform_stripped_args_support_custom_prefix_and_empty_keyword(music):
 
 
 @pytest.mark.parametrize("config", [
-    {"file_type": "exhigh"}, {"output_mode": "unknown"}, {"on_failure": "unknown"},
+    {"provider": "unknown"}, {"file_type": "exhigh"}, {"output_mode": "unknown"}, {"on_failure": "unknown"},
     {"api_base": "https://music.example.test?"}, {"api_base": "https://music.example.test#"},
     {"api_base": "https://user:pass@music.example.test"}, {"api_key": "proxy\r\nextra"},
 ])
@@ -630,8 +630,10 @@ def test_standard_music_reply_validation_and_channel_fallbacks():
     assert standard_replies([card]) == [card]
     native = _normalize_reply_item(card, channel_type="wechat_webridge")
     assert native["message_type"] == "music" and native["song_lyric"] == "歌词"
+    gugatool = _normalize_reply_item(card, channel_type="wechat_gugatool")
+    assert gugatool["message_type"] == "music" and gugatool["data_url"] == card["data_url"]
     for channel in get_discovered_plugin("music", force=True).capability.channel_types:
-        if channel == "wechat_webridge":
+        if channel in {"wechat_webridge", "wechat_gugatool"}:
             continue
         fallback = _normalize_reply_item(card, channel_type=channel)
         assert fallback["message_type"] == "text"
@@ -640,3 +642,94 @@ def test_standard_music_reply_validation_and_channel_fallbacks():
     for values in ({"data_url": "file:///a.mp3"}, {"song_album_url": "https://u:p@host/a"}, {"song_lyric": "x" * 5001}, {"title": ""}):
         with pytest.raises(PluginReplyError):
             music_reply(**{key: value for key, value in {**card, **values}.items() if key != "type"})
+
+
+class FakeNeteaseService:
+    def __init__(self, *, songs=None, resource=None, lyric="[00:01.00]第一行\n[00:02.50]第二行"):
+        self.songs = [{"id": 191254, "name": "天下", "artists": [{"name": "张杰"}]}] if songs is None else songs
+        self.resource = [{
+            "url": "https://api.qijieya.cn/meting/?server=netease&type=url&id=191254",
+            "pic": "https://api.qijieya.cn/meting/?server=netease&type=pic&id=1099",
+            "lrc": "",
+        }] if resource is None else resource
+        self.lyric = lyric
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        parsed = urlsplit(url)
+        query = parse_qs(parsed.query)
+        self.calls.append((method, parsed.hostname, parsed.path, query, kwargs))
+        if parsed.hostname == "music.163.com":
+            payload = {"result": {"songs": self.songs}}
+            return PluginHttpResponse(200, {"content-type": "application/json"}, json.dumps(payload).encode(), url)
+        if parsed.hostname == "api.qijieya.cn":
+            kind = query.get("type", [""])[0]
+            if kind == "song":
+                return PluginHttpResponse(200, {"content-type": "application/json"}, json.dumps(self.resource).encode(), url)
+            if kind == "lrc":
+                return PluginHttpResponse(200, {"content-type": "text/plain; charset=utf-8"}, self.lyric.encode(), url)
+            if method == "HEAD" and kind == "url":
+                final = "https://m801.music.126.net/20261116/a/b.mp3"
+                return PluginHttpResponse(200, {"content-type": "audio/mpeg"}, b"", final)
+            if method == "HEAD" and kind == "pic":
+                final = "https://p3.music.126.net/x/y.jpg?param=300y300"
+                return PluginHttpResponse(200, {"content-type": "image/jpg"}, b"", final)
+        raise AssertionError(f"unexpected NetEase request: {method} {url}")
+
+
+def test_netease_provider_searches_resolves_and_builds_card(music):
+    fake = FakeNeteaseService()
+    with patch.object(music, "PluginHttpClient", return_value=fake):
+        result = music.execute_action(request("点歌 天下", config={"provider": "netease"}))
+    assert result.ok
+    card = result.output["replies"][0]
+    assert card["type"] == "music" and card["title"] == "天下" and card["desc"] == "张杰"
+    assert card["url"] == "https://music.163.com/song?id=191254"
+    assert card["data_url"] == "https://m801.music.126.net/20261116/a/b.mp3"
+    assert card["song_album_url"] == "https://p3.music.126.net/x/y.jpg?param=300y300"
+    assert "第一行" in card["song_lyric"]
+    assert fake.calls[0][0] == "POST" and fake.calls[0][1] == "music.163.com"
+    assert fake.calls[0][4]["body"] == b"s=%E5%A4%A9%E4%B8%8B&limit=5&type=1&offset=0"
+    assert any(call[0] == "HEAD" and call[3].get("type") == ["url"] for call in fake.calls)
+    assert any(call[0] == "HEAD" and call[3].get("type") == ["pic"] for call in fake.calls)
+
+
+def test_netease_file_mode_skips_lyrics_and_uses_mp3_name(music):
+    fake = FakeNeteaseService()
+    with patch.object(music, "PluginHttpClient", return_value=fake):
+        result = music.execute_action(request(
+            "点歌 天下", config={"provider": "netease", "output_mode": "file", "include_lyrics": False},
+        ))
+    assert result.ok
+    file_reply = result.output["replies"][1]
+    assert file_reply["file_name"] == "张杰 - 天下.mp3"
+    assert file_reply["file_url"] == "https://m801.music.126.net/20261116/a/b.mp3"
+    assert not any(call[3].get("type") == ["lrc"] for call in fake.calls)
+
+
+def test_netease_unplayable_song_does_not_return_a_card(music):
+    fake = FakeNeteaseService(resource=[{"url": "", "pic": "", "lrc": ""}])
+    with patch.object(music, "PluginHttpClient", return_value=fake):
+        result = music.execute_action(request("点歌 天下", config={"provider": "netease"}))
+    assert not result.ok and result.output["provider_status"] == "unplayable"
+    assert all(reply["type"] != "music" for reply in result.output["replies"])
+
+
+def test_netease_is_the_default_provider_without_api_base(music):
+    fake = FakeNeteaseService()
+    with patch.object(music, "PluginHttpClient", return_value=fake):
+        result = music.execute_action(PluginExecutionRequest(
+            action="execute", config={}, payload={"content": "点歌 天下"}, context=None,
+        ))
+    assert result.ok and result.output["replies"][0]["url"] == "https://music.163.com/song?id=191254"
+
+
+def test_legacy_config_with_api_base_keeps_qqmusic_provider(music):
+    assert music._load_config({}).provider == "netease"
+    assert music._load_config({"api_base": "https://music.example.test"}).provider == "qqmusic"
+    assert music._load_config({"provider": "netease", "api_base": "https://music.example.test"}).provider == "netease"
+
+
+def test_reload_reports_netease_upstream(music):
+    result = music.execute_action(PluginExecutionRequest(action="reload", config={"provider": "netease"}, payload={}, context=None))
+    assert result.ok and result.output["provider"] == "netease" and result.output["upstream"] == "NetEase + meting"

@@ -24,7 +24,7 @@ import io
 import json
 import re
 import uuid
-from html import unescape
+from html import escape, unescape
 from typing import Any
 from urllib import parse as urlparse
 from urllib.error import HTTPError, URLError
@@ -46,6 +46,8 @@ PROFILE_TIMEOUT_SECONDS = 4
 MAX_MEDIA_BYTES = 20 * 1024 * 1024
 MAX_SEND_BYTES = 32 * 1024 * 1024
 DEFAULT_VOICE_MS = 3000
+GUGATOOL_MUSIC_APP_ID = "wx8dd6ecd81906fd84"
+GUGATOOL_MUSIC_SEND_TYPE = 3
 
 # 微信原生 messageType 到通用消息类型的映射；49 是 app 消息（文件/链接/小程序）。
 MSG_TYPE_MAP = {
@@ -95,6 +97,35 @@ XML_ATTR_RE = re.compile(r'([A-Za-z0-9_:-]+)\s*=\s*"([^"]*)"')
 XML_MEDIA_TAG_RE = re.compile(r"<(img|video|emoji|appmsg)[^>]*>", re.IGNORECASE)
 
 logger = get_logger(__name__)
+
+
+def build_music_card_xml(payload: dict[str, Any], from_user: str) -> str:
+    """微信原生音乐卡片 XML；与服务端插件验证过的 Type=3 / 内层 76 模板一致。"""
+
+    def esc(value: Any) -> str:
+        cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(value or ""))
+        return escape(cleaned, quote=True)
+
+    app_id = esc(str(payload.get("app_id") or "").strip() or GUGATOOL_MUSIC_APP_ID)
+    title = esc(payload.get("title") or "音乐")
+    singer = esc(payload.get("desc") or "")
+    url = esc(payload.get("url") or payload.get("data_url") or "")
+    data_url = esc(payload.get("data_url") or "")
+    cover = esc(payload.get("song_album_url") or "")
+    lyric = esc(payload.get("song_lyric") or "")
+    return (
+        f'<appmsg appid="{app_id}" sdkver="0"><title>{title}</title><des>{singer}</des>'
+        f"<action>view</action><type>76</type><showtype>0</showtype><content/><url>{url}</url>"
+        f"<dataurl>{data_url}</dataurl><lowurl>{url}</lowurl><lowdataurl>{data_url}</lowdataurl>"
+        f"<recorditem/><thumburl>{cover}</thumburl><messageaction/><laninfo/><extinfo/>"
+        f"<sourceusername/><sourcedisplayname/><songlyric>{lyric}</songlyric><commenturl/>"
+        f"<appattach><totallen>0</totallen><attachid/><emoticonmd5/><fileext/><aeskey/></appattach>"
+        f"<webviewshared><publisherId/><publisherReqId>0</publisherReqId></webviewshared>"
+        f"<weappinfo><pagepath/><username/><appid/><appservicetype>0</appservicetype></weappinfo>"
+        f"<websearch/><songalbumurl>{cover}</songalbumurl></appmsg>"
+        f"<fromusername>{esc(from_user)}</fromusername><scene>0</scene>"
+        f"<appinfo><version>1</version><appname/></appinfo><commenturl/>"
+    )
 
 
 class WechatGugatoolAdapter(BaseChannelAdapter):
@@ -211,6 +242,8 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
                 return self._send_file(channel, conversation, payload, to_wxid)
             if message_type in {"link", "card"}:
                 return self._send_link(channel, conversation, payload, to_wxid)
+            if message_type == "music":
+                return self._send_music(channel, conversation, payload, to_wxid)
             return self._fail(
                 conversation,
                 message_type,
@@ -381,6 +414,28 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         if thumb_base64:
             params["thumb_base64"] = thumb_base64
         return self._queued_result(channel, conversation, "link", "send_link", params)
+
+    def _send_music(
+        self,
+        channel: Channel,
+        conversation: Conversation,
+        payload: dict[str, Any],
+        to_wxid: str,
+    ) -> dict[str, Any]:
+        """原生音乐卡片走手机的 SendApp：外层 Type=3，XML 内层 76。"""
+
+        title = str(payload.get("title") or "").strip()
+        data_url = str(payload.get("data_url") or "").strip()
+        if not title or not data_url:
+            return self._fail(conversation, "music", "music_payload_missing", "音乐卡片缺少标题或播放地址")
+        from app.services.guga_agent.service import registration
+
+        xml = build_music_card_xml(payload, str(registration(channel).get("account_id") or ""))
+        return self._queued_result(channel, conversation, "music", "send_app", {
+            "to_wxid": to_wxid,
+            "xml": xml,
+            "type": GUGATOOL_MUSIC_SEND_TYPE,
+        })
 
     def _queued_media(
         self,

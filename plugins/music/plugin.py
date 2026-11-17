@@ -17,8 +17,8 @@ from app.services.plugin_runtime.http_client import PluginHttpClient
 from app.services.plugin_runtime.replies import file_reply, music_reply, standard_replies, text_reply
 from app.services.plugin_runtime.state_store import PluginStateStore
 from plugins.music.service import (
-    FILE_TYPES, MAX_KEYWORD_LENGTH, MusicApi, MusicConfig, MusicError, PlayableSong, Song,
-    http_url, identifier, inline_text, request_guard, resolve_card_source,
+    FILE_TYPES, MAX_KEYWORD_LENGTH, MusicApi, MusicConfig, MusicError, NeteaseMusicApi,
+    PlayableSong, Song, build_api, http_url, identifier, inline_text, request_guard, resolve_card_source,
 )
 
 
@@ -28,15 +28,15 @@ COMMANDS = (*PLAY_COMMANDS, "搜歌", "选歌", "歌词")
 STATE_NAMESPACE = "music_selection"
 MAX_SELECTIONS = 256
 FAILURES = {
-    "auth": "音乐服务授权失效，请管理员检查 QQMusicApi 的账号登录及可选的反向代理密钥。",
+    "auth": "音乐服务授权失效，请管理员检查所选音源的账号或访问密钥。",
     "access_denied": "音乐服务拒绝访问，请管理员检查服务访问策略或网关授权。",
     "limited": "上游音乐接口暂时受限，请稍后再试。",
     "quota": "音乐服务的共享请求额度已用完，请稍后再试。",
     "unplayable": "这首歌暂时没有播放权限或可用地址，可能需要会员或单独购买。可用“搜歌 歌名”选择其他版本。",
     "vkey_failed": "这首歌的播放授权暂时获取失败，请稍后再试或选择其他版本。",
     "device": "QQ 音乐限制了当前播放设备，请管理员检查音乐账号的设备状态。",
-    "incompatible": "音乐服务响应或接口不兼容，请管理员确认使用 QQMusicApi 0.9.0 Web 服务。",
-    "configuration_error": "音乐配置不正确，请检查 QQMusicApi 服务地址、音质、回复方式及卡片来源 App ID。",
+    "incompatible": "音乐服务响应或接口不兼容，请管理员检查所选音源配置。",
+    "configuration_error": "音乐配置不正确，请检查音源、服务地址、音质、回复方式及卡片来源 App ID。",
     "timeout": "音乐请求已超时，请稍后再试。",
     "upstream": "音乐服务暂时不可用，请稍后再试。",
     "pending": "上一条音乐请求还在处理中，请稍等。",
@@ -99,6 +99,8 @@ class SelectionSession:
                 media_mid=identifier(value.get("media_mid")),
                 song_type=value.get("song_type") if type(value.get("song_type")) is int and value["song_type"] >= 0 else None,
                 needs_detail=value.get("needs_detail") is True,
+                provider=value.get("provider") if value.get("provider") in {"netease", "qqmusic"} else "qqmusic",
+                cover=http_url(value.get("cover")),
             ))
         return songs
 
@@ -140,7 +142,7 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
         db=db, context=context, channel=channel, binding=binding, store=PluginStateStore(db, context),
         state_key="selection:" + _digest([context.bot_id, channel.id, conversation.id, context.sender_id, account]),
         account_fingerprint=account,
-        service_fingerprint=_digest([config.api_base, config.file_type, config.api_key]), config=config,
+        service_fingerprint=_digest([config.provider, config.api_base, config.file_type, config.api_key]), config=config,
     )
     return _execute(request, config=config, session=session)
 
@@ -150,10 +152,12 @@ def _execute(request: PluginExecutionRequest, *, config: MusicConfig | None = No
     try:
         config = config or _load_config(request.config)
         if request.action == "reload":
-            if config.api_base:
-                MusicApi(config)
+            if config.provider == "netease" or config.api_base:
+                build_api(config)
+            upstream = "QQMusicApi" if config.provider == "qqmusic" else "NetEase + meting"
             return PluginExecutionResult(ok=True, status="running", message="音乐点播配置已加载。", output={
-                "upstream": "QQMusicApi", "upstream_version": "0.9.0",
+                "provider": config.provider, "upstream": upstream,
+                "upstream_version": "0.9.0" if config.provider == "qqmusic" else "",
                 "api_base_configured": bool(config.api_base), "api_key_configured": bool(config.api_key),
                 "file_type": config.file_type,
             })
@@ -165,12 +169,13 @@ def _execute(request: PluginExecutionRequest, *, config: MusicConfig | None = No
             return _text_result(f"请带上歌名或歌手，例如“{example}”。", "keyword_required", ok=False)
         if command.operation == "select" and session is None:
             return _text_result("选歌需要真实聊天会话，请先在聊天中发送“搜歌 歌名”。", "trusted_context_required", ok=False)
-        if not config.api_base:
-            return _text_result("请先配置当前租户的 QQMusicApi 0.9.0 服务地址。", "music_not_configured", ok=False)
+        if config.provider == "qqmusic" and not config.api_base:
+            return _text_result("请先配置当前租户的 QQMusicApi 0.9.0 服务地址，或将音源切换为网易云。",
+                                "music_not_configured", ok=False)
         context = request.context
         identity = session.state_key if session else _digest([getattr(context, "sender_id", None), command.keyword])
         with request_guard(getattr(context, "tenant_id", 0), getattr(context, "binding_id", 0), identity):
-            result = _run_command(MusicApi(config, PluginHttpClient()), command, session)
+            result = _run_command(build_api(config, PluginHttpClient()), command, session)
             if session is not None and not session.is_current():
                 return PluginExecutionResult(ok=False, status="error", message="音乐请求的账号状态已改变。",
                                              output={"provider_status": "context_changed", "replies": []})
@@ -182,7 +187,7 @@ def _execute(request: PluginExecutionRequest, *, config: MusicConfig | None = No
         return _failure(exc, config)
 
 
-def _run_command(api: MusicApi, command: Command, session: SelectionSession | None) -> PluginExecutionResult:
+def _run_command(api: MusicApi | NeteaseMusicApi, command: Command, session: SelectionSession | None) -> PluginExecutionResult:
     if command.operation == "select":
         songs = session.load() if session else []
         if not songs:
@@ -267,13 +272,19 @@ def _parse_command(payload: Mapping[str, Any]) -> Command:
 
 
 def _load_config(raw: Mapping[str, Any]) -> MusicConfig:
+    provider = str(raw.get("provider") or "").strip().lower()
+    if not provider:
+        # 旧绑定没有 provider 字段；已填 QQMusicApi 地址的继续用原音源，其余走免部署的网易云。
+        provider = "qqmusic" if str(raw.get("api_base") or "").strip() else "netease"
     file_type = str(raw.get("file_type") or "mp3_128").strip().lower()
     output_mode = str(raw.get("output_mode") or "auto").strip().lower()
     on_failure = str(raw.get("on_failure") or "message").strip().lower()
-    if file_type not in FILE_TYPES or output_mode not in {"auto", "file", "text"} or on_failure not in {"message", "silent"}:
+    if (provider not in {"netease", "qqmusic"} or file_type not in FILE_TYPES
+            or output_mode not in {"auto", "file", "text"} or on_failure not in {"message", "silent"}):
         raise MusicError("configuration_error", "config")
     app_id, app_name = resolve_card_source(raw.get("app_id"))
     return MusicConfig(
+        provider=provider,
         api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
         api_key=str(raw.get("api_key") or "").strip(), file_type=file_type,
         timeout_seconds=_bounded_int(raw.get("timeout_seconds"), 25, 5, 25),
@@ -300,7 +311,13 @@ def _account_fingerprint(channel: Channel) -> str:
         info = {}
     bridge = info.get("webridge") if isinstance(info, Mapping) else None
     bridge = bridge if isinstance(bridge, Mapping) else {}
-    return _digest([channel.id, channel.channel_type, *(bridge.get(key) for key in ("device_id", "account_id", "session_id"))])
+    agent = info.get("guga_agent") if isinstance(info, Mapping) else None
+    agent = agent if isinstance(agent, Mapping) else {}
+    return _digest([
+        channel.id, channel.channel_type,
+        *(bridge.get(key) for key in ("device_id", "account_id", "session_id")),
+        *(agent.get(key) for key in ("device_id", "account_id", "session_id")),
+    ])
 
 
 def _digest(value: Any) -> str:
