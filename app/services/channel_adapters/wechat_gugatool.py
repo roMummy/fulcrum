@@ -404,7 +404,15 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         params: dict[str, Any] = {
             "to_wxid": to_wxid,
             "title": str(payload.get("title") or payload.get("content") or url).strip(),
-            "description": str(payload.get("description") or payload.get("content") or "").strip(),
+            # 插件标准回复的正文键是 desc/link_description,不能只看 description,
+            # 否则会退回到 content(作者名),卡片描述就丢了视频文案。
+            "description": str(
+                payload.get("description")
+                or payload.get("desc")
+                or payload.get("link_description")
+                or payload.get("content")
+                or ""
+            ).strip(),
             "url": url,
         }
         thumb_url = str(payload.get("thumb_url") or payload.get("image_url") or "").strip()
