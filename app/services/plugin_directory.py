@@ -1864,6 +1864,11 @@ def _build_directory_context(
     )
     effective_config = _deep_merge_config(_deep_merge_config(default_config, binding_config), scope_config)
     effective_config.update(secret_config)
+    # 延迟导入避免 plugin_directory -> plugin_runtime 包初始化 -> registry 的循环依赖。
+    from app.services.plugin_runtime.proxy import strip_proxy_config
+
+    # 代理配置只供平台运行时使用，匹配阶段不需要也不应看到代理凭据。
+    effective_config = strip_proxy_config(effective_config)
     return DirectoryPluginContext(
         plugin_code=candidate.plugin_code,
         binding_id=candidate.binding_id,

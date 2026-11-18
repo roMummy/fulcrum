@@ -12,13 +12,26 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import BotPlugin, Channel, Chatroom, GroupPluginScope
 from app.services.plugin_commands import command_overrides, command_triggers
+from app.services.plugin_runtime.proxy import (
+    GROUP_PROXY_KEYS,
+    RESERVED_PROXY_KEYS,
+    PluginProxyConfigError,
+    normalize_bypass,
+    parse_proxy_config,
+    parse_proxy_url,
+    strip_proxy_config,
+)
+from app.services.plugin_secrets import (
+    PluginSecretError,
+    decrypt_plugin_secret_config,
+)
 from app.services.message_actions import capabilities
 from app.services.plugin_auto_revoke import CONFIG_KEY, DEFAULT_POLICY, FORM_FIELDS, merge_auto_revoke_form
 from app.services.plugin_directory import SKIP_MESSAGE_PLUGIN_TYPES, get_discovered_plugin
 from app.services.plugin_scopes import group_plugin_scope_enabled
 from app.services.plugin_schemas import (
-    _parse_field_value, build_plugin_config_view, deep_merge_config, diff_config_override,
-    get_plugin_config_schema, parse_config_json,
+    _parse_field_value, _proxy_error_message, build_plugin_config_view, deep_merge_config,
+    diff_config_override, get_plugin_config_schema, parse_config_json,
 )
 from app.services.wechat_ipad.chatrooms import update_group_plugin_scope_config_override
 
@@ -57,7 +70,8 @@ def _base_config(binding: BotPlugin) -> dict[str, Any]:
     config = deep_merge_config(defaults, parse_config_json(binding.config_json))
     for name in _sensitive_fields(code):
         config.pop(name, None)
-    return config
+    # 代理配置只属于机器人绑定，群页面不展示也不能保存。
+    return strip_proxy_config(config)
 
 
 def _commands(discovered, base: Mapping[str, Any]) -> tuple[str, ...]:
@@ -83,6 +97,74 @@ def _binding(db: Session, channel: Channel, room: Chatroom, binding_id: int) -> 
     return binding
 
 
+def _binding_proxy_runtime(binding: BotPlugin) -> dict[str, Any]:
+    """读取绑定页代理，作为群切到「代理」时的初始值；只在服务端内部使用。"""
+
+    config = parse_config_json(binding.config_json)
+    url = str(config.get("proxy_url") or "").strip()
+    username = str(config.get("proxy_username") or "").strip()
+    bypass = str(config.get("proxy_bypass") or "").strip()
+    try:
+        secret = decrypt_plugin_secret_config(
+            tenant_id=int(binding.tenant_id),
+            binding_id=int(binding.id),
+            encrypted=binding.secret_config_encrypted,
+        )
+    except PluginSecretError:
+        secret = {}
+    password = str(secret.get("proxy_password") or "")
+    legacy_url = str(secret.get("proxy_url") or "").strip()
+    legacy: dict[str, str] = {}
+    if legacy_url:
+        try:
+            endpoint = parse_proxy_url(legacy_url, bypass=bypass)
+        except PluginProxyConfigError:
+            endpoint = None
+        if endpoint is not None:
+            legacy = {
+                "url": endpoint.safe_label,
+                "username": endpoint.username,
+                "bypass": ",".join(endpoint.bypass),
+                "password": endpoint.password,
+            }
+    if url:
+        # 旧版单 URL 密文里的密码只在账号一致时复用，避免把 A 代理密码带到 B 代理。
+        legacy_password = legacy.get("password", "") if username == legacy.get("username", "") else ""
+        return {
+            "url": url,
+            "username": username,
+            "bypass": bypass,
+            "password": password or legacy_password,
+        }
+    return {
+        "url": legacy.get("url", ""),
+        "username": legacy.get("username", ""),
+        "bypass": legacy.get("bypass", ""),
+        "password": legacy.get("password", ""),
+    }
+
+
+def _group_proxy_view(scope: GroupPluginScope | None, binding: BotPlugin) -> dict[str, Any]:
+    """群级代理覆盖的可编辑视图；群代理不支持账号密码。"""
+
+    fallback = _binding_proxy_runtime(binding)
+    config = parse_config_json(scope.config_override_json) if scope is not None else {}
+    explicit_mode = str(config.get("group_proxy_mode") or "").strip().lower()
+    if explicit_mode in {"custom", "proxy"}:
+        mode = "proxy"
+    elif explicit_mode == "direct":
+        mode = "direct"
+    else:
+        # 群没有显式代理设置时跟随绑定代理；绑定也没有代理才显示直连。
+        mode = "proxy" if fallback["url"] else "direct"
+    group_url = str(config.get("group_proxy_url") or "").strip()
+    group_bypass = str(config.get("group_proxy_bypass") or "").strip()
+    if mode == "proxy" and group_url:
+        return {"mode": "proxy", "url": group_url, "bypass": group_bypass}
+    # 直连或群代理地址缺失时，用绑定页代理做初始值；切到「代理」后可直接保存。
+    return {"mode": mode, "url": fallback["url"], "bypass": fallback["bypass"]}
+
+
 def group_plugin_settings_view(db: Session, channel: Channel, room: Chatroom, binding: BotPlugin) -> dict[str, Any]:
     """生成卡片、表单与保存回报共用的非敏感视图，保证摘要对应真正生效值。"""
 
@@ -90,7 +172,9 @@ def group_plugin_settings_view(db: Session, channel: Channel, room: Chatroom, bi
     discovered = get_discovered_plugin(plugin.code if plugin else '')
     scope = _scope(db, channel, room, binding.id)
     base = _base_config(binding)
-    effective = deep_merge_config(base, parse_config_json(scope.config_override_json) if scope else {})
+    effective = strip_proxy_config(
+        deep_merge_config(base, parse_config_json(scope.config_override_json) if scope else {})
+    )
     schema = get_plugin_config_schema(plugin.code if plugin else '')
     sensitive = _sensitive_fields(plugin.code if plugin else '')
     for name in sensitive:
@@ -99,7 +183,8 @@ def group_plugin_settings_view(db: Session, channel: Channel, room: Chatroom, bi
     config_view['delivery']['supported'] = capabilities(channel)['revoke']
     # 本群页面只需要可编辑字段，不发送机器人完整配置 JSON 或隐藏的预览副本。
     config_view = {'mode':'schema', 'delivery':config_view['delivery'],
-        'fields':[field for field in config_view['fields'] if not field['sensitive'] and field['name'] not in TRIGGER_FIELDS | sensitive]}
+        'fields':[field for field in config_view['fields'] if not field['sensitive']
+                  and field['name'] not in TRIGGER_FIELDS | sensitive | RESERVED_PROXY_KEYS]}
     commands = _commands(discovered, base) if discovered else ()
     mapping = command_overrides(effective)
     inherited_mapping = command_overrides(base)
@@ -109,6 +194,7 @@ def group_plugin_settings_view(db: Session, channel: Channel, room: Chatroom, bi
     require_mention = bool(effective.get('require_mention', discovered.matcher.require_mention if discovered else False))
     return {
         'available':bool(discovered and discovered.is_valid),
+        'proxy_view':_group_proxy_view(scope, binding),
         'version':plugin.version if plugin else '', 'plugin_id':plugin.id if plugin else 0,
         'description':(plugin.description if plugin else '') or (discovered.manifest.description if discovered else '') or '',
         'binding_enabled':binding.status == 'enabled',
@@ -194,7 +280,9 @@ def _check_commands(db: Session, channel: Channel, room: Chatroom, binding: BotP
         discovered = get_discovered_plugin(other.plugin.code)
         if not discovered or not discovered.is_valid or discovered.manifest.plugin_type in SKIP_MESSAGE_PLUGIN_TYPES:
             continue
-        config = deep_merge_config(_base_config(other), parse_config_json(scope.config_override_json) if scope else {})
+        config = strip_proxy_config(
+            deep_merge_config(_base_config(other), parse_config_json(scope.config_override_json) if scope else {})
+        )
         conflict = changed.intersection(word.casefold() for word in command_triggers(_commands(discovered, config), config))
         if conflict:
             raise ValueError(f'触发词「{sorted(conflict)[0]}」已由本群「{other.plugin.display_name}」使用')
@@ -210,14 +298,20 @@ def save_group_plugin_settings(db: Session, channel: Channel, room: Chatroom, bi
         raise ValueError('插件当前不可用，无法保存设置')
     base = _base_config(binding)
     scope = _scope(db, channel, room, binding.id)
-    target = deep_merge_config(base, parse_config_json(scope.config_override_json) if scope else {})
+    target = strip_proxy_config(
+        deep_merge_config(base, parse_config_json(scope.config_override_json) if scope else {})
+    )
     schema = get_plugin_config_schema(binding.plugin.code)
     # 群配置不能持有密钥，保存时直接清理历史覆盖里的敏感同名字段。
     sensitive = _sensitive_fields(binding.plugin.code)
     for name in sensitive:
         target.pop(name, None)
-    editable = {field.name:field for field in schema.fields if not field.sensitive and field.name not in TRIGGER_FIELDS | sensitive} if schema else {}
-    allowed = {'csrf_token', *FORM_FIELDS.values()} | {f'schema__{name}' for name in editable} | {f'command__{item["index"]}' for item in view['commands']}
+    editable = {field.name:field for field in schema.fields if not field.sensitive
+                and field.name not in TRIGGER_FIELDS | sensitive | RESERVED_PROXY_KEYS} if schema else {}
+    allowed = ({'csrf_token', *FORM_FIELDS.values(), 'group_proxy_mode', 'group_proxy_url',
+                'group_proxy_username', 'group_proxy_password', 'group_proxy_bypass'}
+               | {f'schema__{name}' for name in editable}
+               | {f'command__{item["index"]}' for item in view['commands']})
     if view['message_plugin']:
         allowed.add('require_mention')
     if view['keywords_supported']:
@@ -252,6 +346,8 @@ def save_group_plugin_settings(db: Session, channel: Channel, room: Chatroom, bi
         if not target['command_overrides']:
             target.pop('command_overrides')
     diff = diff_config_override(base, target)
+    if any(key in form for key in {'group_proxy_mode', *GROUP_PROXY_KEYS}):
+        _merge_group_proxy(fm=form, binding=binding, diff=diff)
     # 不用普通配置的空值压缩器，false、空字符串和空数组都是有效的群覆盖。
     update_group_plugin_scope_config_override(db, channel=channel, chatroom=room, bot_plugin_id=binding.id,
         config_override_json=json.dumps(diff, ensure_ascii=False, sort_keys=True) if diff else None,
@@ -259,10 +355,52 @@ def save_group_plugin_settings(db: Session, channel: Channel, room: Chatroom, bi
     return binding
 
 
+def _merge_group_proxy(
+    *,
+    fm: Mapping[str, Any],
+    binding: BotPlugin,
+    diff: dict[str, Any],
+) -> None:
+    """把群级代理字段并入覆盖配置；群代理只支持无账号密码的地址。"""
+
+    mode = str(fm.get("group_proxy_mode") or "direct").strip().lower()
+    # custom/inherit 是旧版表单值，分别按 proxy/direct 处理。
+    mode = {"custom": "proxy", "inherit": "direct"}.get(mode, mode)
+    if mode not in {"direct", "proxy"}:
+        raise ValueError("本群代理模式不正确")
+    for key in GROUP_PROXY_KEYS:
+        diff.pop(key, None)
+    if mode == "direct":
+        # 显式保存直连，避免“没有代理字段”被当成跟随绑定代理。
+        diff["group_proxy_mode"] = "direct"
+        return
+
+    proxy_url = str(fm.get("group_proxy_url") or "").strip()
+    bypass_raw = fm.get("group_proxy_bypass") or ""
+    if not proxy_url:
+        raise ValueError("选择“代理”后必须填写代理地址，例如 http://host:7897")
+    binding_proxy = _binding_proxy_runtime(binding)
+    if proxy_url == binding_proxy["url"]:
+        # 与插件页一致时保持跟随，避免群代理丢失插件页保存的账号密码。
+        return
+    try:
+        bypass = normalize_bypass(bypass_raw)
+        parse_proxy_config(proxy_url, bypass=bypass)
+    except PluginProxyConfigError as exc:
+        if str(exc) == "proxy_url_credentials_inline":
+            raise ValueError("群代理不支持账号密码；需要认证请使用插件页代理并保持跟随") from exc
+        raise ValueError(_proxy_error_message(str(exc))) from exc
+    diff["group_proxy_mode"] = "proxy"
+    diff["group_proxy_url"] = proxy_url
+    if bypass:
+        diff["group_proxy_bypass"] = ",".join(bypass)
+
+
 def reset_group_plugin_settings(db: Session, channel: Channel, room: Chatroom, binding_id: int, operator_id: int) -> BotPlugin:
     """只清除配置覆盖，现有启停选择由群作用域服务保留。"""
 
     binding = _binding(db, channel, room, binding_id)
     update_group_plugin_scope_config_override(db, channel=channel, chatroom=room, bot_plugin_id=binding.id,
-        config_override_json=None, operator_id=operator_id, audit_note='恢复本群插件配置默认值', source='chatroom_plugin_settings_reset')
+        config_override_json=None,
+        operator_id=operator_id, audit_note='恢复本群插件配置默认值', source='chatroom_plugin_settings_reset')
     return binding

@@ -29,7 +29,9 @@ from app.services.plugin_runtime import (
     get_plugin_runtime_meta,
     get_plugin_runtime_meta_map,
 )
+from app.services.plugin_runtime.proxy import PluginProxyConfigError, parse_proxy_url
 from app.services.plugin_schemas import build_plugin_config_view, merge_schema_config
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.runtime import compute_binding_runtime, persist_binding_execution, reload_binding
 from app.web.auth_common import require_tenant_csrf
 from app.web.plugins.views import (
@@ -390,12 +392,27 @@ async def edit_plugin_binding_action(
             raise HTTPException(status_code=404, detail="Binding not found")
         form = await request.form()
         plugin_code = binding.plugin.code if binding.plugin else None
+        secret_config = decrypt_plugin_secret_config(
+            tenant_id=int(binding.tenant_id),
+            binding_id=int(binding.id),
+            encrypted=binding.secret_config_encrypted,
+        )
+        existing_proxy_password = str(secret_config.get("proxy_password") or "")
+        if not existing_proxy_password:
+            legacy_proxy_url = str(secret_config.get("proxy_url") or "").strip()
+            if legacy_proxy_url:
+                try:
+                    legacy_endpoint = parse_proxy_url(legacy_proxy_url)
+                except PluginProxyConfigError:
+                    legacy_endpoint = None
+                existing_proxy_password = legacy_endpoint.password if legacy_endpoint else ""
         try:
             merged_config = merge_schema_config(
                 plugin_code,
                 form,
                 existing_config_json=binding.config_json,
                 fallback_config_json=config_json or None,
+                existing_proxy_password=existing_proxy_password,
             )
         except ValueError as exc:
             # 与本群设置返回相同的可读错误，fetch 保存失败时保留用户输入继续修改。

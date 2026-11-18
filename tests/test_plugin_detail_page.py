@@ -65,6 +65,19 @@ def test_the_detail_page_leads_with_how_to_use_and_hides_the_technical_card(page
     assert "消息里包含关键词" in head and "插件详情" not in head
 
 
+def test_bind_modal_exposes_proxy_mode(pages) -> None:
+    """首次绑定弹窗也要提供直连/代理切换，而不是绑定后再去配置页补。"""
+
+    client, _ids, weather_id, _binding_id = pages
+    _login(client, "admin")
+    html = client.get(f"/plugins/{weather_id}").text
+    modal = html.split('id="create-plugin-binding-modal"', 1)[1]
+    assert 'name="proxy_mode"' in modal
+    assert 'data-proxy-section' in modal
+    assert 'name="proxy_url"' in modal
+    assert 'data-proxy-field' in modal
+
+
 def test_each_binding_is_a_card_with_the_group_feature_interaction(pages) -> None:
     client, ids, weather_id, binding_id = pages
     csrf = _login(client, "admin")

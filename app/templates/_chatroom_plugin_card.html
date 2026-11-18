@@ -36,7 +36,27 @@
       {# 功能参数按插件声明分成平面区块，与触发方式同级，避免再叠一层空的“功能设置”容器。 #}
       <div class="form-grid config-stack">{% with config_view=settings.config_view %}{% include '_plugin_config_form.html' %}{% endwith %}</div>
       {% endif %}
-      <p class="chatroom-plugin-default-note">密钥与机器人默认设置在<a href="/plugins/{{ settings.plugin_id }}">插件配置</a>中管理。这里保存的调整仅对本群生效。</p>
+      <section class="config-section full-row" data-proxy-section>
+        <h4>网络代理</h4>
+        <div class="form-grid config-flow">
+          <label class="config-field config-field-short"><span>代理模式</span>
+            <select name="group_proxy_mode" data-proxy-mode>
+              <option value="direct"{% if settings.proxy_view.mode == 'direct' %} selected{% endif %}>直连</option>
+              <option value="proxy"{% if settings.proxy_view.mode == 'proxy' %} selected{% endif %}>代理</option>
+            </select>
+            <small>未单独设置时跟随插件页代理；群代理只支持无账号密码的地址。</small>
+          </label>
+          <label class="full-row config-field config-field-wide" data-proxy-field><span>代理地址</span>
+            <input name="group_proxy_url" value="{{ settings.proxy_view.url }}" autocomplete="off" spellcheck="false"
+                   placeholder="http://host:port 或 socks5://host:port" />
+          </label>
+          <label class="full-row config-field config-field-wide" data-proxy-field><span>绕过列表</span>
+            <input name="group_proxy_bypass" value="{{ settings.proxy_view.bypass }}" placeholder="localhost, .internal.example.com" />
+            <small>仅选择“代理”时生效；与插件页地址一致时保持跟随插件代理。</small>
+          </label>
+        </div>
+      </section>
+      <p class="chatroom-plugin-default-note">密钥与机器人默认设置在<a href="/plugins/{{ settings.plugin_id }}">插件配置</a>中管理。这里保存的调整（含本群代理）仅对本群生效。</p>
       <p class="chatroom-plugin-feedback" data-scope-feedback role="status" aria-live="polite" hidden></p>
     </div>
     <footer class="gf-foot chatroom-plugin-footer">

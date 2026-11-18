@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import BotPlugin, Plugin
 from app.services.plugin_runtime import get_plugin_runtime_meta, get_plugin_runtime_meta_map
-from app.services.plugin_schemas import build_plugin_config_view
+from app.services.plugin_schemas import build_plugin_config_view, dump_config_json, parse_config_json
 from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.runtime import build_binding_dispatch_view, build_binding_runtime_view
 
@@ -22,21 +22,73 @@ def build_binding_schema_cards(bindings: list[BotPlugin]) -> list[dict[str, obje
             binding_id=int(binding.id),
             encrypted=binding.secret_config_encrypted,
         )
+        config_data = parse_config_json(binding.config_json)
+        proxy_bypass = str(config_data.pop("proxy_bypass", "") or "").strip()
+        proxy_url = str(config_data.pop("proxy_url", "") or "").strip()
+        proxy_username = str(config_data.pop("proxy_username", "") or "").strip()
+        # 代理配置只由独立区域展示；原始 JSON 预览和应用配置不再重复暴露。
         config_view = build_plugin_config_view(
             plugin_code,
-            binding.config_json,
+            dump_config_json(config_data),
             secret_config=secret_config,
         )
         cards.append(
             {
                 "binding": binding,
                 "config_view": config_view,
+                "proxy_view": _proxy_view(
+                    proxy_url=proxy_url,
+                    proxy_username=proxy_username,
+                    proxy_bypass=proxy_bypass,
+                    secret_config=secret_config,
+                ),
                 "has_schema": config_view["mode"] == "schema",
                 "runtime_info": get_plugin_runtime_meta(plugin_code),
                 "runtime_view": build_binding_runtime_view(binding),
             }
         )
     return cards
+
+
+def _proxy_view(
+    *,
+    proxy_url: str,
+    proxy_username: str,
+    proxy_bypass: str,
+    secret_config: Mapping[str, Any],
+) -> dict[str, object]:
+    """向页面提供可编辑的代理地址、用户名和是否已保存密码。"""
+
+    view: dict[str, object] = {
+        "mode": "proxy" if proxy_url else "direct",
+        "has_proxy": bool(proxy_url),
+        "url": proxy_url,
+        "username": proxy_username,
+        "has_password": bool(secret_config.get("proxy_password")),
+        "bypass": proxy_bypass,
+    }
+    if proxy_url:
+        return view
+    # 兼容旧的单 URL 密文格式：展示脱敏地址，保存时会迁移为拆分字段。
+    legacy_url = str(secret_config.get("proxy_url") or "").strip()
+    if not legacy_url:
+        return view
+    from app.services.plugin_runtime.proxy import PluginProxyConfigError, parse_proxy_url
+
+    try:
+        endpoint = parse_proxy_url(legacy_url, bypass=proxy_bypass)
+    except PluginProxyConfigError:
+        return {**view, "mode": "proxy", "has_proxy": True, "url": ""}
+    if endpoint is None:
+        return view
+    return {
+        **view,
+        "mode": "proxy",
+        "has_proxy": True,
+        "url": endpoint.safe_label,
+        "username": endpoint.username,
+        "has_password": bool(endpoint.password),
+    }
 
 
 def build_binding_schema_cards_with_dispatch(db: Session, bindings: list[BotPlugin]) -> list[dict[str, object]]:

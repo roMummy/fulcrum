@@ -10,6 +10,8 @@ tzdata>=2024.1; sys_platform == "win32"
 argon2-cffi>=23.1.0
 cryptography>=43.0.0,<47.0.0
 pymysql>=1.1.1
+# 插件绑定级出网代理的 SOCKS5/SOCKS5H 支持；HTTP/HTTPS 代理继续使用标准库 urllib。
+PySocks>=1.7.1,<2
 pydantic>=2.9.2
 pydantic-settings>=2.5.2
 python-multipart>=0.0.9

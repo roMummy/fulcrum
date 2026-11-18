@@ -32,25 +32,7 @@ def encrypt_plugin_secret_config(
     因而复制数据库密文到其他租户或其他插件绑定后无法通过解密校验。
     """
 
-    normalized = _normalize_secret_config(config)
-    if not normalized:
-        return None
-
-    key = _load_master_key()
-    nonce = os.urandom(PLUGIN_SECRET_NONCE_BYTES)
-    plaintext = json.dumps(
-        normalized,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    ciphertext = AESGCM(key).encrypt(
-        nonce,
-        plaintext,
-        _build_aad(tenant_id=tenant_id, binding_id=binding_id),
-    )
-    payload = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii").rstrip("=")
-    return f"{PLUGIN_SECRET_VERSION}.{payload}"
+    return _encrypt_config(config, _build_aad(tenant_id=tenant_id, binding_id=binding_id))
 
 
 def decrypt_plugin_secret_config(
@@ -61,6 +43,26 @@ def decrypt_plugin_secret_config(
 ) -> dict[str, Any]:
     """解密当前版本插件密文，不接受明文、旧算法或未知版本降级。"""
 
+    return _decrypt_config(encrypted, _build_aad(tenant_id=tenant_id, binding_id=binding_id))
+
+
+def _encrypt_config(config: Mapping[str, Any] | None, aad: bytes) -> str | None:
+    normalized = _normalize_secret_config(config)
+    if not normalized:
+        return None
+    nonce = os.urandom(PLUGIN_SECRET_NONCE_BYTES)
+    plaintext = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    ciphertext = AESGCM(_load_master_key()).encrypt(nonce, plaintext, aad)
+    payload = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii").rstrip("=")
+    return f"{PLUGIN_SECRET_VERSION}.{payload}"
+
+
+def _decrypt_config(encrypted: str | None, aad: bytes) -> dict[str, Any]:
     normalized = str(encrypted or "").strip()
     if not normalized:
         return {}
@@ -75,11 +77,7 @@ def decrypt_plugin_secret_config(
             raise PluginSecretError("plugin_secret_payload_invalid")
         nonce = decoded[:PLUGIN_SECRET_NONCE_BYTES]
         ciphertext = decoded[PLUGIN_SECRET_NONCE_BYTES:]
-        plaintext = AESGCM(_load_master_key()).decrypt(
-            nonce,
-            ciphertext,
-            _build_aad(tenant_id=tenant_id, binding_id=binding_id),
-        )
+        plaintext = AESGCM(_load_master_key()).decrypt(nonce, ciphertext, aad)
         parsed = json.loads(plaintext.decode("utf-8"))
     except PluginSecretError:
         raise

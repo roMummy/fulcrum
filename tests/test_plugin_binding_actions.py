@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.models.entities import Bot, BotPlugin, Channel, Chatroom, Conversation, GroupPluginScope, PluginStateRecord, TaskJob
 from app.services.async_workers import _process_outbound_dispatch_job
+from app.services.plugin_secrets import decrypt_plugin_secret_config
 from app.services.task_queue import OUTBOUND_DISPATCH_JOB, PLUGIN_SCHEDULED_ACTION_JOB
 from test_plugin_detail_page import pages  # noqa: F401
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401
@@ -80,6 +81,41 @@ def test_first_bind_defaults_closed_unless_explicitly_opened(pages, choice, expe
     with ids["factory"]() as db:
         binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
         assert binding.group_default_enabled is expected
+
+
+def test_first_bind_can_store_proxy_from_bind_form(pages):
+    """首次绑定到机器人时可以直接选择代理并保存，无需绑定后再单独配置。"""
+
+    client, ids, plugin_id, _binding_id = pages
+    with ids["factory"]() as db:
+        bot = Bot(tenant_id=ids["alpha"], name="代理绑定机器人")
+        db.add(bot)
+        db.commit()
+        bot_id = bot.id
+    csrf = _login(client, "admin")
+    response = client.post("/plugins/bind", data={
+        "csrf_token": csrf,
+        "bot_id": bot_id,
+        "plugin_id": plugin_id,
+        "proxy_mode": "proxy",
+        "proxy_url": "http://proxy.example.test:8080",
+        "proxy_username": "proxy-user",
+        "proxy_password": "proxy-pass",
+        "proxy_bypass": ".internal.test",
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    with ids["factory"]() as db:
+        binding = db.scalar(select(BotPlugin).where(BotPlugin.bot_id == bot_id, BotPlugin.plugin_id == plugin_id))
+        config = json.loads(binding.config_json)
+        assert config["proxy_url"] == "http://proxy.example.test:8080"
+        assert config["proxy_username"] == "proxy-user"
+        assert config["proxy_bypass"] == "internal.test"
+        secret = decrypt_plugin_secret_config(
+            tenant_id=ids["alpha"],
+            binding_id=int(binding.id),
+            encrypted=binding.secret_config_encrypted,
+        )
+        assert secret["proxy_password"] == "proxy-pass"
 
 
 def test_saving_existing_binding_preserves_scope_and_rebind_asks_again(pages):

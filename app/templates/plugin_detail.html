@@ -81,6 +81,34 @@
             {% include '_plugin_config_form.html' %}
           {% endwith %}
         </div>
+        <section class="config-section full-row" data-proxy-section>
+          <h4>网络代理</h4>
+          <div class="form-grid config-flow">
+            <label class="config-field config-field-short"><span>代理模式</span>
+              <select name="proxy_mode" data-proxy-mode>
+                <option value="direct"{% if card.proxy_view.mode == 'direct' %} selected{% endif %}>直连</option>
+                <option value="proxy"{% if card.proxy_view.mode == 'proxy' %} selected{% endif %}>代理</option>
+              </select>
+              <small>默认直连；选择代理后填写下面的代理地址。</small>
+            </label>
+            <label class="full-row config-field config-field-wide" data-proxy-field><span>代理地址</span>
+              <input type="text" name="proxy_url" value="{{ card.proxy_view.url }}" autocomplete="off" spellcheck="false"
+                     placeholder="http://host:port 或 socks5://host:port" />
+              <small>支持 http、socks5、socks5h。</small>
+            </label>
+            <label class="config-field config-field-short" data-proxy-field><span>代理用户名</span>
+              <input name="proxy_username" value="{{ card.proxy_view.username }}" autocomplete="off" />
+            </label>
+            <label class="config-field config-field-short" data-proxy-field><span>代理密码</span>
+              <input type="password" name="proxy_password" autocomplete="new-password"
+                     placeholder="{{ '留空保持当前密码' if card.proxy_view.has_password else '没有认证时留空' }}" />
+            </label>
+            <label class="full-row config-field config-field-wide" data-proxy-field><span>绕过列表</span>
+              <input name="proxy_bypass" value="{{ card.proxy_view.bypass }}" placeholder="localhost, .internal.example.com" />
+              <small>留空表示不额外绕过；localhost 和回环地址默认绕过。</small>
+            </label>
+          </div>
+        </section>
         <div class="plugin-binding-info">
           <p class="muted-text">群默认范围：{{ '对所有群开放' if item.group_default_enabled else '仅对单独启用的群开放' }}。可到<a href="/chatrooms/plugin-scopes?plugin_id={{ plugin.id }}">群插件批量管理</a>查看和调整群聊。</p>
           <p class="muted-text">最近执行：{{ card.runtime_view.last_execution_at|bj_time if card.runtime_view.last_execution_at else '-' }}　{{ card.runtime_view.last_execution_summary or '' }}</p>
@@ -129,6 +157,34 @@
       {% with config_view=plugin_config_view %}
         {% include '_plugin_config_form.html' %}
       {% endwith %}
+      <section class="config-section" data-proxy-section>
+        <h4>网络代理</h4>
+        <div class="form-grid config-flow">
+          <label class="config-field config-field-short"><span>代理模式</span>
+            <select name="proxy_mode" data-proxy-mode>
+              <option value="direct" selected>直连</option>
+              <option value="proxy">代理</option>
+            </select>
+            <small>默认直连；选择代理后填写下面的代理地址。</small>
+          </label>
+          <label class="full-row config-field config-field-wide" data-proxy-field><span>代理地址</span>
+            <input type="text" name="proxy_url" value="" autocomplete="off" spellcheck="false"
+                   placeholder="http://host:port 或 socks5://host:port" />
+            <small>支持 http、socks5、socks5h。</small>
+          </label>
+          <label class="config-field config-field-short" data-proxy-field><span>代理用户名</span>
+            <input name="proxy_username" value="" autocomplete="off" />
+          </label>
+          <label class="config-field config-field-short" data-proxy-field><span>代理密码</span>
+            <input type="password" name="proxy_password" autocomplete="new-password"
+                   placeholder="没有认证时留空" />
+          </label>
+          <label class="full-row config-field config-field-wide" data-proxy-field><span>绕过列表</span>
+            <input name="proxy_bypass" value="" placeholder="localhost, .internal.example.com" />
+            <small>留空表示不额外绕过；localhost 和回环地址默认绕过。</small>
+          </label>
+        </div>
+      </section>
       <div class="full-row form-actions-inline">
         <button class="btn" type="submit">保存绑定</button>
         <button class="btn btn-ghost" type="button" data-modal-close><span class="i i-x" aria-hidden="true"></span><span>取消</span></button>
@@ -184,4 +240,5 @@
 </section>
 <script src="/static/js/group-features.js" defer></script>
 <script src="/static/js/plugin-delivery-settings.js" defer></script>
+<script src="/static/js/proxy-mode-toggle.js" defer></script>
 {% endblock %}

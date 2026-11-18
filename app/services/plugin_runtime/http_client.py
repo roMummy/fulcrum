@@ -5,12 +5,27 @@ import socket
 import time
 from dataclasses import dataclass
 from email.message import Message
+from functools import partial
+from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
+from urllib.request import (
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    OpenerDirector,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 from app.core.logging import get_logger
+from app.services.plugin_runtime.proxy import (
+    PluginProxyEndpoint,
+    current_plugin_proxy,
+    proxy_request_host,
+)
 
 
 logger = get_logger(__name__)
@@ -30,6 +45,7 @@ SENSITIVE_HEADER_NAMES = {
 }
 SENSITIVE_QUERY_KEYWORDS = ("token", "key", "secret", "password", "signature", "authorization")
 REDACTED_VALUE = "[REDACTED]"
+_UNSET = object()
 
 
 class PluginHttpError(RuntimeError):
@@ -87,9 +103,12 @@ class PluginHttpClient:
         *,
         opener_factory: Callable[[int], OpenerDirector] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        proxy: PluginProxyEndpoint | None | object = _UNSET,
     ):
-        self._opener_factory = opener_factory or _build_limited_opener
+        self._opener_factory = opener_factory
         self._clock = clock
+        # 显式传入的 proxy 优先于当前插件执行上下文。
+        self._proxy = proxy
 
     def request(
         self,
@@ -128,6 +147,9 @@ class PluginHttpClient:
         deadline = self._clock() + total_timeout
         attempts = retries + 1
         last_error: BaseException | None = None
+        proxy = self._proxy if self._proxy is not _UNSET else current_plugin_proxy()
+        if not isinstance(proxy, PluginProxyEndpoint):
+            proxy = None
 
         logger.debug(
             "plugin http request started",
@@ -142,7 +164,11 @@ class PluginHttpClient:
             remaining = deadline - self._clock()
             if remaining <= 0:
                 raise PluginHttpTimeoutError("插件 HTTP 请求超过总时限") from last_error
-            opener = self._opener_factory(redirect_limit)
+            opener = (
+                self._opener_factory(redirect_limit)
+                if self._opener_factory is not None
+                else _build_limited_opener(redirect_limit, proxy)
+            )
             try:
                 response = opener.open(request, timeout=min(connect_timeout, remaining))
                 with response:
@@ -249,8 +275,125 @@ def redact_url(url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(redacted_query), parsed.fragment))
 
 
-def _build_limited_opener(max_redirects: int) -> OpenerDirector:
-    return build_opener(_LimitedRedirectHandler(max_redirects))
+class _BypassProxyHandler(ProxyHandler):
+    """按请求主机判断绕过规则；重定向后的新主机也会重新判断。"""
+
+    def __init__(self, endpoint: PluginProxyEndpoint):
+        super().__init__({"http": endpoint.url, "https": endpoint.url})
+        self._endpoint = endpoint
+
+    def proxy_open(self, req, proxy, type):  # noqa: ANN001
+        if self._endpoint.bypasses(proxy_request_host(req.full_url)):
+            return None
+        return super().proxy_open(req, proxy, type)
+
+
+class _SocksHTTPConnection(HTTPConnection):
+    """使用 PySocks 建立到目标站的 SOCKS5 隧道。"""
+
+    def __init__(self, *args: Any, endpoint: PluginProxyEndpoint, **kwargs: Any):
+        self._proxy_endpoint = endpoint
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = _open_socks_socket(
+            self._proxy_endpoint,
+            self.host,
+            self.port,
+            self.timeout,
+        )
+
+
+class _SocksHTTPSConnection(HTTPSConnection):
+    """在 SOCKS5 隧道上继续做目标站 TLS 校验。"""
+
+    def __init__(self, *args: Any, endpoint: PluginProxyEndpoint, **kwargs: Any):
+        self._proxy_endpoint = endpoint
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        raw_socket = _open_socks_socket(
+            self._proxy_endpoint,
+            self.host,
+            self.port,
+            self.timeout,
+        )
+        self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+
+
+class _SocksHTTPHandler(HTTPHandler):
+    """SOCKS 代理下的 HTTP 请求；绕过主机回退到直连。"""
+
+    def __init__(self, endpoint: PluginProxyEndpoint):
+        super().__init__()
+        self._endpoint = endpoint
+
+    def http_open(self, req):  # noqa: ANN001
+        if self._endpoint.bypasses(proxy_request_host(req.full_url)):
+            return super().http_open(req)
+        return self.do_open(partial(_SocksHTTPConnection, endpoint=self._endpoint), req)
+
+
+class _SocksHTTPSHandler(HTTPSHandler):
+    """SOCKS 代理下的 HTTPS 请求；绕过主机回退到直连。"""
+
+    def __init__(self, endpoint: PluginProxyEndpoint):
+        super().__init__()
+        self._endpoint = endpoint
+
+    def https_open(self, req):  # noqa: ANN001
+        if self._endpoint.bypasses(proxy_request_host(req.full_url)):
+            return super().https_open(req)
+        return self.do_open(
+            partial(_SocksHTTPSConnection, endpoint=self._endpoint),
+            req,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
+
+
+def _build_limited_opener(
+    max_redirects: int,
+    proxy: PluginProxyEndpoint | None = None,
+) -> OpenerDirector:
+    handlers: list[Any] = [_LimitedRedirectHandler(max_redirects)]
+    if proxy is None:
+        # 显式空代理，避免部署环境的 HTTP_PROXY 意外改变插件出网路径。
+        handlers.append(ProxyHandler({}))
+    elif proxy.proxy_type == "http":
+        handlers.append(_BypassProxyHandler(proxy))
+    else:
+        handlers.append(ProxyHandler({}))
+        handlers.append(_SocksHTTPHandler(proxy))
+        handlers.append(_SocksHTTPSHandler(proxy))
+    return build_opener(*handlers)
+
+
+def _open_socks_socket(
+    endpoint: PluginProxyEndpoint,
+    host: str,
+    port: int,
+    timeout: float | None,
+) -> Any:
+    socks = _import_socks()
+    return socks.create_connection(
+        (host, int(port)),
+        timeout=timeout,
+        proxy_type=socks.SOCKS5,
+        proxy_addr=endpoint.host,
+        proxy_port=endpoint.port,
+        proxy_rdns=endpoint.proxy_type == "socks5h",
+        proxy_username=endpoint.username or None,
+        proxy_password=endpoint.password or None,
+    )
+
+
+def _import_socks():  # noqa: ANN202
+    try:
+        import socks  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise PluginHttpError("插件 HTTP 代理组件未安装") from exc
+    return socks
 
 
 def _encode_request_body(
