@@ -21,3 +21,5 @@ silk-python==0.2.9
 markdown>=3.10
 psutil>=7.2.2
 pillow>=10.0.0
+# 抖音网页渲染解析需要 V8 执行页面签名脚本；PyPI 包名为 mini-racer，导入名仍是 py_mini_racer。
+mini-racer>=0.14.1,<0.15
