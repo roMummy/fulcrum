@@ -1,6 +1,7 @@
-"""抖音解析服务:取媒资(DTK 优先、自有解析兜底)并按媒资类型生成平台标准回复。
+"""抖音解析服务:取媒资(DTK 优先、网页渲染降级)并按媒资类型生成平台标准回复。
 
-一、解析来源:DTK 自建服务优先;未配置、失败或无有效媒资时回退到自有解析:
+一、解析来源:DTK 自建服务优先;未配置或失败时降级到网页渲染解析
+   (__ac_signature 签名 + 作品页 RENDER_DATA),再失败才回退到自有解析:
    展开短链取分享页 -> 官方 detail 接口(a_bogus 签名)-> 分享页 HTML -> slidesinfo 接口。
    所有请求都走平台 PluginHttpClient,受响应体上限、重定向上限和总时限约束。
 二、发送策略:
@@ -73,7 +74,7 @@ def parse_media(
     dtk_wait_seconds: int,
     deadline: float,
 ) -> dict[str, Any]:
-    """按 DTK、自有解析的固定顺序取媒资;两条都失败才抛错,不使用任何第三方兜底。"""
+    """DTK 优先;未配置或失败时降级到网页渲染解析,最后尝试自有解析。"""
 
     reasons: list[str] = []
     if dtk_api_url and dtk_api_key:
@@ -81,11 +82,25 @@ def parse_media(
             return _from_dtk(client, share_url, dtk_api_url, dtk_api_key, dtk_wait_seconds, deadline)
         except (SourceError, PluginHttpError, ValueError) as exc:
             reasons.append(f"DTK:{exc}")
+    else:
+        reasons.append("DTK:未配置")
+    try:
+        return _from_render(client, share_url, deadline)
+    except (PluginHttpError, ValueError) as exc:
+        reasons.append(f"页面解析:{exc}")
     try:
         return _from_local(client, share_url, deadline)
     except (SourceError, PluginHttpError, ValueError) as exc:
         reasons.append(f"自有解析:{exc}")
     raise SourceError("; ".join(reasons))
+
+
+def _from_render(client: PluginHttpClient, share_url: str, deadline: float) -> dict[str, Any]:
+    """网页渲染解析按需加载 V8 签名组件，避免所有执行都依赖原生库。"""
+
+    from plugins.douyin_parser.render import parse_render_media
+
+    return parse_render_media(client, share_url, deadline=deadline)
 
 
 def _remaining(deadline: float, cap: float) -> float:
@@ -280,6 +295,7 @@ MAX_IMAGE_DOWNLOADS = 18
 IMAGE_DOWNLOAD_BYTES = 12 * 1024 * 1024
 COVER_DOWNLOAD_BYTES = 2 * 1024 * 1024
 VIDEO_DOWNLOAD_BYTES = 10 * 1024 * 1024  # 与微桥 send_video 默认 10MiB 上限保持一致
+FILE_SEND_MAX_BYTES = 20 * 1024 * 1024  # 咕嘎文件发送上限；超过时退回链接卡片
 MEDIA_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
@@ -366,7 +382,18 @@ def _video_replies(client: PluginHttpClient, media: dict[str, Any], mode: str, t
     title = clean_text(media.get("title")) or "抖音作品"
     author = clean_text(media.get("author"))
     if mode == "file":
-        return [file_reply(file_name=_safe_name(f"{author} - {title}" if author else title) + ".mp4", file_url=url)]
+        file_name = _safe_name(f"{author} - {title}" if author else title) + ".mp4"
+        size = _remote_content_length(client, url, timeout)
+        if size is not None and size <= FILE_SEND_MAX_BYTES:
+            return [file_reply(file_name=file_name, file_url=url)]
+        # 超过通道文件上限或无法确认大小时，不能把远端地址直接交给发送层，
+        # 否则适配器下载后失败，用户只会看到“没反应”。
+        reason = (
+            f"视频文件超过 {FILE_SEND_MAX_BYTES // (1024 * 1024)}MB"
+            if size is not None and size > FILE_SEND_MAX_BYTES
+            else "无法确认视频文件大小"
+        )
+        return [text_reply(f"{reason}，已改为链接卡片。"), _link_card(media, title=author or "抖音作品", description=title)]
 
     duration = media.get("duration_seconds")
     cover_url = str(media.get("cover") or "")
@@ -376,14 +403,42 @@ def _video_replies(client: PluginHttpClient, media: dict[str, Any], mode: str, t
         # 平台视频回复必须带封面;没有封面或视频下载失败就回退卡片。
         if video and cover:
             return [video_reply(video_base64=_b64(video), cover_base64=_b64(cover), play_length=round(duration))]
-    return [
-        link_reply(
-            url=media.get("page_url") or url,
-            title=author or "抖音作品",
-            description=title,
-            thumb_url=cover_url if cover_url.startswith("http") else "",
+    return [_link_card(media, title=author or "抖音作品", description=title)]
+
+
+def _link_card(media: dict[str, Any], *, title: str, description: str) -> dict[str, Any]:
+    cover_url = str(media.get("cover") or "")
+    # page_url 指向作品页(有站点 favicon);url 是播放直链,只用于下载/直发视频。
+    return link_reply(
+        url=str(media.get("page_url") or media.get("url") or "").strip(),
+        title=title,
+        description=description,
+        thumb_url=cover_url if cover_url.startswith("http") else "",
+    )
+
+
+def _remote_content_length(client: PluginHttpClient, url: str, timeout: float) -> int | None:
+    """用 HEAD 读取远端文件大小；失败或没有 Content-Length 时返回 None。"""
+
+    try:
+        response = client.request(
+            "HEAD",
+            url.strip(),
+            headers={"User-Agent": MEDIA_USER_AGENT, "Referer": "https://www.douyin.com/"},
+            total_timeout_seconds=min(10, max(3, timeout)),
+            max_response_bytes=4096,
+            max_redirects=3,
+            retry_count=0,
         )
-    ]
+    except PluginHttpError:
+        return None
+    if response.status_code < 200 or response.status_code >= 400:
+        return None
+    try:
+        size = int(str(response.headers.get("content-length") or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return size if size > 0 else None
 
 
 # ---------------------------------------------------------------- 下载与图片处理

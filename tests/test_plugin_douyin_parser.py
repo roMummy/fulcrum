@@ -17,7 +17,8 @@ from PIL import Image
 from app.services.plugin_runtime.contracts import PluginExecutionContext, PluginExecutionRequest
 from app.services.plugin_runtime.http_client import PluginHttpError, PluginHttpResponse
 from plugins.douyin_parser import parsers as parse
-from plugins.douyin_parser import plugin, service
+from plugins.douyin_parser import plugin, render, service
+from urllib.parse import quote
 
 
 def _jpeg(width: int = 100, height: int = 50, fmt: str = "JPEG") -> bytes:
@@ -136,6 +137,105 @@ def _dtk_ok(data):
     return _resp({"success": True, "data": data})
 
 
+RENDER_DETAIL = {
+    "desc": "渲染视频",
+    "authorInfo": {"nickname": "渲染作者"},
+    "video": {
+        "duration": 625987,
+        "uri": "v0200abc",
+        "playAddr": [{"src": "https://v.test/p.mp4"}],
+        "coverUrlList": ["https://c.test/c.jpg"],
+    },
+}
+
+
+def _render_page(detail):
+    payload = quote(json.dumps({"app": {"videoDetail": detail}}, ensure_ascii=False))
+    return f'<html><script id="RENDER_DATA" type="application/json">{payload}</script></html>'
+
+
+def test_render_detail_maps_video_and_note() -> None:
+    media = render.media_from_render_detail(RENDER_DETAIL)
+    assert media["type"] == "video"
+    assert media["url"] == "https://aweme.snssdk.com/aweme/v1/play/?video_id=v0200abc&ratio=720p&line=0"
+    assert media["cover"] == "https://c.test/c.jpg"
+    assert media["duration_seconds"] == 625.987
+    assert media["title"] == "渲染视频" and media["author"] == "渲染作者"
+
+    note = render.media_from_render_detail(
+        {
+            "desc": "渲染图文",
+            "authorInfo": {"nickname": "图文作者"},
+            "images": [{"urlList": ["https://i.test/1.webp", "https://i.test/1.jpg"]}],
+        }
+    )
+    assert note["type"] == "image" and len(note["note_pages"]) == 1
+    assert note["note_pages"][0]["image_candidates"][0] == "https://i.test/1.jpg"
+
+
+def test_missing_dtk_falls_back_to_render(monkeypatch) -> None:
+    monkeypatch.setattr(render, "_sign", lambda nonce: "x" * 47)
+    client = FakeClient(
+        {
+            "user/self": _resp(_render_page(RENDER_DETAIL).encode(), content_type="text/html"),
+            "v.douyin.com": _resp(
+                b"<html></html>",
+                content_type="text/html",
+                url="https://www.douyin.com/video/7707873015090380131",
+            ),
+            "https://www.douyin.com/": _resp(
+                b"",
+                content_type="text/html",
+                headers={"set-cookie": "__ac_nonce=abc123; Path=/"},
+            ),
+        }
+    )
+    media = service.parse_media(
+        client,
+        "https://v.douyin.com/x/",
+        dtk_api_url="https://dtk.test",
+        dtk_api_key="",
+        dtk_wait_seconds=15,
+        deadline=time.monotonic() + 30,
+    )
+    assert media["type"] == "video" and media["author"] == "渲染作者"
+    assert media["page_url"] == "https://www.douyin.com/video/7707873015090380131"
+    assert not any("/api/v1/parse" in call[1] for call in client.calls)
+    assert any("user/self" in call[1] for call in client.calls)
+
+
+def test_dtk_failure_falls_back_to_render(monkeypatch) -> None:
+    monkeypatch.setattr(render, "_sign", lambda nonce: "x" * 47)
+    client = FakeClient(
+        {
+            "/api/v1/parse": _resp({"success": False, "error": {"code": "BUSY"}}, status=500),
+            "user/self": _resp(_render_page(RENDER_DETAIL).encode(), content_type="text/html"),
+            "v.douyin.com": _resp(
+                b"<html></html>",
+                content_type="text/html",
+                url="https://www.douyin.com/video/7707873015090380131",
+            ),
+            "https://www.douyin.com/": _resp(
+                b"",
+                content_type="text/html",
+                headers={"set-cookie": "__ac_nonce=abc123; Path=/"},
+            ),
+        }
+    )
+    media = service.parse_media(
+        client,
+        "https://v.douyin.com/x/",
+        dtk_api_url="https://dtk.test",
+        dtk_api_key="k",
+        dtk_wait_seconds=15,
+        deadline=time.monotonic() + 30,
+    )
+    assert media["type"] == "video" and media["author"] == "渲染作者"
+    assert any("/api/v1/parse" in call[1] for call in client.calls)
+    # 降级成功后不再走自有解析的 detail 接口。
+    assert not any("aweme/detail" in call[1] for call in client.calls)
+
+
 def test_dtk_success_skips_local_parsing() -> None:
     client = FakeClient({"/api/v1/parse": _dtk_ok({"raw": VIDEO_AWEME})})
     media = service.parse_media(
@@ -222,7 +322,7 @@ def test_long_or_unknown_duration_falls_back_to_link_card(duration) -> None:
     client = _media_client()
     replies = service.build_replies(client, _short_video(duration), download_mode="card", timeout_seconds=10)
     assert replies[0]["type"] == "link" and replies[0]["title"] == "作者" and replies[0]["description"] == "标题"
-    assert not client.calls  # 不下载视频
+    assert not client.calls  # 不下载视频,也不额外下载封面
 
 
 def test_short_video_download_failure_falls_back_to_link_card() -> None:
@@ -230,11 +330,31 @@ def test_short_video_download_failure_falls_back_to_link_card() -> None:
     assert replies[0]["type"] == "link"
 
 
-def test_file_mode_sends_remote_file_without_downloading() -> None:
-    client = _media_client()
+def test_file_mode_sends_small_video_as_remote_file() -> None:
+    client = FakeClient({"m.test/v.mp4": _resp(b"", headers={"content-length": str(5 * 1024 * 1024)})})
     replies = service.build_replies(client, _short_video(300), download_mode="file", timeout_seconds=10)
     assert replies == [{"type": "file", "file_name": "作者 - 标题.mp4", "file_url": "https://m.test/v.mp4"}]
-    assert not client.calls
+    assert [call[0] for call in client.calls] == ["HEAD"]
+
+
+def test_file_mode_large_or_unknown_video_falls_back_to_link_card() -> None:
+    large = FakeClient({"m.test/v.mp4": _resp(b"", headers={"content-length": str(75 * 1024 * 1024)})})
+    replies = service.build_replies(large, _short_video(300), download_mode="file", timeout_seconds=10)
+    assert [item["type"] for item in replies] == ["text", "link"]
+    assert "超过 20MB" in replies[0]["content"]
+
+    unknown = FakeClient({"m.test/v.mp4": _resp(b"", headers={})})
+    replies = service.build_replies(unknown, _short_video(300), download_mode="file", timeout_seconds=10)
+    assert [item["type"] for item in replies] == ["text", "link"]
+    assert "无法确认" in replies[0]["content"]
+
+
+def test_link_card_prefers_page_url() -> None:
+    media = {**_short_video(300), "page_url": "https://www.douyin.com/video/7400000000000000001"}
+    replies = service.build_replies(FakeClient({}), media, download_mode="card", timeout_seconds=10)
+    assert replies[0]["type"] == "link"
+    assert replies[0]["url"] == "https://www.douyin.com/video/7400000000000000001"
+    assert replies[0]["thumb_url"] == "https://m.test/c.jpg"
 
 
 def test_work_page_is_used_only_for_cards():

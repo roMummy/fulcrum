@@ -243,22 +243,22 @@ def parse_video_item(item: dict[str, Any]) -> dict[str, Any] | None:
 def parse_aweme(aweme: dict[str, Any], *, fallback_duration: float | None = None) -> dict[str, Any] | None:
     """解析一条原始 aweme:先图文后视频;视频播放地址用稳定 uri 重建。"""
 
-    note = parse_note_item(aweme)
-    if note:
-        return note
-    video = parse_video_item(aweme)
-    if not video:
+    media = parse_note_item(aweme) or parse_video_item(aweme)
+    if not media:
         return None
-    if video.get("duration_seconds") is None:
-        video["duration_seconds"] = fallback_duration
-    play_addr = (aweme.get("video") or {}).get("play_addr")
-    uri = str(play_addr.get("uri") or "") if isinstance(play_addr, dict) else ""
-    if uri:
-        video["url"] = _AWEME_PLAY_URL.format(uri=uri)
-    work_id = str(aweme.get("aweme_id") or "")
+    if media["type"] == "video" and media.get("duration_seconds") is None:
+        media["duration_seconds"] = fallback_duration
+    if media["type"] == "video":
+        play_addr = (aweme.get("video") or {}).get("play_addr")
+        uri = str(play_addr.get("uri") or "") if isinstance(play_addr, dict) else ""
+        if uri:
+            media["url"] = _AWEME_PLAY_URL.format(uri=uri)
+    # 链接卡片用作品页地址:直链域名没有 favicon,微信卡片会缺少来源 logo。
+    # 图文和视频都要带;aweme_id 必须是纯数字才拼进 URL。
+    work_id = str(aweme.get("aweme_id") or "").strip()
     if re.fullmatch(r"[0-9]{1,20}", work_id):
-        video["page_url"] = f"https://www.douyin.com/video/{work_id}"
-    return video
+        media["page_url"] = f"https://www.douyin.com/video/{work_id}"
+    return media
 
 
 # ---------------------------------------------------------------- DTK 响应
