@@ -25,8 +25,9 @@ from app.core.db import Base
 from app.core.logging import ContextFormatter
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import open_tenant_session
-from app.models.entities import Channel
+from app.models.entities import Channel, Conversation, Message, MessageAttachment
 from app.models.saas import Tenant
+from app.services import inbound_media
 from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
 from app.services.guga_agent import service
 from app.services.guga_agent.access import connection_url, initialize_connection
@@ -65,7 +66,7 @@ def _path(channel_id: int, token: str, suffix: str) -> str:
 
 # ---------- Token 认证:对外接入点唯一的门 ----------
 
-@pytest.mark.parametrize("method, suffix", [("post", "register"), ("post", "state"), ("post", "event"), ("post", "poll"), ("post", "command_result"), ("get", "health")])
+@pytest.mark.parametrize("method, suffix", [("post", "register"), ("post", "state"), ("post", "event"), ("post", "poll"), ("post", "command_result"), ("post", "upload_media?attachment_id=1"), ("get", "health")])
 def test_every_endpoint_rejects_missing_wrong_and_other_channels_tokens(env, method, suffix) -> None:
     client, _factory, channels = env
     (a_id, a_token), (_b_id, b_token) = channels["a"], channels["b"]
@@ -99,6 +100,53 @@ def test_a_channel_without_any_token_rejects_everything(env) -> None:
     for token in ("", "None", "null", "x" * 43):
         if token:
             assert client.post(_path(bare_id, token, "poll"), json=IDENTITY).status_code == 403  # 没有登记 token 的渠道,任何值都不通过
+
+
+def test_upload_media_stores_the_file_with_its_original_name(env, tmp_path, monkeypatch) -> None:
+    """手机按 upload_url 直传后,附件直接变成 downloaded 并保留原始文件名。"""
+
+    client, factory, channels = env
+    channel_id, token = channels["a"]
+    monkeypatch.setattr(
+        inbound_media,
+        "_build_attachment_path",
+        lambda cid, aid, suffix: tmp_path / f"{cid}-{aid}{suffix}",
+    )
+    with tenant_scope(7), open_tenant_session(factory) as db:
+        conversation = Conversation(
+            tenant_id=7, bot_id=1, channel_id=channel_id, channel_type="wechat_gugatool",
+            external_id="1@chatroom", chat_type="group",
+        )
+        db.add(conversation)
+        db.flush()
+        message = Message(
+            tenant_id=7, conversation_id=conversation.id, direction="in",
+            content="[文件] console-2026-11-02.log", message_type="file", status="received",
+        )
+        db.add(message)
+        db.flush()
+        attachment = MessageAttachment(
+            tenant_id=7, message_id=message.id, channel_id=channel_id,
+            conversation_id=conversation.id, direction="in", attachment_type="file",
+            provider="wechat_gugatool", status="pending",
+        )
+        db.add(attachment)
+        db.commit()
+        attachment_id = int(attachment.id)
+
+    response = client.post(
+        _path(channel_id, token, f"upload_media?attachment_id={attachment_id}"),
+        files={"file": ("console-2026-11-02.log", b"[14:25:32] log line", "text/plain")},
+    )
+
+    assert response.status_code == 200 and response.json()["ok"] is True
+    with tenant_scope(7), open_tenant_session(factory) as db:
+        stored = db.get(MessageAttachment, attachment_id)
+        assert stored.status == "downloaded"
+        assert stored.storage_path.endswith(".log")
+        metadata = json.loads(stored.metadata_json)
+        assert metadata["file_name"] == "console-2026-11-02.log"
+        assert metadata["uploaded_by"] == "wechat_gugatool"
 
 
 def test_the_websocket_refuses_a_wrong_token(env) -> None:

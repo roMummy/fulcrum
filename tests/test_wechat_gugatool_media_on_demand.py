@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -15,7 +16,7 @@ from app.core.db import Base
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import open_tenant_session
 from app.models.entities import Channel, Conversation, Message, MessageAttachment, RawWebhookEvent, TaskJob
-from app.services import message_media
+from app.services import inbound_media, message_media
 from app.services.inbound_media import create_wechat_media_attachment
 from app.services.task_queue import INBOUND_MEDIA_FETCH_JOB
 
@@ -133,3 +134,101 @@ def test_other_channels_still_report_unsupported(session_factory) -> None:
 
         assert outcome["state"] == "failed"
         assert "暂不支持按需获取媒体" in outcome["error"]
+
+
+def test_file_download_keeps_original_extension_and_name(session_factory, tmp_path, monkeypatch) -> None:
+    """手机回传的文件没有 ContentType 时,按 appmsg 里的文件名/扩展名落盘。"""
+
+    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+
+    monkeypatch.setattr(
+        inbound_media,
+        "_build_attachment_path",
+        lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}",
+    )
+    monkeypatch.setattr(
+        WechatGugatoolAdapter,
+        "download_message_media",
+        lambda self, channel, **kwargs: {
+            "ok": True,
+            "data": {"Base64": base64.b64encode("[14:25:32] log line".encode()).decode("ascii")},
+            "raw": {},
+        },
+    )
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel, conversation, message = _seed(db, with_event=False)
+        message.message_type = "file"
+        message.content = (
+            "<msg><appmsg><title>console-2026-11-02.log</title><type>74</type>"
+            "<appattach><totallen>20</totallen><fileext>log</fileext></appattach></appmsg></msg>"
+        )
+        attachment = create_wechat_media_attachment(
+            db,
+            channel=channel,
+            raw_event_id=None,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            attachment_type="file",
+            metadata={"to_wxid": "123@chatroom", "local_message_id": 1, "server_message_id": 2},
+            provider="wechat_gugatool",
+        )
+        db.flush()
+
+        result = inbound_media.download_wechat_media_attachment(db, attachment=attachment, channel=channel)
+
+        assert result["storage_path"].endswith(".log")
+        assert attachment.mime_type == "text/plain"
+        meta = json.loads(attachment.metadata_json)
+        assert meta["file_name"] == "console-2026-11-02.log"
+        assert meta["file_ext"] == "log"
+
+
+def test_file_download_prefers_phone_reported_file_name(session_factory, tmp_path, monkeypatch) -> None:
+    """新版本手机直接返回 FileName/FileExt/ContentType 时,服务端优先使用这些值。"""
+
+    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+
+    monkeypatch.setattr(
+        inbound_media,
+        "_build_attachment_path",
+        lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}",
+    )
+    monkeypatch.setattr(
+        WechatGugatoolAdapter,
+        "download_message_media",
+        lambda self, channel, **kwargs: {
+            "ok": True,
+            "data": {
+                "Base64": base64.b64encode(b"%PDF-1.7").decode("ascii"),
+                "FileName": "季度报告.pdf",
+                "FileExt": "pdf",
+                "ContentType": "application/pdf",
+            },
+            "raw": {},
+        },
+    )
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel, conversation, message = _seed(db, with_event=False)
+        message.message_type = "file"
+        message.content = "<msg/>"
+        attachment = create_wechat_media_attachment(
+            db,
+            channel=channel,
+            raw_event_id=None,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            attachment_type="file",
+            metadata={"to_wxid": "123@chatroom", "local_message_id": 1, "server_message_id": 2},
+            provider="wechat_gugatool",
+        )
+        db.flush()
+
+        result = inbound_media.download_wechat_media_attachment(db, attachment=attachment, channel=channel)
+
+        assert result["storage_path"].endswith(".pdf")
+        assert attachment.mime_type == "application/pdf"
+        meta = json.loads(attachment.metadata_json)
+        assert meta["file_name"] == "季度报告.pdf"
+        assert meta["file_ext"] == "pdf"

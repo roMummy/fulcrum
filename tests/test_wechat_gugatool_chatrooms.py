@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -103,6 +105,46 @@ def test_second_message_does_not_duplicate_roster(monkeypatch, session_factory) 
         assert result["chatroom_created"] is False
         assert result["member_created"] == 0
         assert db.query(ChatroomMember).count() == 2
+
+
+def test_plain_message_keeps_roster_avatar_and_remark(monkeypatch, session_factory) -> None:
+    """普通发言没有头像资料时,不能清掉名册已同步的头像和备注。"""
+
+    roster = {
+        "title": "群",
+        "members": {
+            "wxid_a": {
+                "wxid": "wxid_a",
+                "name": "老王",
+                "display_name": "老王",
+                "avatar_url": "https://img.test/a.jpg",
+                "alias": "laowang",
+                "remark": "备注",
+            },
+        },
+    }
+    monkeypatch.setattr(wechat_gugatool_chatrooms, "cached_group", lambda *args: roster)
+
+    with tenant_scope(7), open_tenant_session(session_factory) as db:
+        channel = _channel(db)
+        sync_chatroom(db, channel, _normalized())
+        db.commit()
+        member = db.query(ChatroomMember).filter_by(member_external_id="wxid_a").one()
+        assert json.loads(member.extra_json)["avatar_url"] == "https://img.test/a.jpg"
+
+        # 后续普通消息没有 member_profile,不能把名册资料写成 None。
+        sync_chatroom(db, channel, {
+            "event_key": "evt:plain",
+            "conversation": {"external_id": "1@chatroom", "chat_type": "group", "title": "群"},
+            "message": {"sender_id": "wxid_a", "message_type": "text", "sender_name": "老王"},
+            "details": {"create_time": 1794362360, "member_profile": None},
+        })
+        db.commit()
+        db.refresh(member)
+        extra = json.loads(member.extra_json)
+        assert extra["avatar_url"] == "https://img.test/a.jpg"
+        assert extra["alias"] == "laowang"
+        assert extra["remark"] == "备注"
 
 
 def test_chatroom_name_prefers_roster_over_technical_id() -> None:

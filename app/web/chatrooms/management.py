@@ -102,11 +102,19 @@ async def backfill_chatroom_invitations_action(request: Request, channel_id: int
         room = db.get(Chatroom, chatroom_id)
         if not room or room.channel_id != channel.id:
             raise HTTPException(status_code=404, detail="Chatroom not found")
-        report = backfill_chatroom_invitations(db, channel, room)
+        if channel.channel_type == "wechat_gugatool":
+            # 咕嘎的历史系统消息正文只有占位,原始 XML 在 raw_webhook_events;
+            # 回查逻辑放在渠道适配器里,共享服务保持原样。
+            from app.services.channel_adapters.wechat_gugatool import backfill_wechat_gugatool_invitations
+
+            report = backfill_wechat_gugatool_invitations(db, channel, room)
+        else:
+            report = backfill_chatroom_invitations(db, channel, room)
         db.commit()
-        message = f"已检查本群 {report['checked']} 条系统消息，补充 {report['updated']} 条邀请关系。"
+        source_label = "入群系统事件" if channel.channel_type == "wechat_gugatool" else "系统消息"
+        message = f"已检查本群 {report['checked']} 条{source_label}，补充 {report['updated']} 条邀请关系。"
         if report["limited"]:
-            message += "本次检查最近 2000 条系统消息。"
+            message += f"本次检查最近 2000 条{source_label}。"
         record_audit(db, f"channel.{channel.channel_type}.chatroom.invitations.backfill", "chatroom", room.id, message)
         return _completed_operation_response(request, message, f"/channels/{channel_id}/chatrooms/{chatroom_id}?tab=members")
     finally:

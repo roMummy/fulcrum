@@ -28,11 +28,12 @@ from html import escape, unescape
 from typing import Any
 from urllib import parse as urlparse
 from urllib.error import HTTPError, URLError
+from xml.etree import ElementTree
 
 from app.core.logging import get_logger
 from app.models.entities import Channel, Conversation
 
-from app.services.message_view import parse_quote_payload, recall_info
+from app.services.message_view import parse_quote_payload, recall_info, strip_sender
 from app.services.safe_fetch import UnsafeUrlError, open_public_url
 
 from .base import BaseChannelAdapter
@@ -64,6 +65,66 @@ MSG_TYPE_MAP = {
     10002: "system",
 }
 APP_MESSAGE_TYPE = "app"
+
+# appmsg(49) 子类型:同一个 messageType 下混着链接、文件、转账、视频号等十几种内容,
+# 归一化时按子类型生成可读正文,并把结构化摘要放进 details.appmsg 供插件和 AI 使用。
+APPMSG_SUBTYPE_KIND = {
+    3: "link",
+    4: "link",
+    5: "link",
+    6: "file",
+    8: "emoji",
+    19: "chat_record",
+    33: "mini_program",
+    36: "mini_program",
+    51: "video_channel",
+    57: "quote",
+    62: "pat",
+    74: "file",
+    87: "group_announcement",
+    2000: "transfer",
+    2001: "red_packet",
+}
+APPMSG_KIND_LABELS = {
+    "link": "链接",
+    "file": "文件",
+    "emoji": "表情",
+    "chat_record": "聊天记录",
+    "mini_program": "小程序",
+    "video_channel": "视频号",
+    "quote": "引用",
+    "pat": "拍一拍",
+    "transfer": "转账",
+    "red_packet": "红包",
+    "group_announcement": "群公告",
+}
+APPMSG_MAX_XML_CHARS = 60_000
+APPMSG_MAX_TEXT_CHARS = 500
+APPMSG_MAX_RECORD_CHARS = 60_000
+# 这些子类型能直接复用消息中心现有的卡片渲染(链接/聊天记录/小程序/通知),
+# 正文写成紧凑 XML,不再只存一行标题。
+APPMSG_CARD_KINDS = {
+    "link",
+    "chat_record",
+    "mini_program",
+    "video_channel",
+    "transfer",
+    "red_packet",
+    "group_announcement",
+}
+# appmsg 子类型 -> 统一 message_type。文件单独映射为 file,引用保持 text,
+# 没有映射的仍然回退 app。
+APPMSG_MESSAGE_TYPES = {
+    "link": "link",
+    "emoji": "emoji",
+    "chat_record": "merged_records",
+    "mini_program": "mini_program",
+    "video_channel": "video_channel",
+    "transfer": "transfer",
+    "red_packet": "red_packet",
+    "pat": "pat",
+    "group_announcement": "group_announcement",
+}
 
 # 媒体类消息在会话列表里只展示中文占位，原始 XML/JSON 保留在 details 中。
 MEDIA_CONTENT_LABELS = {
@@ -199,9 +260,10 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         to_wxid: str,
         local_id: int | None = None,
         msg_svr_id: int | None = None,
+        upload_url: str | None = None,
         timeout: float = MEDIA_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
-        """通过 Agent 命令让手机回传媒体 Base64。"""
+        """通过 Agent 命令让手机回传媒体;新版本可直接上传到 upload_url。"""
 
         if not (local_id or msg_svr_id):
             raise RuntimeError("缺少本地或服务端消息 ID，无法下载媒体")
@@ -213,9 +275,19 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             params["local_id"] = int(local_id)
         if msg_svr_id:
             params["msg_svr_id"] = int(msg_svr_id)
+        if upload_url:
+            # 手机优先把文件 multipart 直传平台,避免几十 MB 的 Base64 进命令队列。
+            params["upload_url"] = str(upload_url).strip()
         from app.services.guga_agent.bridge import call_command
 
-        response = call_command(channel, "download_media", params, timeout=timeout + 30, priority=4)
+        try:
+            response = call_command(channel, "download_media", params, timeout=timeout + 30, priority=4)
+        except RuntimeError as exc:
+            # 手机端目前只给图片/语音/视频提供了 download_media 选择器;
+            # appmsg(49) 文件会返回这个协议错误,翻译成用户能理解的结论。
+            if "download_selector_unavailable" in str(exc):
+                raise RuntimeError("手机端暂不支持下载这类文件，请升级咕嘎助手后重试") from exc
+            raise
         data = response.get("Data") if isinstance(response.get("Data"), dict) else {}
         return {"ok": True, "data": data, "raw": response}
 
@@ -551,10 +623,22 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         raw_type = self._coerce_int(item.get("messageType"))
         message_type = MSG_TYPE_MAP.get(raw_type, APP_MESSAGE_TYPE)
         raw_content = str(item.get("content") or "")
-        content, content_xml = self._resolve_content(message_type, raw_content)
+        appmsg = _parse_appmsg_payload(raw_content) if raw_type == 49 else None
+        if appmsg is not None:
+            appmsg_kind = str(appmsg.get("kind") or "")
+            if appmsg_kind == "file":
+                # 文件复用现有文件消息契约:消息中心显示文件卡片,点击可按需从手机下载。
+                message_type = "file"
+            elif appmsg_kind != "quote":
+                # 引用仍然按 text 入库,由下面的 quote_payload 逻辑还原引用卡片。
+                message_type = APPMSG_MESSAGE_TYPES.get(appmsg_kind, message_type)
+        content, content_xml = self._resolve_content(message_type, raw_content, appmsg=appmsg)
         revoke_summary = str(item.get("revokeSummary") or "").strip()
 
         sender_id = (real_chat_user or from_user) if is_group else (from_user or real_chat_user)
+        if is_group and not real_chat_user and "<sysmsg" in raw_content:
+            # 群系统消息的 fromUser 是群 id,没有真实发送者;不能把群 id 写成群成员。
+            sender_id = ""
         sender_name = (
             str(item.get("memberDisplayName") or "").strip()
             or str(item.get("memberNickName") or "").strip()
@@ -577,6 +661,26 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             event_type = "revoke"
             message_type = "system"
             content = str(recalled.get("text") or "一条消息已被撤回")
+
+        # 手机端把入群/退群/改群昵称作为结构化 eventName 上报;
+        # 入群/被移出等没有 eventName 的,再从 10002 系统消息 XML 组装。
+        structured_change = _build_guga_member_change(item)
+        member_change = structured_change
+        if member_change is None and "<sysmsg" in raw_content:
+            member_change = _build_wechat_sysmsg_member_change(raw_content)
+            if member_change is not None:
+                # 去掉 "群id:\n" 前缀,共享的邀请关系解析器只认纯 <sysmsg>。
+                content_xml = _extract_sysmsg_xml(raw_content)
+        if member_change is not None:
+            if structured_change is not None:
+                message_type = _MEMBER_CHANGE_MESSAGE_TYPES.get(
+                    str(member_change.get("change_type") or ""), message_type
+                )
+            content = (
+                str(member_change.get("summary") or "").strip()
+                or str(item.get("content") or "").strip()
+                or content
+            )
 
         external_message_id = str(item.get("id") or "").strip() or self._build_message_key(item)
         local_message_id = self._coerce_int(item.get("localMessageID"))
@@ -616,6 +720,21 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
             # 群里 @ 自己（或 @所有人）时置位，插件与 AI 调度据此判断是否被点名。
             "mentioned_self": self._is_self_mentioned(message_source, to_user),
         }
+        if member_change is not None:
+            details["member_change"] = member_change
+            details["member_profile"] = {"nickname": str(item.get("memberNickName") or "").strip()}
+        if appmsg is not None:
+            # 链接/文件/转账等 appmsg 的结构化摘要;正文只保留上面的可读占位。
+            details["appmsg"] = appmsg
+            if str(appmsg.get("kind") or "") == "pat":
+                pat = appmsg.get("pat") if isinstance(appmsg.get("pat"), dict) else {}
+                patted_id = str(pat.get("patted_user") or "").strip()
+                details["pat"] = {
+                    "from_id": str(pat.get("from_user") or "").strip(),
+                    "patted_id": patted_id,
+                    # 群/私聊事件的 toUser 都是机器人自己;判断不了就不猜。
+                    "patted_is_me": (patted_id == to_user) if (to_user and patted_id) else None,
+                }
         if recalled is not None:
             # 撤回是消息状态更新,不交给插件和 AI 当成新发言处理。
             details["skip_plugin_dispatch"] = True
@@ -630,6 +749,23 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
                 "local_message_id": local_message_id or None,
                 "server_message_id": server_message_id or None,
                 "message_type": raw_type,
+            }
+        elif (
+            appmsg is not None
+            and str(appmsg.get("kind") or "") == "file"
+            and (local_message_id or server_message_id)
+        ):
+            # 文件是 appmsg(49);这里显式声明附件元数据,消息中心按现有文件契约按需下载。
+            attachment = appmsg.get("attachment") if isinstance(appmsg.get("attachment"), dict) else {}
+            details["media"] = {
+                "to_wxid": conversation_id,
+                "local_message_id": local_message_id or None,
+                "server_message_id": server_message_id or None,
+                "message_type": raw_type,
+                "attachment_type": "file",
+                "file_name": appmsg.get("title") or None,
+                "file_ext": attachment.get("file_ext") or None,
+                "file_size": attachment.get("file_size") or None,
             }
         return {
             "adapter_type": self.adapter_type,
@@ -654,18 +790,36 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
 
     # ---------------------------------------------------------------- 内部工具
 
-    def _resolve_content(self, message_type: str, raw_content: str) -> tuple[str, str | None]:
+    def _resolve_content(
+        self,
+        message_type: str,
+        raw_content: str,
+        *,
+        appmsg: dict[str, Any] | None = None,
+    ) -> tuple[str, str | None]:
         """媒体消息正文是整段 XML，列表里只展示中文占位，原文放进 details。"""
 
         label = MEDIA_CONTENT_LABELS.get(message_type)
         if label:
             return label, raw_content or None
+        if message_type == "file" and appmsg is not None:
+            # 文件/音频保留原始 appmsg XML,消息中心按现有文件卡片解析标题和大小。
+            return raw_content, raw_content or None
         if message_type == "system":
             # 撤回在微信里是 10002 系统消息，正文同样是 XML，这里只保留可读结论。
             if "revokemsg" in (raw_content or ""):
                 return "对方撤回了一条消息", raw_content or None
             return "[系统消息]", raw_content or None
+        if appmsg is not None:
+            kind = str(appmsg.get("kind") or "")
+            if kind in APPMSG_CARD_KINDS:
+                # 链接/聊天记录/小程序等写成紧凑 XML,消息中心直接渲染卡片。
+                return _appmsg_display_xml(appmsg), raw_content or None
+            if kind in {"emoji", "pat"}:
+                return _appmsg_content(appmsg), raw_content or None
         if message_type == APP_MESSAGE_TYPE:
+            if appmsg is not None:
+                return _appmsg_content(appmsg), raw_content or None
             return self._extract_app_title(raw_content) or "[链接/文件]", raw_content or None
         return raw_content, None
 
@@ -839,3 +993,457 @@ class WechatGugatoolAdapter(BaseChannelAdapter):
         if local_id or server_id:
             return f"ios:{local_id}:{server_id}"
         return ""
+
+
+_MEMBER_EVENT_TYPES = {
+    "group_member_join": "join",
+    "group_member_leave": "left",
+    "group_member_nickname_change": "rename",
+}
+
+_MEMBER_CHANGE_MESSAGE_TYPES = {
+    "join": "group_member_join",
+    "left": "group_member_leave",
+    "removed": "group_member_leave",
+    "rename": "group_member_nickname_change",
+}
+
+
+def _parse_appmsg_payload(raw_content: str) -> dict[str, Any] | None:
+    """解析 appmsg(49) 的公开 XML 字段，未知子类型只保留通用标题。
+
+    手机上报的微信 XML 可能带 ``wxid:\\n`` 前缀，也可能整段再转义一层；
+    这里逐层反转义后解析，任何一步失败都返回 None，不影响消息正常入库。
+    """
+
+    root = _appmsg_root(raw_content)
+    if root is None:
+        return None
+    appmsg = root if root.tag == "appmsg" else root.find(".//appmsg")
+    if appmsg is None:
+        return None
+    subtype = _int_value(_node_text(appmsg, "type"))
+    kind = APPMSG_SUBTYPE_KIND.get(subtype, "app")
+    payload: dict[str, Any] = {"type": subtype, "kind": kind}
+    for key, path in (
+        ("title", "title"),
+        ("description", "des"),
+        ("url", "url"),
+        ("thumb_url", "thumburl"),
+        ("source", "sourcedisplayname"),
+        ("app_name", ".//appinfo/appname"),
+    ):
+        value = _node_text(root if path.startswith(".//") else appmsg, path)
+        if value:
+            payload[key] = value
+    app_id = str(appmsg.get("appid") or "").strip()
+    if app_id:
+        payload["app_id"] = app_id
+
+    attachment = _appmsg_attachment(appmsg)
+    if attachment:
+        payload["attachment"] = attachment
+    if kind == "chat_record":
+        record = _appmsg_chat_record(appmsg)
+        if record:
+            payload["chat_record"] = record
+    elif kind == "video_channel":
+        feed = _appmsg_video_channel(appmsg)
+        if feed:
+            payload["video_channel"] = feed
+    elif kind == "quote":
+        quote = _appmsg_quote(appmsg)
+        if quote:
+            payload["quote"] = quote
+    elif kind == "pat":
+        pat = _appmsg_pat(appmsg)
+        if pat:
+            payload["pat"] = pat
+    elif kind in {"transfer", "red_packet"}:
+        payment = _appmsg_payment(appmsg)
+        if payment:
+            payload["payment"] = payment
+    elif kind == "mini_program":
+        mini_program = _appmsg_mini_program(appmsg)
+        if mini_program:
+            payload["mini_program"] = mini_program
+    elif kind == "group_announcement":
+        announcement = _node_text(appmsg, "textannouncement", 2000) or str(payload.get("description") or "")
+        if announcement:
+            payload["announcement"] = announcement
+    return payload
+
+
+def parse_appmsg_details(raw_content: str) -> dict[str, Any] | None:
+    """解析 appmsg 原始 XML;媒体落盘等跨模块场景复用渠道解析结果。"""
+
+    return _parse_appmsg_payload(raw_content)
+
+
+def _appmsg_root(raw_content: str) -> ElementTree.Element | None:
+    """去掉发送人前缀并逐层反转义，返回包含 appmsg 的 XML 根节点。"""
+
+    current = strip_sender(str(raw_content or "").strip())
+    for _ in range(3):
+        root = _parse_xml(current)
+        if root is not None:
+            return root
+        unescaped = unescape(current)
+        if unescaped == current:
+            return None
+        current = strip_sender(unescaped)
+    return None
+
+
+def _parse_xml(body: str) -> ElementTree.Element | None:
+    text = str(body or "").strip()
+    if not text.startswith("<") or len(text) > APPMSG_MAX_XML_CHARS:
+        return None
+    try:
+        return ElementTree.fromstring(text)
+    except (ElementTree.ParseError, ValueError):
+        return None
+
+
+def _node_text(node: ElementTree.Element | None, path: str, limit: int = APPMSG_MAX_TEXT_CHARS) -> str:
+    if node is None:
+        return ""
+    target = node.find(path)
+    if target is None:
+        return ""
+    text = str(target.text or "").strip()
+    return text[:limit] if text else ""
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _appmsg_attachment(appmsg: ElementTree.Element) -> dict[str, Any]:
+    node = appmsg.find("appattach")
+    if node is None:
+        return {}
+    info: dict[str, Any] = {}
+    for key, path in (
+        ("file_ext", "fileext"),
+        ("attach_id", "attachid"),
+        ("emoticon_md5", "emoticonmd5"),
+        ("cdn_thumb_url", "cdnthumburl"),
+    ):
+        value = _node_text(node, path, 1000)
+        if value:
+            info[key] = value
+    size = _int_value(_node_text(node, "totallen"))
+    if size:
+        info["file_size"] = size
+    return info
+
+
+def _appmsg_chat_record(appmsg: ElementTree.Element) -> dict[str, Any]:
+    """聊天记录只保留标题、摘要和条数；完整的 recorditem 可能几十 KB，不重复入库。"""
+
+    raw = _node_text(appmsg, "recorditem", APPMSG_MAX_RECORD_CHARS)
+    if not raw:
+        return {}
+    root = _parse_xml(raw)
+    if root is None:
+        unescaped = unescape(raw)
+        root = _parse_xml(unescaped) if unescaped != raw else None
+    if root is None:
+        return {}
+    data_list = root.find(".//datalist")
+    info: dict[str, Any] = {
+        "title": _node_text(root, "title", 200),
+        "description": _node_text(root, "desc", 1000),
+    }
+    count = _int_value(data_list.get("count") if data_list is not None else "")
+    if count:
+        info["item_count"] = count
+    return {key: value for key, value in info.items() if value}
+
+
+def _appmsg_video_channel(appmsg: ElementTree.Element) -> dict[str, Any]:
+    feed = appmsg.find("finderFeed")
+    if feed is None:
+        return {}
+    info: dict[str, Any] = {
+        "object_id": _node_text(feed, "objectId", 100),
+        "nickname": _node_text(feed, "nickname", 200),
+        "description": _node_text(feed, "desc", 1000),
+        "avatar_url": _node_text(feed, "avatar", 1000),
+        "feed_type": _node_text(feed, "feedType", 20),
+    }
+    count = _int_value(_node_text(feed, "mediaCount"))
+    if count:
+        info["media_count"] = count
+    return {key: value for key, value in info.items() if value}
+
+
+def _appmsg_quote(appmsg: ElementTree.Element) -> dict[str, Any]:
+    refer = appmsg.find("refermsg")
+    if refer is None:
+        return {}
+    return {
+        "ref_type": _int_value(_node_text(refer, "type")),
+        "server_id": _node_text(refer, "svrid", 100),
+        "display_name": _node_text(refer, "displayname", 200),
+        "content": _node_text(refer, "content", 1000),
+    }
+
+
+def _appmsg_pat(appmsg: ElementTree.Element) -> dict[str, Any]:
+    pat = appmsg.find("patMsg")
+    record = pat.find(".//record") if pat is not None else None
+    if record is None:
+        return {}
+    return {
+        "template": _node_text(record, "templete", 500),
+        "from_user": _node_text(record, "fromUser", 100),
+        "patted_user": _node_text(record, "pattedUser", 100),
+        "chat_user": _node_text(pat, "chatUser", 100),
+    }
+
+
+def _appmsg_payment(appmsg: ElementTree.Element) -> dict[str, Any]:
+    pay = appmsg.find("wcpayinfo")
+    if pay is None:
+        return {}
+    info = {
+        "subtype": _node_text(pay, "paysubtype", 20),
+        "amount": _node_text(pay, "feedesc", 100),
+        "memo": _node_text(pay, "pay_memo", 200),
+        "transaction_id": _node_text(pay, "transcationid", 100),
+        "transfer_id": _node_text(pay, "transferid", 100),
+    }
+    return {key: value for key, value in info.items() if value}
+
+
+def _appmsg_mini_program(appmsg: ElementTree.Element) -> dict[str, Any]:
+    weapp = appmsg.find("weappinfo")
+    if weapp is None:
+        return {}
+    info = {
+        "app_id": _node_text(weapp, "appid", 100),
+        "page_path": _node_text(weapp, "pagepath", 500),
+        "username": _node_text(weapp, "username", 200),
+        "service_type": _node_text(weapp, "appservicetype", 20),
+    }
+    return {key: value for key, value in info.items() if value}
+
+
+def _appmsg_display_xml(payload: dict[str, Any]) -> str:
+    """生成只含展示字段的紧凑 appmsg XML。
+
+    消息中心已有按 XML 渲染链接/聊天记录/小程序/通知卡片的能力;这里把
+    咕嘎上报的原始字段(尤其聊天记录里几十 KB 的 recorditem)裁剪后再入库,
+    既不改公共解析器,也避免消息正文过大。
+    """
+
+    kind = str(payload.get("kind") or "")
+    subtype = _int_value(payload.get("type")) or 5
+    title = str(payload.get("title") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    url = str(payload.get("url") or "").strip()
+    source = str(payload.get("source") or payload.get("app_name") or "").strip()
+    if kind == "video_channel":
+        feed = payload.get("video_channel") if isinstance(payload.get("video_channel"), dict) else {}
+        title = str(feed.get("nickname") or title or "视频号").strip()
+        description = str(feed.get("description") or description).strip()
+        source = "视频号"
+    elif kind == "group_announcement":
+        title = "群公告"
+        description = str(payload.get("announcement") or description).strip()
+        source = "群公告"
+    elif kind == "chat_record":
+        record = payload.get("chat_record") if isinstance(payload.get("chat_record"), dict) else {}
+        description = str(record.get("description") or description).strip()
+    elif kind in {"transfer", "red_packet"}:
+        payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else {}
+        description = str(payment.get("amount") or description).strip()
+    if not (title or description or url):
+        return ""
+    # 只有普通链接的 url 是可点击的目标;视频号/转账等卡片里的 url 常是微信升级提示,
+    # 原样保留会把卡片链到 support.weixin.qq.com。
+    if kind != "link":
+        url = ""
+    parts = ["<msg><appmsg>"]
+    if title:
+        parts.append(f"<title>{escape(title[:200])}</title>")
+    if description:
+        parts.append(f"<des>{escape(description[:500])}</des>")
+    parts.append(f"<type>{subtype}</type>")
+    if url:
+        parts.append(f"<url>{escape(url[:1000])}</url>")
+    if source:
+        parts.append(f"<sourcedisplayname>{escape(source[:100])}</sourcedisplayname>")
+    parts.append("</appmsg></msg>")
+    return "".join(parts)
+
+
+def _appmsg_content(payload: dict[str, Any]) -> str:
+    """按子类型生成会话列表和插件都能直接读取的中文占位正文。"""
+
+    kind = str(payload.get("kind") or "")
+    title = str(payload.get("title") or "").strip()[:200]
+    if kind in {"link", "file", "chat_record", "mini_program", "group_announcement"}:
+        label = APPMSG_KIND_LABELS[kind]
+        return f"[{label}] {title}" if title else f"[{label}]"
+    if kind == "emoji":
+        return f"[{APPMSG_KIND_LABELS[kind]}]"
+    if kind == "video_channel":
+        feed = payload.get("video_channel") if isinstance(payload.get("video_channel"), dict) else {}
+        label = str(feed.get("description") or feed.get("nickname") or "").strip()[:200]
+        return f"[视频号] {label}" if label else "[视频号]"
+    if kind == "quote":
+        return title or "[引用消息]"
+    if kind == "pat":
+        return "[拍一拍]"
+    if kind in {"transfer", "red_packet"}:
+        payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else {}
+        amount = str(payment.get("amount") or "").strip()
+        label = APPMSG_KIND_LABELS[kind]
+        return f"[{label}] {amount}" if amount else f"[{label}]"
+    return title or "[链接/文件]"
+
+
+def _extract_sysmsg_xml(content: str) -> str:
+    """截出正文里的 <sysmsg> 片段;手机端可能在前面带 "群id:\\n"。"""
+
+    raw = str(content or "")
+    start = raw.find("<sysmsg")
+    end = raw.rfind("</sysmsg>")
+    if start < 0 or end <= start:
+        return ""
+    return raw[start:end + len("</sysmsg>")]
+
+
+def _build_wechat_sysmsg_member_change(content: str) -> dict[str, Any] | None:
+    """从 10002 系统消息 XML 组装成员事件;复用群功能的微信 XML 解析。"""
+
+    xml = _extract_sysmsg_xml(content)
+    if not xml:
+        return None
+    try:
+        from app.services.group_features.member_change import parse_member_change
+    except Exception:  # noqa: BLE001 - 解析依赖不可用时按普通系统消息处理
+        return None
+    parsed = parse_member_change({"message": {"content": xml, "message_type": "system"}, "details": {}})
+    if not parsed:
+        return None
+    members = parsed.get("members") or []
+    names = "、".join(
+        str(item.get("display_name") or item.get("external_id") or "").strip()
+        for item in members
+        if isinstance(item, dict)
+    )
+    change_type = str(parsed.get("change_type") or "")
+    summary = {
+        "join": f"{names} 加入了群聊",
+        "left": f"{names} 退出了群聊",
+        "removed": f"{names} 被移出了群聊",
+    }.get(change_type, "")
+    return {**parsed, "summary": summary} if summary else parsed
+
+
+def _build_guga_member_change(item: dict[str, Any]) -> dict[str, Any] | None:
+    """把手机端群成员 eventName 转成群功能通用的 member_change 结构。"""
+
+    event_name = str(item.get("eventName") or item.get("messageSubType") or "").strip().lower()
+    change_type = _MEMBER_EVENT_TYPES.get(event_name)
+    member_id = str(
+        item.get("memberID") or item.get("memberUserName") or item.get("realChatUser") or ""
+    ).strip()
+    if not change_type or not member_id:
+        return None
+
+    old_name = str(item.get("oldRoomNickName") or "").strip()
+    new_name = str(item.get("newRoomNickName") or "").strip()
+    name = (
+        new_name
+        if change_type == "rename"
+        else str(item.get("memberDisplayName") or "").strip()
+        or str(item.get("roomNickName") or "").strip()
+        or str(item.get("memberNickName") or "").strip()
+    )
+    name = name or str(item.get("memberDisplayName") or item.get("roomNickName") or member_id).strip()
+
+    result: dict[str, Any] = {
+        "change_type": change_type,
+        "members": [{"external_id": member_id, "display_name": name}],
+    }
+    after_count = item.get("snapshotAfterCount")
+    if isinstance(after_count, int) and not isinstance(after_count, bool) and after_count >= 0:
+        result["after_count"] = after_count
+    if change_type == "rename":
+        if not new_name:
+            return None
+        result["new_room_nick_name"] = new_name
+        result["old_room_nick_name"] = old_name
+        result["summary"] = f"{old_name or name} 将群昵称改为 {new_name}"
+    elif change_type == "join":
+        result["summary"] = f"{name} 加入了群聊"
+    else:
+        result["summary"] = f"{name} 退出了群聊"
+    return result
+
+
+def backfill_wechat_gugatool_invitations(db, channel, room) -> dict[str, Any]:
+    """从原始事件回查本群入群系统消息,补记邀请关系。
+
+    咕嘎消息表的系统消息正文只有占位/摘要,原始 XML 仍在 raw_webhook_events,
+    因此这里按群 ID 和"加入了群聊"过滤原始事件,再交给统一入口解析。
+    """
+
+    from sqlalchemy import desc, select
+
+    from app.core.time import ensure_shanghai_datetime
+    from app.models.entities import Conversation, RawWebhookEvent
+    from app.services.chatroom_invitations import HISTORY_LIMIT, record_invitation_event
+
+    room_id = str(room.external_id or "").strip()
+    if not room_id:
+        return {"checked": 0, "updated": 0, "limited": False}
+    conversation = db.scalar(
+        select(Conversation).where(
+            Conversation.tenant_id == int(channel.tenant_id),
+            Conversation.channel_id == int(channel.id),
+            Conversation.bot_id == int(channel.bot_id),
+            Conversation.external_id == room_id,
+            Conversation.chat_type == "group",
+        )
+    )
+    if conversation is None:
+        return {"checked": 0, "updated": 0, "limited": False}
+    rows = db.scalars(
+        select(RawWebhookEvent).where(
+            RawWebhookEvent.tenant_id == int(channel.tenant_id),
+            RawWebhookEvent.channel_id == int(channel.id),
+            RawWebhookEvent.payload_json.like(f"%{room_id}%"),
+            RawWebhookEvent.payload_json.like("%加入了群聊%"),
+        ).order_by(desc(RawWebhookEvent.id)).limit(HISTORY_LIMIT + 1)
+    ).all()
+    adapter = WechatGugatoolAdapter()
+    updated = 0
+    for raw in reversed(rows[:HISTORY_LIMIT]):
+        try:
+            payload = json.loads(raw.payload_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        normalized = adapter.normalize_inbound_payload(channel, payload)
+        updated += record_invitation_event(
+            db,
+            channel,
+            conversation,
+            normalized,
+            recorded_at=ensure_shanghai_datetime(raw.created_at),
+        )
+    return {
+        "checked": min(len(rows), HISTORY_LIMIT),
+        "updated": updated,
+        "limited": len(rows) > HISTORY_LIMIT,
+    }
