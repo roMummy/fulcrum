@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.core.time import now_shanghai
 from app.models.entities import Channel, Conversation
+from app.services import message_view
 from app.services.account_connections.registry import get_account_connector
 from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+from app.services.chatroom_invitations import parse_system_invitation
+from app.services.group_features.member_change import parse_member_change
 
 
 def _channel() -> Channel:
@@ -64,6 +69,129 @@ def test_group_message_uses_room_as_conversation_and_member_as_sender() -> None:
     assert normalized["message"]["content"] == "组里好"
     assert normalized["event_key"] == "event-1"
     assert normalized["details"]["self_wxid"] == "wxid_self"
+
+
+def test_member_nickname_change_builds_structured_member_event() -> None:
+    """手机端的改群昵称事件要转成群功能可消费的 member_change。"""
+
+    item = {
+        "id": "rename-1",
+        "kind": "incoming",
+        "eventName": "group_member_nickname_change",
+        "messageSubType": "group_member_nickname_change",
+        "fromUser": "54383334897@chatroom",
+        "realChatUser": "wxid_member",
+        "memberID": "wxid_member",
+        "memberDisplayName": "1",
+        "memberNickName": "只为遇见你",
+        "roomNickName": "1",
+        "oldRoomNickName": "只为遇见你",
+        "newRoomNickName": "1",
+        "snapshotBeforeCount": 2,
+        "snapshotAfterCount": 2,
+        "content": "只为遇见你 -> 1",
+        "messageType": 10000,
+    }
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), item)
+
+    assert normalized["message"]["message_type"] == "group_member_nickname_change"
+    assert normalized["details"]["member_change"] == {
+        "change_type": "rename",
+        "members": [{"external_id": "wxid_member", "display_name": "1"}],
+        "after_count": 2,
+        "new_room_nick_name": "1",
+        "old_room_nick_name": "只为遇见你",
+        "summary": "只为遇见你 将群昵称改为 1",
+    }
+    parsed = parse_member_change(normalized)
+    assert parsed["change_type"] == "rename"
+    assert parsed["new_name"] == "1"
+    assert parsed["old_name"] == "只为遇见你"
+
+
+def test_member_leave_builds_structured_member_event() -> None:
+    """退群事件同样走结构化 member_change,不再依赖系统消息 XML。"""
+
+    item = {
+        "id": "leave-1",
+        "kind": "incoming",
+        "eventName": "group_member_leave",
+        "messageSubType": "group_member_leave",
+        "fromUser": "27602422280@chatroom",
+        "realChatUser": "wxid_leaver",
+        "memberID": "wxid_leaver",
+        "memberDisplayName": "区区糕",
+        "memberNickName": "tan 90",
+        "roomNickName": "区区糕",
+        "oldRoomNickName": "区区糕",
+        "snapshotBeforeCount": 39,
+        "snapshotAfterCount": 38,
+        "content": "区区糕",
+        "messageType": 10000,
+    }
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), item)
+
+    assert normalized["message"]["message_type"] == "group_member_leave"
+    assert normalized["details"]["member_change"]["change_type"] == "left"
+    assert normalized["details"]["member_change"]["after_count"] == 38
+    parsed = parse_member_change(normalized)
+    assert parsed["change_type"] == "left"
+    assert parsed["members"] == [{"external_id": "wxid_leaver", "display_name": "区区糕"}]
+
+
+def test_member_join_system_xml_builds_member_event() -> None:
+    """入群通知在咕嘎里是 10002 系统消息 XML,要从 details.content_xml 解析出来。"""
+
+    content = """54383334897@chatroom:
+<sysmsg type="sysmsgtemplate">
+	<sysmsgtemplate>
+		<content_template type="tmpl_type_profile">
+			<template><![CDATA["$username$"邀请"$names$"加入了群聊]]></template>
+			<link_list>
+				<link name="username" type="link_profile">
+					<memberlist><member><username><![CDATA[wxid_inviter]]></username><nickname><![CDATA[主人]]></nickname></member></memberlist>
+				</link>
+				<link name="names" type="link_profile">
+					<memberlist><member><username><![CDATA[wxid_joiner]]></username><nickname><![CDATA[Scorpio9_L]]></nickname></member></memberlist>
+				</link>
+			</link_list>
+		</content_template>
+	</sysmsgtemplate>
+</sysmsg>
+"""
+    item = {
+        "id": "join-1",
+        "kind": "incoming",
+        "fromUser": "54383334897@chatroom",
+        "toUser": "wxid_self",
+        "realChatUser": "",
+        "memberID": "",
+        "roomID": "",
+        "content": content,
+        "messageType": 10002,
+    }
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), item)
+
+    # 群系统消息不能把群 id 当成发送者写进群成员表。
+    assert normalized["message"]["sender_id"] is None
+    # 入群 XML 保持 system 类型,由共享邀请解析器消费归一化后的 XML。
+    assert normalized["message"]["message_type"] == "system"
+    assert normalized["details"]["content_xml"].startswith("<sysmsg")
+    assert normalized["details"]["content_xml"].endswith("</sysmsg>")
+    assert normalized["details"]["member_change"] == {
+        "change_type": "join",
+        "members": [{"external_id": "wxid_joiner", "display_name": "Scorpio9_L"}],
+        "summary": "Scorpio9_L 加入了群聊",
+    }
+    invitation = parse_system_invitation(normalized["details"]["content_xml"])
+    assert invitation["inviter_external_id"] == "wxid_inviter"
+    assert invitation["member_ids"] == ["wxid_joiner"]
+    parsed = parse_member_change(normalized)
+    assert parsed["change_type"] == "join"
+    assert parsed["members"] == [{"external_id": "wxid_joiner", "display_name": "Scorpio9_L"}]
 
 
 def test_image_message_uses_placeholder_and_keeps_raw_xml() -> None:
@@ -202,6 +330,294 @@ def test_app_message_title_survives_nested_escaping() -> None:
     assert normalized["message"]["content"] == "抖音解析成功"
 
 
+def _appmsg_item(xml: str, *, local_id: int = 0, server_id: int = 0) -> dict:
+    return {
+        "id": "event-appmsg",
+        "fromUser": "49273817233@chatroom",
+        "toUser": "wxid_self",
+        "realChatUser": "wxid_member",
+        "messageType": 49,
+        "content": xml,
+        "localMessageID": local_id,
+        "serverMessageID": server_id,
+    }
+
+
+def test_appmsg_link_exposes_structured_details() -> None:
+    """链接卡片(5):正文带中文标签,URL/来源/缩略图放进 details.appmsg。"""
+
+    xml = (
+        'wxid_member:\n<?xml version="1.0"?>\n<msg><appmsg appid="wx123" sdkver="0">'
+        "<title>拆解小米澎程N90底盘结构和用料</title><des>虎扑汽车区热议</des><type>5</type>"
+        "<url>https://m.hupu.com/bbs-share/644031742.html?share=share&amp;euid=1</url>"
+        "<thumburl>https://example.com/thumb.jpg</thumburl>"
+        "<sourcedisplayname>虎扑App</sourcedisplayname>"
+        "</appmsg><appinfo><appname>虎扑App</appname></appinfo></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), _appmsg_item(xml))
+
+    assert normalized["message"]["message_type"] == "link"
+    # 正文改成紧凑 XML,消息中心用现有解析器直接渲染链接卡片。
+    assert normalized["message"]["content"].startswith("<msg><appmsg>")
+    card = message_view.describe(normalized["message"]["content"], "link")
+    assert (card["kind"], card["title"], card["url"], card["source"]) == (
+        "link",
+        "拆解小米澎程N90底盘结构和用料",
+        "https://m.hupu.com/bbs-share/644031742.html?share=share&euid=1",
+        "虎扑App",
+    )
+    assert card["desc"] == "虎扑汽车区热议"
+    appmsg = normalized["details"]["appmsg"]
+    assert appmsg["type"] == 5
+    assert appmsg["kind"] == "link"
+    assert appmsg["title"] == "拆解小米澎程N90底盘结构和用料"
+    assert appmsg["description"] == "虎扑汽车区热议"
+    assert appmsg["url"] == "https://m.hupu.com/bbs-share/644031742.html?share=share&euid=1"
+    assert appmsg["thumb_url"] == "https://example.com/thumb.jpg"
+    assert appmsg["source"] == "虎扑App"
+    assert appmsg["app_id"] == "wx123"
+    assert appmsg["app_name"] == "虎扑App"
+    assert "media" not in normalized["details"]
+
+
+def test_appmsg_transfer_uses_payment_amount_in_content() -> None:
+    """转账(2000):正文带金额,支付单号等字段结构化保留。"""
+
+    xml = (
+        "<msg><appmsg><title><![CDATA[微信转账]]></title><type>2000</type>"
+        "<wcpayinfo><paysubtype>3</paysubtype><feedesc><![CDATA[￥8.00]]></feedesc>"
+        "<transcationid>tx-1</transcationid><transferid>tr-1</transferid>"
+        "<pay_memo>晚饭</pay_memo></wcpayinfo></appmsg></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), _appmsg_item(xml))
+
+    card = message_view.describe(normalized["message"]["content"], "transfer")
+    assert normalized["message"]["message_type"] == "transfer"
+    assert (card["kind"], card["title"], card["desc"]) == ("notice", "微信转账", "￥8.00")
+    assert normalized["details"]["appmsg"]["kind"] == "transfer"
+    assert normalized["details"]["appmsg"]["payment"] == {
+        "subtype": "3",
+        "amount": "￥8.00",
+        "memo": "晚饭",
+        "transaction_id": "tx-1",
+        "transfer_id": "tr-1",
+    }
+
+
+def test_appmsg_video_channel_extracts_finder_feed() -> None:
+    """视频号(51):标题只显示"当前微信版本不支持",必须用 finderFeed 的文案做正文。"""
+
+    xml = (
+        "<msg><appmsg><title>当前微信版本不支持展示该内容，请升级至最新版本。</title><type>51</type>"
+        "<finderFeed><objectId><![CDATA[15057483877242116331]]></objectId>"
+        "<feedType><![CDATA[4]]></feedType><nickname><![CDATA[和美永宁村]]></nickname>"
+        "<avatar><![CDATA[https://example.com/avatar.jpg]]></avatar>"
+        "<desc><![CDATA[两层方正农房，屋前屋后视野开阔]]></desc>"
+        "<mediaCount><![CDATA[1]]></mediaCount></finderFeed>"
+        "</appmsg></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), _appmsg_item(xml))
+
+    card = message_view.describe(normalized["message"]["content"], "video_channel")
+    assert normalized["message"]["message_type"] == "video_channel"
+    assert (card["kind"], card["title"], card["desc"], card["source"]) == (
+        "link", "和美永宁村", "两层方正农房，屋前屋后视野开阔", "视频号",
+    )
+    feed = normalized["details"]["appmsg"]["video_channel"]
+    assert feed["nickname"] == "和美永宁村"
+    assert feed["object_id"] == "15057483877242116331"
+    assert feed["description"] == "两层方正农房，屋前屋后视野开阔"
+    assert feed["avatar_url"] == "https://example.com/avatar.jpg"
+    assert feed["feed_type"] == "4"
+    assert feed["media_count"] == 1
+
+
+def test_appmsg_chat_record_summarizes_item_count() -> None:
+    """聊天记录(19):只保留标题、摘要和条数,不把几十 KB 的 recorditem 重复入库。"""
+
+    record = (
+        "<recordinfo><title>呱皮的聊天记录</title><desc>呱皮: 女人都在聊些什么</desc>"
+        '<datalist count="21"><dataitem datatype="1"/></datalist></recordinfo>'
+    )
+    xml = (
+        "<msg><appmsg><title>呱皮的聊天记录</title><type>19</type>"
+        f"<recorditem><![CDATA[{record}]]></recorditem></appmsg></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), _appmsg_item(xml))
+
+    card = message_view.describe(normalized["message"]["content"], "merged_records")
+    assert normalized["message"]["message_type"] == "merged_records"
+    assert (card["kind"], card["title"], card["desc"]) == (
+        "merged", "呱皮的聊天记录", "呱皮: 女人都在聊些什么",
+    )
+    assert normalized["details"]["appmsg"]["chat_record"] == {
+        "title": "呱皮的聊天记录",
+        "description": "呱皮: 女人都在聊些什么",
+        "item_count": 21,
+    }
+
+
+def test_appmsg_file_declares_media_for_auto_download() -> None:
+    """文件(6):按现有 file 消息契约入库,消息中心显示文件卡片并按需下载。"""
+
+    xml = (
+        '<msg><appmsg><title>季度报告.pdf</title><type>6</type>'
+        "<appattach><totallen>10240</totallen><fileext>pdf</fileext><attachid>attach-1</attachid></appattach>"
+        "</appmsg></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(
+        _channel(),
+        _appmsg_item(xml, local_id=11, server_id=22),
+    )
+
+    assert normalized["message"]["message_type"] == "file"
+    card = message_view.describe(normalized["message"]["content"], "file")
+    assert (card["kind"], card["media_type"], card["title"], card["meta"]) == (
+        "media", "file", "季度报告.pdf", "PDF · 10.0 KB",
+    )
+    assert normalized["details"]["appmsg"]["kind"] == "file"
+    assert normalized["details"]["appmsg"]["attachment"] == {
+        "file_ext": "pdf",
+        "attach_id": "attach-1",
+        "file_size": 10240,
+    }
+    assert normalized["details"]["media"] == {
+        "to_wxid": "49273817233@chatroom",
+        "local_message_id": 11,
+        "server_message_id": 22,
+        "message_type": 49,
+        "attachment_type": "file",
+        "file_name": "季度报告.pdf",
+        "file_ext": "pdf",
+        "file_size": 10240,
+    }
+
+
+def test_appmsg_type_74_reuses_file_attachment_contract() -> None:
+    """类型 74 也是文件(appmsg),与类型 6 共用 file 消息契约。"""
+
+    xml = (
+        '<msg><appmsg><title><![CDATA[7701166629241588521.mp3]]></title><type>74</type>'
+        "<appattach><totallen>1038166</totallen><fileext><![CDATA[mp3]]></fileext></appattach>"
+        "</appmsg></msg>"
+    )
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(
+        _channel(),
+        _appmsg_item(xml, local_id=31, server_id=32),
+    )
+
+    assert normalized["message"]["message_type"] == "file"
+    card = message_view.describe(normalized["message"]["content"], "file")
+    assert (card["kind"], card["media_type"], card["title"]) == ("media", "file", "7701166629241588521.mp3")
+    assert normalized["details"]["appmsg"]["kind"] == "file"
+    assert normalized["details"]["media"]["attachment_type"] == "file"
+    assert normalized["details"]["media"]["file_name"] == "7701166629241588521.mp3"
+
+
+def test_file_download_reports_phone_unsupported_clearly(monkeypatch) -> None:
+    """手机端没有 appmsg 文件下载选择器时,把协议错误翻译成可读提示。"""
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("download_selector_unavailable_or_message_type_unsupported")
+
+    monkeypatch.setattr("app.services.guga_agent.bridge.call_command", _fail)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        WechatGugatoolAdapter().download_message_media(_channel(), to_wxid="1@chatroom", local_id=1583)
+
+    assert "手机端暂不支持下载这类文件" in str(excinfo.value)
+
+
+def test_appmsg_pat_and_emoji_get_readable_labels() -> None:
+    pat_xml = (
+        "<msg><appmsg><title>当前微信版本不支持展示该内容，请升级至最新版本。</title><type>62</type>"
+        "<patMsg><records><record><pattedUser>wxid_b</pattedUser>"
+        '<templete>"${wxid_a}" 拍了拍 "${wxid_b}"</templete>'
+        "<fromUser>wxid_a</fromUser></record><recordNum>1</recordNum></records>"
+        "<chatUser>27602422280@chatroom</chatUser></patMsg></appmsg></msg>"
+    )
+    emoji_xml = (
+        "<msg><appmsg><title /><type>8</type>"
+        "<appattach><totallen>1297594</totallen><attachid>0:0:07f6</attachid>"
+        "<emoticonmd5>07f63efebfe95a5c3516170314f1a36c</emoticonmd5><fileext>jpg</fileext></appattach>"
+        "</appmsg></msg>"
+    )
+    adapter = WechatGugatoolAdapter()
+
+    pat = adapter.normalize_inbound_payload(_channel(), _appmsg_item(pat_xml))
+    emoji = adapter.normalize_inbound_payload(_channel(), _appmsg_item(emoji_xml))
+
+    assert pat["message"]["message_type"] == "pat"
+    assert pat["message"]["content"] == "[拍一拍]"
+    assert pat["details"]["pat"] == {
+        "from_id": "wxid_a",
+        "patted_id": "wxid_b",
+        "patted_is_me": False,
+    }
+    assert pat["details"]["appmsg"]["pat"] == {
+        "template": '"${wxid_a}" 拍了拍 "${wxid_b}"',
+        "from_user": "wxid_a",
+        "patted_user": "wxid_b",
+        "chat_user": "27602422280@chatroom",
+    }
+    assert emoji["message"]["message_type"] == "emoji"
+    assert emoji["message"]["content"] == "[表情]"
+    assert message_view.describe(emoji["message"]["content"], "emoji")["kind"] == "media"
+    assert emoji["details"]["appmsg"]["attachment"]["emoticon_md5"] == "07f63efebfe95a5c3516170314f1a36c"
+    # 表情按图片缓存处理,不能误触发文件自动下载。
+    assert "media" not in emoji["details"]
+
+
+def test_appmsg_mini_program_and_group_announcement() -> None:
+    mini_xml = (
+        "<msg><appmsg><title>点餐小程序</title><type>33</type>"
+        "<weappinfo><appid>wx-mini</appid><pagepath>pages/menu</pagepath>"
+        "<username>gh_mini</username><appservicetype>0</appservicetype></weappinfo></appmsg></msg>"
+    )
+    announcement_xml = (
+        "<msg><appmsg><title>群公告</title><type>87</type>"
+        "<textannouncement>明天上午停水</textannouncement></appmsg></msg>"
+    )
+    adapter = WechatGugatoolAdapter()
+
+    mini = adapter.normalize_inbound_payload(_channel(), _appmsg_item(mini_xml))
+    announcement = adapter.normalize_inbound_payload(_channel(), _appmsg_item(announcement_xml))
+
+    mini_card = message_view.describe(mini["message"]["content"], "mini_program")
+    assert mini["message"]["message_type"] == "mini_program"
+    assert (mini_card["kind"], mini_card["title"]) == ("mini_program", "点餐小程序")
+    assert mini["details"]["appmsg"]["mini_program"] == {
+        "app_id": "wx-mini",
+        "page_path": "pages/menu",
+        "username": "gh_mini",
+        "service_type": "0",
+    }
+    announcement_card = message_view.describe(announcement["message"]["content"], "group_announcement")
+    assert announcement["message"]["message_type"] == "group_announcement"
+    assert (announcement_card["kind"], announcement_card["title"], announcement_card["desc"], announcement_card["source"]) == (
+        "link", "群公告", "明天上午停水", "群公告",
+    )
+    assert announcement["details"]["appmsg"]["announcement"] == "明天上午停水"
+
+
+def test_unknown_appmsg_subtype_keeps_title_fallback() -> None:
+    """没有映射的 49 子类型仍保留原标题,不能因为细分改造丢掉正文。"""
+
+    xml = "<msg><appmsg><title>客服卡片</title><type>12345</type></appmsg></msg>"
+
+    normalized = WechatGugatoolAdapter().normalize_inbound_payload(_channel(), _appmsg_item(xml))
+
+    assert normalized["message"]["content"] == "客服卡片"
+    assert normalized["details"]["appmsg"]["kind"] == "app"
+    assert "media" not in normalized["details"]
+
+
 def test_account_connector_is_registered() -> None:
     assert get_account_connector("wechat_gugatool").channel_type == "wechat_gugatool"
 
@@ -328,6 +744,13 @@ def test_quote_message_becomes_text_with_quote_payload() -> None:
     }
     # 原始 XML 仍保留给媒体/排查使用,引用本身不再当成 app 卡片。
     assert normalized["details"]["content_xml"].startswith("<msg>")
+    assert normalized["details"]["appmsg"]["kind"] == "quote"
+    assert normalized["details"]["appmsg"]["quote"] == {
+        "ref_type": 1,
+        "server_id": "2773629253319918141",
+        "display_name": "小明",
+        "content": "原始问题\n保留换行",
+    }
 
 
 def test_quote_message_survives_one_extra_escape() -> None:

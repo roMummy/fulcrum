@@ -5,26 +5,29 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import select
 
 from app.core.db import SessionLocal, TenantSessionLocal
 from app.core.logging import get_logger
 from app.core.tenant_context import tenant_scope
 from app.core.tenant_db import platform_session, tenant_session
-from app.models.entities import Channel
+from app.models.entities import Channel, MessageAttachment
 from app.services.account_connections import verify_account_connection
 from app.services.account_connections.contracts import AccountConnectionError
 from app.services.guga_agent import service
 from app.services.guga_agent import ws as agent_ws
 from app.services.guga_agent.access import account_info, verify_connection_token
 from app.services.guga_agent.contract import GugaAgentError
+from app.services.inbound_media import store_uploaded_media_attachment
 
 router = APIRouter(prefix="/api/guga-agent", tags=["guga-agent"])
 logger = get_logger(__name__)
 
 POLL_HOLD_SECONDS = 20
 POLL_CHECK_INTERVAL_SECONDS = 1
+MAX_MEDIA_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 def _payload_summary(payload: dict) -> dict[str, object]:
@@ -160,6 +163,54 @@ async def event(channel_id: int, request: Request):
             return result
     except GugaAgentError as exc:
         return _error_response(exc, channel_id=channel_id)
+
+
+@router.post("/{channel_id}/{connection_token}/agent/upload_media", dependencies=[Depends(_require_device_token)])
+async def upload_media(channel_id: int, attachment_id: int, file: UploadFile = File(...)):
+    """手机执行 download_media 后把文件 multipart 直传平台。"""
+
+    tenant_id, _ = _channel_tenant(channel_id)
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="guga_agent_upload_empty")
+    if len(content) > MAX_MEDIA_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="guga_agent_upload_too_large")
+    with tenant_scope(tenant_id), tenant_session(TenantSessionLocal) as db:
+        channel = db.get(Channel, int(channel_id))
+        if channel is None:
+            raise HTTPException(status_code=404, detail="guga_agent_channel_not_found")
+        attachment = db.scalar(
+            select(MessageAttachment).where(
+                MessageAttachment.id == int(attachment_id),
+                MessageAttachment.channel_id == channel.id,
+                MessageAttachment.provider == "wechat_gugatool",
+            )
+        )
+        if attachment is None:
+            raise HTTPException(status_code=404, detail="guga_agent_attachment_not_found")
+        result = store_uploaded_media_attachment(
+            db,
+            attachment=attachment,
+            content=content,
+            filename=file.filename or "",
+            content_type=file.content_type or "application/octet-stream",
+        )
+        db.commit()
+        logger.info(
+            "guga agent media uploaded",
+            extra={
+                "channel_id": channel.id,
+                "attachment_id": attachment.id,
+                "file_name": file.filename or "",
+                "file_size": len(content),
+            },
+        )
+        return {
+            "ok": True,
+            "attachment_id": result["attachment_id"],
+            "file_size": result["file_size"],
+            "file_name": file.filename or "",
+        }
 
 
 def _claim_once(channel_id: int, tenant_id: int, body: dict) -> list[dict]:

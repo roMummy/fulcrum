@@ -282,14 +282,17 @@ def _upsert_member(
     member.status = "active"
     member.last_synced_at = seen_at
     member.last_active_at = seen_at
+    previous_extra = _parse_json(member.extra_json)
+    avatar_url = str(profile.get("avatar_url") or "").strip()
     member.extra_json = json.dumps(
         {
-            # 名册及后续发言只更新当前资料，保留从系统入群消息取得的邀请关系。
-            **_parse_json(member.extra_json),
+            # 名册及后续发言只更新当前资料，保留从系统入群消息取得的邀请关系;
+            # 普通发言没有头像/备注时不能清掉名册已同步的资料。
+            **previous_extra,
             "source": "wechat_gugatool_group_roster",
-            "alias": str(profile.get("alias") or "") or None,
-            "remark": str(profile.get("remark") or "") or None,
-            "avatar_url": str(profile.get("avatar_url") or "") or None,
+            "alias": str(profile.get("alias") or "").strip() or previous_extra.get("alias"),
+            "remark": str(profile.get("remark") or "").strip() or previous_extra.get("remark"),
+            "avatar_url": avatar_url or previous_extra.get("avatar_url"),
         },
         ensure_ascii=False,
         sort_keys=True,
