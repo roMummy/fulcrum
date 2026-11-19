@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.settings import settings
-from app.models.entities import Channel, MessageAttachment, TaskJob
+from app.models.entities import Channel, Message, MessageAttachment, TaskJob
 from app.services import media_storage
 from app.services.channel_adapters.workwechat import WorkWechatAdapter
 from app.services.task_queue import WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
@@ -180,7 +182,15 @@ def store_uploaded_media_attachment(
     attachment.mime_type = mime_type
     attachment.last_error = None
     metadata = _parse_json(attachment.metadata_json)
-    attachment.metadata_json = json.dumps({**metadata, "uploaded_by": "wechat_webridge", "file_name": filename or None}, ensure_ascii=False, sort_keys=True)
+    attachment.metadata_json = json.dumps(
+        {
+            **metadata,
+            "uploaded_by": str(attachment.provider or "wechat_webridge"),
+            "file_name": filename or None,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     db.flush()
     return {"attachment_id": int(attachment.id), "storage_path": str(storage_path), "file_size": len(content), "mime_type": attachment.mime_type}
 
@@ -463,16 +473,36 @@ def _download_wechat_gugatool_attachment(db: Session, *, attachment: MessageAtta
     手机在同一容器网络，也避免把 aeskey 之类的解密参数落到主服务。
     """
 
-    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
+    from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter, parse_appmsg_details
+    from app.services.guga_agent.access import connection_url
 
     metadata = _parse_json(attachment.metadata_json)
     adapter = WechatGugatoolAdapter()
-    response = adapter.download_message_media(
-        channel,
-        to_wxid=str(metadata.get("to_wxid") or ""),
-        local_id=_coerce_optional_int(metadata.get("local_message_id")),
-        msg_svr_id=_coerce_optional_int(metadata.get("server_message_id")),
-    )
+    upload_url = ""
+    try:
+        agent_base = connection_url(channel)
+        if agent_base:
+            upload_url = f"{agent_base}/agent/upload_media?attachment_id={int(attachment.id)}"
+    except Exception:  # noqa: BLE001 - 地址不可用时继续走 Base64
+        upload_url = ""
+    try:
+        response = adapter.download_message_media(
+            channel,
+            to_wxid=str(metadata.get("to_wxid") or ""),
+            local_id=_coerce_optional_int(metadata.get("local_message_id")),
+            msg_svr_id=_coerce_optional_int(metadata.get("server_message_id")),
+            upload_url=upload_url or None,
+        )
+    except RuntimeError:
+        # 手机可能已经上传成功、只是命令结果回传超时。
+        db.refresh(attachment, with_for_update=True)
+        if _gugatool_attachment_uploaded(attachment):
+            return _gugatool_upload_result(attachment)
+        raise
+    # 手机按 upload_url 直传时,附件已由上传接口落盘,不需要再解 Base64。
+    db.refresh(attachment, with_for_update=True)
+    if _gugatool_attachment_uploaded(attachment):
+        return _gugatool_upload_result(attachment)
     data = response.get("data") or {}
     base64_payload = str(data.get("Base64") or data.get("base64") or "").strip()
     if not base64_payload:
@@ -480,6 +510,21 @@ def _download_wechat_gugatool_attachment(db: Session, *, attachment: MessageAtta
     content = base64.b64decode(base64_payload, validate=False)
     mime_type = str(data.get("ContentType") or data.get("content_type") or "").strip()
     resolved_mime = mime_type or "application/octet-stream"
+    file_name, file_ext = _gugatool_file_hints(
+        db, attachment=attachment, metadata=metadata, data=data, parse_appmsg=parse_appmsg_details
+    )
+    if file_name:
+        metadata["file_name"] = file_name
+    if file_ext:
+        metadata["file_ext"] = file_ext
+    is_file = str(attachment.attachment_type or "") == "file"
+    extension = _normalize_file_ext(file_ext)
+    if not extension and is_file:
+        # 未知文件不再伪装成 .jpg;扩展名信息缺失时至少保留为二进制。
+        extension = ".bin"
+    extension = extension or _guess_extension(resolved_mime, content)
+    if not mime_type and (file_name or is_file):
+        resolved_mime = _guess_mime_type(file_name, extension)
     source_kind = "base64"
     return _persist_attachment_content(
         db,
@@ -488,11 +533,71 @@ def _download_wechat_gugatool_attachment(db: Session, *, attachment: MessageAtta
         resolved={
             "content": content,
             "mime_type": resolved_mime,
-            "extension": _guess_extension(resolved_mime, content),
+            "extension": extension,
             "source_kind": source_kind,
         },
         metadata=metadata,
     )
+
+
+def _gugatool_attachment_uploaded(attachment: MessageAttachment) -> bool:
+    """手机直传接口是否已经把附件写成可消费状态。"""
+
+    return bool(
+        str(attachment.status or "") == "downloaded"
+        and attachment.storage_path
+        and str(attachment.provider or "") == "wechat_gugatool"
+    )
+
+
+def _gugatool_upload_result(attachment: MessageAttachment) -> dict[str, Any]:
+    return {
+        "attachment_id": int(attachment.id),
+        "storage_path": str(attachment.storage_path or ""),
+        "file_size": int(attachment.file_size or 0),
+        "mime_type": str(attachment.mime_type or "application/octet-stream"),
+        "uploaded_by": "wechat_gugatool",
+    }
+
+
+def _gugatool_file_hints(
+    db: Session,
+    *,
+    attachment: MessageAttachment,
+    metadata: dict[str, Any],
+    data: dict[str, Any],
+    parse_appmsg: Any,
+) -> tuple[str, str]:
+    """解析文件名/扩展名:优先手机命令返回值,其次附件元数据,最后消息正文 XML。"""
+
+    file_name = str(
+        data.get("FileName") or data.get("fileName") or metadata.get("file_name") or ""
+    ).strip()
+    file_ext = str(
+        data.get("FileExt") or data.get("fileExt") or metadata.get("file_ext") or ""
+    ).strip()
+    if file_name or file_ext:
+        return file_name, file_ext.lstrip(".")
+    message = db.get(Message, int(attachment.message_id or 0)) if attachment.message_id else None
+    if message is None:
+        return "", ""
+    appmsg = parse_appmsg(str(message.content or ""))
+    if not isinstance(appmsg, dict):
+        return "", ""
+    attach = appmsg.get("attachment") if isinstance(appmsg.get("attachment"), dict) else {}
+    return str(appmsg.get("title") or "").strip(), str(attach.get("file_ext") or "").strip().lstrip(".")
+
+
+def _normalize_file_ext(value: str) -> str:
+    """只保留字母数字扩展名,避免元数据里的异常字符进入落盘路径。"""
+
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", str(value or "").strip().lstrip("."))
+    return f".{cleaned.lower()}" if cleaned else ""
+
+
+def _guess_mime_type(file_name: str, extension: str) -> str:
+    guessed, _ = mimetypes.guess_type(file_name or f"file{extension}")
+    return guessed or "application/octet-stream"
 
 
 def _persist_attachment_content(
