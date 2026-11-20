@@ -338,6 +338,36 @@ def test_link_card_prefers_page_url() -> None:
     assert replies[0]["thumb_url"] == "https://m.test/c.jpg"
 
 
+def test_file_mode_sends_the_declared_file_without_probing_size() -> None:
+    """显式 file 模式不在插件里探测远端大小；超限由平台侧处理。"""
+
+    client = FakeClient({})  # 任何探测都会落到这里并记录调用
+    replies = service.build_replies(client, _short_video(300), download_mode="file", timeout_seconds=10)
+    assert replies == [{"type": "file", "file_name": "作者 - 标题.mp4", "file_url": "https://m.test/v.mp4"}]
+    assert not client.calls
+
+
+@pytest.mark.parametrize("channel", ("wechat_webridge", "wechat_gugatool", "wechat_ipad"))
+def test_file_mode_keeps_the_same_reply_on_every_channel(monkeypatch, channel) -> None:
+    """file 模式不按渠道改道；长视频也直接给文件地址，由渠道自行处理超限。"""
+
+    url = "https://media.example.org/play/?id=12&sig=a%2Fb%3D"
+    data = {"content_kind": "video", "duration_ms": 600000,
+            "video": {"play_url": url, "cover_url": "https://media.example.org/cover.jpg"}}
+    client = FakeClient({"/api/v1/parse": _dtk_ok(data)})
+    monkeypatch.setattr(plugin, "PluginHttpClient", lambda: client)
+    result = plugin.execute_action(PluginExecutionRequest(
+        action="execute", config={"download_mode": "file", "dtk_api_url": "https://dtk.test", "dtk_api_key": "test"},
+        context=PluginExecutionContext(tenant_id=1, bot_id=1, binding_id=1, channel_type=channel),
+        payload={"content": "https://v.douyin.com/x/", "channel_type": channel},
+    ))
+    assert result.ok
+    reply, = result.output["replies"]
+    assert reply["type"] == "file" and reply["file_url"] == url
+    # 只查作品元数据；不探测播放地址大小。
+    assert [call[0] for call in client.calls] == ["POST"]
+
+
 def test_work_page_is_used_only_for_cards():
     media = parse.parse_aweme(VIDEO_AWEME)
     media["duration_seconds"] = None
