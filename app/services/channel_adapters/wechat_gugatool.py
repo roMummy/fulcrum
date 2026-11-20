@@ -1213,6 +1213,10 @@ def _appmsg_payment(appmsg: ElementTree.Element) -> dict[str, Any]:
         "memo": _node_text(pay, "pay_memo", 200),
         "transaction_id": _node_text(pay, "transcationid", 100),
         "transfer_id": _node_text(pay, "transferid", 100),
+        # 付款方/收款方与发起时间:转账统计需要分辨谁付给谁,不能只靠消息发送人兜底。
+        "payer_id": _node_text(pay, "payer_username", 100),
+        "receiver_id": _node_text(pay, "receiver_username", 100),
+        "begin_time": _node_text(pay, "begintransfertime", 20),
     }
     return {key: value for key, value in info.items() if value}
 

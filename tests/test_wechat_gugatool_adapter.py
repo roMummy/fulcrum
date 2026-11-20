@@ -388,6 +388,8 @@ def test_appmsg_transfer_uses_payment_amount_in_content() -> None:
         "<msg><appmsg><title><![CDATA[微信转账]]></title><type>2000</type>"
         "<wcpayinfo><paysubtype>3</paysubtype><feedesc><![CDATA[￥8.00]]></feedesc>"
         "<transcationid>tx-1</transcationid><transferid>tr-1</transferid>"
+        "<payer_username>wxid_payer</payer_username><receiver_username>wxid_payee</receiver_username>"
+        "<begintransfertime>1795000000</begintransfertime>"
         "<pay_memo>晚饭</pay_memo></wcpayinfo></appmsg></msg>"
     )
 
@@ -403,6 +405,9 @@ def test_appmsg_transfer_uses_payment_amount_in_content() -> None:
         "memo": "晚饭",
         "transaction_id": "tx-1",
         "transfer_id": "tr-1",
+        "payer_id": "wxid_payer",
+        "receiver_id": "wxid_payee",
+        "begin_time": "1795000000",
     }
 
 
