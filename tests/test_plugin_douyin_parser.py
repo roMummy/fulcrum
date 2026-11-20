@@ -330,25 +330,6 @@ def test_short_video_download_failure_falls_back_to_link_card() -> None:
     assert replies[0]["type"] == "link"
 
 
-def test_file_mode_sends_small_video_as_remote_file() -> None:
-    client = FakeClient({"m.test/v.mp4": _resp(b"", headers={"content-length": str(5 * 1024 * 1024)})})
-    replies = service.build_replies(client, _short_video(300), download_mode="file", timeout_seconds=10)
-    assert replies == [{"type": "file", "file_name": "作者 - 标题.mp4", "file_url": "https://m.test/v.mp4"}]
-    assert [call[0] for call in client.calls] == ["HEAD"]
-
-
-def test_file_mode_large_or_unknown_video_falls_back_to_link_card() -> None:
-    large = FakeClient({"m.test/v.mp4": _resp(b"", headers={"content-length": str(75 * 1024 * 1024)})})
-    replies = service.build_replies(large, _short_video(300), download_mode="file", timeout_seconds=10)
-    assert [item["type"] for item in replies] == ["text", "link"]
-    assert "超过 20MB" in replies[0]["content"]
-
-    unknown = FakeClient({"m.test/v.mp4": _resp(b"", headers={})})
-    replies = service.build_replies(unknown, _short_video(300), download_mode="file", timeout_seconds=10)
-    assert [item["type"] for item in replies] == ["text", "link"]
-    assert "无法确认" in replies[0]["content"]
-
-
 def test_link_card_prefers_page_url() -> None:
     media = {**_short_video(300), "page_url": "https://www.douyin.com/video/7400000000000000001"}
     replies = service.build_replies(FakeClient({}), media, download_mode="card", timeout_seconds=10)

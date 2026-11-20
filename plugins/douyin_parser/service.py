@@ -295,7 +295,6 @@ MAX_IMAGE_DOWNLOADS = 18
 IMAGE_DOWNLOAD_BYTES = 12 * 1024 * 1024
 COVER_DOWNLOAD_BYTES = 2 * 1024 * 1024
 VIDEO_DOWNLOAD_BYTES = 10 * 1024 * 1024  # 与微桥 send_video 默认 10MiB 上限保持一致
-FILE_SEND_MAX_BYTES = 20 * 1024 * 1024  # 咕嘎文件发送上限；超过时退回链接卡片
 MEDIA_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
@@ -382,18 +381,7 @@ def _video_replies(client: PluginHttpClient, media: dict[str, Any], mode: str, t
     title = clean_text(media.get("title")) or "抖音作品"
     author = clean_text(media.get("author"))
     if mode == "file":
-        file_name = _safe_name(f"{author} - {title}" if author else title) + ".mp4"
-        size = _remote_content_length(client, url, timeout)
-        if size is not None and size <= FILE_SEND_MAX_BYTES:
-            return [file_reply(file_name=file_name, file_url=url)]
-        # 超过通道文件上限或无法确认大小时，不能把远端地址直接交给发送层，
-        # 否则适配器下载后失败，用户只会看到“没反应”。
-        reason = (
-            f"视频文件超过 {FILE_SEND_MAX_BYTES // (1024 * 1024)}MB"
-            if size is not None and size > FILE_SEND_MAX_BYTES
-            else "无法确认视频文件大小"
-        )
-        return [text_reply(f"{reason}，已改为链接卡片。"), _link_card(media, title=author or "抖音作品", description=title)]
+        return [file_reply(file_name=_safe_name(f"{author} - {title}" if author else title) + ".mp4", file_url=url)]
 
     duration = media.get("duration_seconds")
     cover_url = str(media.get("cover") or "")
@@ -415,30 +403,6 @@ def _link_card(media: dict[str, Any], *, title: str, description: str) -> dict[s
         description=description,
         thumb_url=cover_url if cover_url.startswith("http") else "",
     )
-
-
-def _remote_content_length(client: PluginHttpClient, url: str, timeout: float) -> int | None:
-    """用 HEAD 读取远端文件大小；失败或没有 Content-Length 时返回 None。"""
-
-    try:
-        response = client.request(
-            "HEAD",
-            url.strip(),
-            headers={"User-Agent": MEDIA_USER_AGENT, "Referer": "https://www.douyin.com/"},
-            total_timeout_seconds=min(10, max(3, timeout)),
-            max_response_bytes=4096,
-            max_redirects=3,
-            retry_count=0,
-        )
-    except PluginHttpError:
-        return None
-    if response.status_code < 200 or response.status_code >= 400:
-        return None
-    try:
-        size = int(str(response.headers.get("content-length") or "").strip())
-    except (TypeError, ValueError):
-        return None
-    return size if size > 0 else None
 
 
 # ---------------------------------------------------------------- 下载与图片处理
