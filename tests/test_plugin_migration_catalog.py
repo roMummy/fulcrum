@@ -5,7 +5,7 @@ from pathlib import Path
 
 # 私有插件目录(只在内网部署里使用,不随公开仓库发布)不参与目录校验;必须在导入校验脚本之前设置。
 if not os.environ.get("FULCRUM_PRIVATE_PLUGINS"):
-    os.environ["FULCRUM_PRIVATE_PLUGINS"] = "beautyleg,video,video_man,fanhao_search,xiuren_image,sehuatang_push"
+    os.environ["FULCRUM_PRIVATE_PLUGINS"] = "beautyleg,video,video_man,fanhao_search,xiuren_image,sehuatang_push,e7_gvg,e7_hero,e7_rta,transfer_stats"
 
 from scripts.verify_plugin_migration import (
     PRIVATE_PLUGIN_CODES,
