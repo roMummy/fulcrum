@@ -141,11 +141,8 @@ def test_file_download_keeps_original_extension_and_name(session_factory, tmp_pa
 
     from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
 
-    monkeypatch.setattr(
-        inbound_media,
-        "_build_attachment_path",
-        lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}",
-    )
+    # 附件必须落在 data_dir 之内:媒体存储会校验路径边界并拒绝符号链接。
+    monkeypatch.setattr(inbound_media.settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(
         WechatGugatoolAdapter,
         "download_message_media",
@@ -189,11 +186,8 @@ def test_file_download_prefers_phone_reported_file_name(session_factory, tmp_pat
 
     from app.services.channel_adapters.wechat_gugatool import WechatGugatoolAdapter
 
-    monkeypatch.setattr(
-        inbound_media,
-        "_build_attachment_path",
-        lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}",
-    )
+    # 附件必须落在 data_dir 之内:媒体存储会校验路径边界并拒绝符号链接。
+    monkeypatch.setattr(inbound_media.settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(
         WechatGugatoolAdapter,
         "download_message_media",

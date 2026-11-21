@@ -107,11 +107,9 @@ def test_upload_media_stores_the_file_with_its_original_name(env, tmp_path, monk
 
     client, factory, channels = env
     channel_id, token = channels["a"]
-    monkeypatch.setattr(
-        inbound_media,
-        "_build_attachment_path",
-        lambda cid, aid, suffix: tmp_path / f"{cid}-{aid}{suffix}",
-    )
+    # 附件必须落在 data_dir 之内:媒体存储会校验路径边界并拒绝符号链接,
+    # 所以这里把数据目录指到临时目录,而不是把附件路径改到边界之外。
+    monkeypatch.setattr(inbound_media.settings, "data_dir", str(tmp_path))
     with tenant_scope(7), open_tenant_session(factory) as db:
         conversation = Conversation(
             tenant_id=7, bot_id=1, channel_id=channel_id, channel_type="wechat_gugatool",

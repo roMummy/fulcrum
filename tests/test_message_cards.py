@@ -263,7 +263,8 @@ def test_article_cards_render_in_initial_and_history_pages(conversation_page) ->
 
 @pytest.fixture()
 def media_env(tmp_path, monkeypatch):
-    monkeypatch.setattr(inbound_media, "_build_attachment_path", lambda channel_id, attachment_id, suffix: tmp_path / f"{channel_id}-{attachment_id}{suffix}")
+    # 媒体路径要落在 data_dir 之内,否则媒体存储的边界校验会直接拒绝。
+    monkeypatch.setattr(inbound_media.settings, "data_dir", str(tmp_path))
     db = _session()
     channel = _seed(db)
     channel.api_base = "http://fulcrum.test/api/wechat-webridge/1"
