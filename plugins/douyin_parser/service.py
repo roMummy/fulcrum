@@ -396,9 +396,10 @@ def _video_replies(client: PluginHttpClient, media: dict[str, Any], mode: str, t
 
 def _link_card(media: dict[str, Any], *, title: str, description: str) -> dict[str, Any]:
     cover_url = str(media.get("cover") or "")
-    # page_url 指向作品页(有站点 favicon);url 是播放直链,只用于下载/直发视频。
+    # 卡片用播放直链:点开即可播放。作品页(www.douyin.com/video/{id}) 没有服务端渲染内容,
+    # 全靠前端 JS 拉数据,微信内置浏览器里经常是白屏,所以只作为没有播放地址时的兜底。
     return link_reply(
-        url=str(media.get("page_url") or media.get("url") or "").strip(),
+        url=str(media.get("url") or media.get("page_url") or "").strip(),
         title=title,
         description=description,
         thumb_url=cover_url if cover_url.startswith("http") else "",
