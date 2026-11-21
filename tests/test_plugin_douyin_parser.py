@@ -330,11 +330,13 @@ def test_short_video_download_failure_falls_back_to_link_card() -> None:
     assert replies[0]["type"] == "link"
 
 
-def test_link_card_prefers_page_url() -> None:
+def test_link_card_uses_play_url_so_it_opens_the_video() -> None:
+    """卡片必须用播放直链:作品页在微信里是 JS 空壳,点开白屏。"""
+
     media = {**_short_video(300), "page_url": "https://www.douyin.com/video/7400000000000000001"}
     replies = service.build_replies(FakeClient({}), media, download_mode="card", timeout_seconds=10)
     assert replies[0]["type"] == "link"
-    assert replies[0]["url"] == "https://www.douyin.com/video/7400000000000000001"
+    assert replies[0]["url"] == media["url"] == "https://m.test/v.mp4"
     assert replies[0]["thumb_url"] == "https://m.test/c.jpg"
 
 
@@ -368,14 +370,16 @@ def test_file_mode_keeps_the_same_reply_on_every_channel(monkeypatch, channel) -
     assert [call[0] for call in client.calls] == ["POST"]
 
 
-def test_work_page_is_used_only_for_cards():
+def test_card_and_file_share_the_same_play_url():
+    """卡片与文件发送都用播放直链;作品页只留在 media 里作兜底,不进回复。"""
+
     media = parse.parse_aweme(VIDEO_AWEME)
     media["duration_seconds"] = None
     client = _media_client()
     card, = service.build_replies(client, media, download_mode="card", timeout_seconds=10)
     file, = service.build_replies(client, media, download_mode="file", timeout_seconds=10)
-    assert card["url"] == f"https://www.douyin.com/video/{VIDEO_AWEME['aweme_id']}"
-    assert file["file_url"] == media["url"] != card["url"]
+    assert card["url"] == media["url"] == file["file_url"]
+    assert media["page_url"] == f"https://www.douyin.com/video/{VIDEO_AWEME['aweme_id']}"
     assert not client.calls
 
 
