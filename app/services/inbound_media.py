@@ -611,7 +611,13 @@ def _persist_attachment_content(
     content = resolved["content"]
     if not content:
         raise ValueError("wechat_ipad_attachment_content_empty")
-    mime_type, extension = identify(content, resolved["mime_type"], "media" + resolved["extension"])
+    detected_mime, detected_extension = identify(content, resolved["mime_type"], "media" + resolved["extension"])
+    if detected_extension == ".bin" and resolved["extension"]:
+        # 手机声明的扩展名不一定在识别表里(如 .log/.dat),此时保留原扩展名与声明 MIME,
+        # 不能因为文件头识别不出来就把用户的文件改名成 .bin。
+        mime_type, extension = resolved["mime_type"] or detected_mime, resolved["extension"]
+    else:
+        mime_type, extension = detected_mime, detected_extension
     storage_path = _build_attachment_path(attachment.channel_id, attachment.id, extension)
     media_storage.write(storage_path, content, tenant_id=attachment.tenant_id,
         boundary=Path(settings.data_dir) / "inbound_media" / f"channel_{attachment.channel_id}")
