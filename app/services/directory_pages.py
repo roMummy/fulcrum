@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.services.points import PointsService
@@ -231,7 +231,24 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
         )
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     paging = _page(total, page)
-    contacts = db.execute(stmt.order_by(c.display_name, c.id.desc(), c.channel_id).offset(paging["offset"]).limit(PAGE_SIZE)).all()
+    # 按好友昵称排序：空昵称排到末尾，非空昵称忽略大小写稳定排序。
+    trimmed_name = func.coalesce(func.trim(c.name), "")
+    nickname_sort = func.coalesce(
+        func.nullif(trimmed_name, ""),
+        func.nullif(func.coalesce(func.trim(c.display_name), ""), ""),
+        c.contact_external_id,
+    )
+    contacts = db.execute(
+        stmt.order_by(
+            case((trimmed_name == "", 1), else_=0),
+            func.lower(nickname_sort),
+            nickname_sort,
+            c.id.desc(),
+            c.channel_id,
+        )
+        .offset(paging["offset"])
+        .limit(PAGE_SIZE)
+    ).all()
     # 按账号与机器人状态批量计算写入口资格；不逐行查询，也不为已失效账号展示操作按钮。
     active_bot_ids = set(db.scalars(select(Bot.id).where(Bot.deleted_at.is_(None), Bot.is_enabled.is_(True))).all())
     # 本页好友各自所在的群数、以及与好友的私聊会话,一次性批量取,避免逐行查询。
@@ -261,7 +278,8 @@ def build_contact_directory(db: Session, *, keyword: str = "", channel_id: int =
                 **friend_chat_fields(channel, item, channel.bot_id in active_bot_ids),
                 "channel_type": channel.channel_type,
                 "channel_name": channel.name or f"账号 #{item.channel_id}",
-                "identity": make_identity(item.contact_external_id, item.display_name or item.name, item.avatar_url),
+                "nickname": (item.name or item.display_name or item.contact_external_id or "").strip(),
+                "identity": make_identity(item.contact_external_id, item.name or item.display_name, item.avatar_url),
                 "remark": item.remark,
                 "group_count": group_counts.get(key, 0),
                 "points": totals.get(item.contact_external_id, 0),

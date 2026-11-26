@@ -6,9 +6,10 @@ import re
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 import app.web.messages.routes as message_routes
-from app.models.entities import Chatroom, ChatroomMember, Conversation, Message
+from app.models.entities import Channel, Chatroom, ChatroomMember, Conversation, Message
 from test_provider_node_pages import _login, provider_page_context  # noqa: F401  (provider_page_context 是 fixture)
 
 TOTAL = 75
@@ -50,6 +51,37 @@ def _rows(payload: dict) -> list[int]:
 
 # ---------- 页面 ----------
 
+def test_message_count_is_manual_and_reads_fresh_visible_rows(seeded) -> None:
+    client, ids, conversation_id, _message_ids, _csrf = seeded
+    engine = ids["factory"].kw["bind"]
+    counts = []
+
+    def record_count(conn, cursor, statement, parameters, context, executemany):
+        if "count(messages.id)" in statement.lower():
+            counts.append(statement)
+
+    event.listen(engine, "after_cursor_execute", record_count)
+    try:
+        assert 'id="message-count-button"' not in client.get("/messages").text
+        assert 'id="message-count-button"' in client.get(f"/messages?conversation_id={conversation_id}").text
+        assert not counts
+        url = f"/messages/count?conversation_id={conversation_id}"
+        response = client.get(url)
+        assert response.json() == {"total": TOTAL}
+        assert "no-store" in response.headers["cache-control"]
+        with ids["factory"]() as db:
+            for status in ("sent", "echo"):
+                db.add(Message(tenant_id=ids["alpha"], conversation_id=conversation_id, direction="in", sender_id="u1", message_type="text", content="新增消息", status=status))
+            db.commit()
+        assert client.get(url).json() == {"total": TOTAL + 1}
+        assert len(counts) == 2
+        assert client.get("/messages/count?conversation_id=999999").status_code == 404
+        client.cookies.clear()
+        assert client.get(url).status_code in {303, 401}
+    finally:
+        event.remove(engine, "after_cursor_execute", record_count)
+
+
 def test_page_has_no_intro_copy_or_page_numbers_and_loads_only_the_latest(seeded) -> None:
     client, _ids, conversation_id, message_ids, _csrf = seeded
     page = client.get(f"/messages?conversation_id={conversation_id}")
@@ -65,6 +97,32 @@ def test_page_has_no_intro_copy_or_page_numbers_and_loads_only_the_latest(seeded
     assert 'id="wechat-composer"' in page.text and "<textarea" in page.text and 'action="/messages/send"' not in page.text
     # 发送失败的出站消息在对话里有标记
     assert "发送失败" in page.text
+
+
+def test_inbox_scopes_conversations_to_each_account(seeded):
+    client, ids, first, _message_ids, _csrf = seeded
+    channel = ids["channel_id"]
+    with ids["factory"]() as db:
+        other = Channel(tenant_id=ids["alpha"], bot_id=ids["bot"], name="第二账号", channel_type="wechat_ipad")
+        db.add(other)
+        db.flush()
+        room = Conversation(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=other.id, channel_type="wechat_ipad",
+                            external_id="room@chatroom", chat_type="group", title="测试群")
+        db.add(room)
+        db.flush()
+        db.add(Message(tenant_id=ids["alpha"], conversation_id=room.id, direction="in", sender_id="friend", content="第二账号的消息"))
+        db.commit()
+        second, other_channel = room.id, other.id
+
+    def conversation_ids(account):
+        result = client.get("/messages/conversations", params={"channel_id": account}).json()
+        return [row["id"] for row in result["conversations"]]
+
+    assert conversation_ids(channel) == [first]
+    assert conversation_ids(other_channel) == [second]
+    assert client.get(f"/messages?channel_id={other_channel}&conversation_id={first}").status_code == 404
+    page = client.get(f"/messages?conversation_id={second}").text
+    assert "第二账号的消息" in page and "未读消息" not in page and "全部消息" not in page
 
 
 def test_short_conversation_has_nothing_more_to_load(seeded) -> None:

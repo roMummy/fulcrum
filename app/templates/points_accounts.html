@@ -24,27 +24,31 @@
   </form>
 
   {% if directory.rows %}
-  <div class="table-scroll">
-  <table class="table">
-    <thead><tr><th>成员</th>{% if not directory.group_id %}<th>所在群</th>{% endif %}<th class="col-compact">积分</th><th class="col-action"></th></tr></thead>
-    <tbody>
-      {% for item in directory.rows %}
-      <tr>
-        <td>{{ identity(item.identity, 'lg') }}</td>
-        {% if not directory.group_id %}<td>{{ identity(item.group, 'sm', false) }}</td>{% endif %}
-        <td class="col-compact" style="vertical-align:middle;"><strong>{{ item.points }}</strong></td>
-        <td class="col-action" style="vertical-align:middle;white-space:nowrap;">
-          <button class="btn btn-small" type="button" data-points-adjust
+  {# 积分账户采用紧凑小卡片网格（一行多张），调整积分与账单使用图标按钮以保持紧凑。 #}
+  <div class="compact-card-grid points-card-grid">
+    {% for item in directory.rows %}
+    <article class="compact-card points-card">
+      <div class="compact-card-head">
+        <div class="compact-card-identity">{{ identity(item.identity, 'sm') }}</div>
+        <div class="points-card-score"><strong>{{ item.points }}</strong><small>积分</small></div>
+      </div>
+      {% if not directory.group_id %}
+      <div class="points-card-group">{{ identity(item.group, 'sm', false) }}</div>
+      {% endif %}
+      <div class="compact-card-footer">
+        <span class="muted-text" style="font-size:12px;">{{ item.group.name if directory.group_id else '账户操作' }}</span>
+        <div class="compact-card-actions">
+          <button class="btn btn-small btn-icon" type="button" data-points-adjust
             data-user-id="{{ item.user_id }}" data-group-id="{{ item.group_id }}"
             data-name="{{ item.identity.name }}" data-wxid="{{ item.identity.external_id if item.identity.show_id else '' }}"
             data-avatar="{{ item.identity.avatar_url }}" data-initial="{{ item.identity.initial }}"
-            data-group-name="{{ item.group.name }}" data-points="{{ item.points }}">调整积分</button>
-          <a class="btn btn-small btn-secondary" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}&return_to={{ current_list_url|urlencode }}"><span class="i i-wallet" aria-hidden="true"></span><span>账单</span></a>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+            data-group-name="{{ item.group.name }}" data-points="{{ item.points }}"
+            title="调整积分" aria-label="调整积分"><span class="i i-edit" aria-hidden="true"></span></button>
+          <a class="btn btn-small btn-secondary btn-icon" href="/points/ledger?group_id={{ item.group_id|urlencode }}&q={{ item.user_id|urlencode }}&return_to={{ current_list_url|urlencode }}" title="查看账单" aria-label="查看账单"><span class="i i-wallet" aria-hidden="true"></span></a>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
   </div>
   {% include '_pager.html' %}
   {% else %}

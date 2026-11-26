@@ -54,6 +54,7 @@
       // 开关即时保存后同步导航计数，无需刷新页面才能看到本群的启用数量。
       const count = document.querySelector("[data-group-plugin-count]");
       if (count) count.textContent = document.querySelectorAll("[data-group-plugin-settings] [data-gf-master]:checked").length + "/" + document.querySelectorAll("[data-group-plugin-settings]").length;
+      applyFilter();
     });
     const reset = card.querySelector("[data-scope-config-reset]");
     reset.addEventListener("click", async function () {
@@ -75,6 +76,42 @@
       } finally {
         reset.disabled = false;
       }
+    });
+  });
+
+  // 本群插件本地即时搜索与启停状态筛选，避免几十个插件翻找不便。
+  const filterBar = document.querySelector("[data-group-plugin-filter]");
+  const searchInput = filterBar ? filterBar.querySelector("[data-group-plugin-search]") : null;
+  const stateButtons = filterBar ? Array.from(filterBar.querySelectorAll("[data-group-plugin-state]")) : [];
+  const emptyNotice = document.querySelector("[data-group-plugin-empty]");
+  let activeState = "all";
+
+  function applyFilter() {
+    if (!filterBar) return;
+    const query = String(searchInput ? searchInput.value : "").trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll("[data-group-plugin-settings]").forEach(function (card) {
+      const enabled = Boolean(card.querySelector("[data-gf-master]:checked"));
+      const haystack = card.dataset.pluginSearch || "";
+      const matchQuery = !query || haystack.includes(query);
+      const matchState = activeState === "all" || (activeState === "enabled" ? enabled : !enabled);
+      const show = matchQuery && matchState;
+      card.hidden = !show;
+      if (show) visible += 1;
+    });
+    if (emptyNotice) emptyNotice.hidden = visible > 0;
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener("input", applyFilter);
+  }
+  stateButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      activeState = button.dataset.groupPluginState || "all";
+      stateButtons.forEach(function (item) {
+        item.setAttribute("aria-pressed", String(item === button));
+      });
+      applyFilter();
     });
   });
 })();

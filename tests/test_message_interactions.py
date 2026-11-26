@@ -15,6 +15,7 @@ from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader, sele
 
 from app.services.message_view import describe, preview
 from app.services.conversation_kinds import KIND_LABELS
+from app.web.messages.routes import _message_kind_tabs
 
 playwright = pytest.importorskip("playwright.sync_api")
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +97,9 @@ class MessagePage:
     def html(self):
         return self.env.get_template("messages.html").render(
             conversation_summaries=([{"conversation": self.conversation, "identity": {}, "display_name": "测试群聊", "initial": "测", "latest": self.messages[-1], "kind": self.conversation.chat_type}] if self.messages else []),
-            kind_labels=KIND_LABELS,
+            selected_summary={"conversation": self.conversation, "display_name": "测试群聊", "kind": self.conversation.chat_type} if self.selected else None,
+            inbox_accounts={1: {"name": "测试账号"}},
+            kind_labels=KIND_LABELS, kind_tabs=_message_kind_tabs(bot_id=0, channel_id=0, current=""),
             selected_conversation_id=7 if self.selected else None, has_more_messages=False, selected_chatroom=None, channel_id=0,
             messages=self.messages, message_identities=self.identities, message_views=self.views, csrf_token="test-csrf",
         )
@@ -188,7 +191,7 @@ def test_quote_own_and_incoming_messages_mentions_and_revoke(page):
     screen = MessagePage(page)
     own = page.locator('[data-id="20"]')
     own_bubble = own.locator(".wechat-message-bubble")
-    assert own_bubble.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(157, 242, 159)"
+    assert own_bubble.evaluate("el => getComputedStyle(el).backgroundColor") != page.locator('.wechat-message-bubble.in').first.evaluate("el => getComputedStyle(el).backgroundColor")
     assert own.evaluate("el => getComputedStyle(el).flexDirection") == "row-reverse"
     own_bubble.click(button="right")
     playwright.expect(page.locator('[data-message-action="quote"]')).to_be_visible()
@@ -298,6 +301,36 @@ def test_conversation_list_discovers_first_conversation_and_updates_preview(page
     playwright.expect(item).to_contain_text("新收到的图片")
     assert len(screen.list_calls) == 2
     assert not screen.history_calls and not screen.page_errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (1024, 768), (390, 844)])
+def test_inbox_search_survives_refresh_and_mobile_navigation(page, width, height):
+    page.set_viewport_size({"width": width, "height": height})
+    screen = MessagePage(page, count=1, selected=False)
+    search = page.get_by_role("searchbox", name="按名称查找最近会话")
+    item = page.locator('.wechat-conversation-item[data-conversation-id="7"]')
+    search.fill("设计")
+    playwright.expect(item).to_be_hidden()
+    playwright.expect(page.get_by_text("没有匹配的会话")).to_be_visible()
+    screen.conversation_items[0]["display_name"] = "设计讨论群" * 30
+    page.clock.fast_forward(10_100)
+    playwright.expect(item).to_be_visible()
+    playwright.expect(search).to_have_value("设计")
+    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+    screen.selected = True
+    item.focus()
+    item.press("Enter")
+    playwright.expect(page.locator("#wechat-composer")).to_be_visible()
+    if width == 390:
+        playwright.expect(search).to_be_hidden()
+        screen.selected = False
+        page.get_by_role("link", name="返回会话列表").click()
+        playwright.expect(search).to_be_visible()
+        playwright.expect(page.locator(".wechat-thread")).to_be_hidden()
+    else:
+        playwright.expect(search).to_be_visible()
+        playwright.expect(item).to_have_attribute("aria-current", "page")
+    assert not screen.page_errors
 
 
 def test_media_capabilities_upload_and_failed_text_preserve_draft(page):

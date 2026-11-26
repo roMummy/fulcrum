@@ -41,18 +41,59 @@ from app.services.plugin_runtime.contracts import (
 )
 from app.services.plugin_runtime.http_client import PluginHttpResponse
 from app.services.plugin_runtime.messages import PluginMessageBatch, PluginMessageRecord
+from plugins.message_summary.report import (
+    DailyActivity,
+    MemberChangeStats,
+    MessageSummaryReport,
+    SpeakerContribution,
+    SummaryAnalytics,
+    SummaryTopic,
+)
 
 
-def test_message_summary_uses_group_date_commands_and_clean_runtime_config() -> None:
-    """群总结只声明当前两个命令，并由平台统一识别斜杠和井号前缀。"""
+def _sample_summary_report(message_count: int = 120, active_member_count: int = 8) -> MessageSummaryReport:
+    """构造定时缓存测试使用的最小合法结构化报告。"""
+
+    analytics = SummaryAnalytics(
+        message_count=message_count,
+        active_member_count=active_member_count,
+        group_member_count=20,
+        active_ratio_percent=40.0,
+        contributions=(SpeakerContribution("speaker-a", "甲成员", "", 20, 16.7),),
+        daily_activity=(DailyActivity("2026-08-30", message_count, active_member_count, 40.0),),
+        member_changes=MemberChangeStats(),
+    )
+    topic = SummaryTopic("主流程", "主流程已确认。", (1, 2), 2, ("甲成员",), ("主流程已确认",), ())
+    return MessageSummaryReport(
+        conversation_title="产品研发群",
+        period_label="2026-08-30",
+        date_key="2026-08-30",
+        headline="主流程已确认",
+        intro="群聊围绕主流程推进，已形成明确下一步。",
+        analytics=analytics,
+        topics=(topic,),
+        top_topics=(topic,),
+        token_usage=300,
+    )
+
+
+def test_message_summary_uses_group_date_commands_and_openai_runtime_config() -> None:
+    """群总结只声明当前两个命令，并使用独立 OpenAI-compatible 配置。"""
 
     discovered = get_discovered_plugin("message_summary", force=True)
     assert discovered is not None
     assert discovered.matcher.commands == ("总结", "summary")
     assert discovered.capability.chat_types == ("group",)
     assert "telegram" in discovered.capability.channel_types
-    assert discovered.runtime_config["api_base"] == ""
+    assert discovered.runtime_config["llm_api_base"] == ""
+    assert discovered.runtime_config["llm_model"] == ""
+    assert discovered.runtime_config["llm_api_protocol"] == "responses"
+    assert discovered.runtime_config["llm_timeout_seconds"] == 60
     assert discovered.runtime_config["min_messages"] == 100
+    assert discovered.runtime_config["max_messages"] == 5000
+    assert discovered.runtime_config["max_tokens"] == 12000
+    assert discovered.runtime_config["reasoning_effort"] == "medium"
+    assert discovered.runtime_config["stream_output"] is True
     assert "app_mode" not in discovered.runtime_config
     assert "workflow_input_key" not in discovered.runtime_config
     assert "workflow_session_key" not in discovered.runtime_config
@@ -82,10 +123,21 @@ def test_message_summary_uses_group_date_commands_and_clean_runtime_config() -> 
     assert "workflow_input_key" not in source
     assert "workflow_session_key" not in source
     assert "192.0.2.240" not in source
+    assert "/workflows/run" not in source
+    normalized = module._load_config(
+        {
+            "llm_api_protocol": "unsupported",
+            "reasoning_effort": "unsupported",
+            "stream_output": "off",
+        }
+    )
+    assert normalized.llm_api_protocol == "responses"
+    assert normalized.reasoning_effort == "medium"
+    assert normalized.stream_output is False
 
 
-def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> None:
-    """指定日期总结使用平台消息批次和固定 Dify workflow 契约。"""
+def test_message_summary_reads_fixed_day_and_returns_structured_report() -> None:
+    """指定日期沿用消息批次，并把结构化报告交给统一文本回复。"""
 
     loaded = load_directory_plugin("message_summary", force=True)
     assert loaded is not None and loaded.instance is not None
@@ -122,33 +174,13 @@ def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> N
             captured["reader_kwargs"] = kwargs
             return batch
 
-    response = PluginHttpResponse(
-        status_code=200,
-        headers={"content-type": "application/json"},
-        body=json.dumps(
-            {
-                "data": {
-                    "outputs": {"text": "# 群聊摘要\n\n- 已确认主流程\n- 明确下一步负责人"},
-                    "total_tokens": 456,
-                },
-                "trace_id": "provider-sensitive-trace",
-            },
-            ensure_ascii=False,
-        ).encode("utf-8"),
-        url="https://dify.example.test/v1/workflows/run",
-    )
-
-    class FakeClient:
-        def post_json(self, url, payload, **kwargs):
-            captured.update({"url": url, "payload": payload, "http_kwargs": kwargs})
-            return response
-
     request = PluginExecutionRequest(
         action="execute",
         config={
             "enabled": True,
-            "api_base": "https://dify.example.test/v1",
-            "api_key": "tenant-summary-key",
+            "llm_api_base": "https://model.example.test/v1",
+            "llm_api_key": "tenant-summary-key",
+            "llm_model": "summary-model",
             "min_messages": 100,
             "max_messages": 1000,
             "render_as_image": False,
@@ -168,10 +200,11 @@ def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> N
         ),
     )
     expected_db = object()
+    report = _sample_summary_report(100, 4)
     with (
         patch.object(module, "now_shanghai", return_value=current),
         patch.object(module, "PluginMessageReader", FakeReader),
-        patch.object(module, "PluginHttpClient", return_value=FakeClient()),
+        patch.object(module, "build_structured_report", return_value=report),
     ):
         result = module.execute_message_action(expected_db, request)
 
@@ -180,20 +213,14 @@ def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> N
     assert result.output["message_count"] == 100
     assert result.output["participant_count"] == 4
     assert result.output["period_label"] == "2026-08-30"
-    assert result.output["token_usage"] == 456
+    assert result.output["token_usage"] == 300
     assert result.output["reply_type"] == "text"
-    assert result.output["replies"] == [
-        {"type": "text", "content": "# 群聊摘要\n\n- 已确认主流程\n- 明确下一步负责人"}
-    ]
+    assert result.output["report"]["schema_version"] == 1
+    assert result.output["replies"][0]["type"] == "text"
     assert captured["reader_db"] is expected_db
     reader_kwargs = captured["reader_kwargs"]
     assert reader_kwargs["start_at"] == datetime(2026, 8, 30, 0, 0, tzinfo=SHANGHAI_TZ)
     assert reader_kwargs["end_at"] == datetime(2026, 8, 31, 0, 0, tzinfo=SHANGHAI_TZ)
-    assert captured["url"] == "https://dify.example.test/v1/workflows/run"
-    request_body = captured["payload"]
-    assert set(request_body["inputs"]) == {"query", "group_name", "chat_content", "summary_mode"}
-    assert request_body["inputs"]["summary_mode"] == "markdown"
-    assert "第100条业务消息" in request_body["inputs"]["chat_content"]
     serialized_output = json.dumps(result.output, ensure_ascii=False)
     assert "第100条业务消息" not in serialized_output
     assert "tenant-summary-key" not in serialized_output
@@ -201,7 +228,7 @@ def test_message_summary_reads_fixed_day_and_uses_single_dify_text_output() -> N
 
 
 def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
-    """未指定日期时读取昨天零点到现在，低于 100 条不调用 Dify。"""
+    """未指定日期时读取昨天零点到现在，低于 100 条不调用模型。"""
 
     loaded = load_directory_plugin("message_summary", force=True)
     assert loaded is not None and loaded.instance is not None
@@ -224,15 +251,12 @@ def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
                 messages=(),
             )
 
-    class ForbiddenClient:
-        def post_json(self, *args, **kwargs):
-            raise AssertionError("消息不足时不应调用 Dify")
-
     request = PluginExecutionRequest(
         action="execute",
         config={
-            "api_base": "https://dify.example.test/v1",
-            "api_key": "tenant-key",
+            "llm_api_base": "https://model.example.test/v1",
+            "llm_api_key": "tenant-key",
+            "llm_model": "summary-model",
             "render_as_image": False,
         },
         payload={"content": "/summary"},
@@ -250,7 +274,7 @@ def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
     with (
         patch.object(module, "now_shanghai", return_value=current),
         patch.object(module, "PluginMessageReader", FakeReader),
-        patch.object(module, "PluginHttpClient", return_value=ForbiddenClient()),
+        patch.object(module, "build_structured_report", side_effect=AssertionError("消息不足时不应调用模型")),
     ):
         result = module.execute_message_action(object(), request)
 
@@ -262,7 +286,7 @@ def test_message_summary_defaults_to_yesterday_and_skips_small_groups() -> None:
 
 
 def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
-    """凌晨只缓存最小摘要，早上命中缓存后直接创建群聊出站任务。"""
+    """凌晨只缓存结构化报告，早上命中缓存后直接创建群聊出站任务。"""
 
     loaded = load_directory_plugin("message_summary", force=True)
     assert loaded is not None and loaded.instance is not None
@@ -317,7 +341,7 @@ def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
             message="generated",
             output={
                 "provider_status": "completed",
-                "summary": "# 昨日摘要\n\n- 主流程已确认",
+                "report": _sample_summary_report().to_dict(),
                 "message_count": 120,
                 "participant_count": 8,
                 "period_start": "2026-08-30T00:00:00+08:00",
@@ -347,8 +371,9 @@ def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
         chat_type="group",
     )
     base_config = {
-        "api_base": "https://dify.example.test/v1",
-        "api_key": "tenant-key",
+        "llm_api_base": "https://model.example.test/v1",
+        "llm_api_key": "tenant-key",
+        "llm_model": "summary-model",
         "render_as_image": False,
     }
     with (
@@ -384,7 +409,7 @@ def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
     assert len(generated_calls) == 1
     stored = next(iter(cache.values()))
     assert set(stored) == {
-        "summary",
+        "report",
         "message_count",
         "participant_count",
         "period_start",
@@ -400,7 +425,7 @@ def test_message_summary_prepare_cache_is_minimal_and_push_reuses_it() -> None:
             "receiver_id": "room-50",
             "chat_type": "group",
             "message_type": "text",
-            "content": "# 昨日摘要\n\n- 主流程已确认",
+            "content": "产品研发群｜2026-08-30\n主流程已确认\n群聊围绕主流程推进，已形成明确下一步。\n消息 120 条｜活跃成员 8 人｜活跃比例 40.0%\n1. 主流程（2 条，1 人）\n主流程已确认。\n“主流程已确认”",
         }
     ]
 
@@ -1444,3 +1469,77 @@ def test_douyu_scheduled_poll_uses_tenant_session_and_generic_text(douyu_schedul
         )
         assert room_state is not None
         assert json.loads(room_state.payload_json)["provider_status"] == "live"
+
+
+def test_douyu_scheduled_poll_sends_live_link_card_on_wechat_channels_and_text_on_offline(
+    douyu_schedule_fixture,
+) -> None:
+    """支持卡片的微信系渠道在开播时同时发送文本提醒与链接卡片，下播仅发文本提醒。"""
+
+    factory, identity = douyu_schedule_fixture
+    loaded = load_directory_plugin("douyu", force=True)
+    assert loaded is not None and loaded.instance is not None
+    module = loaded.instance._module
+    assert module._load_config({}).poll_interval_seconds == 30
+
+    with tenant_scope(identity["tenant_id"]), tenant_session(factory) as db:
+        binding = db.get(BotPlugin, identity["binding_id"])
+        conversation = db.get(Conversation, identity["conversation_id"])
+        assert binding is not None and conversation is not None
+        channel = db.get(Channel, conversation.channel_id)
+        assert channel is not None
+        channel.channel_type = "wechat_webridge"
+        conversation.channel_type = "wechat_webridge"
+        db.flush()
+
+        request = PluginExecutionRequest(
+            action="poll_subscriptions",
+            config=json.loads(binding.config_json or "{}"),
+            payload={},
+            context=PluginExecutionContext(
+                tenant_id=identity["tenant_id"],
+                binding_id=identity["binding_id"],
+                bot_id=identity["bot_id"],
+            ),
+        )
+        live_room = {
+            "provider_status": "live",
+            "room_id": "100",
+            "nickname": "主播甲",
+            "room_name": "开心直播",
+            "room_url": "https://www.douyu.com/100",
+            "thumb_url": "https://img.example.test/avatar.jpg",
+        }
+        with patch.object(module, "_fetch_room_status_output", return_value=live_room):
+            live_result = module.execute_scheduled_action(db, request)
+
+        assert live_result.ok is True
+        jobs = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+        assert len(jobs) == 2
+        first_payload = json.loads(jobs[0].payload_json)["payload"]
+        second_payload = json.loads(jobs[1].payload_json)["payload"]
+        assert first_payload["message_type"] == "text"
+        assert "斗鱼开播提醒" in first_payload["content"]
+        assert second_payload["message_type"] == "link"
+        assert second_payload["link_url"] == "https://www.douyu.com/100"
+        assert second_payload["link_title"] == "开心直播"
+        assert second_payload["link_description"] == "主播甲 正在斗鱼直播"
+        assert second_payload["thumb_url"] == "https://img.example.test/avatar.jpg"
+
+        offline_room = {
+            "provider_status": "offline",
+            "room_id": "100",
+            "nickname": "主播甲",
+            "room_name": "开心直播",
+            "room_url": "https://www.douyu.com/100",
+            "thumb_url": "https://img.example.test/avatar.jpg",
+        }
+        with patch.object(module, "_fetch_room_status_output", return_value=offline_room):
+            offline_result = module.execute_scheduled_action(db, request)
+
+        assert offline_result.ok is True
+        jobs_after_offline = db.scalars(select(TaskJob).order_by(TaskJob.id.asc())).all()
+        assert len(jobs_after_offline) == 3
+        offline_payload = json.loads(jobs_after_offline[2].payload_json)["payload"]
+        assert offline_payload["message_type"] == "text"
+        assert "斗鱼下播提醒" in offline_payload["content"]

@@ -20,15 +20,139 @@ commands = ["总结", "summary"]
 require_mention = false
 
 [secrets]
-fields = ["api_key"]
+fields = ["llm_api_key"]
 
 [runtime]
-api_base = ""
-api_key = ""
+llm_api_base = ""
+llm_api_key = ""
+llm_model = ""
+llm_api_protocol = "responses"
+llm_timeout_seconds = 60
+temperature = 0.3
+max_tokens = 12000
+reasoning_effort = "medium"
+stream_output = true
 min_messages = 100
-max_messages = 1000
-request_timeout_seconds = 60
+max_messages = 5000
 render_as_image = true
 daily_summary_conversation_ids = []
 daily_summary_prepare_time = "03:00"
 daily_summary_push_time = "09:00"
+
+[[config.fields]]
+key = "llm_api_base"
+label = "模型 API 地址"
+kind = "url"
+default = ""
+placeholder = "https://api.example.com/v1"
+group = "模型"
+
+[[config.fields]]
+key = "llm_api_key"
+label = "模型 API Key"
+kind = "secret"
+group = "模型"
+
+[[config.fields]]
+key = "llm_model"
+label = "模型名称"
+kind = "text"
+default = ""
+placeholder = "gpt-4o-mini"
+group = "模型"
+
+[[config.fields]]
+key = "llm_api_protocol"
+label = "模型 API 协议"
+kind = "select"
+options = [{ value = "responses", label = "Responses API" }, { value = "chat_completions", label = "Chat Completions" }]
+default = "responses"
+group = "模型"
+
+[[config.fields]]
+key = "llm_timeout_seconds"
+label = "模型等待时间（秒）"
+kind = "number"
+default = 60
+min = 10
+max = 180
+group = "模型"
+
+[[config.fields]]
+key = "temperature"
+label = "生成温度"
+kind = "number"
+default = 0.3
+min = 0
+max = 2
+group = "模型"
+
+[[config.fields]]
+key = "max_tokens"
+label = "最大输出 Token"
+kind = "number"
+default = 12000
+min = 400
+max = 32000
+group = "模型"
+
+[[config.fields]]
+key = "reasoning_effort"
+label = "推理强度"
+kind = "select"
+options = [{ value = "none", label = "关闭" }, { value = "low", label = "低" }, { value = "medium", label = "中" }, { value = "high", label = "高" }]
+default = "medium"
+group = "模型"
+
+[[config.fields]]
+key = "stream_output"
+label = "流式接收"
+kind = "bool"
+default = true
+group = "模型"
+
+[[config.fields]]
+key = "min_messages"
+label = "最少总结消息数"
+kind = "number"
+default = 100
+min = 100
+max = 2000
+group = "总结"
+
+[[config.fields]]
+key = "max_messages"
+label = "最多读取消息数"
+kind = "number"
+default = 5000
+min = 100
+max = 20000
+group = "总结"
+
+[[config.fields]]
+key = "render_as_image"
+label = "生成周报图片"
+kind = "bool"
+default = true
+group = "总结"
+
+[[config.fields]]
+key = "daily_summary_conversation_ids"
+label = "定时总结群聊"
+kind = "tags"
+default = []
+group = "定时推送"
+
+[[config.fields]]
+key = "daily_summary_prepare_time"
+label = "预生成时间"
+kind = "time"
+default = "03:00"
+group = "定时推送"
+
+[[config.fields]]
+key = "daily_summary_push_time"
+label = "推送时间"
+kind = "time"
+default = "09:00"
+group = "定时推送"

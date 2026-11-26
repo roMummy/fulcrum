@@ -8,8 +8,8 @@
     <input type="hidden" name="expected" value="{{ item.remark or '' }}">
     <label>好友备注<input name="remark" value="{{ item.remark or '' }}" maxlength="255"></label>
     <div class="chip-row">
-      <button class="btn btn-small" type="submit">保存备注</button>
-      {% if item.remark %}<button class="btn btn-small btn-secondary" type="submit" name="clear" value="true">清空备注</button>{% endif %}
+      <button class="btn btn-small btn-icon" type="submit" title="保存备注" aria-label="保存备注"><span class="i i-check" aria-hidden="true"></span></button>
+      {% if item.remark %}<button class="btn btn-small btn-secondary btn-icon" type="submit" name="clear" value="true" title="清空备注" aria-label="清空备注"><span class="i i-x" aria-hidden="true"></span></button>{% endif %}
     </div>
   </form>
 </details>

@@ -45,46 +45,46 @@
   </nav>
 
   {% if tab == 'features' %}
-  {# 群功能:每个能力一张卡片。标题 + 总开关为主,设置分小节铺开为次;配置存在群自己的记录里。 #}
-  <div class="gf-list">
-  {# 运行模式:三选一。只采集消息 = 继续记录但不触发功能;完全关闭 = 不接收也不触发。 #}
-  <form method="post" action="{{ base_url }}/management" class="gf-card gf-card-compact is-on" data-gf-card data-gf-key="mode" data-gf-open="1">
-    <header class="gf-head">
-      <div class="gf-head-copy" data-gf-toggle-title>
-        <h3>运行模式</h3>
-        <p>决定机器人在本群做什么。下面各项群功能，只在“正常运行”时生效。</p>
-      </div>
-      <div class="gf-head-actions">
-        <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="true" aria-label="展开或收起设置" title="展开或收起设置"></button>
-      </div>
-    </header>
-    <div class="gf-collapse" data-gf-collapse>
-    <div class="gf-body">
-      <div class="gf-mode-list">
-        {% for mode in group_modes %}
-        <label class="gf-mode{% if mode.value == group_mode %} is-selected{% endif %}">
-          {# 选中即生效:脚本提交后弹出提示;失败时回到原来的选项 #}
-          <input type="radio" name="management_status" value="{{ mode.value }}" data-autosave-url="{{ base_url }}/management" data-autosave-key="management_status" data-autosave-form="{}"{% if mode.value == group_mode %} checked{% endif %} />
-          <span class="gf-mode-text"><strong>{{ mode.label }}</strong><small>{{ mode.hint }}</small></span>
-        </label>
-        {% endfor %}
-      </div>
+  {# 群功能:顶部一行紧凑运行模式，下方两列小卡，展开某项设置时自动占满整行。 #}
+  <div class="gf-list chatroom-feature-grid">
+  {# 运行模式:三选一紧凑分段条，点击即保存。 #}
+  <form method="post" action="{{ base_url }}/management" class="gf-card gf-mode-bar is-on" data-gf-card data-gf-key="mode">
+    <div class="gf-mode-bar-head">
+      <h3>运行模式</h3>
+      <small>群功能仅在「正常运行」时生效</small>
     </div>
+    <div class="gf-mode-list">
+      {% for mode in group_modes %}
+      <label class="gf-mode{% if mode.value == group_mode %} is-selected{% endif %}" title="{{ mode.hint }}">
+        {# 选中即生效:脚本提交后弹出提示;失败时回到原来的选项 #}
+        <input type="radio" name="management_status" value="{{ mode.value }}" data-autosave-url="{{ base_url }}/management" data-autosave-key="management_status" data-autosave-form="{}"{% if mode.value == group_mode %} checked{% endif %} />
+        <span class="gf-mode-text"><strong>{{ mode.label }}</strong><small>{{ mode.hint }}</small></span>
+      </label>
+      {% endfor %}
     </div>
   </form>
   {% for item in features %}
-  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% if item.key == 'moderation' %}{% include '_group_moderation_ledger.html' %}{% endif %}{% if item.key == 'trigger_reply' %}<div class="gf-body"><a class="btn btn-secondary" href="{{ base_url }}/triggers"><span class="i i-sliders" aria-hidden="true"></span><span>管理触发规则</span></a></div>{% endif %}{% endcall %}
+  {% call config_card(item, base_url ~ '/features/' ~ item.key, base_url ~ '/features/' ~ item.key ~ '/toggle', base_url ~ '/features/' ~ item.key) %}{% if ledgers.get(item.key) %}{{ payment_ledger(ledgers[item.key]) }}{% endif %}{% if item.key == 'moderation' %}{% include '_group_moderation_ledger.html' %}{% endif %}{% if item.key == 'trigger_reply' %}<div class="gf-body"><a class="btn btn-secondary btn-small" href="{{ base_url }}/triggers"><span class="i i-sliders" aria-hidden="true"></span><span>管理触发规则</span></a></div>{% endif %}{% endcall %}
   {% endfor %}
   </div>
 
   {% elif tab == 'plugins' %}
   {% if detail.bindings %}
-  <div class="chatroom-plugins-heading"><div><h2>本群插件</h2><p>指令与功能选项可单独调整，未修改的项目跟随机器人默认设置。</p></div><a class="btn btn-secondary btn-small" href="/chatrooms/plugin-scopes">批量管理</a></div>
-  <div class="gf-list chatroom-plugin-list">
+  <div class="chatroom-plugins-toolbar" data-group-plugin-filter>
+    <label class="chatroom-plugin-search"><span class="i i-search" aria-hidden="true"></span><input type="search" placeholder="搜索本群插件、指令或介绍" aria-label="搜索本群插件" data-group-plugin-search /></label>
+    <div class="plugin-usage-periods chatroom-plugin-state-filter" role="group" aria-label="按启用状态筛选">
+      <button type="button" data-group-plugin-state="all" aria-pressed="true">全部</button>
+      <button type="button" data-group-plugin-state="enabled" aria-pressed="false">已启用</button>
+      <button type="button" data-group-plugin-state="disabled" aria-pressed="false">已停用</button>
+    </div>
+    <a class="btn btn-secondary btn-small btn-icon" href="/chatrooms/plugin-scopes" title="批量管理群插件" aria-label="批量管理群插件"><span class="i i-sliders" aria-hidden="true"></span></a>
+  </div>
+  <div class="gf-list chatroom-plugin-list" data-group-plugin-list>
   {% for item in detail.bindings %}
   {% include '_chatroom_plugin_card.html' %}
   {% endfor %}
   </div>
+  <p class="muted-text" data-group-plugin-empty hidden>没有匹配的本群插件。</p>
   {% else %}
   <p class="muted-text">当前机器人还没有绑定插件，请先在“插件”页把插件绑定到机器人。</p>
   {% endif %}
@@ -203,8 +203,8 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/ai-models.js" defer></script>
-<script src="/static/js/group-features.js" defer></script>
+<script src="/static/js/group-features.js?v=20261126c" defer></script>
 <script src="/static/js/plugin-delivery-settings.js" defer></script>
 {% if tab == 'members' %}<script src="/static/js/chatroom-invitations.js" defer></script>{% endif %}
-{% if tab == 'plugins' %}<script src="/static/js/chatroom-plugin-settings.js" defer></script><script src="/static/js/proxy-mode-toggle.js" defer></script>{% endif %}
+{% if tab == 'plugins' %}<script src="/static/js/chatroom-plugin-settings.js?v=20261126c" defer></script><script src="/static/js/proxy-mode-toggle.js" defer></script>{% endif %}
 {% endblock %}

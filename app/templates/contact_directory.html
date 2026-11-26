@@ -33,23 +33,36 @@
   </form>
 
   {% if directory.rows %}
-  <div class="table-scroll">
-  <table class="table">
-    <thead><tr><th>好友</th><th>备注</th>{% if channels|length > 1 %}<th>账号</th>{% endif %}<th class="col-compact">共同群</th><th class="col-compact">总积分</th><th class="col-action"></th></tr></thead>
-    <tbody>
-      {% for item in directory.rows %}
-      <tr>
-        <td>{{ identity(item.identity, 'lg') }}</td>
-        <td>{{ friend_remark(item, can_edit, current_list_url, csrf_token) }}</td>
-        {% if channels|length > 1 %}<td class="muted-text">{{ item.channel_name }}</td>{% endif %}
-        <td class="col-compact">{{ item.group_count or '-' }}</td>
-        <td class="col-compact">{{ item.points or '-' }}</td>
+  {# 好友采用竖向紧凑小卡片网格：按昵称排序，大头像独立成行，昵称与备注各占一行，所属账号放在底部。 #}
+  <div class="compact-card-grid contact-card-grid">
+    {% for item in directory.rows %}
+    <article class="contact-card">
+      <div class="contact-card-avatar-row">
+        <span class="contact-card-avatar">
+          {% if item.identity.avatar_url %}
+          <img src="{{ item.identity.avatar_url }}" alt="{{ item.nickname or item.identity.name }}" loading="lazy" referrerpolicy="no-referrer" />
+          {% else %}
+          <span>{{ item.identity.initial }}</span>
+          {% endif %}
+        </span>
+      </div>
+      <h3 class="contact-card-nickname" title="{{ item.nickname or item.identity.name }}">{{ item.nickname or item.identity.name }}</h3>
+      <div class="contact-card-remark">{{ friend_remark(item, can_edit, current_list_url, csrf_token) }}</div>
+      <div class="contact-card-metrics">
+        <span>群 <strong>{{ item.group_count or '-' }}</strong></span>
+        <span>分 <strong>{{ item.points or '-' }}</strong></span>
+      </div>
+      <div class="contact-card-footer">
+        {% if channels|length > 1 %}
+        <span class="contact-card-channel-foot" title="{{ item.channel_name }}">{{ item.channel_name }}</span>
+        {% else %}
+        <span class="contact-card-channel-foot"></span>
+        {% endif %}
         {# 页面使用服务端统一能力判断；只读人员可以查看已有记录，不能创建新会话。 #}
-        <td class="col-action">{{ friend_chat_action(item, can_edit, current_list_url, csrf_token) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+        <div class="compact-card-actions">{{ friend_chat_action(item, can_edit, current_list_url, csrf_token) }}</div>
+      </div>
+    </article>
+    {% endfor %}
   </div>
   {% include '_pager.html' %}
   {% else %}

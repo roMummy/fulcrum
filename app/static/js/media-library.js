@@ -13,6 +13,20 @@
     }
     const sizes = new ResizeObserver(entries => entries.forEach(entry => sizeTile(entry.target)));
     tiles.forEach(tile => { sizeTile(tile); sizes.observe(tile); });
+    // 图片加载完成（或失败回退）后再显示左上勾选与右上信息图标，避免未撑开前两枚浮层图标堆叠在一起。
+    tiles.forEach(tile => {
+      if (!tile.classList.contains('media-tile-image')) return;
+      const picture = tile.querySelector('.media-open img');
+      if (!picture) { tile.classList.remove('is-loading'); return; }
+      const reveal = () => { tile.classList.remove('is-loading'); sizeTile(tile); };
+      // 必须确认图片已有实际像素宽高（naturalWidth > 0）才视为加载完成，避免懒加载图片尚未拉取时提前显现浮层图标。
+      if (picture.complete && picture.naturalWidth > 0) {
+        reveal();
+      } else {
+        picture.addEventListener('load', reveal, { once: true });
+        picture.addEventListener('error', reveal, { once: true });
+      }
+    });
   }
   const operations = Array.from(root.querySelectorAll('[data-media-operation]'));
   let busy = false;

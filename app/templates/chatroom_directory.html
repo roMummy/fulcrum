@@ -79,20 +79,6 @@
   {% if not (directory.keyword or directory.status or directory.channel_id) %}<a class="btn" href="/channels"><span class="i i-plus" aria-hidden="true"></span><span>去接入账号</span></a>{% endif %}
   {% endif %}
 </section>
-
-{# 还没收到消息的群可以先手工登记;登记后默认待启用,是低频操作,所以折叠。 #}
-{% if channels %}
-<details class="work-surface disclosure">
-  <summary>手动登记群</summary>
-  <form method="post" action="/chatrooms/create" class="form-grid" style="margin-top:12px;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label><span>账号</span><select name="channel_id">{% for item in channels %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
-    <label><span>群 ID</span><input name="external_id" placeholder="例如:123456@chatroom" required /></label>
-    <label><span>群名称</span><input name="name" placeholder="例如:运营群" /></label>
-    <div class="full-row"><button class="btn" type="submit"><span class="i i-plus" aria-hidden="true"></span><span>登记</span></button></div>
-  </form>
-</details>
-{% endif %}
 {% endblock %}
 {% block scripts %}
 <script>

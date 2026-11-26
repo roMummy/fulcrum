@@ -264,5 +264,5 @@ def test_reader_rejects_invalid_range_and_excessive_limit(message_reader_fixture
         reader = PluginMessageReader(db, _context(identity))
         with pytest.raises(PluginMessageAccessError, match="时间范围"):
             reader.read(start_at=base_time, end_at=base_time, limit=20)
-        with pytest.raises(PluginMessageAccessError, match="2000"):
-            reader.read(start_at=base_time, end_at=base_time + timedelta(days=1), limit=2001)
+        with pytest.raises(PluginMessageAccessError, match="20000"):
+            reader.read(start_at=base_time, end_at=base_time + timedelta(days=1), limit=20001)

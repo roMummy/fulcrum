@@ -12,14 +12,13 @@
         <p>{{ card.description }}</p>
       </div>
       <div class="gf-head-actions">
-        <label class="gf-master" title="在本群开启或关闭">
-          <span class="gf-master-text" data-gf-state>{{ '已开启' if card.enabled else '未开启' }}</span>
+        <label class="gf-master" title="在本群开启或关闭 {{ card.name }}">
           <span class="ui-switch">
-            <input type="checkbox" name="enabled" value="true" role="switch" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="{{ toggle_url }}" data-autosave-json='{"field":"enabled"}'{% if card.enabled %} checked{% endif %} />
+            <input type="checkbox" name="enabled" value="true" role="switch" aria-label="开启或关闭 {{ card.name }}" data-gf-master data-on-text="已开启" data-off-text="未开启" data-autosave-url="{{ toggle_url }}" data-autosave-json='{"field":"enabled"}'{% if card.enabled %} checked{% endif %} />
             <span class="ui-switch-track"></span>
           </span>
         </label>
-        {% if card.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起设置" title="展开或收起设置"></button>{% endif %}
+        {% if card.sections %}<button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-label="展开或收起 {{ card.name }} 设置" title="展开或收起设置"></button>{% endif %}
       </div>
     </header>
 

@@ -30,6 +30,12 @@ MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16 * 1024 * 1024
 MAX_IMAGE_HEIGHT = 8192
 MAX_IMAGE_WIDTH = 2048
+# Kitesurf 当前渲染器单次截图的单边上限为 2560px，且单片像素预算为
+# 2560×1440。整页超过单片上限时由本服务拆分截图并在应用侧拼接，避免引擎
+# 返回尺寸被静默压缩后再被误当成完整页面。
+KITESURF_MAX_SIDE = 2560
+KITESURF_MAX_PIXELS = 2560 * 1440
+KITESURF_SLICE_HEIGHT = 2400
 # CDP 用 Base64 返回图片，额度包含编码膨胀和少量协议字段，限制在解码前生效。
 MAX_CDP_MESSAGE_BYTES = (MAX_IMAGE_BYTES * 4 // 3) + 64 * 1024
 _slots = threading.BoundedSemaphore(settings.kitesurf_max_concurrency)
@@ -170,15 +176,12 @@ def _full_page_size(metrics: dict, request: ScreenshotRequest) -> tuple[int, int
     return width, height
 
 
-def _decode_image(data: object, *, format: str, width: int, height: int) -> bytes:
-    """解码前限制大小，再验证格式、实际尺寸与完整性，拒绝错误占位图。"""
+def _validate_image_content(content: bytes, *, format: str, width: int, height: int) -> bytes:
+    """统一校验单片和拼接后的图片，拒绝截断、占位或尺寸不符的结果。"""
 
-    if not isinstance(data, str) or not data or len(data) > MAX_IMAGE_BYTES * 4 // 3:
+    if not content or len(content) > MAX_IMAGE_BYTES:
         raise ScreenshotError("screenshot_image_invalid", "截图引擎返回的图片为空或过大")
     try:
-        content = base64.b64decode(data, validate=True)
-        if not content or len(content) > MAX_IMAGE_BYTES:
-            raise ValueError("invalid image size")
         with Image.open(BytesIO(content)) as image:
             if image.format != format.upper() or image.size != (width, height):
                 raise ValueError("unexpected image format or dimensions")
@@ -186,6 +189,50 @@ def _decode_image(data: object, *, format: str, width: int, height: int) -> byte
     except (ValueError, OSError, binascii.Error, UnidentifiedImageError, Image.DecompressionBombError) as exc:
         raise ScreenshotError("screenshot_image_invalid", "截图引擎返回的图片无效") from exc
     return content
+
+
+def _decode_image(data: object, *, format: str, width: int, height: int) -> bytes:
+    """解码前限制大小，再验证格式、实际尺寸与完整性，拒绝错误占位图。"""
+
+    if not isinstance(data, str) or not data or len(data) > MAX_IMAGE_BYTES * 4 // 3:
+        raise ScreenshotError("screenshot_image_invalid", "截图引擎返回的图片为空或过大")
+    try:
+        content = base64.b64decode(data, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ScreenshotError("screenshot_image_invalid", "截图引擎返回的图片无效") from exc
+    return _validate_image_content(content, format=format, width=width, height=height)
+
+
+def _safe_slice_height(width: int) -> int:
+    """按 Kitesurf 的单边和像素限制计算单片高度，留出少量安全余量。"""
+
+    pixel_height = max(1, KITESURF_MAX_PIXELS // width)
+    return min(KITESURF_SLICE_HEIGHT, KITESURF_MAX_SIDE - 1, pixel_height)
+
+
+def _stitch_images(
+    slices: list[tuple[int, bytes]], *, format: str, width: int, height: int, quality: int
+) -> bytes:
+    """按纵向偏移拼接截图分片，并用最终图片校验复核完整尺寸。"""
+
+    mode = "RGBA" if format == "png" else "RGB"
+    try:
+        canvas = Image.new(mode, (width, height))
+        for y, content in slices:
+            with Image.open(BytesIO(content)) as image:
+                image.load()
+                layer = image.convert(mode)
+                canvas.paste(layer, (0, y))
+        output = BytesIO()
+        save_options: dict[str, Any] = {"format": format.upper()}
+        if format == "jpeg":
+            save_options["quality"] = quality
+        canvas.save(output, **save_options)
+        return _validate_image_content(output.getvalue(), format=format, width=width, height=height)
+    except ScreenshotError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise ScreenshotError("screenshot_image_invalid", "截图拼接结果无效") from exc
 
 
 async def _capture(url: str, request: ScreenshotRequest, timeout: float) -> tuple[bytes, int, int]:
@@ -231,15 +278,32 @@ async def _capture(url: str, request: ScreenshotRequest, timeout: float) -> tupl
             if request.full_page:
                 metrics = await cdp.call("Page.getLayoutMetrics", session_id=session_id)
                 width, height = _full_page_size(metrics, request)
-            options: dict[str, Any] = {
-                "format": request.format, "captureBeyondViewport": request.full_page,
-                "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
-            }
-            if request.format == "jpeg":
-                options["quality"] = request.quality
+            slice_height = _safe_slice_height(width)
+            slices: list[tuple[int, bytes]] = []
             # Kitesurf captureScreenshot 本身等待当前截图区域的字体、图片等资源。
-            captured = await cdp.call("Page.captureScreenshot", options, session_id=session_id)
-            return _decode_image(captured.get("data"), format=request.format, width=width, height=height), width, height
+            # 页面较短时保留单次请求，避免为普通截图引入额外编码和拼接开销。
+            for y in range(0, height, slice_height if request.full_page else height):
+                current_height = min(slice_height, height - y) if request.full_page else height
+                options: dict[str, Any] = {
+                    "format": request.format,
+                    "captureBeyondViewport": request.full_page,
+                    "clip": {"x": 0, "y": y, "width": width, "height": current_height, "scale": 1},
+                }
+                if request.format == "jpeg":
+                    options["quality"] = request.quality
+                captured = await cdp.call("Page.captureScreenshot", options, session_id=session_id)
+                content = _decode_image(
+                    captured.get("data"),
+                    format=request.format,
+                    width=width,
+                    height=current_height,
+                )
+                slices.append((y, content))
+                if not request.full_page:
+                    break
+            if len(slices) == 1 and slices[0][0] == 0 and len(slices[0][1]) > 0:
+                return slices[0][1], width, height
+            return _stitch_images(slices, format=request.format, width=width, height=height, quality=request.quality), width, height
         finally:
             if browser_context_id:
                 try:

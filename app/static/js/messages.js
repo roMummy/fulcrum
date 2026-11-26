@@ -32,6 +32,26 @@
   // 会话列表独立刷新；尚未选择会话或暂无会话时，也能带出新收到的消息。
   var conversations = center.querySelector(".wechat-conversation-list");
   var listTimer = null, listRequest = null;
+  var search = document.getElementById("wechat-conversation-search");
+  var emptyList = conversations.querySelector(".wechat-empty");
+  function filterConversations() {
+    var query = search.value.trim().toLocaleLowerCase();
+    var matches = 0;
+    conversations.querySelectorAll(".wechat-conversation-item").forEach(function (link) {
+      var name = link.querySelector(".wechat-conversation-name").textContent;
+      link.hidden = !name.toLocaleLowerCase().includes(query);
+      if (!link.hidden) matches++;
+    });
+    emptyList.hidden = matches > 0;
+    var message = query ? "没有匹配的会话" : "暂无会话消息";
+    if (emptyList.textContent !== message) emptyList.textContent = message;
+  }
+  search.closest("label").hidden = false;
+  search.addEventListener("input", function () {
+    filterConversations();
+    conversations.scrollTop = 0;
+  });
+  filterConversations();
   function conversationFilters() {
     var query = new URLSearchParams();
     if (center.dataset.botId) query.set("bot_id", center.dataset.botId);
@@ -62,6 +82,8 @@
         if (returnTo) query.set("return_to", returnTo);
         link.href = "/messages?" + query.toString();
         link.classList.toggle("active", id === conversationId);
+        if (id === conversationId) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
         var nameEl = link.querySelector(".wechat-conversation-name");
         nameEl.textContent = item.display_name;
         if (item.kind === "official") {
@@ -87,9 +109,7 @@
         position += 1;
       });
       conversations.querySelectorAll(".wechat-conversation-item").forEach(function (link) { if (!seen.has(link.dataset.conversationId)) link.remove(); });
-      var empty = conversations.querySelector(".wechat-empty");
-      if (empty && seen.size) empty.remove();
-      if (!empty && !seen.size) { empty = document.createElement("div"); empty.className = "wechat-empty"; empty.textContent = "暂无会话消息"; conversations.appendChild(empty); }
+      filterConversations();
       conversations.scrollTop = top;
     }).finally(function () { listRequest = null; });
     return listRequest;
@@ -111,9 +131,9 @@
   function toBottom() { body.scrollTop = body.scrollHeight; }
 
   // 断网时结束请求，防止一个挂起请求阻塞后续轮询。
-  async function request(url, options) {
+  async function request(url, options, timeoutMs) {
     var controller = new AbortController();
-    var timeout = setTimeout(function () { controller.abort(); }, 20000);
+    var timeout = setTimeout(function () { controller.abort(); }, timeoutMs || 20000);
     try {
       var response = await fetch(url, Object.assign({ credentials: "same-origin", headers: { Accept: "application/json" }, signal: controller.signal }, options));
       var data = await response.json().catch(function () { return {}; });
@@ -121,6 +141,22 @@
       return data;
     } finally { clearTimeout(timeout); }
   }
+  var countButton = document.getElementById("message-count-button");
+  var countStatus = document.getElementById("message-count-status");
+  if (countButton && countStatus) countButton.addEventListener("click", async function () {
+    if (countButton.disabled) return;
+    countButton.disabled = true;
+    countStatus.textContent = "正在统计…";
+    try {
+      var data = await request("/messages/count?conversation_id=" + encodeURIComponent(conversationId), { cache: "no-store" }, 120000);
+      if (!Number.isSafeInteger(data.total) || data.total < 0) throw new Error();
+      countStatus.textContent = "本次统计：" + data.total + " 条";
+      countButton.textContent = "重新统计";
+    } catch (_error) {
+      countStatus.textContent = "统计未完成";
+      countButton.textContent = "重试统计";
+    } finally { countButton.disabled = false; }
+  });
   function fetchRows(params) {
     return request("/messages/history?" + new URLSearchParams(Object.assign({ conversation_id: conversationId }, params)).toString());
   }

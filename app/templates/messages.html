@@ -1,5 +1,12 @@
 {% extends 'base.html' %}
 {% from '_message_rows.html' import message_rows %}
+{% from '_identity.html' import identity %}
+{% macro list_href(tab) -%}
+{{ tab.href }}{% if return_to %}{{ '&' if '?' in tab.href else '?' }}return_to={{ return_to|urlencode }}{% endif %}
+{%- endmacro %}
+{% macro inbox_href(account) -%}
+/messages?channel_id={{ account }}{% if bot_id %}&bot_id={{ bot_id }}{% endif %}{% if chat_type %}&chat_type={{ chat_type }}{% endif %}{% if return_to %}&return_to={{ return_to|urlencode }}{% endif %}
+{%- endmacro %}
 {% block back %}{% if back_href %}<a class="page-back" href="{{ back_href }}" title="返回列表" aria-label="返回列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endif %}{% endblock %}
 {% block hero_actions %}
 <div class="hero-action-cluster">
@@ -7,50 +14,81 @@
   <nav class="msg-kind-tabs" aria-label="会话类型">
     {% for tab in kind_tabs %}<a class="msg-kind-tab{% if tab.active %} active{% endif %}" href="{{ tab.href }}{% if return_to %}{{ '&' if '?' in tab.href else '?' }}return_to={{ return_to|urlencode }}{% endif %}"{% if tab.active %} aria-current="page"{% endif %} title="{{ tab.label }}"><span class="i i-{{ tab.icon }}" aria-hidden="true"></span><span>{{ tab.label }}</span></a>{% endfor %}
   </nav>
-  {% if selected_total is not none %}<span class="chip chip-outline">消息 {{ selected_total }}</span>{% endif %}
+  {% if selected_conversation_id %}
+  <span id="message-count-status" role="status"></span>
+  <button class="btn btn-small btn-secondary" type="button" id="message-count-button">查看消息总数</button>
+  {% endif %}
 </div>
 {% endblock %}
 {% block content %}
 {# 整页撑满窗口高度:左侧会话列表、右侧对话各自在内部滚动(高度由 messages.js 按窗口计算,样式里有兜底值)。 #}
-<section class="msg-center" id="msg-center" data-conversation-id="{{ selected_conversation_id or '' }}" data-has-more="{{ 1 if has_more_messages else 0 }}" data-bot-id="{{ bot_id or '' }}" data-channel-id="{{ channel_id or '' }}" data-filter-chat-type="{{ chat_type or '' }}" data-chat-type="{% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{{ item.conversation.chat_type }}{% endif %}{% endfor %}">
-  <aside class="wechat-conversation-list" aria-label="会话列表">
-    {% for item in conversation_summaries %}
-    <a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}" data-conversation-id="{{ item.conversation.id }}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}{% if bot_id %}&bot_id={{ bot_id }}{% endif %}{% if chat_type %}&chat_type={{ chat_type }}{% endif %}{% if return_to %}&return_to={{ return_to|urlencode }}{% endif %}">
-      <span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span>
-      <span class="wechat-conversation-copy">
-        <span class="wechat-conversation-head">
-          <strong class="wechat-conversation-name">{% if item.kind == 'official' %}<span class="i i-newspaper msg-kind-badge" title="公众号" aria-label="公众号"></span>{% endif %}{{ item.display_name }}</strong>
-          {# 列表只显示短时间，完整日期保留在悬停提示中；与轮询共用服务端摘要。 #}
-          <time class="wechat-conversation-time" title="{{ item.time_title }}">{{ item.time }}</time>
-        </span>
-        <span class="wechat-conversation-preview">{{ ('你撤回了一条消息' if item.latest.status == 'revoked' else item.latest.content|message_display(item.latest.message_type)) if item.latest else '暂无消息' }}</span>
-      </span>
+<section class="msg-center" id="msg-center" data-conversation-id="{{ selected_conversation_id or '' }}" data-has-more="{{ 1 if has_more_messages else 0 }}" data-bot-id="{{ bot_id or '' }}" data-channel-id="{{ channel_id or '' }}" data-filter-chat-type="{{ chat_type or '' }}" data-chat-type="{{ selected_summary.conversation.chat_type if selected_summary else '' }}">
+  <nav class="wechat-account-rail" aria-label="切换接入账号">
+    <h2>接入账号</h2>
+    {% for id, account in inbox_accounts.items() %}
+    <a href="{{ inbox_href(id) }}" aria-label="{{ account.name }}（账号 {{ id }}）" title="{{ account.name }}"{% if id == channel_id %} aria-current="page"{% endif %}>
+      {{ identity(account, show_id=False) }}
     </a>
-    {% else %}<div class="wechat-empty">暂无会话消息</div>{% endfor %}
+    {% else %}<span class="muted-text">暂无接入账号</span>{% endfor %}
+  </nav>
+  <aside class="wechat-inbox" aria-label="会话列表">
+    <div class="wechat-inbox-tools">
+      <h2>最近会话</h2>
+      <nav class="msg-kind-tabs" aria-label="会话类型">
+        {% for tab in kind_tabs %}<a class="msg-kind-tab{% if tab.active %} active{% endif %}" href="{{ list_href(tab) }}"{% if tab.active %} aria-current="page"{% endif %}>{{ tab.label }}</a>{% endfor %}
+      </nav>
+      <label class="wechat-inbox-search" hidden>
+        <span class="i i-search" aria-hidden="true"></span>
+        <input type="search" id="wechat-conversation-search" aria-label="按名称查找最近会话" placeholder="按名称查找最近会话" autocomplete="off" />
+      </label>
+    </div>
+    <div class="wechat-conversation-list">
+      {% for item in conversation_summaries %}
+      <a class="wechat-conversation-item{% if item.conversation.id == selected_conversation_id %} active{% endif %}"{% if item.conversation.id == selected_conversation_id %} aria-current="page"{% endif %} data-conversation-id="{{ item.conversation.id }}" href="/messages?conversation_id={{ item.conversation.id }}{% if channel_id %}&channel_id={{ channel_id }}{% endif %}{% if bot_id %}&bot_id={{ bot_id }}{% endif %}{% if chat_type %}&chat_type={{ chat_type }}{% endif %}{% if return_to %}&return_to={{ return_to|urlencode }}{% endif %}">
+        <span class="wechat-avatar">{% if item.identity.avatar_url %}<img src="{{ item.identity.avatar_url }}" alt="" referrerpolicy="no-referrer" />{% else %}{{ item.initial }}{% endif %}</span>
+        <span class="wechat-conversation-copy">
+          <span class="wechat-conversation-head">
+            <strong class="wechat-conversation-name">{% if item.kind == 'official' %}<span class="i i-newspaper msg-kind-badge" title="公众号" aria-label="公众号"></span>{% endif %}{{ item.display_name }}</strong>
+            {# 列表只显示短时间，完整日期保留在悬停提示中；与轮询共用服务端摘要。 #}
+            <time class="wechat-conversation-time" title="{{ item.time_title }}">{{ item.time }}</time>
+          </span>
+          <span class="wechat-conversation-preview">{{ ('你撤回了一条消息' if item.latest.status == 'revoked' else item.latest.content|message_display(item.latest.message_type)) if item.latest else '暂无消息' }}</span>
+        </span>
+      </a>
+      {% endfor %}
+      <div class="wechat-empty" role="status"{% if conversation_summaries %} hidden{% endif %}>暂无会话消息</div>
+    </div>
+    {% if channel_id and channel_id > 0 %}
+    <nav class="wechat-inbox-directory" aria-label="当前账号通讯录">
+      <a href="/contacts?channel_id={{ channel_id }}"><span class="i i-user" aria-hidden="true"></span>联系人</a>
+      <a href="/chatrooms?channel_id={{ channel_id }}"><span class="i i-users" aria-hidden="true"></span>群聊通讯录</a>
+    </nav>
+    {% endif %}
   </aside>
 
   <section class="wechat-thread">
-    {% set selected = namespace(item=None) %}
-    {% for item in conversation_summaries %}{% if item.conversation.id == selected_conversation_id %}{% set selected.item = item %}{% endif %}{% endfor %}
-    {% if selected.item %}
+    {% if selected_conversation_id %}
     <header class="wechat-thread-head">
-      <h2>{{ selected.item.display_name }}</h2>
-      <p class="muted-text">{{ kind_labels[selected.item.kind] }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p>
+      {% for tab in kind_tabs if tab.active %}<a class="wechat-inbox-back" href="{{ list_href(tab) }}" aria-label="返回会话列表"><span class="i i-arrow-left" aria-hidden="true"></span></a>{% endfor %}
+      {% if selected_summary %}
+      <h2>{{ selected_summary.display_name }}</h2>
+      <p class="muted-text">{{ kind_labels[selected_summary.kind] }}{% if selected_chatroom %} · <a href="/channels/{{ selected_chatroom.channel_id }}/chatrooms/{{ selected_chatroom.id }}">群设置</a>{% endif %}</p>
+      {% endif %}
     </header>
     {% endif %}
 
     <div class="wechat-thread-body" id="wechat-thread-body" aria-label="聊天消息">
       {% if not selected_conversation_id %}
-      <div class="wechat-empty">从左侧选择一个联系人或群聊</div>
+      <div class="wechat-thread-idle"><span class="i i-message" aria-hidden="true"></span><p>选择会话，查看消息</p></div>
       {% else %}
       <div class="wechat-load-hint" id="wechat-load-hint" hidden></div>
       {% if messages %}{{ message_rows(messages, message_identities, message_views) }}{% else %}<div class="wechat-empty">当前会话暂无消息</div>{% endif %}
       {% endif %}
     </div>
 
-    {% if selected.item %}
+    {% if selected_summary %}
     {# 发送框:由 messages.js 用 fetch 提交,不刷新页面;Enter 发送,Shift+Enter 换行。 #}
-    <form class="wechat-composer" id="wechat-composer" autocomplete="off" data-channel-type="{{ selected.item.conversation.channel_type }}">
+    <form class="wechat-composer" id="wechat-composer" autocomplete="off" data-channel-type="{{ selected_summary.conversation.channel_type }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="conversation_id" value="{{ selected_conversation_id }}" />
       <div class="wechat-mention-picker" id="wechat-mention-picker" role="listbox" aria-label="选择群成员" hidden></div>

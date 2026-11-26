@@ -32,4 +32,5 @@ highlight_enabled = true
 highlight_interval_seconds = 600
 highlight_retention_days = 14
 highlight_realtime_max_items = 5
-poll_interval_seconds = 300
+# 统一调度器允许的最小轮询周期为 30 秒，缩短开播与下播状态检测延迟。
+poll_interval_seconds = 30

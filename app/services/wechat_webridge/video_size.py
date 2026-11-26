@@ -63,10 +63,17 @@ def queue_card_if_oversize(db: Session, channel: Channel, job: TaskJob, data: di
     from .service import enqueue_message_command
 
     # 仅使用已验证的原任务地址、目标和作品资料，不使用回执提供的 URL 或收件人。
+    card_payload = {
+        "message_type": "link",
+        "link_url": args["source"],
+        "link_title": text(card.get("title")),
+        "link_description": text(card.get("description")),
+    }
+    thumb_url = text(card.get("thumb_url"))
+    if thumb_url:
+        card_payload["thumb_url"] = thumb_url
     try:
-        followup = enqueue_message_command(
-            db, channel, conv, {"message_type": "link", "link_url": args["source"], "link_title": text(card.get("title")),
-                                "link_description": text(card.get("description"))}, plugin_code="douyin_parser")
+        followup = enqueue_message_command(db, channel, conv, card_payload, plugin_code="douyin_parser")
     except ValueError:
         # 原群已退出等情况仍按原视频发送失败结算。
         return False

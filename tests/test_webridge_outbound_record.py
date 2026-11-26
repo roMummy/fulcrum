@@ -201,6 +201,9 @@ def test_saved_plugin_limit_is_snapshotted_per_command(env):
             saved = merge_schema_config("douyin_parser", {f"schema__{key}": value})
             ctx.binding_config = json.loads(saved.config_json)
             plugin_directory._dispatch_auto_outbound_messages(db, SimpleNamespace(channel_id=channel.id), ctx, {
+                "author": "抖音作者",
+                "title": "抖音文案",
+                "cover": "https://img.example.org/cover.jpg",
                 "replies": [video_reply(video_url="https://media.example.org/video")]})
             command, = service.claim_commands(db, channel, IDENTITY)
             assert command["args"]["max_size_mb"] == float(value)
@@ -211,6 +214,7 @@ def test_saved_plugin_limit_is_snapshotted_per_command(env):
                 "error": "video exceeds max_size_bytes limit (13107201 > 13107200)"})
         card, = service.claim_commands(db, channel, IDENTITY)
         assert card["command_name"] == "send_link_card"
+        assert card["args"]["thumb_url"] == "https://img.example.org/cover.jpg"
 
 
 def test_remote_video_rejects_invalid_sources_and_unsupported_channel():

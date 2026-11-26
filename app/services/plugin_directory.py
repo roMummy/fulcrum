@@ -1690,12 +1690,14 @@ def _collect_outbound_payloads(
                 from app.services.wechat_webridge.video_size import OversizeCard, configured_limit_mib
 
                 # 此时仍可区分原始播放地址和稍后由 base64 落盘生成的 URL。
+                cover_url = _safe_public_link_url(output.get("cover"))
                 for item in normalized:
                     if item.get("message_type") == "video" and item.get("video_url"):
                         item["oversize_card"] = OversizeCard(
                             max_size_mb=configured_limit_mib(context.binding_config.get("webridge_video_limit_mib", 100)),
                             title=str(output.get("author") or "抖音作品")[:200],
-                            description=str(output.get("title") or "抖音作品")[:1000])
+                            description=str(output.get("title") or "抖音作品")[:1000],
+                            thumb_url=cover_url)
             return normalized
 
     explicit = output.get("outbound_messages")
@@ -1726,6 +1728,20 @@ def _pick_reply_text(output: Mapping[str, Any]) -> str:
         if normalized:
             return normalized
     return ""
+
+
+def _safe_public_link_url(value: Any) -> str:
+    """校验卡片缩略图或链接为公开 http/https 地址，非法值直接忽略。"""
+
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    from app.services.plugin_runtime.replies import PluginReplyError, link_reply
+
+    try:
+        return link_reply(url=candidate)["url"]
+    except PluginReplyError:
+        return ""
 
 
 def _normalize_reply_item(item: Mapping[str, Any], *, channel_type: str = "") -> dict[str, Any] | None:

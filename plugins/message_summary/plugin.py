@@ -1,17 +1,21 @@
+"""群聊周报式总结插件。
+
+插件保留原有“总结/summary”命令和定时入口，但删除 Dify workflow 路径：模型只
+负责生成受限 JSON，Fulcrum 负责统计、校验、缓存和 Kitesurf 图片渲染。
+"""
+
 from __future__ import annotations
 
 import base64
-import json
-import re
-import uuid
-from dataclasses import dataclass
+import importlib.util
+import sys
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
-from app.core.markdown_to_image import convert_md_str_to_image_sync
 from app.core.time import ensure_shanghai_datetime, now_shanghai
 from app.models.entities import BotPlugin, Conversation
 from app.services.outbound_batch import enqueue_outbound_jobs_by_conversation
@@ -20,19 +24,40 @@ from app.services.plugin_runtime.contracts import (
     PluginExecutionRequest,
     PluginExecutionResult,
 )
-from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError, PluginHttpResponse
-from app.services.plugin_runtime.messages import PluginMessageAccessError, PluginMessageBatch, PluginMessageReader
+from app.services.plugin_runtime.messages import PluginMessageAccessError, PluginMessageReader
 from app.services.plugin_runtime.replies import image_reply, standard_replies, text_reply
 from app.services.plugin_runtime.state_store import PluginStateStore
 
 
+def _load_local_module(name: str):
+    """按当前插件目录加载业务模块，避免目录插件跨插件导入顶层 ``plugins``。"""
+
+    module_path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"{__name__}_{name}", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"群总结模块不可用: {name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_report_module = _load_local_module("report")
+_renderer_module = _load_local_module("renderer")
+MessageSummaryReport = _report_module.MessageSummaryReport
+SummaryModelError = _report_module.SummaryModelError
+build_structured_report = _report_module.build_structured_report
+build_summary_analytics = _report_module.build_summary_analytics
+report_from_dict = _report_module.report_from_dict
+capture_summary_image = _renderer_module.capture_summary_image
+summary_text = _renderer_module.summary_text
+
+
 DEFAULT_COMMANDS = ("总结", "summary")
 DEFAULT_MIN_MESSAGES = 100
-DEFAULT_MAX_MESSAGES = 1000
+DEFAULT_MAX_MESSAGES = 5000
 DEFAULT_TIMEOUT_SECONDS = 60
-MAX_SUMMARY_TEXT_LENGTH = 18_000
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SUMMARY_IMAGE_ROOT = PROJECT_ROOT / "data" / "temp" / "md2image"
+DEFAULT_MAX_TOKENS = 12000
 SUMMARY_CACHE_NAMESPACE = "daily_summary"
 SUMMARY_CACHE_TTL_SECONDS = 3 * 24 * 60 * 60
 SCHEDULE_ACTIONS = {"daily_summary_prepare", "daily_summary"}
@@ -40,13 +65,19 @@ SCHEDULE_ACTIONS = {"daily_summary_prepare", "daily_summary"}
 
 @dataclass(frozen=True)
 class SummaryConfig:
-    """保存租户群总结配置，Dify 地址和密钥均由当前绑定提供。"""
+    """保存当前租户独立的 OpenAI-compatible 模型和业务开关。"""
 
-    api_base: str
-    api_key: str
+    llm_api_base: str
+    llm_api_key: str
+    llm_model: str
+    llm_api_protocol: str
+    llm_timeout_seconds: int
+    temperature: float
+    max_tokens: int
+    reasoning_effort: str
+    stream_output: bool
     min_messages: int
     max_messages: int
-    request_timeout_seconds: int
     render_as_image: bool
 
 
@@ -72,16 +103,12 @@ def matches_event(context) -> dict[str, object]:
     return {
         "matched": matched,
         "reason": "summary_command_hit" if matched else "summary_group_command_required",
-        "debug": {
-            "command_name": command_name,
-            "chat_type": chat_type,
-            "message_type": message_type,
-        },
+        "debug": {"command_name": command_name, "chat_type": chat_type, "message_type": message_type},
     }
 
 
 def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
-    """保留无数据库依赖的运行状态入口；实际总结必须走消息动作接口。"""
+    """提供插件重载状态；真正执行仍需要平台创建的可信消息上下文。"""
 
     config = _load_config(request.config)
     if request.action == "reload":
@@ -90,7 +117,10 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             status="running",
             message="群聊消息总结插件已就绪。",
             output={
-                "provider_configured": bool(config.api_base and config.api_key),
+                "llm_configured": bool(config.llm_api_base and config.llm_model),
+                "llm_api_protocol": config.llm_api_protocol,
+                "reasoning_effort": config.reasoning_effort,
+                "stream_output": config.stream_output,
                 "commands": list(DEFAULT_COMMANDS),
                 "min_messages": config.min_messages,
                 "max_messages": config.max_messages,
@@ -108,7 +138,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
 
 
 def execute_message_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """读取当前租户群消息、调用 Dify 工作流并生成通用渠道回复。"""
+    """读取群消息、计算本地统计、调用结构化模型并生成统一回复。"""
 
     if request.action == "reload":
         return execute_action(request)
@@ -119,10 +149,10 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
     context = request.context
     if not _is_trusted_group_text(context):
         return _ignored_result("group_text_only", "群聊消息总结只支持群聊文本消息。")
-    if not config.api_base or not config.api_key:
+    if not config.llm_api_base or not config.llm_model:
         return _business_error(
-            "请先在插件设置中配置当前租户自己的 Dify 地址和 API Key。",
-            provider_status="not_configured",
+            "请先在插件设置中配置当前租户自己的模型 API 地址和模型名称。",
+            provider_status="llm_not_configured",
         )
 
     command_name, date_argument = _resolve_request_command(request.payload)
@@ -140,7 +170,6 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
             limit=config.max_messages,
         )
     except PluginMessageAccessError:
-        # 归属错误只返回统一业务提示，不能把租户、机器人或数据库定位细节发到群里。
         return _business_error("当前群聊无法读取消息记录，请检查机器人和群聊绑定。", provider_status="access_denied")
 
     messages = tuple(item for item in batch.messages if not _is_summary_command(item.content))
@@ -162,65 +191,54 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
             },
         )
 
-    chat_content = "\n".join(item.formatted_text for item in messages)
-    participant_count = len(
-        {
-            item.sender_id or item.sender_name
-            for item in messages
-            if str(item.direction or "").strip().lower() == "in" and (item.sender_id or item.sender_name)
-        }
+    filtered_batch = replace(batch, messages=messages)
+    analytics = build_summary_analytics(db, filtered_batch)
+    stable_user = (
+        f"tenant-{context.tenant_id}:binding-{context.binding_id}:conversation-{context.conversation_id}"
+        if context
+        else "message-summary"
     )
     try:
-        response = _request_dify_summary(
-            request,
-            config,
-            batch=batch,
-            period=period,
-            chat_content=chat_content,
-            message_count=len(messages),
-            participant_count=participant_count,
+        report = build_structured_report(
+            db=db,
+            batch=filtered_batch,
+            analytics=analytics,
+            api_base=config.llm_api_base,
+            api_key=config.llm_api_key,
+            model=config.llm_model,
+            api_protocol=config.llm_api_protocol,
+            timeout_seconds=config.llm_timeout_seconds,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            reasoning_effort=config.reasoning_effort,
+            stream=config.stream_output,
+            user_id=stable_user,
         )
-    except PluginHttpError:
-        return _business_error("Dify 服务暂时不可用，请稍后重试。", provider_status="request_failed")
+        # 模型只看消息时间，展示周期必须沿用命令解析出的业务标签。
+        report = replace(report, period_label=period.label, date_key=period.date_key)
+    except SummaryModelError as exc:
+        message = "群聊总结模型暂时不可用，请检查当前租户的模型配置。"
+        if exc.code == "invalid_response":
+            message = "群聊总结模型返回格式无效，请稍后重试。"
+        return _business_error(message, provider_status=exc.code)
 
-    if response.status_code < 200 or response.status_code >= 300:
-        return PluginExecutionResult(
-            ok=False,
-            status="error",
-            message="Dify 服务返回错误，请检查当前租户的服务配置。",
-            output={
-                "provider_status": "http_error",
-                "http_status": int(response.status_code),
-                "replies": [],
-            },
-        )
-
-    try:
-        provider_payload = response.json()
-        summary_text, token_usage = _extract_workflow_result(provider_payload)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return _business_error("Dify 工作流未返回有效的 text 结果。", provider_status="invalid_response")
-
-    replies, reply_type = _build_summary_replies(
-        config,
-        summary_text=summary_text,
-        conversation_title=batch.conversation_title,
-        period_label=period.label,
-    )
+    replies, reply_type = _build_summary_replies(config, report)
     return PluginExecutionResult(
         ok=True,
         status="completed",
         message=f"已完成 {period.label} 的群聊总结。",
         output={
             "provider_status": "completed",
-            "summary": summary_text,
-            "message_count": len(messages),
-            "participant_count": participant_count,
+            "report": report.to_dict(),
+            "summary": summary_text(report),
+            "message_count": report.message_count,
+            "participant_count": report.active_member_count,
+            "active_member_count": report.active_member_count,
             "period_start": period.start_at.isoformat(),
             "period_end": period.end_at.isoformat(),
             "period_label": period.label,
             "date_key": period.date_key,
-            "token_usage": token_usage,
+            "token_usage": report.token_usage,
             "reply_type": reply_type,
             "replies": replies,
         },
@@ -228,14 +246,10 @@ def execute_message_action(db: Session, request: PluginExecutionRequest) -> Plug
 
 
 def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> PluginExecutionResult:
-    """预生成或推送昨日群总结，所有数据都从任务所属租户会话重新读取。"""
+    """预生成或推送昨日群总结，缓存只保存结构化报告和本地统计。"""
 
     if request.action not in SCHEDULE_ACTIONS:
-        return PluginExecutionResult(
-            ok=False,
-            status="unsupported",
-            message=f"不支持的群总结定时动作: {request.action}",
-        )
+        return PluginExecutionResult(ok=False, status="unsupported", message=f"不支持的群总结定时动作: {request.action}")
     context = request.context
     if context is None or context.conversation_id is None:
         return PluginExecutionResult(ok=False, status="error", message="群总结定时任务缺少目标群聊。")
@@ -264,8 +278,6 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     store = PluginStateStore(db, context)
 
     if request.action == "daily_summary_prepare":
-        # 预生成阶段只需要摘要文本和统计，不渲染图片。这样凌晨任务不会把大块
-        # base64 写入内存或状态，早上推送再按当前渠道统一生成表现形式。
         generated = execute_message_action(
             db,
             PluginExecutionRequest(
@@ -278,13 +290,7 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         state = _summary_state_from_result(generated)
         if state is None:
             return _scheduled_generation_result(generated, action="prepare")
-        store.put(
-            SUMMARY_CACHE_NAMESPACE,
-            cache_key,
-            state,
-            ttl_seconds=SUMMARY_CACHE_TTL_SECONDS,
-            now=current,
-        )
+        store.put(SUMMARY_CACHE_NAMESPACE, cache_key, state, ttl_seconds=SUMMARY_CACHE_TTL_SECONDS, now=current)
         return PluginExecutionResult(
             ok=True,
             status="completed",
@@ -299,17 +305,16 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         )
 
     cached = store.get(SUMMARY_CACHE_NAMESPACE, cache_key, now=current)
-    cache_hit = cached is not None and bool(str(cached.get("summary") or "").strip())
-    if cache_hit:
-        state = cached
-        config = _load_config(request.config)
-        replies, _reply_type = _build_summary_replies(
-            config,
-            summary_text=str(state["summary"]),
-            conversation_title=str(conversation.title or conversation.external_id or "群聊").strip() or "群聊",
-            period_label=period.label,
-        )
-    else:
+    state = cached if isinstance(cached, Mapping) else None
+    report: MessageSummaryReport | None = None
+    cache_hit = False
+    if state is not None and isinstance(state.get("report"), Mapping):
+        try:
+            report = report_from_dict(state["report"])
+            cache_hit = report.date_key == period.date_key
+        except (TypeError, ValueError):
+            report = None
+    if report is None:
         generated = execute_message_action(
             db,
             PluginExecutionRequest(
@@ -322,15 +327,11 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         state = _summary_state_from_result(generated)
         if state is None:
             return _scheduled_generation_result(generated, action="push")
-        store.put(
-            SUMMARY_CACHE_NAMESPACE,
-            cache_key,
-            state,
-            ttl_seconds=SUMMARY_CACHE_TTL_SECONDS,
-            now=current,
-        )
-        replies = [dict(item) for item in generated.output.get("replies", []) if isinstance(item, Mapping)]
+        store.put(SUMMARY_CACHE_NAMESPACE, cache_key, state, ttl_seconds=SUMMARY_CACHE_TTL_SECONDS, now=current)
+        report = report_from_dict(state["report"])
 
+    config = _load_config(request.config)
+    replies, _reply_type = _build_summary_replies(config, report)
     batch_result = enqueue_outbound_jobs_by_conversation(
         db,
         conversations=[conversation],
@@ -354,8 +355,8 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
         output={
             "date_key": period.date_key,
             "conversation_id": int(conversation.id),
-            "message_count": int(state["message_count"]),
-            "participant_count": int(state["participant_count"]),
+            "message_count": report.message_count,
+            "participant_count": report.active_member_count,
             "cache_hit": cache_hit,
             "outbound_job_ids": job_ids,
             "failed_target_count": len(failed_targets),
@@ -363,78 +364,26 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
     )
 
 
-def _request_dify_summary(
-    request: PluginExecutionRequest,
-    config: SummaryConfig,
-    *,
-    batch: PluginMessageBatch,
-    period: SummaryPeriod,
-    chat_content: str,
-    message_count: int,
-    participant_count: int,
-) -> PluginHttpResponse:
-    """按来源最新工作流固定输入调用 Dify，不暴露可变字段映射配置。"""
-
-    prompt = (
-        f"请总结群聊《{batch.conversation_title}》在 {period.label} 的讨论。"
-        f"共有 {message_count} 条消息、{participant_count} 位发言成员。"
-        "请剥离无效沟通，提炼关键话题、结论、待办、分歧和有代表性的原话；"
-        "不要编造聊天记录中没有的信息，输出可直接发送到群里的中文 Markdown。\n\n"
-        f"聊天记录：\n{chat_content}"
-    )
-    context = request.context
-    stable_user = (
-        f"tenant-{context.tenant_id}:binding-{context.binding_id}:conversation-{context.conversation_id}"
-        if context
-        else "message-summary"
-    )
-    body = {
-        "inputs": {
-            "query": prompt,
-            "group_name": batch.conversation_title,
-            "chat_content": chat_content,
-            "summary_mode": "markdown",
-        },
-        "response_mode": "blocking",
-        "user": stable_user,
-    }
-    return PluginHttpClient().post_json(
-        f"{config.api_base}/workflows/run",
-        body,
-        headers={"Authorization": f"Bearer {config.api_key}"},
-        connect_timeout_seconds=min(10, config.request_timeout_seconds),
-        total_timeout_seconds=config.request_timeout_seconds,
-        max_response_bytes=2 * 1024 * 1024,
-        max_redirects=2,
-    )
-
-
 def _summary_state_from_result(result: PluginExecutionResult) -> dict[str, Any] | None:
-    """从即时执行结果提取可短期缓存的最小摘要，不保存回复和消息正文。"""
+    """提取可短期缓存的最小报告，不保存回复、密钥、提示词和原始消息。"""
 
     if not result.ok or str(result.output.get("provider_status") or "") != "completed":
         return None
-    summary = str(result.output.get("summary") or "").strip()
-    if not summary:
+    report = result.output.get("report")
+    if not isinstance(report, Mapping):
+        return None
+    try:
+        validated = report_from_dict(report)
+    except (TypeError, ValueError):
         return None
     return {
-        "summary": summary,
-        "message_count": _bounded_int(result.output.get("message_count"), default=0, minimum=0, maximum=2000),
-        "participant_count": _bounded_int(
-            result.output.get("participant_count"),
-            default=0,
-            minimum=0,
-            maximum=2000,
-        ),
+        "report": validated.to_dict(),
+        "message_count": validated.message_count,
+        "participant_count": validated.active_member_count,
         "period_start": str(result.output.get("period_start") or ""),
         "period_end": str(result.output.get("period_end") or ""),
-        "date_key": str(result.output.get("date_key") or ""),
-        "token_usage": _bounded_int(
-            result.output.get("token_usage"),
-            default=0,
-            minimum=0,
-            maximum=10_000_000,
-        ),
+        "date_key": validated.date_key,
+        "token_usage": validated.token_usage,
     }
 
 
@@ -447,16 +396,7 @@ def _scheduled_generation_result(result: PluginExecutionResult, *, action: str) 
             ok=True,
             status="skipped",
             message="昨日群聊消息不足，已跳过自动总结。",
-            output={
-                "action": action,
-                "provider_status": provider_status,
-                "message_count": _bounded_int(
-                    result.output.get("message_count"),
-                    default=0,
-                    minimum=0,
-                    maximum=2000,
-                ),
-            },
+            output={"action": action, "provider_status": provider_status, "message_count": _bounded_int(result.output.get("message_count"), 0, 20000)},
         )
     return PluginExecutionResult(
         ok=False,
@@ -466,10 +406,21 @@ def _scheduled_generation_result(result: PluginExecutionResult, *, action: str) 
     )
 
 
-def _build_scheduled_outbound_payloads(
-    conversation: Conversation,
-    replies: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _build_summary_replies(config: SummaryConfig, report: MessageSummaryReport) -> tuple[list[dict[str, Any]], str]:
+    """优先通过 Kitesurf 生成图片，截图失败时使用同一报告文本降级。"""
+
+    if config.render_as_image:
+        try:
+            image = capture_summary_image(report)
+            encoded = base64.b64encode(image.content).decode("ascii")
+            return standard_replies([image_reply(base64_data=encoded)]), "image"
+        except Exception:
+            # Kitesurf 未配置、繁忙或渲染失败不应阻断群总结文字发送。
+            pass
+    return standard_replies([text_reply(summary_text(report))]), "text"
+
+
+def _build_scheduled_outbound_payloads(conversation: Conversation, replies: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """把标准文本或图片回复转换为当前群聊的通用出站载荷。"""
 
     payloads: list[dict[str, Any]] = []
@@ -481,21 +432,9 @@ def _build_scheduled_outbound_payloads(
     for reply in replies:
         reply_type = str(reply.get("type") or "").strip().lower()
         if reply_type == "text" and str(reply.get("content") or "").strip():
-            payloads.append(
-                {
-                    **base,
-                    "message_type": "text",
-                    "content": str(reply.get("content") or "").strip(),
-                }
-            )
+            payloads.append({**base, "message_type": "text", "content": str(reply["content"]).strip()})
         elif reply_type == "image" and str(reply.get("base64") or "").strip():
-            payloads.append(
-                {
-                    **base,
-                    "message_type": "image",
-                    "base64": str(reply.get("base64") or "").strip(),
-                }
-            )
+            payloads.append({**base, "message_type": "image", "base64": str(reply["base64"]).strip()})
     if not payloads:
         raise ValueError("群聊总结没有可发送的标准回复")
     return payloads
@@ -503,57 +442,6 @@ def _build_scheduled_outbound_payloads(
 
 def _summary_cache_key(conversation_id: int, date_key: str) -> str:
     return f"conversation-{int(conversation_id)}:{str(date_key or '').strip()}"
-
-
-def _extract_workflow_result(payload: Any) -> tuple[str, int]:
-    """只接受 Dify workflow 的单一 `data.outputs.text` 对外契约。"""
-
-    if not isinstance(payload, Mapping):
-        raise ValueError("Dify 响应不是对象")
-    data = payload.get("data")
-    if not isinstance(data, Mapping):
-        raise ValueError("Dify 响应缺少 data")
-    outputs = data.get("outputs")
-    if not isinstance(outputs, Mapping):
-        raise ValueError("Dify 响应缺少 outputs")
-    summary = _normalize_summary_text(outputs.get("text"))
-    if not summary:
-        raise ValueError("Dify 响应缺少 text")
-    return summary, _bounded_int(data.get("total_tokens"), default=0, minimum=0, maximum=10_000_000)
-
-
-def _build_summary_replies(
-    config: SummaryConfig,
-    *,
-    summary_text: str,
-    conversation_title: str,
-    period_label: str,
-) -> tuple[list[dict[str, Any]], str]:
-    """优先生成通用图片回复；渲染失败时发送同一份摘要文本。"""
-
-    if config.render_as_image:
-        image_path: Path | None = None
-        try:
-            markdown = f"# {conversation_title}\n\n> {period_label}\n\n{summary_text}"
-            output_name = f"message-summary-{uuid.uuid4().hex}.png"
-            image_path = Path(
-                convert_md_str_to_image_sync(markdown, output_name, base_dir=PROJECT_ROOT)
-            ).resolve(strict=True)
-            # 图片转换器只允许在平台临时目录落盘。读取后立即转成标准 base64 回复，
-            # 渠道适配器无需访问服务器路径，临时文件也不会长期占用磁盘。
-            image_path.relative_to(SUMMARY_IMAGE_ROOT.resolve())
-            encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-            return standard_replies([image_reply(base64_data=encoded)]), "image"
-        except Exception:
-            pass
-        finally:
-            if image_path is not None:
-                try:
-                    image_path.relative_to(SUMMARY_IMAGE_ROOT.resolve())
-                    image_path.unlink(missing_ok=True)
-                except (OSError, ValueError):
-                    pass
-    return standard_replies([text_reply(summary_text)]), "text"
 
 
 def _resolve_request_command(payload: Mapping[str, Any]) -> tuple[str, str]:
@@ -566,8 +454,7 @@ def _resolve_request_command(payload: Mapping[str, Any]) -> tuple[str, str]:
         command_name = explicit
     if not content and not explicit:
         command_name = DEFAULT_COMMANDS[0]
-    date_argument = str(payload.get("summary_date") or argument or "").strip()
-    return command_name, date_argument
+    return command_name, str(payload.get("summary_date") or argument or "").strip()
 
 
 def _parse_command_text(content: str) -> tuple[str, str]:
@@ -590,7 +477,7 @@ def _normalize_command_name(value: Any) -> str:
 
 
 def _resolve_summary_period(raw_date: str, *, now: datetime) -> SummaryPeriod:
-    """按来源规则计算指定自然日，或默认从昨天零点到当前时间。"""
+    """按自然日计算指定日期，未指定时默认从昨天零点到当前时间。"""
 
     current = ensure_shanghai_datetime(now)
     normalized = str(raw_date or "").strip()
@@ -604,24 +491,10 @@ def _resolve_summary_period(raw_date: str, *, now: datetime) -> SummaryPeriod:
         if selected > current.date():
             raise ValueError("不能总结未来日期的群聊消息。")
         start_at = datetime.combine(selected, time.min, tzinfo=current.tzinfo)
-        end_at = start_at + timedelta(days=1)
-        return SummaryPeriod(
-            start_at=start_at,
-            end_at=end_at,
-            label=selected.isoformat(),
-            date_key=selected.isoformat(),
-            custom_day=True,
-        )
-
+        return SummaryPeriod(start_at, start_at + timedelta(days=1), selected.isoformat(), selected.isoformat(), True)
     yesterday = current.date() - timedelta(days=1)
     start_at = datetime.combine(yesterday, time.min, tzinfo=current.tzinfo)
-    return SummaryPeriod(
-        start_at=start_at,
-        end_at=current,
-        label=f"{yesterday.isoformat()} 00:00 到现在",
-        date_key=yesterday.isoformat(),
-        custom_day=False,
-    )
+    return SummaryPeriod(start_at, current, f"{yesterday.isoformat()} 00:00 到现在", yesterday.isoformat(), False)
 
 
 def _is_summary_command(content: str) -> bool:
@@ -643,58 +516,32 @@ def _is_trusted_group_text(context: PluginExecutionContext | None) -> bool:
 def _business_error(message: str, *, provider_status: str) -> PluginExecutionResult:
     """把可操作的业务错误转为标准文本回复，不暴露技术异常。"""
 
-    return PluginExecutionResult(
-        ok=False,
-        status="error",
-        message=message,
-        output={"provider_status": provider_status, "replies": standard_replies([text_reply(message)])},
-    )
+    return PluginExecutionResult(False, "error", message, {"provider_status": provider_status, "replies": standard_replies([text_reply(message)])})
 
 
 def _ignored_result(reason: str, message: str) -> PluginExecutionResult:
-    return PluginExecutionResult(
-        ok=True,
-        status="ignored",
-        message=message,
-        output={"provider_status": reason, "replies": []},
-    )
+    return PluginExecutionResult(True, "ignored", message, {"provider_status": reason, "replies": []})
 
 
 def _load_config(raw_config: Mapping[str, Any]) -> SummaryConfig:
+    """读取并规整插件配置，旧 Dify 字段不再参与执行。"""
+
     raw = dict(raw_config)
-    min_messages = _bounded_int(
-        raw.get("min_messages"),
-        default=DEFAULT_MIN_MESSAGES,
-        minimum=DEFAULT_MIN_MESSAGES,
-        maximum=2000,
-    )
+    min_messages = _bounded_int(raw.get("min_messages"), DEFAULT_MIN_MESSAGES, DEFAULT_MIN_MESSAGES, 20000)
     return SummaryConfig(
-        api_base=str(raw.get("api_base") or "").strip().rstrip("/"),
-        api_key=str(raw.get("api_key") or "").strip(),
+        llm_api_base=str(raw.get("llm_api_base") or "").strip().rstrip("/"),
+        llm_api_key=str(raw.get("llm_api_key") or "").strip(),
+        llm_model=str(raw.get("llm_model") or "").strip(),
+        llm_api_protocol=_normalize_choice(raw.get("llm_api_protocol"), {"responses", "chat_completions"}, "responses"),
+        llm_timeout_seconds=_bounded_int(raw.get("llm_timeout_seconds"), DEFAULT_TIMEOUT_SECONDS, 10, 180),
+        temperature=_bounded_float(raw.get("temperature"), 0.3, 0.0, 2.0),
+        max_tokens=_bounded_int(raw.get("max_tokens"), DEFAULT_MAX_TOKENS, 400, 32000),
+        reasoning_effort=_normalize_choice(raw.get("reasoning_effort"), {"none", "low", "medium", "high"}, "medium"),
+        stream_output=_as_bool(raw.get("stream_output"), default=True),
         min_messages=min_messages,
-        max_messages=_bounded_int(
-            raw.get("max_messages"),
-            default=DEFAULT_MAX_MESSAGES,
-            minimum=min_messages,
-            maximum=2000,
-        ),
-        request_timeout_seconds=_bounded_int(
-            raw.get("request_timeout_seconds"),
-            default=DEFAULT_TIMEOUT_SECONDS,
-            minimum=10,
-            maximum=180,
-        ),
+        max_messages=_bounded_int(raw.get("max_messages"), DEFAULT_MAX_MESSAGES, min_messages, 20000),
         render_as_image=_as_bool(raw.get("render_as_image"), default=True),
     )
-
-
-def _normalize_summary_text(value: Any) -> str:
-    normalized = str(value or "").strip()
-    normalized = re.sub(r"^```(?:markdown|md)?\s*", "", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"\s*```$", "", normalized).strip()
-    if len(normalized) > MAX_SUMMARY_TEXT_LENGTH:
-        normalized = normalized[:MAX_SUMMARY_TEXT_LENGTH].rstrip() + "\n\n内容较长，已截断。"
-    return normalized
 
 
 def _as_bool(value: Any, *, default: bool) -> bool:
@@ -710,9 +557,24 @@ def _as_bool(value: Any, *, default: bool) -> bool:
     return default
 
 
-def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+def _normalize_choice(value: Any, choices: set[str], default: str) -> str:
+    """只接受管理后台声明的枚举，避免配置值拼接到上游请求。"""
+
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in choices else default
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     try:
         normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = default
+    return max(minimum, min(normalized, maximum))
+
+
+def _bounded_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        normalized = float(value)
     except (TypeError, ValueError):
         normalized = default
     return max(minimum, min(normalized, maximum))

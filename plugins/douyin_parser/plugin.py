@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from app.core.logging import get_logger
 from app.services.plugin_runtime.contracts import PluginExecutionRequest, PluginExecutionResult
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
-from app.services.plugin_runtime.replies import PluginReplyError, standard_replies, text_reply
+from app.services.plugin_runtime.replies import PluginReplyError, link_reply, standard_replies, text_reply
 
 from plugins.douyin_parser.service import SourceError, build_replies, parse_media
 
@@ -108,6 +108,7 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             return _error("解析服务返回的视频播放地址无效。", "media_failed")
         return _error("素材下载失败,请稍后重试。", "media_failed")
 
+    cover_url = _public_cover_url(media.get("cover"))
     return PluginExecutionResult(
         ok=True,
         status="completed",
@@ -117,9 +118,23 @@ def execute_action(request: PluginExecutionRequest) -> PluginExecutionResult:
             "media_type": media.get("type"),
             "title": media.get("title") or "",
             "author": media.get("author") or "",
+            # 透传已校验的公开封面地址，供微桥视频超限降级卡片时携带缩略图。
+            "cover": cover_url,
             "replies": standard_replies(replies),
         },
     )
+
+
+def _public_cover_url(value: Any) -> str:
+    """只保留合法的 http/https 公开封面地址，非法或空值返回空串。"""
+
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    try:
+        return link_reply(url=candidate)["url"]
+    except PluginReplyError:
+        return ""
 
 
 def _extract_douyin_url(content: str) -> str:

@@ -18,7 +18,7 @@ from app.services.plugin_runtime.contracts import (
     PluginExecutionResult,
 )
 from app.services.plugin_runtime.http_client import PluginHttpClient, PluginHttpError
-from app.services.plugin_runtime.replies import standard_replies, text_reply
+from app.services.plugin_runtime.replies import PluginReplyError, link_reply, standard_replies, text_reply
 from app.services.plugin_runtime.state_store import PluginStateStore
 
 
@@ -37,6 +37,8 @@ HIGHLIGHT_DELIVERY_STATE_NAMESPACE = "douyu_highlight_delivery"
 
 ROOM_ID_PATTERN = re.compile(r"^[0-9]{1,20}$")
 YUBA_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+# 支持标准 link 卡片出站的微信系渠道；其余渠道仅发送包含房间链接的文本提醒。
+LINK_CARD_CHANNEL_TYPES = frozenset({"wechat_ipad", "wechat_webridge", "wechat_gugatool"})
 MUTATING_OPERATIONS = {
     "subscribe_room",
     "unsubscribe_room",
@@ -399,6 +401,12 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
 
         for conversation_key in event.get("target_conversation_ids") or []:
             content = _build_event_text(event, config.reminder_subscribers, str(conversation_key))
+            # 开播事件同时准备标准链接卡片，由支持卡片的渠道在文本提醒后补发可点击直播间卡片。
+            live_link_card = (
+                _build_live_link_card(event.get("room") if isinstance(event.get("room"), Mapping) else {})
+                if str(event.get("type") or "") == "room_live"
+                else None
+            )
             result = _enqueue_event_for_conversation(
                 db,
                 binding=binding,
@@ -406,6 +414,7 @@ def execute_scheduled_action(db: Session, request: PluginExecutionRequest) -> Pl
                 conversation_id=_positive_int(conversation_key),
                 content=content,
                 event_type=str(event.get("type") or "douyu_update"),
+                link_card=live_link_card,
             )
             job_ids.extend(result["job_ids"])
             if result["error"]:
@@ -450,6 +459,14 @@ def _fetch_room_status_output(room_id: str, config: DouyuConfig) -> dict[str, An
     nickname = _clean_text(room.get("nickname"), 80)
     room_name = _clean_text(room.get("room_name"), 160)
     room_url = f"https://www.douyu.com/{room_id}"
+    avatar = room.get("avatar") if isinstance(room.get("avatar"), Mapping) else {}
+    # 优先取主播头像作为卡片缩略图（方形更适配微信链接卡片），缺失时回退房间封面图。
+    thumb_url = _pick_public_http_url(
+        avatar.get("small"),
+        avatar.get("middle"),
+        room.get("room_src"),
+        room.get("room_pic"),
+    )
     status_label = {"live": "直播中", "looping": "轮播中", "offline": "未开播"}[provider_status]
     reply_text = "\n".join(
         line
@@ -468,6 +485,7 @@ def _fetch_room_status_output(room_id: str, config: DouyuConfig) -> dict[str, An
         "nickname": nickname,
         "room_name": room_name,
         "room_url": room_url,
+        "thumb_url": thumb_url,
         "replies": standard_replies([text_reply(reply_text)]),
     }
 
@@ -690,8 +708,9 @@ def _enqueue_event_for_conversation(
     conversation_id: int | None,
     content: str,
     event_type: str,
+    link_card: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """校验精确租户、机器人和渠道后，为一个会话创建通用文本出站任务。"""
+    """校验精确租户、机器人和渠道后，为一个会话创建文本及可选链接卡片出站任务。"""
 
     conversation = db.get(Conversation, int(conversation_id or 0))
     channel = db.get(Channel, int(conversation.channel_id or 0)) if conversation is not None else None
@@ -710,13 +729,35 @@ def _enqueue_event_for_conversation(
             "error": {"conversation_id": int(conversation_id or 0), "error": "conversation_unavailable"},
         }
 
-    payload = {
-        "external_id": conversation.external_id,
-        "receiver_id": conversation.external_id,
-        "chat_type": conversation.chat_type,
-        "message_type": "text",
-        "content": content,
-    }
+    payloads: list[dict[str, Any]] = [
+        {
+            "external_id": conversation.external_id,
+            "receiver_id": conversation.external_id,
+            "chat_type": conversation.chat_type,
+            "message_type": "text",
+            "content": content,
+        }
+    ]
+    channel_type = str(channel.channel_type or "").strip().lower()
+    if link_card and channel_type in LINK_CARD_CHANNEL_TYPES:
+        # 仅对支持标准链接卡片的渠道追加 link 出站任务，字段同时兼容 webridge、ipad 与 gugatool 适配器。
+        card_payload: dict[str, Any] = {
+            "external_id": conversation.external_id,
+            "receiver_id": conversation.external_id,
+            "chat_type": conversation.chat_type,
+            "message_type": "link",
+            "content": link_card["title"] or link_card["url"],
+            "title": link_card["title"],
+            "desc": link_card["description"],
+            "description": link_card["description"],
+            "url": link_card["url"],
+            "link_url": link_card["url"],
+            "link_title": link_card["title"],
+            "link_description": link_card["description"],
+        }
+        if link_card.get("thumb_url"):
+            card_payload["thumb_url"] = link_card["thumb_url"]
+        payloads.append(card_payload)
     try:
         # 保存点隔离单个会话的渠道异常，避免一个失效渠道回滚同一轮其他会话已经
         # 建立的任务和状态。外层租户事务仍统一决定最终提交时机。
@@ -725,7 +766,7 @@ def _enqueue_event_for_conversation(
                 db,
                 conversation=conversation,
                 channel=channel,
-                payloads=[payload],
+                payloads=payloads,
                 plugin_code="douyu",
                 related_type="douyu_binding",
                 related_id=int(binding.id),
@@ -742,6 +783,46 @@ def _enqueue_event_for_conversation(
                 "error": str(exc)[:160],
             },
         }
+
+
+def _build_live_link_card(room: Mapping[str, Any]) -> dict[str, str] | None:
+    """使用平台标准 link_reply 构造开播链接卡片，非法缩略图自动丢弃而不阻断发卡。"""
+
+    room_url = str(room.get("room_url") or "").strip()
+    if not room_url:
+        return None
+    nickname = _clean_text(room.get("nickname"), 80) or "未知主播"
+    room_name = _clean_text(room.get("room_name"), 160) or f"{nickname} 正在直播"
+    description = f"{nickname} 正在斗鱼直播"
+    thumb_url = _pick_public_http_url(room.get("thumb_url"))
+    try:
+        return link_reply(
+            url=room_url,
+            title=room_name,
+            description=description,
+            thumb_url=thumb_url,
+        )
+    except PluginReplyError:
+        if not thumb_url:
+            return None
+        try:
+            return link_reply(url=room_url, title=room_name, description=description)
+        except PluginReplyError:
+            return None
+
+
+def _pick_public_http_url(*candidates: Any) -> str:
+    """返回首个合法的 http/https 公开地址，拒绝无效或非公开协议链接。"""
+
+    for raw in candidates:
+        candidate = str(raw or "").strip()
+        if not candidate:
+            continue
+        try:
+            return link_reply(url=candidate)["url"]
+        except PluginReplyError:
+            continue
+    return ""
 
 
 def _build_event_text(
@@ -1022,7 +1103,7 @@ def _load_config(raw: Mapping[str, Any]) -> DouyuConfig:
         highlight_interval_seconds=max(60, min(_coerce_int(raw.get("highlight_interval_seconds"), 600), 3600)),
         highlight_retention_days=max(1, min(_coerce_int(raw.get("highlight_retention_days"), 14), 365)),
         highlight_realtime_max_items=max(1, min(_coerce_int(raw.get("highlight_realtime_max_items"), 5), 10)),
-        poll_interval_seconds=max(30, min(_coerce_int(raw.get("poll_interval_seconds"), 300), 3600)),
+        poll_interval_seconds=max(30, min(_coerce_int(raw.get("poll_interval_seconds"), 30), 3600)),
     )
 
 

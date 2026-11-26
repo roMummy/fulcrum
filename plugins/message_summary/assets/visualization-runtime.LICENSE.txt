@@ -1,0 +1,16 @@
+Local visualization runtime bundle
+
+This file is generated from:
+
+- echarts 5.5.1
+  License: Apache License 2.0
+  Source: https://github.com/apache/echarts
+- d3-cloud 1.2.7
+  License: BSD-3-Clause
+  Source: https://github.com/jasondavies/d3-cloud
+- d3-dispatch, d3-timer
+  License: ISC
+  Included transitively by d3-cloud.
+
+The minified bundle is intentionally kept local so summary HTML screenshots do
+not depend on a CDN or a third-party network request.

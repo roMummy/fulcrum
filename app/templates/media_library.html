@@ -37,7 +37,7 @@
   {% if can_manage %}<form method="post" action="/media/delete" id="media-delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /></form>{% endif %}
   <div class="media-grid">
   {% for item in library['items'] %}
-    <article class="media-tile media-tile-{{ item.kind }}" data-media-item>
+    <article class="media-tile media-tile-{{ item.kind }}{% if item.kind == 'image' %} is-loading{% endif %}" data-media-item>
       <div class="media-preview">
         {% if item.kind == 'image' %}
         <button type="button" class="media-open" data-media-open="image" data-url="/media/items/{{ item.ref }}/file" aria-label="预览 {{ item.name }}"><img loading="lazy" src="/media/items/{{ item.ref }}/file" alt="{{ item.name }}" /></button>
@@ -62,4 +62,4 @@
   {% if library.pages > 1 %}<nav class="media-pagination" aria-label="媒体分页">{% if library.page > 1 %}<a class="btn btn-secondary" href="{{ previous_url }}">上一页</a>{% endif %}<span>{{ library.page }} / {{ library.pages }}</span>{% if library.page < library.pages %}<a class="btn btn-secondary" href="{{ next_url }}">下一页</a>{% endif %}</nav>{% endif %}
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/js/media-library.js" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/js/media-library.js?v=20261126b" defer></script>{% endblock %}

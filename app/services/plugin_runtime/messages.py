@@ -13,7 +13,8 @@ from app.models.entities import BotPlugin, Conversation, Message
 from app.services.plugin_runtime.contracts import PluginExecutionContext
 
 
-MAX_PLUGIN_MESSAGE_LIMIT = 2000
+# 群总结按配置可读取一天几千条消息；共享读取层必须与插件配置的最大值一致。
+MAX_PLUGIN_MESSAGE_LIMIT = 20000
 
 
 class PluginMessageAccessError(ValueError):

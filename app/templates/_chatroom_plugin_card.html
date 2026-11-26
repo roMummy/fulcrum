@@ -1,18 +1,17 @@
 {# 本群插件与群功能共用可展开卡片；所有字段均来自服务端非敏感声明式视图。 #}
 {% set settings = item.settings %}
 {% set settings_url = base_url ~ '/plugins/' ~ item.binding_id ~ '/settings' %}
-<form method="post" action="{{ settings_url }}{{ return_query }}" class="gf-card chatroom-plugin-card{% if settings.enabled %} is-on{% endif %}" data-gf-card data-group-plugin-settings data-gf-key="group-plugin-{{ channel.id }}-{{ detail.chatroom_id }}-{{ item.binding_id }}" data-gf-save-url="{{ settings_url }}">
+<form method="post" action="{{ settings_url }}{{ return_query }}" class="gf-card chatroom-plugin-card{% if settings.enabled %} is-on{% endif %}" data-gf-card data-group-plugin-settings data-plugin-search="{{ (item.plugin_name ~ ' ' ~ (item.plugin_code or '') ~ ' ' ~ (settings.description or '') ~ ' ' ~ (settings.triggers|join(' ')))|lower }}" data-gf-key="group-plugin-{{ channel.id }}-{{ detail.chatroom_id }}-{{ item.binding_id }}" data-gf-save-url="{{ settings_url }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <header class="gf-head">
-    <div class="gf-head-copy">
-      <div class="chatroom-plugin-title"><h3>{{ item.plugin_name }}</h3><span class="chip chip-muted">{{ 'v' ~ settings.version if settings.version else '版本未声明' }}</span></div>
+    <div class="gf-head-copy" data-gf-toggle-title>
+      <div class="chatroom-plugin-title"><h3>{{ item.plugin_name }}</h3><span class="chatroom-plugin-ver">{{ 'v' ~ settings.version if settings.version else '未声明' }}</span><span class="chatroom-plugin-source" data-scope-source>{{ '本群已自定义' if settings.custom else '跟随默认' }}</span></div>
       <p>{{ settings.description or '暂未提供功能介绍' }}</p>
-      <div class="chatroom-plugin-summary"><span class="chatroom-plugin-source" data-scope-source>{{ '本群已自定义' if settings.custom else '跟随默认' }}</span><span data-scope-commands>{% if settings.triggers %}指令：{{ settings.triggers|join('、') }}{% else %}按消息或插件规则触发{% endif %}</span><span data-scope-mention{% if not settings.require_mention %} hidden{% endif %}>需要 @ 机器人</span></div>
+      <div class="chatroom-plugin-summary"><span data-scope-commands>{% if settings.triggers %}指令：{{ settings.triggers|join('、') }}{% else %}按消息或插件规则触发{% endif %}</span><span data-scope-mention{% if not settings.require_mention %} hidden{% endif %}>需要 @ 机器人</span></div>
       {% if not settings.binding_enabled %}<p class="chatroom-plugin-warning">机器人已停用此插件，启用后本群设置才会执行。</p>{% endif %}
     </div>
     <div class="gf-head-actions">
-      <label class="gf-master" title="在本群启用或停用这个插件">
-        <span class="gf-master-text" data-gf-state>{{ '已启用' if settings.enabled else '已停用' }}</span>
+      <label class="gf-master" title="在本群启用或停用 {{ item.plugin_name }}">
         <span class="ui-switch"><input type="checkbox" role="switch" aria-label="在本群启用 {{ item.plugin_name }}" data-gf-master data-on-text="已启用" data-off-text="已停用" data-autosave-url="{{ base_url }}/scopes/{{ item.binding_id }}/mode" data-autosave-key="mode" data-autosave-on="enabled" data-autosave-off="disabled" data-autosave-form="{}"{% if settings.enabled %} checked{% endif %} /><span class="ui-switch-track"></span></span>
       </label>
       <button class="gf-toggle" type="button" data-gf-toggle aria-expanded="false" aria-controls="group-plugin-panel-{{ item.binding_id }}" aria-label="展开或收起 {{ item.plugin_name }} 设置" title="展开或收起设置"></button>

@@ -30,6 +30,12 @@ Keep these files and their route references in sync.
 Consumer-specific guides explain their own configuration; the bridge guide owns
 the general Open API contract. Do not copy another business system into this repo.
 
+## Message inbox
+
+Open **消息** and select a connected account to see its recent conversations. Filter by conversation type or search by name within the recent list. On phones, open a conversation to chat and use the back arrow to return to the list.
+
+![Account inbox showing recent conversations and an open chat with fictional messages](images/message-inbox.png)
+
 ## Channels and operations
 
 | Topic | Reference |

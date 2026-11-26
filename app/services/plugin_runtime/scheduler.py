@@ -472,7 +472,8 @@ def _build_plugin_schedule_specs(
             config.get("yuba_subscriptions")
         ):
             return ()
-        interval = max(30, min(_coerce_int(config.get("poll_interval_seconds"), 60), 3600))
+        # 未显式配置时默认按 30 秒轮询，减少开播与下播通知的检测延迟。
+        interval = max(30, min(_coerce_int(config.get("poll_interval_seconds"), 30), 3600))
         timestamp = math.floor(current.timestamp() / interval) * interval
         scheduled_for = datetime.fromtimestamp(timestamp, tz=current.tzinfo)
         return (

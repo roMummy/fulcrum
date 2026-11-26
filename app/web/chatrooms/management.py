@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import Channel, Chatroom
 from app.services.chatroom_invitations import backfill_chatroom_invitations
-from app.services.chatroom_registry import set_chatroom_management_status, upsert_manual_chatroom
+from app.services.chatroom_registry import set_chatroom_management_status
 from app.services.crud import get_channel
 from app.services.ops import record_audit
 from app.services.task_queue import WORKWECHAT_CLOUD_CONTROL_JOB, enqueue_job
@@ -227,42 +227,6 @@ async def sync_wechat_ipad_chatroom_action(request: Request, channel_id: int, ch
             return _queued_operation_response(request, db, channel, [member_job, notice_job], return_url)
         else:
             raise HTTPException(status_code=400, detail="Channel is not wechat_ipad / wechat_winauto / workwechat / wechat_webridge")
-    finally:
-        db.close()
-
-
-@router.post("/chatrooms/create")
-async def create_channel_chatroom_action(
-    request: Request,
-    channel_id: int = Form(...),
-    external_id: str = Form(...),
-    name: str = Form(""),
-    remark: str = Form(""),
-    operator_note: str = Form(""),
-):
-    user = enforce_role(request, "ops")
-    db = get_session()
-    try:
-        channel = get_channel(db, channel_id)
-        if not channel or channel.channel_type not in GROUP_SCOPE_CHANNEL_TYPES:
-            raise HTTPException(status_code=404, detail="Channel not found")
-        normalized_external_id = str(external_id or "").strip()
-        if not normalized_external_id:
-            return RedirectResponse(url=f"/chatrooms?channel_id={channel_id}&notice={quote('群外部 ID 不能为空')}", status_code=303)
-        chatroom = upsert_manual_chatroom(
-            db,
-            channel=channel,
-            external_id=normalized_external_id,
-            name=name,
-            remark=remark,
-            operator_note=f"{str(operator_note or '').strip()}".strip() or f"manual created by {user.username}",
-        )
-        db.commit()
-        record_audit(db, f"channel.{channel.channel_type}.chatroom.create", "chatroom", chatroom.id, f"external_id={normalized_external_id}")
-        return RedirectResponse(
-            url=f"/channels/{channel_id}/chatrooms/{chatroom.id}?notice={quote('已创建群登记，默认待启用')}",
-            status_code=303,
-        )
     finally:
         db.close()
 

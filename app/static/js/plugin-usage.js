@@ -62,6 +62,19 @@
       if (data.last_called_at) last.setAttribute("datetime", data.last_called_at);
       else last.removeAttribute("datetime");
       var svg = card.querySelector("svg"), maximum = 1;
+      var hasUsage = metrics.some(function (key) { return count(data.totals[key]) > 0; }) ||
+        data.series.some(function (point) { return metrics.some(function (key) { return count(point[key]) > 0; }); });
+      if (!hasUsage) {
+        // 本期没有任何调用时隐藏空折线图，仅保留紧凑统计数值与最近调用时间，减少卡片占用空间。
+        svg.replaceChildren();
+        chartStates.delete(card);
+        card.classList.add("is-idle");
+        card.querySelector("[data-usage-plot]").hidden = true;
+        card.setAttribute("aria-busy", "false");
+        card.querySelector("[data-usage-readout]").textContent = "本期暂无调用";
+        return;
+      }
+      card.classList.remove("is-idle");
       data.series.forEach(function (point) {
         metrics.forEach(function (key) { maximum = Math.max(maximum, count(point[key])); });
       });
@@ -87,7 +100,6 @@
       card.querySelector("[data-usage-plot]").hidden = false;
       card.setAttribute("aria-busy", "false");
       readPoint(card, buckets.length - 1);
-      if (!data.totals.matched && !data.last_called_at) card.querySelector("[data-usage-readout]").textContent = "本期暂无调用";
     }
 
     cards.forEach(function (card) {

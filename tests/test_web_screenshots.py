@@ -36,6 +36,7 @@ class FakeCdp:
         self.hang_method = ""
         self.invalid_image = False
         self.invalid_frame_tree = False
+        self.engine_max_height = None
 
     async def __aenter__(self):
         return self
@@ -64,7 +65,8 @@ class FakeCdp:
             result = {"pending": False}
         elif method == "Page.captureScreenshot":
             clip = params["clip"]
-            content = _image(1, 1) if self.invalid_image else _image(clip["width"], clip["height"], params["format"].upper())
+            actual_height = min(clip["height"], self.engine_max_height or clip["height"])
+            content = _image(1, 1) if self.invalid_image else _image(clip["width"], actual_height, params["format"].upper())
             result = {"data": base64.b64encode(content).decode()}
         if method == self.hang_method:
             return
@@ -149,6 +151,32 @@ def test_html_viewport_and_successive_tenants_get_distinct_contexts(fake_engine)
         created = next(item for item in connection.commands if item["method"] == "Target.createTarget")
         assert created["params"]["browserContextId"] == f"context-{connection.number}"
         assert connection.closed
+
+
+def test_full_page_over_kitesurf_limit_is_stitched(fake_engine, monkeypatch):
+    """引擎把单片限制在 2560px 时，公共服务仍返回完整长图。"""
+
+    original = screenshots.websocket_connect
+
+    def capped(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        connection.content_height = 3000
+        connection.engine_max_height = 2560
+        return connection
+
+    monkeypatch.setattr(screenshots, "websocket_connect", capped)
+    with tenant_scope(1):
+        result = screenshots.capture_screenshot(
+            screenshots.ScreenshotRequest(html="<main style='height:3000px'>长图</main>", width=640, height=480)
+        )
+    assert (result.width, result.height) == (640, 3000)
+    with Image.open(BytesIO(result.content)) as image:
+        assert image.size == (640, 3000)
+    captures = [item["params"]["clip"] for item in fake_engine[0].commands if item["method"] == "Page.captureScreenshot"]
+    assert captures == [
+        {"x": 0, "y": 0, "width": 640, "height": 2400, "scale": 1},
+        {"x": 0, "y": 2400, "width": 640, "height": 600, "scale": 1},
+    ]
 
 
 @pytest.mark.parametrize("variant,expected", [("engine", "screenshot_engine_error"), ("image", "screenshot_image_invalid"), ("large", "screenshot_too_large"), ("frame", "screenshot_protocol_error")])

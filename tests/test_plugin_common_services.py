@@ -151,7 +151,11 @@ def test_text_generation_client_uses_openai_compatible_contract_without_raw_resp
         {"role": "system", "content": "只输出结论"},
         {"role": "user", "content": "请总结新闻"},
     ]
-    assert captured["kwargs"]["headers"] == {"Authorization": "Bearer tenant-secret"}
+    assert captured["kwargs"]["headers"] == {
+        "Authorization": "Bearer tenant-secret",
+        "Content-Type": "application/json",
+        "User-Agent": "Fulcrum/1.0",
+    }
     assert "provider-sensitive-trace" not in repr(result)
 
 
@@ -172,6 +176,99 @@ def test_text_generation_client_rejects_nonstandard_response() -> None:
     )
     with pytest.raises(PluginTextGenerationError, match="choices"):
         client.generate(user_prompt="test")
+
+
+def test_text_generation_client_supports_responses_reasoning_and_user_agent() -> None:
+    """Responses 协议使用 input、max_output_tokens 和标准推理字段。"""
+
+    captured: dict[str, object] = {}
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "application/json"},
+        body='{"output_text":"结构化结果","usage":{"total_tokens":88}}'.encode("utf-8"),
+        url="https://llm.example.test/v1/responses",
+    )
+
+    class FakeHttpClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "kwargs": kwargs})
+            return response
+
+    result = PluginTextGenerationClient(
+        api_base="https://llm.example.test/v1",
+        model="reasoning-model",
+        api_key="secret",
+        http_client=FakeHttpClient(),
+    ).generate(
+        system_prompt="只输出 JSON",
+        user_prompt="总结",
+        api_protocol="responses",
+        reasoning_effort="high",
+        max_tokens=2400,
+    )
+
+    assert result.text == "结构化结果" and result.token_usage == 88
+    assert captured["url"] == "https://llm.example.test/v1/responses"
+    assert captured["payload"]["max_output_tokens"] == 2400
+    assert captured["payload"]["reasoning"] == {"effort": "high"}
+    assert captured["payload"]["input"][0]["content"][0]["type"] == "input_text"
+    assert captured["kwargs"]["headers"]["User-Agent"] == "Fulcrum/1.0"
+
+
+def test_text_generation_client_accumulates_responses_sse() -> None:
+    """Responses 流式事件只累积 output_text delta，完成后再返回。"""
+
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+        body=(
+            'data: {"type":"response.output_text.delta","delta":"{\\"headline\\":\\""}\n\n'
+            'data: {"type":"response.output_text.delta","delta":"今日\\"}"}\n\n'
+            'data: {"type":"response.completed","response":{"usage":{"total_tokens":123}}}\n\n'
+            'data: [DONE]\n\n'
+        ).encode("utf-8"),
+        url="https://llm.example.test/v1/responses",
+    )
+
+    class FakeHttpClient:
+        def post_json(self, _url, payload, **_kwargs):
+            assert payload["stream"] is True
+            return response
+
+    result = PluginTextGenerationClient(
+        api_base="https://llm.example.test/v1",
+        model="m",
+        http_client=FakeHttpClient(),
+    ).generate(user_prompt="总结", api_protocol="responses", stream=True)
+    assert result.text == '{"headline":"今日"}'
+    assert result.token_usage == 123
+
+
+def test_text_generation_client_accumulates_chat_completion_sse_without_reasoning_none() -> None:
+    """旧协议的 SSE 仍可用，关闭推理时不发送 reasoning 私有字段。"""
+
+    captured: dict[str, object] = {}
+    response = PluginHttpResponse(
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+        body=(
+            'data: {"choices":[{"delta":{"content":"甲"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"乙"}}],"usage":{"total_tokens":7}}\n\n'
+            'data: [DONE]\n\n'
+        ).encode("utf-8"),
+        url="https://llm.example.test/v1/chat/completions",
+    )
+
+    class FakeHttpClient:
+        def post_json(self, url, payload, **kwargs):
+            captured.update({"url": url, "payload": payload, "kwargs": kwargs})
+            return response
+
+    result = PluginTextGenerationClient(api_base="https://llm.example.test/v1", model="m", http_client=FakeHttpClient()).generate(
+        user_prompt="总结", api_protocol="chat_completions", reasoning_effort="none", stream=True
+    )
+    assert result.text == "甲乙" and result.token_usage == 7
+    assert "reasoning_effort" not in captured["payload"]
 
 
 def test_plugin_state_store_isolates_tenants_and_expires_records(common_service_fixture) -> None:

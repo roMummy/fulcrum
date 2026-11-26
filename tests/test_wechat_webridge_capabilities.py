@@ -324,6 +324,56 @@ def test_claim_commands_plain_outbound_carries_command_name_and_args(tmp_path) -
     assert commands[0]["args"] == {"receiver": "r@chatroom", "content": "你好"}
 
 
+def test_claim_commands_plain_outbound_supports_link_card(tmp_path) -> None:
+    """统一出站队列下发的标准 link 卡片在微桥领取时必须转换为 send_link_card 命令。"""
+
+    from unittest.mock import patch
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.models.entities import TaskJob, WebridgeDeviceSample
+    from app.services.wechat_webridge import group_sync, invitation_sync, member_directory, official_accounts
+
+    service._last_poll_maintenance.clear()
+    engine = create_engine(f"sqlite:///{tmp_path / 'claim-link.db'}")
+    TaskJob.__table__.create(engine)
+    WebridgeDeviceSample.__table__.create(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    db.add(TaskJob(
+        tenant_id=1, job_type=service.JOB_TYPE, status="pending", priority=70,
+        payload_json=json.dumps({
+            "channel_id": 2,
+            "payload": {
+                "message_type": "link",
+                "receiver_id": "r@chatroom",
+                "link_url": "https://www.douyu.com/52876",
+                "link_title": "开心DOTA！",
+                "link_description": "主播甲 正在斗鱼直播",
+                "thumb_url": "https://img.example.test/avatar.jpg",
+            },
+        }),
+    ))
+    db.commit()
+    identity = {"device_id": "d1", "session_id": "s1", "account_id": "a1"}
+    channel = Channel(id=2, bot_id=1, tenant_id=1, name="微桥", channel_type="wechat_webridge",
+                      runtime_info_json=json.dumps({"webridge": identity}))
+
+    with patch.object(service, "_enqueue_device_status"), patch.object(service, "_enqueue_account_status"), patch.object(group_sync, "reconcile_if_due"), patch.object(member_directory, "retry_due"), patch.object(official_accounts, "request_sync"), patch.object(invitation_sync, "resume_channel"):
+        commands = service.claim_commands(db, channel, identity)
+
+    assert len(commands) == 1
+    assert commands[0]["command_name"] == "send_link_card"
+    assert commands[0]["type"] == "send_link_card"
+    assert commands[0]["args"] == {
+        "receiver": "r@chatroom",
+        "title": "开心DOTA！",
+        "url": "https://www.douyu.com/52876",
+        "description": "主播甲 正在斗鱼直播",
+        "thumb_url": "https://img.example.test/avatar.jpg",
+    }
+
+
 def test_accept_command_result_matches_request_id_strictly(tmp_path) -> None:
     """命令回报必须严格按 request_id 匹配，不能被无 command 的普通出站任务或其他渠道任务吞掉。"""
 

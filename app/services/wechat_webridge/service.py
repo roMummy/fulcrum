@@ -922,27 +922,53 @@ def claim_commands(db: Session, channel: Channel, payload: dict[str, Any], limit
         else:
             outbound = as_object(data.get("payload"))
             message_type = text(outbound.get("message_type") or "text")
-            if message_type != "text":
+            receiver = text(outbound.get("receiver_id") or outbound.get("external_id"))
+            if message_type == "text":
+                content = str(outbound.get("content") or outbound.get("text") or "").strip()
+                if not receiver or not content:
+                    job.status = "failed"
+                    job.error_message = "webridge_text_message_requires_content_and_receiver"
+                    job.finished_at = current
+                    continue
+                # 插件自动回复走这条分支：同样必须带 command_name/args，手机插件只认这两个字段，
+                # 缺失会返回 command_name is required 而导致回复发不出去。
+                commands.append({
+                    "request_id": f"job_{int(job.id)}",
+                    "type": "send_message",
+                    "params": {"receiver": receiver, "content": content},
+                    "command_name": "send_message",
+                    "args": {"receiver": receiver, "content": content},
+                })
+            elif message_type == "link":
+                # 定时插件或主动推送通过统一出站队列下发标准 link 卡片时，转换为微桥原生 send_link_card 命令。
+                link_url = text(outbound.get("link_url") or outbound.get("url"))
+                link_title = text(outbound.get("link_title") or outbound.get("title") or outbound.get("content") or link_url)
+                link_description = text(outbound.get("link_description") or outbound.get("description") or outbound.get("desc"))
+                thumb_url = text(outbound.get("thumb_url") or outbound.get("image_url"))
+                if not receiver or not link_url:
+                    job.status = "failed"
+                    job.error_message = "webridge_link_message_requires_url_and_receiver"
+                    job.finished_at = current
+                    continue
+                params = {
+                    "receiver": receiver,
+                    "title": link_title,
+                    "url": link_url,
+                    "description": link_description,
+                    "thumb_url": thumb_url,
+                }
+                commands.append({
+                    "request_id": f"job_{int(job.id)}",
+                    "type": "send_link_card",
+                    "params": params,
+                    "command_name": "send_link_card",
+                    "args": params,
+                })
+            else:
                 job.status = "failed"
                 job.error_message = "WeBridge 普通出站链路暂只支持文本，请使用通用命令桥"
                 job.finished_at = current
                 continue
-            receiver = text(outbound.get("receiver_id") or outbound.get("external_id"))
-            content = str(outbound.get("content") or outbound.get("text") or "").strip()
-            if not receiver or not content:
-                job.status = "failed"
-                job.error_message = "webridge_text_message_requires_content_and_receiver"
-                job.finished_at = current
-                continue
-            # 插件自动回复走这条分支：同样必须带 command_name/args，手机插件只认这两个字段，
-            # 缺失会返回 command_name is required 而导致回复发不出去。
-            commands.append({
-                "request_id": f"job_{int(job.id)}",
-                "type": "send_message",
-                "params": {"receiver": receiver, "content": content},
-                "command_name": "send_message",
-                "args": {"receiver": receiver, "content": content},
-            })
         if len(commands) >= max(1, min(int(limit or 5), 20)):
             break
     db.commit()

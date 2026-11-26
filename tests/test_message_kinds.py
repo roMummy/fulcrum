@@ -8,7 +8,6 @@ import tempfile
 os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="message-kinds-logs-"))
 
 import pytest
-from sqlalchemy import select
 
 from app.models.entities import Conversation
 from app.services.conversation_kinds import KIND_DIRECT, KIND_GROUP, KIND_OFFICIAL, apply_kind_filter, conversation_kind, normalize_kind
@@ -40,14 +39,13 @@ def test_filter_values_are_whitelisted() -> None:
 def _add_conversations(ids) -> dict[str, int]:
     rows = {}
     with ids["factory"]() as db:
-        channel_id = db.scalar(select(Conversation.channel_id).limit(1)) or 0
         for key, chat_type, external_id, title in [
             ("friend", "direct", "wxid_friend01", "好友小王"),
             ("official", "direct", "gh_1a2b3c4d5e6f", "某某公众号"),
             ("underscore", "direct", "ghXabcdef", "名字像公众号但不是"),   # gh_ 里的下划线不能被当成通配符
             ("room", "group", "888@chatroom", "客户群"),
         ]:
-            item = Conversation(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=channel_id or None, channel_type="wechat_webridge",
+            item = Conversation(tenant_id=ids["alpha"], bot_id=ids["bot"], channel_id=ids["channel_id"], channel_type="wechat_webridge",
                                 chat_type=chat_type, external_id=external_id, title=title)
             db.add(item)
             db.flush()
@@ -78,9 +76,9 @@ def test_the_list_filters_and_marks_official_accounts(provider_page_context) -> 
     assert "客户群" in group and "某某公众号" not in group and "好友小王" not in group
 
     page = client.get("/messages?chat_type=official").text
-    assert 'class="msg-kind-tab active"' in page and 'href="/messages?chat_type=official"' in page   # 当前类型高亮
+    assert 'class="msg-kind-tab active"' in page and f'href="/messages?channel_id={ids["channel_id"]}&amp;chat_type=official"' in page   # 当前类型高亮
     thread = client.get(f"/messages?conversation_id={rows['official']}").text
-    assert "公众号" in thread.split("wechat-thread-head", 1)[1][:200]    # 对话头部显示类型
+    assert "公众号" in thread.split("wechat-thread-head", 1)[1].split("</header>", 1)[0]    # 对话头部显示类型
 
 
 def test_the_refresh_endpoint_reports_each_conversations_kind(provider_page_context) -> None:

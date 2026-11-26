@@ -1,19 +1,22 @@
 """消息会话、历史、附件和手动发送入口。"""
 
+from itertools import pairwise
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import quote, urlencode
 import base64
 import json
+import logging
 import re
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.time import format_conversation_time, now_shanghai
-from app.models.entities import Bot, Channel, Chatroom, Conversation, Message, MessageAttachment
+from app.models.entities import Channel, Chatroom, Conversation, Message, MessageAttachment
 from app.services import message_actions, message_media, message_mentions, message_view
 from app.services.channel_adapters import dispatch_outbound_message
 from app.services.conversation_kinds import (
@@ -32,6 +35,7 @@ from app.services.outbound_files import (
     sanitize_upload_filename,
     store_outbound_upload,
 )
+from app.web.messages import inbox
 from app.web.auth_common import require_tenant_csrf
 from app.services.wechat_ipad.files import delivery_name
 from app.services.wechat_ipad import stickers
@@ -43,6 +47,8 @@ from app.web.shared.urls import safe_return_to
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+SLOW_MESSAGE_PAGE_SECONDS = 1.0
 
 
 # 消息中心单条发送内容的长度上限(微信文本消息本身有上限,这里取一个稳妥值)。
@@ -403,29 +409,12 @@ async def revoke_manual_message(request: Request, conversation_id: int = Form(..
         db.close()
 
 
-def _message_conversation_summaries(db: Session, *, bot_id: int = 0, channel_id: int = 0, chat_type: str = "") -> list[dict[str, Any]]:
-    """整页和自动刷新共用会话筛选、身份解析及摘要。"""
-
-    # 会话类型三分:群聊 / 私聊 / 公众号(公众号不再混在私聊里),判断规则见 conversation_kinds
-    normalized_chat_type = normalize_kind(chat_type)
-
-    # 已删除的账号/机器人(逻辑删除)的会话不再出现在列表里,聊天数据本身保留。
-    conversations_stmt = select(Conversation).where(
-        Conversation.bot_id.in_(select(Bot.id).where(Bot.deleted_at.is_(None))),
-        or_(Conversation.channel_id.is_(None), Conversation.channel_id.in_(select(Channel.id).where(Channel.deleted_at.is_(None)))),
-    )
-    if bot_id:
-        conversations_stmt = conversations_stmt.where(Conversation.bot_id == bot_id)
-    if channel_id:
-        conversations_stmt = conversations_stmt.where(Conversation.channel_id == channel_id)
-    conversations_stmt = apply_kind_filter(conversations_stmt, normalized_chat_type)
-    conversations = db.scalars(
-        conversations_stmt.order_by(
-            Conversation.last_message_at.is_(None),
-            Conversation.last_message_at.desc(),
-            Conversation.id.desc(),
-        ).limit(100)
-    ).all()
+def _message_conversation_summaries(db: Session, scope, *, selected_id=0):
+    if selected_id:
+        scope = scope.where(Conversation.id == selected_id)
+    conversations = db.scalars(scope.order_by(
+        Conversation.last_message_at.is_(None), Conversation.last_message_at.desc(), Conversation.id.desc(),
+    ).limit(100)).all()
     # 专用目录确认的非 gh_ 公众号也需要显示类型徽标；按当前页批量查询，避免逐条读取联系人。
     official_ids = set(db.scalars(apply_kind_filter(
         select(Conversation.id).where(Conversation.id.in_([item.id for item in conversations])), "official",
@@ -474,7 +463,9 @@ async def message_conversations(request: Request, bot_id: int = 0, channel_id: i
     enforce_role(request, "readonly")
     db = get_session()
     try:
-        summaries = _message_conversation_summaries(db, bot_id=bot_id, channel_id=channel_id, chat_type=chat_type)
+        _, channel_id = inbox.account_scope(db, bot_id, channel_id, include_accounts=False)
+        scope = inbox.inbox_query(bot_id, channel_id, normalize_kind(chat_type))
+        summaries = _message_conversation_summaries(db, scope)
         items = []
         for row in summaries:
             latest = row["latest"]
@@ -490,6 +481,22 @@ async def message_conversations(request: Request, bot_id: int = 0, channel_id: i
         db.close()
 
 
+@router.get("/messages/count")
+def message_count(request: Request, conversation_id: int):
+    # 精确统计可能很慢。同步路由在线程池执行，避免阻塞聊天轮询。
+    enforce_role(request, "readonly")
+    db = get_session()
+    try:
+        if db.get(Conversation, conversation_id) is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        total = db.scalar(select(func.count(Message.id)).where(
+            Message.conversation_id == conversation_id, Message.status != "echo",
+        ))
+        return JSONResponse({"total": int(total)}, headers={"Cache-Control": "private, no-store"})
+    finally:
+        db.close()
+
+
 @router.get("/messages", response_class=HTMLResponse)
 async def messages_page(
     request: Request,
@@ -498,16 +505,27 @@ async def messages_page(
     chat_type: str = "",
     conversation_id: int = 0,
 ):
+    enforce_role(request, "readonly")
     db = get_session()
+    stages = [("summaries_ms", perf_counter())]
     try:
-        conversation_summaries = _message_conversation_summaries(db, bot_id=bot_id, channel_id=channel_id, chat_type=chat_type)
+        accounts, channel_id = inbox.account_scope(db, bot_id, channel_id, conversation_id)
+        scope = inbox.inbox_query(bot_id, channel_id, normalize_kind(chat_type))
+        conversation_summaries = _message_conversation_summaries(db, scope)
 
         # 只有选中了会话才读消息;没有分页,更早的消息由页面向上滚动时通过 /messages/history 继续加载。
-        page = load_conversation_messages(db, conversation_id) if conversation_id else {"messages": [], "has_more": False, "identities": {}, "attachments": {}, "views": {}}
-        selected_total = int(db.scalar(select(func.count(Message.id)).where(Message.conversation_id == conversation_id, Message.status != "echo")) or 0) if conversation_id else None
+        if conversation_id:
+            stages.append(("recent_messages_ms", perf_counter()))
+            page = load_conversation_messages(db, conversation_id)
+        else:
+            page = {"messages": [], "has_more": False, "identities": {}, "attachments": {}, "views": {}}
         # 选中群会话时,找到对应的群记录,线程头据此提供“群设置”入口。
+        stages.append(("thread_header_ms", perf_counter()))
         selected_chatroom = None
         selected_summary = next((row for row in conversation_summaries if int(row["conversation"].id) == conversation_id), None)
+        if conversation_id and not selected_summary:
+            selected_scope = inbox.inbox_query(bot_id, channel_id, "")
+            selected_summary = next(iter(_message_conversation_summaries(db, selected_scope, selected_id=conversation_id)), None)
         if selected_summary and selected_summary["conversation"].chat_type == "group":
             selected_chatroom = db.scalar(
                 select(Chatroom).where(
@@ -515,6 +533,7 @@ async def messages_page(
                     Chatroom.external_id == selected_summary["conversation"].external_id,
                 )
             )
+        stages.append(("render_ms", perf_counter()))
         return render(
             request,
             "messages.html",
@@ -523,10 +542,10 @@ async def messages_page(
             message_identities=page["identities"],
             message_views=page["views"],
             has_more_messages=page["has_more"],
-            selected_total=selected_total,
             conversation_summaries=conversation_summaries,
             selected_conversation_id=conversation_id,
-            selected_chatroom=selected_chatroom,
+            selected_chatroom=selected_chatroom, selected_summary=selected_summary,
+            inbox_accounts=accounts,
             back_href=safe_return_to(request.query_params.get("return_to"), ""),
             bot_id=bot_id,
             channel_id=channel_id,
@@ -536,4 +555,12 @@ async def messages_page(
             selected_kind=selected_summary["kind"] if selected_summary else "",
         )
     finally:
+        stages.append(("session_close_ms", perf_counter()))
         db.close()
+        finished = perf_counter()
+        elapsed = finished - stages[0][1]
+        if elapsed >= SLOW_MESSAGE_PAGE_SECONDS:
+            # 只记录实际执行阶段的耗时，不写会话标识、查询参数或消息内容。
+            stages.append(("end", finished))
+            timings = {name: round((end - start) * 1000, 2) for (name, start), (_, end) in pairwise(stages)}
+            logger.warning("slow messages page", extra={"duration_ms": round(elapsed * 1000, 2), **timings})

@@ -1,11 +1,11 @@
 {% macro friend_chat_action(item, can_edit, source, csrf_token) -%}
 {% if item.conversation_id %}
-<a class="btn btn-small btn-secondary" href="/messages?conversation_id={{ item.conversation_id }}&amp;channel_id={{ item.channel_id }}&amp;return_to={{ source|urlencode }}"><span class="i i-message" aria-hidden="true"></span><span>聊天记录</span></a>
+<a class="btn btn-small btn-secondary btn-icon" href="/messages?conversation_id={{ item.conversation_id }}&amp;channel_id={{ item.channel_id }}&amp;return_to={{ source|urlencode }}" title="聊天记录" aria-label="聊天记录"><span class="i i-message" aria-hidden="true"></span></a>
 {% elif can_edit and item.can_start_chat %}
 <form method="post" action="/contacts/{{ item.contact_key }}/chat">
   <input type="hidden" name="return_to" value="{{ source }}" />
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-  <button class="btn btn-small btn-secondary" type="submit"><span class="i i-message" aria-hidden="true"></span><span>发起聊天</span></button>
+  <button class="btn btn-small btn-secondary btn-icon" type="submit" title="发起聊天" aria-label="发起聊天"><span class="i i-message" aria-hidden="true"></span></button>
 </form>
-{% else %}<span class="muted-text">暂无会话</span>{% endif %}
+{% else %}<span class="muted-text" style="font-size:12px;">无会话</span>{% endif %}
 {%- endmacro %}
